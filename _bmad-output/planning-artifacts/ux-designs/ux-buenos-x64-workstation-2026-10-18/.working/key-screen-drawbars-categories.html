@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Drawbars & categories</title>
+<style>
+  /* Sálvia dark: bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on #0b0d0c warn #cdb86c
+     Drawbar heads (traditional, desaturated to fit Sálvia): brown #7a5a44, white #e7e4dc, black #1d201e */
+  * { box-sizing:border-box; }
+  body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
+  .wrap { max-width:1120px; margin:auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; font-weight:500; margin:0 0 6px; } h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:30px 0 6px; }
+  p { color:#555; max-width:860px; margin:0 0 12px; }
+  .frame { background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab); padding:12px; border-radius:12px; }
+  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; grid-template-rows:7% 22% 12% 1fr 8%; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; color:#e7ebe8; background:#0b0d0c; container-type:inline-size; }
+  .bar { display:flex; align-items:center; justify-content:space-between; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.5cqw; letter-spacing:.25em; }
+  .bar b { color:#9fbaa8; font-weight:600; } .bar span span { margin-left:1.6cqw; }
+  .hero { display:grid; grid-template-columns:1fr auto; align-items:center; padding:0 2.2cqw; border-bottom:1px solid #2b322e; }
+  .hero small { display:block; color:#88938c; font-size:1.5cqw; letter-spacing:.2em; } .hero .ls { font-size:5.2cqw; line-height:1.05; }
+  .hero .next { text-align:right; font-size:1.5cqw; color:#88938c; letter-spacing:.08em; } .hero .next b { display:block; color:#e7ebe8; font-size:2.1cqw; font-weight:400; letter-spacing:0; } .hero .next i { font-style:normal; color:#9fbaa8; }
+  .scenes { display:grid; grid-template-columns:repeat(8,1fr); gap:.8cqw; padding:1cqw 2.2cqw; }
+  .scenes div { border:1px solid #2b322e; border-radius:.8cqw; display:flex; flex-direction:column; justify-content:center; padding:0 1cqw; font-size:1.6cqw; background:#151917; }
+  .scenes small { color:#88938c; font-size:1.2cqw; } .scenes .cur { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; } .scenes .cur small { color:#0b0d0c; opacity:.75; } .scenes .empty { background:transparent; color:#88938c; border-style:dashed; }
+  .body { display:grid; grid-template-columns:1.2fr 3fr; gap:1.4cqw; padding:1cqw 2.2cqw; min-height:0; overflow:hidden; } .organ, .dbs { min-height:0; }
+  .organ { background:#202622; border:1px solid #9fbaa8; border-radius:.8cqw; padding:1.2cqw; display:flex; flex-direction:column; gap:.6cqw; }
+  .organ .n { font-size:1.2cqw; color:#88938c; letter-spacing:.15em; } .organ .t { font-size:2.2cqw; } .organ .c { font-size:1.3cqw; color:#9fbaa8; letter-spacing:.1em; }
+  .organ .reg { font-size:2.4cqw; letter-spacing:.2em; white-space:nowrap; margin-top:auto; font-variant-numeric:tabular-nums; }
+  .organ .meta { font-size:1.25cqw; color:#88938c; line-height:1.6; }
+  .dbs { display:grid; grid-template-columns:repeat(9,1fr); gap:1.2cqw; align-items:stretch; }
+  .db { display:grid; grid-template-rows:auto 1fr auto; gap:.5cqw; text-align:center; min-height:0; }
+  .db .ft { font-size:1.2cqw; color:#88938c; }
+  .slot { position:relative; background:#151917; border-radius:.6cqw; border:1px solid #2b322e; overflow:hidden; }
+  .slot .rod { position:absolute; left:42%; right:42%; top:0; background:#88938c; opacity:.5; }
+  .slot .head { position:absolute; left:12%; right:12%; height:13%; border-radius:.5cqw; display:flex; align-items:center; justify-content:center; font-size:1.6cqw; font-weight:600; }
+  .slot .ghost { position:absolute; left:4%; right:4%; border-top:2px dashed #cdb86c; }
+  .br { background:#7a5a44; color:#f1e9df; } .wh { background:#e7e4dc; color:#1d201e; } .bk { background:#1d201e; color:#e7e4dc; border:1px solid #3a403c; }
+  .db .v { font-size:1.9cqw; font-variant-numeric:tabular-nums; }
+  .status { display:flex; gap:2.4cqw; align-items:center; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.4cqw; } .status .ok { color:#9fbaa8; } .status .w { color:#cdb86c; }
+  table { border-collapse:collapse; width:100%; max-width:980px; background:#fff; border:1px solid #d6d4cf; border-radius:8px; overflow:hidden; }
+  td, th { text-align:left; padding:7px 10px; border-bottom:1px solid #e3e1dc; vertical-align:top; font-size:13px; }
+  th { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:#666; background:#f6f5f2; }
+  td:first-child { color:#888; width:34px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Drawbars na tela e categorias de timbre</h1>
+<p>Com o botão em <b>DRAWBARS</b>, a área das partes vira o <b>registro do órgão</b>: os 9 drawbars aparecem como num órgão de verdade, com o valor de 0 a 8 em cada um. O fantasma amarelo indica onde está o fader físico que ainda não "pegou" o valor. O registro aparece também em números, como os organistas falam (88 8000 000).</p>
+
+<h2>Performance · modo DRAWBARS (parte 4 = órgão)</h2>
+<div class="frame"><div class="scr">
+  <div class="bar"><span>SETLIST · SUNDAY SERVICE · 5 / 9</span><span><span><b>DRAWBARS</b></span><span><b>PARTS</b></span><span>KNOBS <b>PART 4</b></span><span>♩ 96</span></span></div>
+  <div class="hero"><div><small>LIVE SET 05</small><div class="ls">Oceans</div></div><div class="next">NEXT<b>Goodness of God</b><i>● Ready</i></div></div>
+  <div class="scenes"><div>1 Intro<small>pad</small></div><div>2 Verse<small>piano + organ</small></div><div class="cur">3 Chorus<small>organ full</small></div><div>4 Bridge<small>organ soft</small></div><div class="empty">5</div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="body">
+    <div class="organ"><div class="n">PART 4 · DRAWBARS</div><div class="t">Gospel B</div><div class="c">ORGAN</div>
+      <div class="meta">Percussion 2nd · Soft · Fast<br>Vibrato C3 · Rotary <b style="color:#9fbaa8">FAST</b></div>
+      <div class="reg">88 8600 000</div></div>
+    <div class="dbs">
+      <div class="db"><div class="ft">16'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head br" style="top:87%">8</div></div><div class="v">8</div></div>
+      <div class="db"><div class="ft">5⅓'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head br" style="top:87%">8</div></div><div class="v">8</div></div>
+      <div class="db"><div class="ft">8'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head wh" style="top:87%">8</div></div><div class="v">8</div></div>
+      <div class="db"><div class="ft">4'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head wh" style="top:87%">8</div></div><div class="v">8</div></div>
+      <div class="db"><div class="ft">2⅔'</div><div class="slot"><div class="rod" style="height:71%"></div><div class="head bk" style="top:65%">6</div><div class="ghost" style="top:39%"></div></div><div class="v">6</div></div>
+      <div class="db"><div class="ft">2'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head wh" style="top:0%">0</div></div><div class="v">0</div></div>
+      <div class="db"><div class="ft">1⅗'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
+      <div class="db"><div class="ft">1⅓'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
+      <div class="db"><div class="ft">1'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head wh" style="top:0%">0</div></div><div class="v">0</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="status"><span>VOICES 96 / 256</span><span class="ok">● STREAMING OK</span><span class="w">● DRAWBAR 2⅔': MOVE TO 6 TO TAKE OVER (NOW 3)</span></div>
+</div></div>
+<p style="margin-top:10px">Se a Live Set <b>não tem órgão</b>, o botão DRAWBARS não muda de modo. O LED pisca duas vezes e a tela mostra "No organ in this Live Set". Se houver <b>dois órgãos</b>, os faders controlam o órgão selecionado pelo toque longo (PART).</p>
+
+<h2>Categorias propostas (baseadas no que Yamaha, Korg, Roland e Nord usam)</h2>
+<table>
+  <tr><th>#</th><th>Categoria (EN · padrão)</th><th>PT-BR</th><th>ES</th><th>Inclui</th></tr>
+  <tr><td>1</td><td>Piano</td><td>Piano</td><td>Piano</td><td>Pianos de cauda, de armário, upright, honky-tonk</td></tr>
+  <tr><td>2</td><td>E.Piano</td><td>Piano Elétrico</td><td>Piano Eléctrico</td><td>Rhodes, Wurlitzer, CP, FM EP</td></tr>
+  <tr><td>3</td><td>Organ</td><td>Órgão</td><td>Órgano</td><td>Tonewheel, transistorizado, de tubos, igreja</td></tr>
+  <tr><td>4</td><td>Keys</td><td>Teclas</td><td>Teclas</td><td>Clavinet, cravo, celesta, acordeão</td></tr>
+  <tr><td>5</td><td>Mallet &amp; Bells</td><td>Percussão Melódica</td><td>Percusión Melódica</td><td>Vibrafone, marimba, xilofone, sinos, glockenspiel</td></tr>
+  <tr><td>6</td><td>Strings</td><td>Cordas</td><td>Cuerdas</td><td>Seções, solo, pizzicato, orquestra de cordas</td></tr>
+  <tr><td>7</td><td>Brass</td><td>Metais</td><td>Metales</td><td>Trompete, trombone, trompa, seção de metais</td></tr>
+  <tr><td>8</td><td>Woodwind</td><td>Madeiras</td><td>Maderas</td><td>Flauta, clarinete, oboé, saxofone, gaita</td></tr>
+  <tr><td>9</td><td>Choir &amp; Vocal</td><td>Coral &amp; Vozes</td><td>Coro &amp; Voces</td><td>Coros, aahs/oohs, vozes sintéticas</td></tr>
+  <tr><td>10</td><td>Guitar</td><td>Violão &amp; Guitarra</td><td>Guitarra</td><td>Violão de nylon e aço, guitarra, dedilhados</td></tr>
+  <tr><td>11</td><td>Bass</td><td>Baixo</td><td>Bajo</td><td>Acústico, elétrico, synth bass</td></tr>
+  <tr><td>12</td><td>Synth Lead</td><td>Synth Lead</td><td>Synth Lead</td><td>Leads monofônicos e solos</td></tr>
+  <tr><td>13</td><td>Synth Pad</td><td>Synth Pad</td><td>Synth Pad</td><td>Pads, texturas lentas</td></tr>
+  <tr><td>14</td><td>Synth Poly</td><td>Synth Poly</td><td>Synth Poly</td><td>Brass synth, poly, plucks, arpejos</td></tr>
+  <tr><td>15</td><td>Drums &amp; Perc</td><td>Bateria &amp; Percussão</td><td>Batería &amp; Percusión</td><td>Kits, percussão, loops</td></tr>
+  <tr><td>16</td><td>World</td><td>Étnicos</td><td>Étnicos</td><td>Sitar, koto, berimbau, cavaquinho, instrumentos regionais</td></tr>
+  <tr><td>17</td><td>FX &amp; Ambient</td><td>Efeitos &amp; Ambiências</td><td>Efectos &amp; Ambientes</td><td>Efeitos sonoros, atmosferas, ruídos</td></tr>
+</table>
+</div>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forja: Workstation ARM64</title>
+<style>
+:root{
+  --bg:#f6f1e7; --paper:#fffdf8; --ink:#231f1a; --muted:#6b6257; --line:#e2d8c6;
+  --seal:#9e2a2b; --seal-dark:#6f1b1c; --accent:#1f5f5b; --kill:#8a8178; --warn:#a86a12;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16130f; --paper:#1f1b16; --ink:#efe7da; --muted:#a89d8e; --line:#3a3229;
+    --seal:#c2433f; --seal-dark:#8c2a27; --accent:#5fb3a9; --kill:#8f857a; --warn:#d99a3a;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16130f; --paper:#1f1b16; --ink:#efe7da; --muted:#a89d8e; --line:#3a3229;
+  --seal:#c2433f; --seal-dark:#8c2a27; --accent:#5fb3a9; --kill:#8f857a; --warn:#d99a3a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Georgia,"Times New Roman",serif}
+main{max-width:860px;margin:0 auto;padding:40px 16px 64px}
+.sheet{background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:36px clamp(16px,5vw,48px);position:relative}
+header{display:flex;gap:28px;align-items:center;flex-wrap:wrap;border-bottom:2px solid var(--line);padding-bottom:24px;margin-bottom:28px}
+header .t{flex:1;min-width:240px}
+.kicker{font:600 12px/1 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:clamp(26px,4.5vw,36px);line-height:1.15;margin:.35em 0 .3em}
+.sub{color:var(--muted);margin:0}
+h2{font:700 13px/1 system-ui,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:34px 0 14px}
+ul{margin:0;padding-left:1.2em}
+li{margin:.35em 0}
+.kills li{color:var(--kill)}
+.kills b{color:var(--ink)}
+.weak li::marker{color:var(--warn)}
+.arc{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:15px}
+.arc span:nth-child(odd){font:600 12px/1.9 system-ui,sans-serif;color:var(--muted);white-space:nowrap}
+.cast{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.p{border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.p .n{font-weight:700}
+.p .r{font:12px/1.4 system-ui,sans-serif;color:var(--muted)}
+.p q{display:block;margin-top:6px;font-style:italic;font-size:14px}
+.tag{font:600 10px/1 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:2px 5px;margin-left:6px}
+footer{margin-top:36px;font:12px/1.5 system-ui,sans-serif;color:var(--muted)}
+svg.seal{flex:none}
+</style>
+</head>
+<body>
+<main>
+<div class="sheet">
+<header>
+  <svg class="seal" width="150" height="150" viewBox="0 0 200 200" role="img" aria-label="Selo: HARDENED">
+    <path fill="var(--seal)" d="M100 6c9 0 13 8 21 10s16-4 23 1 6 14 12 20 15 6 18 14-3 15-2 23 9 13 7 22-11 11-15 18-1 16-8 22-14 2-22 6-12 12-21 12-13-8-21-12-16 0-22-6-2-15-8-22-14-9-15-18 6-14 7-22-6-15-2-23 12-8 18-14 5-15 12-20 15 1 23-1 12-10 21-10z"/>
+    <circle cx="100" cy="100" r="70" fill="none" stroke="var(--seal-dark)" stroke-width="3"/>
+    <circle cx="100" cy="100" r="60" fill="none" stroke="var(--paper)" stroke-width="1.5" stroke-dasharray="3 4" opacity=".7"/>
+    <text x="100" y="92" text-anchor="middle" font-family="Georgia,serif" font-size="13" fill="var(--paper)" letter-spacing="3">FORJA</text>
+    <text x="100" y="116" text-anchor="middle" font-family="Georgia,serif" font-weight="700" font-size="22" fill="var(--paper)" letter-spacing="1">HARDENED</text>
+    <text x="100" y="136" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--paper)" letter-spacing="2">2026 · X</text>
+  </svg>
+  <div class="t">
+    <div class="kicker">Relatório da forja · Mateus · 17 out 2026</div>
+    <h1>Workstation ARM64 própria</h1>
+    <p class="sub">Começou como "Linux 64 bits no Korg Kronos para ter mais RAM de samples". Saiu como uma workstation de palco própria, com motor de samples de biblioteca gigante no NVMe.</p>
+  </div>
+</header>
+
+<h2>A trajetória</h2>
+<div class="arc">
+  <span>Início</span><span>Portar o SO do Kronos para x86_64/ARM64 para passar de ~2,2 GB de sample RAM.</span>
+  <span>Ruptura</span><span>O OA.ko é um binário i386 fechado, e o teto está no espaço virtual do kernel, não no Linux.</span>
+  <span>Desvio</span><span>A meta passou a ser uma proposta de "Kronos 4" para a Korg (64 bits como requisito).</span>
+  <span>Virada</span><span>Produto próprio em ARM64, para escalar, com o motor de samples como diferencial.</span>
+</div>
+
+<h2>Decisões fixadas</h2>
+<ul>
+  <li><b>Software:</b> motor em userspace 64 bits sobre Linux mainline com PREEMPT_RT, sem RTAI. Base única para a v1 e a Pro.</li>
+  <li><b>Diferencial:</b> biblioteca no NVMe muito maior que a RAM: heads em RAM, streaming otimizado, sem perda.</li>
+  <li><b>Metas da v1:</b> ≥256 vozes estéreo de sample, ≤5 ms, até 1 TB indexado, 16 GB de RAM, até 32 bits float/96 kHz, zero dropouts em 24 h.</li>
+  <li><b>Polifonia:</b> pool dinâmico com pisos por motor (≥256 sample, ≥128 FM, ≥64 VA, órgão sempre com polifonia total). O voice stealing protege graves e notas sustentadas.</li>
+  <li><b>Escopo:</b> v1 de palco com 8 partes e sem sequenciador. A Pro terá sequenciador, 16 partes e 32 GB.</li>
+  <li><b>Lançamento por data:</b> o mínimo é samples + órgão. FM e VA chegam por firmware, e a arquitetura prevê os 4 motores desde o dia 1.</li>
+  <li><b>Marco 1:</b> motor de samples numa placa RK3588 provando as metas. O primeiro teste é a latência do PREEMPT_RT com áudio real.</li>
+  <li><b>Motores clean-room</b>, sem código GPL e com nomes genéricos.</li>
+  <li><b>Conteúdo:</b> biblioteca de fábrica do fundador e importação livre de SFZ (prioridade) e SF2. O formato próprio é criptografado só o bastante para dificultar a quebra.</li>
+  <li><b>Hardware:</b> SoM industrial RK3588 (16/32 GB) com longevidade garantida por contrato.</li>
+  <li><b>Áudio:</b> I2S/TDM → PCM3168A como clock master. USB-C funciona como interface UAC2 + MIDI, algo que a Nord não oferece.</li>
+  <li><b>I/O da v1:</b> 4 saídas balanceadas, fone, 1 entrada estéreo, MIDI DIN, pedais.</li>
+</ul>
+
+<h2>Rejeitado, e por quê</h2>
+<ul class="kills">
+  <li><b>Portar o SO do Kronos:</b> o kernel 64 bits não carrega o OA.ko i386. PAE, VM 32 bits e processo 32 bits ficam abaixo de 4 GB.</li>
+  <li><b>Heads menores (opção F):</b> exigiria reescrever o preload de fábrica da Korg.</li>
+  <li><b>Pitch "Kronos 4":</b> a Korg tem o fonte, e um PoC que contorna o anti-tamper dela vira passivo.</li>
+  <li><b>ARM64 emulando o OA.ko:</b> DSP x86/SSE em tempo real não se emula com latência de áudio.</li>
+  <li><b>i.MX 95 / 8M Plus</b> (CPU fraca), <b>CIX P1</b> (mainline imaturo), <b>CM5 como produto</b> (PCIe x1, 16 GB).</li>
+</ul>
+
+<h2>Pontos fracos que sobreviveram</h2>
+<ul class="weak">
+  <li>Ninguém mediu ainda o PREEMPT_RT mainline no RK3588 com áudio real. Se falhar, o CM5 ou o Intel N-series viram plano B.</li>
+  <li>Todo o software fica com uma pessoa e IA. O gargalo é a validação sonora por ouvido (órgão, FM), não escrever código.</li>
+  <li>Os parceiros do investidor cobrem a parte física, não o DSP.</li>
+  <li>Pendentes: preço-alvo, keybed, tela, e o desenho detalhado do formato e da cripto.</li>
+</ul>
+
+<h2>Quem pressionou a ideia</h2>
+<div class="cast">
+  <div class="p"><div class="n">🏗️ Winston<span class="tag">BMad</span></div><div class="r">Arquiteto de sistemas</div><q>Escolha um lado: kernel ou userspace. Isso define o tamanho do port.</q></div>
+  <div class="p"><div class="n">💻 Amelia<span class="tag">BMad</span></div><div class="r">Engenheira sênior</div><q>Dois forks de firmware numa empresa pequena: nenhum funciona.</q></div>
+  <div class="p"><div class="n">📋 John<span class="tag">BMad</span></div><div class="r">Product manager</div><q>A Korg não compra "Linux 64 bits".</q></div>
+  <div class="p"><div class="n">📊 Mary<span class="tag">BMad</span></div><div class="r">Analista de negócios</div><q>Os 4 motores são o mínimo esperado. O diferencial é o motor de samples.</q></div>
+  <div class="p"><div class="n">😤 Grumbal<span class="tag">custom</span></div><div class="r">O adversário</div><q>Quem aqui escreve esse código?</q></div>
+  <div class="p"><div class="n">🔒 Vex<span class="tag">custom</span></div><div class="r">Engenheiro de segurança</div><q>A chave mora no aparelho. "Ninguém quebra" não existe.</q></div>
+  <div class="p"><div class="n">🌶️ Boundary<span class="tag">custom</span></div><div class="r">Caçador de casos-limite</div><q>Polifonia sem número de timbres não diz nada.</q></div>
+  <div class="p"><div class="n">🎹 Rafaela Kuster<span class="tag">gerada</span></div><div class="r">Tecladista de turnê</div><q>Quem gravou esses sons?</q></div>
+  <div class="p"><div class="n">🔍 Ilya Varga<span class="tag">gerada</span></div><div class="r">Reverse engineer de áudio</div><q>Com símbolos, você acha o alocador numa tarde.</q></div>
+  <div class="p"><div class="n">🎛️ Hiroshi Tanabe<span class="tag">gerada</span></div><div class="r">Ex-firmware de workstation</div><q>O codec é o clock master, ou um Nord ao lado soa mais limpo.</q></div>
+  <div class="p"><div class="n">🗄️ Tomás Reis<span class="tag">gerada</span></div><div class="r">Engenheiro de storage</div><q>O inimigo é a latência de cauda, não a banda.</q></div>
+  <div class="p"><div class="n">🎚️ Lúcia Amaral<span class="tag">gerada</span></div><div class="r">Produtora de bibliotecas</div><q>Aqui a sua cripto passa a valer dinheiro.</q></div>
+</div>
+
+<footer>Gerado pela forja BMad · Log da sessão: <code>_bmad-output/forge/kronos-64bit-os/.memlog.md</code> · Brief: <code>forged-idea.md</code></footer>
+</div>
+</main>
+</body>
+</html>

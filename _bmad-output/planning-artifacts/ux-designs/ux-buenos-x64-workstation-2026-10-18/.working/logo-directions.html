@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ladiani — direções de logo</title>
+<style>
+  /* Monochrome on purpose: colour is decided later in the palette step.
+     ink #111111 · paper #F4F2EE · metal gradient #C9CCCF→#8E9296 · boot #050505 */
+  :root { --ink:#111; --paper:#f4f2ee; --muted:#6b6b6b; --line:#d9d6d0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font:15px/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  header { padding:40px 24px 8px; max-width:1180px; margin:auto; }
+  header h1 { font-weight:500; font-size:22px; margin:0 0 6px; }
+  header p { color:var(--muted); margin:0; max-width:760px; }
+  .dir { max-width:1180px; margin:28px auto; padding:0 24px; }
+  .dir h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 4px; font-weight:600; }
+  .dir .why { margin:0 0 16px; max-width:780px; }
+  .row { display:grid; grid-template-columns: 1.3fr 1.6fr 1.2fr .9fr; gap:14px; }
+  @media (max-width:900px){ .row { grid-template-columns:1fr 1fr; } }
+  @media (max-width:560px){ .row { grid-template-columns:1fr; } }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; min-height:190px;
+          display:flex; flex-direction:column; align-items:center; justify-content:center; padding:18px; position:relative; }
+  .card small { position:absolute; left:12px; top:9px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:#9a9a9a; }
+  .boot { background:#050505; color:#f2f2f2; border-color:#050505; aspect-ratio:1024/600; min-height:0; }
+  .boot small { color:#555; }
+  .metal { background:linear-gradient(180deg,#d3d6d9 0%,#b6babe 45%,#9ea2a6 100%); border-color:#9ea2a6; }
+  .metal small { color:#6c7074; }
+  .engrave { fill:#7d8185; color:#7d8185; filter:drop-shadow(0 1px 0 rgba(255,255,255,.55)) drop-shadow(0 -1px 0 rgba(0,0,0,.25)); }
+  .icons { display:flex; gap:14px; align-items:flex-end; }
+  .icon { background:#111; border-radius:22%; display:flex; align-items:center; justify-content:center; color:#f4f2ee; }
+  .avatar { width:72px; height:72px; border-radius:50%; background:#111; display:flex; align-items:center; justify-content:center; margin-top:12px; }
+  svg { display:block; overflow:visible; max-width:100%; height:auto; }
+  .row > .card { min-width:0; }
+  @media (max-width:1100px){ .row { grid-template-columns:1fr 1fr; } }
+  .sizes { font-size:10px; color:#9a9a9a; margin-top:6px; }
+  footer { max-width:1180px; margin:30px auto 60px; padding:0 24px; color:var(--muted); font-size:13px; }
+  /* Direction type stacks (system fonts — a final logo would be custom-drawn) */
+  .fA { font-family:"Avenir Next","Helvetica Neue",Helvetica,Arial,sans-serif; }
+  .fB { font-family:Didot,"Bodoni 72","Bodoni MT","Libre Bodoni",Georgia,serif; }
+  .fC { font-family:Optima,Candara,"Segoe UI","Gill Sans",sans-serif; }
+  .fD { font-family:Futura,"Avenir Next","Century Gothic",sans-serif; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ladiani · Velora — 4 direções de logo</h1>
+  <p>Tudo em preto, branco e metal de propósito: a cor vem depois, na etapa de paleta, e um bom logo precisa funcionar numa cor só. As fontes são do sistema e servem só para mostrar o caminho. O logo final seria desenhado à mão, letra por letra, por um designer de tipos.</p>
+</header>
+
+<!-- ============ A — SILÊNCIO ============ -->
+<section class="dir">
+  <h2>A · Silêncio</h2>
+  <p class="why">Minimalismo absoluto, na linha da Apple. Sans-serif ultrafina com espaçamento largo e um monograma "L" de traço único dentro de um quadrado arredondado. Quase sussurra, e a elegância vem do que foi tirado.</p>
+  <div class="row">
+    <div class="card"><small>Wordmark</small>
+      <svg width="250" height="70" viewBox="0 0 250 70"><text x="125" y="34" text-anchor="middle" class="fA" font-size="26" font-weight="200" letter-spacing="11">LADIANI</text>
+      <text x="125" y="60" text-anchor="middle" class="fA" font-size="13" font-weight="300" letter-spacing="6" fill="#6b6b6b">velora 73</text></svg>
+    </div>
+    <div class="card boot"><small>Tela de boot 7"</small>
+      <svg width="64" height="64" viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="14" fill="none" stroke="#f2f2f2" stroke-width="1.2"/><path d="M25 17 V45 H41" fill="none" stroke="#f2f2f2" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <svg width="220" height="40" viewBox="0 0 220 40" style="margin-top:14px"><text x="110" y="26" text-anchor="middle" class="fA" font-size="15" font-weight="300" letter-spacing="9" fill="#f2f2f2">VELORA</text></svg>
+    </div>
+    <div class="card metal"><small>Painel gravado</small>
+      <svg width="210" height="40" viewBox="0 0 210 40" class="engrave"><text x="105" y="27" text-anchor="middle" class="fA" font-size="20" font-weight="300" letter-spacing="9">LADIANI</text></svg>
+      <svg width="140" height="24" viewBox="0 0 140 24" class="engrave" style="margin-top:6px"><text x="70" y="16" text-anchor="middle" class="fA" font-size="11" font-weight="400" letter-spacing="5">VELORA 73</text></svg>
+    </div>
+    <div class="card"><small>Ícone · avatar</small>
+      <div class="icons">
+        <div class="icon" style="width:64px;height:64px"><svg width="34" height="34" viewBox="0 0 64 64"><path d="M25 14 V48 H42" fill="none" stroke="#f4f2ee" stroke-width="4" stroke-linecap="round"/></svg></div>
+        <div class="icon" style="width:32px;height:32px"><svg width="18" height="18" viewBox="0 0 64 64"><path d="M25 14 V48 H42" fill="none" stroke="#f4f2ee" stroke-width="6" stroke-linecap="round"/></svg></div>
+        <div class="icon" style="width:16px;height:16px;border-radius:4px"><svg width="10" height="10" viewBox="0 0 64 64"><path d="M25 14 V48 H42" fill="none" stroke="#f4f2ee" stroke-width="9" stroke-linecap="round"/></svg></div>
+      </div>
+      <div class="sizes">64 · 32 · 16 px</div>
+      <div class="avatar"><svg width="30" height="30" viewBox="0 0 64 64"><path d="M25 14 V48 H42" fill="none" stroke="#f4f2ee" stroke-width="4" stroke-linecap="round"/></svg></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ B — ATELIER ============ -->
+<section class="dir">
+  <h2>B · Atelier</h2>
+  <p class="why">Exclusividade de relojoaria e alta-costura, na linha da Ferrari. Serifa de alto contraste e um selo "LA" num círculo fino, como a marca de contraste que se grava em metais preciosos. O Velora vem em itálico, como uma assinatura.</p>
+  <div class="row">
+    <div class="card"><small>Wordmark</small>
+      <svg width="250" height="78" viewBox="0 0 250 78"><text x="125" y="38" text-anchor="middle" class="fB" font-size="34" letter-spacing="5">LADIANI</text>
+      <text x="125" y="66" text-anchor="middle" class="fB" font-size="19" font-style="italic" fill="#6b6b6b">Velora</text></svg>
+    </div>
+    <div class="card boot"><small>Tela de boot 7"</small>
+      <svg width="70" height="70" viewBox="0 0 70 70"><circle cx="35" cy="35" r="32" fill="none" stroke="#f2f2f2" stroke-width="1"/><circle cx="35" cy="35" r="28" fill="none" stroke="#f2f2f2" stroke-width=".5"/><text x="35" y="43" text-anchor="middle" class="fB" font-size="22" fill="#f2f2f2" letter-spacing="1">LA</text></svg>
+      <svg width="220" height="40" viewBox="0 0 220 40" style="margin-top:12px"><text x="110" y="28" text-anchor="middle" class="fB" font-size="22" font-style="italic" fill="#f2f2f2">Velora</text></svg>
+    </div>
+    <div class="card metal"><small>Painel gravado</small>
+      <svg width="210" height="44" viewBox="0 0 210 44" class="engrave"><text x="105" y="31" text-anchor="middle" class="fB" font-size="27" letter-spacing="4">LADIANI</text></svg>
+      <svg width="140" height="26" viewBox="0 0 140 26" class="engrave"><text x="70" y="18" text-anchor="middle" class="fB" font-size="15" font-style="italic">Velora 73</text></svg>
+    </div>
+    <div class="card"><small>Ícone · avatar</small>
+      <div class="icons">
+        <div class="icon" style="width:64px;height:64px"><svg width="44" height="44" viewBox="0 0 70 70"><circle cx="35" cy="35" r="31" fill="none" stroke="#f4f2ee" stroke-width="2"/><text x="35" y="44" text-anchor="middle" class="fB" font-size="24" fill="#f4f2ee">LA</text></svg></div>
+        <div class="icon" style="width:32px;height:32px"><svg width="24" height="24" viewBox="0 0 70 70"><text x="35" y="48" text-anchor="middle" class="fB" font-size="38" fill="#f4f2ee">L</text></svg></div>
+        <div class="icon" style="width:16px;height:16px;border-radius:4px"><svg width="12" height="12" viewBox="0 0 70 70"><text x="35" y="54" text-anchor="middle" class="fB" font-size="56" fill="#f4f2ee">L</text></svg></div>
+      </div>
+      <div class="sizes">64 · 32 · 16 px</div>
+      <div class="avatar"><svg width="46" height="46" viewBox="0 0 70 70"><circle cx="35" cy="35" r="31" fill="none" stroke="#f4f2ee" stroke-width="2"/><text x="35" y="44" text-anchor="middle" class="fB" font-size="24" fill="#f4f2ee">LA</text></svg></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ C — DRAWBAR ============ -->
+<section class="dir">
+  <h2>C · Drawbar</h2>
+  <p class="why">O lado artesanal do Nord, com raiz no instrumento. O "L" é feito de drawbars: uma barra alta e quatro curtas, como num registro de órgão. A fonte humanista tem traços que lembram letra gravada em pedra e funciona muito bem em baixo-relevo. O símbolo também "toca", porque as barras podem ganhar animação no boot.</p>
+  <div class="row">
+    <div class="card"><small>Wordmark</small>
+      <svg width="260" height="70" viewBox="0 0 260 70">
+        <g fill="#111"><rect x="6" y="12" width="6" height="40" rx="3"/><rect x="16" y="40" width="6" height="12" rx="3"/><rect x="26" y="40" width="6" height="12" rx="3"/><rect x="36" y="40" width="6" height="12" rx="3"/></g>
+        <text x="58" y="44" class="fC" font-size="30" letter-spacing="5">LADIANI</text>
+        <text x="58" y="64" class="fC" font-size="12" letter-spacing="4" fill="#6b6b6b">VELORA 73</text></svg>
+    </div>
+    <div class="card boot"><small>Tela de boot 7"</small>
+      <svg width="80" height="64" viewBox="0 0 80 64"><g fill="#f2f2f2"><rect x="8" y="4" width="9" height="56" rx="4.5"/><rect x="22" y="44" width="9" height="16" rx="4.5"/><rect x="36" y="44" width="9" height="16" rx="4.5"/><rect x="50" y="44" width="9" height="16" rx="4.5"/><rect x="64" y="44" width="9" height="16" rx="4.5"/></g></svg>
+      <svg width="220" height="40" viewBox="0 0 220 40" style="margin-top:14px"><text x="110" y="27" text-anchor="middle" class="fC" font-size="18" letter-spacing="8" fill="#f2f2f2">VELORA</text></svg>
+    </div>
+    <div class="card metal"><small>Painel gravado</small>
+      <svg width="220" height="46" viewBox="0 0 220 46" class="engrave"><g><rect x="4" y="8" width="5" height="30" rx="2.5"/><rect x="12" y="29" width="5" height="9" rx="2.5"/><rect x="20" y="29" width="5" height="9" rx="2.5"/><rect x="28" y="29" width="5" height="9" rx="2.5"/></g><text x="44" y="34" class="fC" font-size="24" letter-spacing="4">LADIANI</text></svg>
+      <svg width="140" height="24" viewBox="0 0 140 24" class="engrave"><text x="70" y="16" text-anchor="middle" class="fC" font-size="12" letter-spacing="5">VELORA 73</text></svg>
+    </div>
+    <div class="card"><small>Ícone · avatar</small>
+      <div class="icons">
+        <div class="icon" style="width:64px;height:64px"><svg width="40" height="34" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="8" y="4" width="11" height="56" rx="5.5"/><rect x="24" y="42" width="11" height="18" rx="5.5"/><rect x="40" y="42" width="11" height="18" rx="5.5"/><rect x="56" y="42" width="11" height="18" rx="5.5"/></g></svg></div>
+        <div class="icon" style="width:32px;height:32px"><svg width="20" height="17" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="10" y="2" width="16" height="60" rx="8"/><rect x="32" y="40" width="16" height="22" rx="8"/><rect x="54" y="40" width="16" height="22" rx="8"/></g></svg></div>
+        <div class="icon" style="width:16px;height:16px;border-radius:4px"><svg width="10" height="9" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="12" y="0" width="22" height="64" rx="6"/><rect x="44" y="36" width="24" height="28" rx="6"/></g></svg></div>
+      </div>
+      <div class="sizes">64 · 32 · 16 px</div>
+      <div class="avatar"><svg width="38" height="30" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="8" y="4" width="11" height="56" rx="5.5"/><rect x="24" y="42" width="11" height="18" rx="5.5"/><rect x="40" y="42" width="11" height="18" rx="5.5"/><rect x="56" y="42" width="11" height="18" rx="5.5"/></g></svg></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ D — TECLA ============ -->
+<section class="dir">
+  <h2>D · Tecla</h2>
+  <p class="why">O "L" da Ladiani é literalmente a silhueta de uma tecla branca. A tecla Dó tem forma de L, por causa do recorte da tecla preta ao lado. É um símbolo forte e próprio, que reconhece o instrumento sem desenhar um teclado inteiro. Vai bem com a geométrica moderna, e o recorte pode virar acento de cor depois.</p>
+  <div class="row">
+    <div class="card"><small>Wordmark</small>
+      <svg width="260" height="70" viewBox="0 0 260 70">
+        <path d="M8 10 H22 V34 H32 V54 H8 Z" fill="#111" stroke-linejoin="round"/>
+        <text x="46" y="44" class="fD" font-size="28" font-weight="500" letter-spacing="7">LADIANI</text>
+        <text x="46" y="63" class="fD" font-size="11" font-weight="500" letter-spacing="5" fill="#6b6b6b">VELORA 73</text></svg>
+    </div>
+    <div class="card boot"><small>Tela de boot 7"</small>
+      <svg width="56" height="70" viewBox="0 0 56 70"><path d="M6 4 H28 V40 H50 V66 H6 Z" fill="#f2f2f2"/><path d="M30 4 H50 V38 H30 Z" fill="none" stroke="#3a3a3a" stroke-width="1"/></svg>
+      <svg width="220" height="40" viewBox="0 0 220 40" style="margin-top:12px"><text x="110" y="27" text-anchor="middle" class="fD" font-size="17" font-weight="500" letter-spacing="8" fill="#f2f2f2">VELORA</text></svg>
+    </div>
+    <div class="card metal"><small>Painel gravado</small>
+      <svg width="220" height="46" viewBox="0 0 220 46" class="engrave"><path d="M4 8 H15 V27 H23 V40 H4 Z"/><text x="34" y="34" class="fD" font-size="23" font-weight="500" letter-spacing="6">LADIANI</text></svg>
+      <svg width="140" height="24" viewBox="0 0 140 24" class="engrave"><text x="70" y="16" text-anchor="middle" class="fD" font-size="11" font-weight="500" letter-spacing="5">VELORA 73</text></svg>
+    </div>
+    <div class="card"><small>Ícone · avatar</small>
+      <div class="icons">
+        <div class="icon" style="width:64px;height:64px"><svg width="30" height="38" viewBox="0 0 56 70"><path d="M6 4 H28 V40 H50 V66 H6 Z" fill="#f4f2ee"/></svg></div>
+        <div class="icon" style="width:32px;height:32px"><svg width="15" height="19" viewBox="0 0 56 70"><path d="M6 4 H28 V40 H50 V66 H6 Z" fill="#f4f2ee"/></svg></div>
+        <div class="icon" style="width:16px;height:16px;border-radius:4px"><svg width="8" height="10" viewBox="0 0 56 70"><path d="M6 4 H28 V40 H50 V66 H6 Z" fill="#f4f2ee"/></svg></div>
+      </div>
+      <div class="sizes">64 · 32 · 16 px</div>
+      <div class="avatar"><svg width="28" height="35" viewBox="0 0 56 70"><path d="M6 4 H28 V40 H50 V66 H6 Z" fill="#f4f2ee"/></svg></div>
+    </div>
+  </div>
+</section>
+
+<footer>Você pode escolher uma direção, combinar duas (por exemplo, o símbolo da D com a tipografia da B) ou descartar todas e me dizer por quê. Próximos modelos do portfólio seguiriam a mesma regra: o nome na tipografia do modelo, subordinado à marca.</footer>
+</body>
+</html>

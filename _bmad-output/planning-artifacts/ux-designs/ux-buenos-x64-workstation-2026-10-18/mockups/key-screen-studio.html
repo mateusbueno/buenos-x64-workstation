@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora Studio — main window</title>
+<style>
+  /* Sálvia dark (desktop): bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on #0b0d0c warn #cdb86c */
+  * { box-sizing:border-box; }
+  body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
+  .wrap { max-width:1320px; margin:auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; font-weight:500; margin:0 0 6px; } p { color:#555; max-width:900px; margin:0 0 14px; }
+  .win { border-radius:12px; overflow:hidden; box-shadow:0 18px 50px rgba(0,0,0,.25); background:#0b0d0c; color:#e7ebe8; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; overflow-x:auto; }
+  .inner { min-width:1180px; display:grid; grid-template-rows:38px 1fr 30px; height:760px; }
+  .title { display:flex; align-items:center; gap:10px; padding:0 14px; background:#151917; border-bottom:1px solid #2b322e; font-size:12px; color:#88938c; letter-spacing:.12em; }
+  .dots i { display:inline-block; width:11px; height:11px; border-radius:50%; background:#3a403c; margin-right:6px; }
+  .title .conn { margin-left:auto; color:#9fbaa8; letter-spacing:.06em; }
+  .title .btns span { border:1px solid #2b322e; border-radius:6px; padding:3px 9px; margin-left:6px; color:#e7ebe8; letter-spacing:.06em; }
+  .title .btns .pri { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; }
+  .body { display:grid; grid-template-columns:220px 1fr; min-height:0; }
+  .side { background:#151917; border-right:1px solid #2b322e; padding:12px 10px; font-size:13px; overflow:hidden; }
+  .side h4 { font-size:10px; letter-spacing:.18em; color:#88938c; margin:12px 4px 6px; font-weight:600; }
+  .side div { padding:4px 8px; border-radius:5px; color:#c9cfcb; }
+  .side .on { background:#202622; color:#e7ebe8; border-left:2px solid #9fbaa8; }
+  .side .sub { padding-left:20px; color:#88938c; }
+  .main { display:grid; grid-template-rows:auto auto auto 1fr; min-height:0; }
+  .ls { display:flex; align-items:baseline; gap:14px; padding:14px 18px 6px; }
+  .ls b { font-size:28px; font-weight:400; } .ls small { color:#88938c; letter-spacing:.15em; font-size:11px; }
+  .scenes { display:grid; grid-template-columns:repeat(8,1fr); gap:6px; padding:4px 18px 10px; }
+  .scenes div { background:#151917; border:1px solid #2b322e; border-radius:6px; padding:5px 8px; font-size:12px; }
+  .scenes .cur { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; } .scenes .empty { border-style:dashed; color:#88938c; background:transparent; }
+  .strips { display:grid; grid-template-columns:repeat(8,1fr); gap:6px; padding:0 18px 12px; }
+  .st { background:#151917; border:1px solid #2b322e; border-radius:8px; padding:8px; font-size:12px; display:grid; gap:5px; }
+  .st.sel { border-color:#9fbaa8; background:#202622; }
+  .st .h { display:flex; justify-content:space-between; color:#88938c; font-size:10px; letter-spacing:.12em; }
+  .st .h i { width:8px; height:8px; border-radius:50%; background:#9fbaa8; display:inline-block; } .st.off { opacity:.45; } .st.off .h i { background:#2b322e; }
+  .st .nm { font-size:14px; } .st .cat { color:#9fbaa8; font-size:10px; letter-spacing:.12em; }
+  .meter { height:5px; background:#2b322e; border-radius:3px; overflow:hidden; } .meter span { display:block; height:100%; background:#9fbaa8; }
+  .row { display:flex; justify-content:space-between; color:#88938c; font-size:11px; }
+  .editor { border-top:1px solid #2b322e; display:grid; grid-template-columns:1.15fr 1fr 1fr 1fr; gap:0; min-height:0; }
+  .sec { padding:12px 16px; border-right:1px solid #2b322e; min-height:0; }
+  .sec h5 { margin:0 0 10px; font-size:10px; letter-spacing:.18em; color:#88938c; font-weight:600; }
+  .knobs { display:grid; grid-template-columns:repeat(3,1fr); gap:12px 8px; }
+  .k { text-align:center; font-size:10px; color:#88938c; letter-spacing:.08em; }
+  .k svg { display:block; margin:0 auto 3px; }
+  .k b { display:block; color:#e7ebe8; font-weight:400; font-size:12px; letter-spacing:0; }
+  .env { width:100%; height:70px; background:#151917; border:1px solid #2b322e; border-radius:6px; margin-bottom:10px; }
+  .chain div { display:flex; justify-content:space-between; background:#151917; border:1px solid #2b322e; border-radius:6px; padding:6px 9px; margin-bottom:6px; font-size:12px; }
+  .chain div i { font-style:normal; color:#88938c; }
+  .chain .add { border-style:dashed; color:#88938c; justify-content:center; }
+  .zone { background:#151917; border:1px solid #2b322e; border-radius:6px; height:34px; position:relative; margin-bottom:10px; }
+  .zone span { position:absolute; top:6px; bottom:6px; background:#9fbaa8; opacity:.35; border-radius:3px; }
+  .foot { display:flex; gap:18px; align-items:center; padding:0 14px; background:#151917; border-top:1px solid #2b322e; font-size:11px; color:#88938c; letter-spacing:.06em; }
+  .foot .ok { color:#9fbaa8; }
+  .notes { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin-top:14px; }
+  .notes div { background:#fff; border:1px solid #d6d4cf; border-radius:8px; padding:10px 12px; font-size:13px; color:#444; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Velora Studio: janela principal</h1>
+<p>O mesmo modelo mental do teclado (Setlist → Live Set → Cenas → 8 Partes), mas com <b>tudo à vista</b>. Você clica numa parte, e o editor de baixo mostra todos os parâmetros dela de uma vez: som, envelope, filtro, EQ, efeitos e zona. Não há menus. As mudanças vão para o teclado em tempo real, pela USB.</p>
+<div class="win"><div class="inner">
+  <div class="title"><span class="dots"><i></i><i></i><i></i></span>VELORA STUDIO<span class="conn">● VELORA 73 · CONNECTED VIA USB · PAIRED</span><span class="btns"><span>Import</span><span>Backup</span><span class="pri">Write to Velora</span></span></div>
+  <div class="body">
+    <div class="side">
+      <h4>SETLISTS</h4><div class="on">Wedding Ana &amp; Pedro</div><div class="sub">01 Canon in D</div><div class="sub">02 A Thousand Years</div><div class="sub" style="color:#e7ebe8">▸ 03 Perfect</div><div class="sub">04 Thinking Out Loud</div><div class="sub">…</div><div>Sunday Service</div><div>Rock Covers</div>
+      <h4>LIBRARY</h4><div>Piano</div><div>E.Piano</div><div>Organ</div><div>Strings</div><div>Synth Pad</div><div>… 17 categories</div>
+      <h4>DEVICE</h4><div>Storage · 412 / 960 GB</div><div>Firmware 1.2.0</div><div>Backups</div>
+    </div>
+    <div class="main">
+      <div class="ls"><small>LIVE SET 03</small><b>Perfect</b><small>♩ 72 · 4 PARTS ACTIVE IN SCENE</small></div>
+      <div class="scenes"><div>1 Intro</div><div class="cur">2 Verse</div><div>3 Chorus</div><div>4 Bridge</div><div>5 Final</div><div class="empty">+ 6</div><div class="empty">+ 7</div><div class="empty">+ 8</div></div>
+      <div class="strips">
+        <div class="st sel"><div class="h">PART 1 <i></i></div><div class="nm">Concert Grand</div><div class="cat">PIANO</div><div class="meter"><span style="width:78%"></span></div><div class="row"><span>VOL 78</span><span>C1–C7</span></div></div>
+        <div class="st"><div class="h">PART 2 <i></i></div><div class="nm">Warm Pad</div><div class="cat">SYNTH PAD</div><div class="meter"><span style="width:40%"></span></div><div class="row"><span>VOL 40</span><span>C1–C7</span></div></div>
+        <div class="st off"><div class="h">PART 3 <i></i></div><div class="nm">Chamber Strings</div><div class="cat">STRINGS</div><div class="meter"><span style="width:55%"></span></div><div class="row"><span>VOL 55</span><span>C3–C7</span></div></div>
+        <div class="st off"><div class="h">PART 4 <i></i></div><div class="nm">Gospel B</div><div class="cat">ORGAN</div><div class="meter"><span style="width:62%"></span></div><div class="row"><span>88 8600 000</span><span>C1–C7</span></div></div>
+        <div class="st off"><div class="h">PART 5 <i></i></div><div class="nm">Choir Aahs</div><div class="cat">CHOIR &amp; VOCAL</div><div class="meter"><span style="width:30%"></span></div><div class="row"><span>VOL 30</span><span>C3–C6</span></div></div>
+        <div class="st off"><div class="h">PART 6 <i></i></div><div class="nm" style="color:#88938c">+ Add timbre</div></div>
+        <div class="st off"><div class="h">PART 7 <i></i></div><div class="nm" style="color:#88938c">+ Add timbre</div></div>
+        <div class="st off"><div class="h">PART 8 <i></i></div><div class="nm" style="color:#88938c">+ Add timbre</div></div>
+      </div>
+      <div class="editor">
+        <div class="sec"><h5>PART 1 · CONCERT GRAND · SOUND</h5>
+          <div class="knobs">
+            <div class="k"><svg width="40" height="40"><circle cx="20" cy="20" r="14" fill="#202622"/><path d="M8 30 A14 14 0 1 1 33 14" fill="none" stroke="#9fbaa8" stroke-width="3"/></svg>BRIGHTNESS<b>62</b></div>
+            <div class="k"><svg width="40" height="40"><circle cx="20" cy="20" r="14" fill="#202622"/><path d="M8 30 A14 14 0 0 1 14 7" fill="none" stroke="#9fbaa8" stroke-width="3"/></svg>RESONANCE<b>12</b></div>
+            <div class="k"><svg width="40" height="40"><circle cx="20" cy="20" r="14" fill="#202622"/><path d="M8 30 A14 14 0 1 1 26 7" fill="none" stroke="#9fbaa8" stroke-width="3"/></svg>VELO CURVE<b>Normal</b></div>
+            <div class="k"><svg width="40" height="40"><circle cx="20" cy="20" r="14" fill="#202622"/><path d="M8 30 A14 14 0 0 1 20 6" fill="none" stroke="#9fbaa8" stroke-width="3"/></svg>PEDAL NOISE<b>40</b></div>
+            <div class="k"><svg width="40" height="40"><circle cx="20" cy="20" r="14" fill="#202622"/><path d="M8 30 A14 14 0 0 1 11 9" fill="none" stroke="#9fbaa8" stroke-width="3"/></svg>RELEASE NOISE<b>25</b></div>
+            <div class="k"><svg width="40" height="40"><circle cx="20" cy="20" r="14" fill="#202622"/><path d="M8 30 A14 14 0 1 1 30 10" fill="none" stroke="#9fbaa8" stroke-width="3"/></svg>RESONANCE (STR)<b>55</b></div>
+          </div></div>
+        <div class="sec"><h5>AMP ENVELOPE</h5>
+          <svg class="env" viewBox="0 0 220 70" preserveAspectRatio="none"><polyline points="6,64 22,8 70,24 160,24 214,64" fill="none" stroke="#9fbaa8" stroke-width="2"/><g fill="#e7ebe8"><circle cx="22" cy="8" r="3"/><circle cx="70" cy="24" r="3"/><circle cx="160" cy="24" r="3"/></g></svg>
+          <div class="knobs"><div class="k">ATTACK<b>2 ms</b></div><div class="k">DECAY<b>1.8 s</b></div><div class="k">RELEASE<b>420 ms</b></div></div>
+          <h5 style="margin-top:12px">EQ</h5>
+          <div class="knobs"><div class="k">LOW<b>+1.5 dB</b></div><div class="k">MID<b>−2 dB @ 800 Hz</b></div><div class="k">HIGH<b>+1 dB</b></div></div></div>
+        <div class="sec"><h5>EFFECTS · INSERTS</h5>
+          <div class="chain"><div>1 Compressor<i>gentle</i></div><div>2 Stereo Width<i>110%</i></div><div class="add">+ Add insert</div></div>
+          <h5 style="margin-top:12px">SENDS</h5>
+          <div class="chain"><div>Reverb · Hall<i>35%</i></div><div>Delay · ¼ dotted<i>0%</i></div></div></div>
+        <div class="sec" style="border-right:0"><h5>ZONE &amp; KEYBOARD</h5>
+          <div class="zone"><span style="left:4%;right:4%"></span></div>
+          <div class="knobs"><div class="k">LOW KEY<b>C1</b></div><div class="k">HIGH KEY<b>C7</b></div><div class="k">TRANSPOSE<b>0</b></div><div class="k">OUTPUT<b>Main</b></div><div class="k">SUSTAIN<b>On</b></div><div class="k">ARP<b>Off</b></div></div>
+          <h5 style="margin-top:12px">ASSIGN · KNOBS (THIS LIVE SET)</h5>
+          <div class="row"><span>K1 Brightness · K2 Reverb · K3 Pad vol …</span><span style="color:#9fbaa8">Edit</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span class="ok">● LIVE EDIT ON · CHANGES PLAY ON THE VELORA</span><span>UNSAVED: SCENE 2</span><span>LAST BACKUP · TODAY 14:02</span></div>
+</div></div>
+<div class="notes">
+  <div><b>Sem menus:</b> clique numa parte, e o editor inteiro dela aparece embaixo. Cada knob aceita arrastar, digitar o valor ou rolar o mouse.</div>
+  <div><b>Mesmo vocabulário do teclado:</b> Setlist, Live Set, Scenes e Parts têm os mesmos nomes, as mesmas cores e a mesma ordem.</div>
+  <div><b>Write to Velora:</b> as edições tocam na hora, mas só ficam permanentes com Write, igual ao botão físico.</div>
+  <div><b>Claro/escuro:</b> segue o sistema operacional ou a escolha do usuário. Esta prévia usa o tema escuro.</div>
+</div>
+</div>
+</body>
+</html>

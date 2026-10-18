@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — device screens</title>
+<style>
+  /* Sálvia dark: bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on #0b0d0c warn #cdb86c */
+  * { box-sizing:border-box; }
+  body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
+  .wrap { max-width:1120px; margin:auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; font-weight:500; margin:0 0 6px; } h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:34px 0 6px; }
+  p { color:#555; max-width:880px; margin:0 0 12px; }
+  .frame { background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab); padding:12px; border-radius:12px; }
+  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; grid-template-rows:7% 1fr 9%; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; background:#0b0d0c; color:#e7ebe8; container-type:inline-size; position:relative; }
+  .bar { display:flex; align-items:center; justify-content:space-between; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.5cqw; letter-spacing:.25em; }
+  .bar b { color:#e7ebe8; font-weight:400; }
+  .cnt { padding:1.6cqw 2.2cqw; min-height:0; overflow:hidden; }
+  .hint { display:flex; gap:2.6cqw; align-items:center; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.35cqw; letter-spacing:.08em; }
+  .hint b { color:#e7ebe8; font-weight:400; border:1px solid #2b322e; border-radius:.5cqw; padding:.2cqw .7cqw; margin-right:.6cqw; }
+  .cols { display:grid; grid-template-columns:1fr 1.6fr; gap:1.6cqw; height:100%; }
+  .list > div { display:flex; justify-content:space-between; align-items:center; padding:1cqw 1.4cqw; border-radius:.7cqw; font-size:1.9cqw; margin-bottom:.6cqw; background:#151917; }
+  .list > div small { color:#88938c; font-size:1.3cqw; }
+  .list .sel { background:#202622; border:1px solid #9fbaa8; }
+  .list .cur { color:#9fbaa8; }
+  .list .drag { border:1px dashed #9fbaa8; background:transparent; opacity:.8; }
+  .tag { font-size:1.2cqw; letter-spacing:.12em; color:#88938c; margin-bottom:.8cqw; display:block; }
+  .chips { display:flex; flex-wrap:wrap; gap:.7cqw; margin-bottom:1.2cqw; }
+  .chips span { font-size:1.4cqw; padding:.5cqw 1.1cqw; border-radius:2cqw; background:#151917; border:1px solid #2b322e; }
+  .chips .on { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; }
+  .search { display:flex; align-items:center; gap:1cqw; background:#151917; border:1px solid #2b322e; border-radius:.8cqw; padding:1cqw 1.4cqw; font-size:2cqw; margin-bottom:1.2cqw; }
+  .search i { font-style:normal; color:#88938c; } .search .caret { width:2px; height:2.4cqw; background:#9fbaa8; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.8cqw; }
+  .grid div { background:#151917; border-radius:.7cqw; padding:1cqw 1.2cqw; font-size:1.6cqw; border:1px solid transparent; }
+  .grid div small { display:block; color:#88938c; font-size:1.15cqw; letter-spacing:.1em; }
+  .grid .sel { border-color:#9fbaa8; background:#202622; }
+  .grid div em { font-style:normal; color:#9fbaa8; float:right; }
+  .imp > div { display:grid; grid-template-columns:2.4fr 1.4fr .8fr; align-items:center; gap:1cqw; padding:.8cqw 1.2cqw; background:#151917; border-radius:.7cqw; margin-bottom:.6cqw; font-size:1.55cqw; }
+  .imp .cat { border:1px solid #2b322e; border-radius:.5cqw; padding:.3cqw .8cqw; font-size:1.35cqw; }
+  .imp .sug { color:#9fbaa8; } .imp .need { border-color:#cdb86c; color:#cdb86c; }
+  .imp small { color:#88938c; font-size:1.2cqw; }
+  .prog { height:1cqw; background:#2b322e; border-radius:1cqw; overflow:hidden; margin:1.2cqw 0 .6cqw; } .prog span { display:block; height:100%; width:38%; background:#9fbaa8; }
+  .modal { position:absolute; inset:18% 22%; background:#202622; border:1px solid #9fbaa8; border-radius:1.2cqw; padding:2.4cqw; display:flex; flex-direction:column; gap:1.4cqw; box-shadow:0 2cqw 6cqw rgba(0,0,0,.6); }
+  .modal h3 { margin:0; font-size:2.6cqw; font-weight:400; }
+  .modal .opt { display:flex; gap:1cqw; }
+  .modal .opt span { flex:1; text-align:center; padding:1cqw; border-radius:.8cqw; border:1px solid #2b322e; font-size:1.6cqw; background:#151917; }
+  .modal .opt .on { border-color:#9fbaa8; color:#9fbaa8; }
+  .modal .name { background:#151917; border:1px solid #2b322e; border-radius:.8cqw; padding:1cqw 1.4cqw; font-size:2cqw; }
+  .modal .act { display:flex; justify-content:flex-end; gap:1cqw; margin-top:auto; }
+  .modal .act span { padding:.9cqw 2.2cqw; border-radius:.8cqw; font-size:1.6cqw; border:1px solid #2b322e; }
+  .modal .act .yes { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; }
+  .dim { filter:brightness(.35); }
+  .set { display:grid; grid-template-columns:1fr 2fr; gap:1.6cqw; height:100%; }
+  .set .rows > div { display:flex; justify-content:space-between; padding:1cqw 1.4cqw; border-bottom:1px solid #2b322e; font-size:1.7cqw; }
+  .set .rows > div span:last-child { color:#9fbaa8; }
+  .seg { display:inline-flex; border:1px solid #2b322e; border-radius:.6cqw; overflow:hidden; }
+  .seg span { padding:.2cqw 1cqw; font-size:1.4cqw; color:#88938c; } .seg .on { background:#9fbaa8; color:#0b0d0c; }
+  .boot { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:2cqw; }
+  .boot small { color:#88938c; font-size:1.4cqw; letter-spacing:.2em; }
+  .bootbar { width:22cqw; height:.4cqw; background:#2b322e; border-radius:1cqw; overflow:hidden; } .bootbar span { display:block; height:100%; width:70%; background:#9fbaa8; }
+  .notes { background:#fff; border:1px solid #d6d4cf; border-radius:8px; padding:10px 14px; font-size:13px; color:#444; margin-top:10px; }
+  .notes li { margin:3px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Velora 73: as demais telas do teclado</h1>
+<p>Seis telas no tema de palco (escuro), em inglês. A faixa de baixo de cada tela mostra quais controles físicos agem naquele momento: o <b>encoder VALUE</b> rola as listas, <b>WRITE</b> confirma e <b>EXIT</b> volta. Tudo também funciona pelo toque.</p>
+
+<!-- 1 SETLIST -->
+<h2>1 · Setlist: escolher e reordenar</h2>
+<div class="frame"><div class="scr">
+  <div class="bar"><span>SETLISTS</span><span><b>Wedding Ana &amp; Pedro</b> · 12 songs</span></div>
+  <div class="cnt"><div class="cols">
+    <div class="list"><span class="tag">YOUR SETLISTS</span>
+      <div class="sel">Wedding Ana &amp; Pedro<small>12</small></div><div>Sunday Service<small>9</small></div><div>Rock Covers<small>18</small></div><div>Jazz Trio<small>14</small></div><div style="color:#88938c">+ New setlist</div></div>
+    <div class="list"><span class="tag">SONGS · DRAG OR HOLD ▲▼ TO REORDER</span>
+      <div>01 Canon in D<small>4 scenes</small></div><div>02 A Thousand Years<small>3 scenes</small></div><div class="cur sel">03 Perfect ● now<small>5 scenes</small></div><div class="drag">04 Thinking Out Loud ⇅<small>moving…</small></div><div>05 All of Me<small>4 scenes</small></div><div style="color:#88938c">+ Add Live Set</div></div>
+  </div></div>
+  <div class="hint"><span><b>VALUE</b>scroll</span><span><b>WRITE</b>load setlist</span><span><b>EXIT</b>back to Performance</span><span style="margin-left:auto">Loading a setlist keeps the current sound playing</span></div>
+</div></div>
+
+<!-- 1b SETLIST BROWSER -->
+<h2>1b · Setlist Browser: busca e seleção (no padrão da Library)</h2>
+<div class="frame"><div class="scr">
+  <div class="bar"><span>SETLIST BROWSER</span><span>4 results for "thou"</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>thou<span class="caret"></span><i style="margin-left:auto">searches setlists and songs</i></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Setlists</span><span class="on">All Live Sets</span><span>Wedding</span><span>Church</span><span>Pop</span><span>Jazz</span><span>…</span></div>
+    <div class="grid">
+      <div class="sel">A Thousand Years<small>LIVE SET · IN WEDDING ANA &amp; PEDRO +2</small><em>★</em></div>
+      <div>Thousand Miles<small>LIVE SET · IN ROCK COVERS</small></div>
+      <div>Thou Art Worthy<small>LIVE SET · IN SUNDAY SERVICE</small></div>
+      <div>Thousand Lights Tour<small>SETLIST · 16 SONGS · LAST MONTH</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>VALUE</b>scroll</span><span><b>WRITE</b>load setlist · or jump to Live Set</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Jumping to a song outside the setlist keeps the setlist; ◀ ▶ return to it</span></div>
+</div></div>
+<p style="margin-top:10px">Serve também para o imprevisto: a banda puxa uma música fora do roteiro, você busca "thou" e entra direto na Live Set certa. A troca não corta o som, e o setlist continua carregado para você voltar com ◀ ▶. As etiquetas (Wedding, Church, Pop…) são criadas pelo usuário e servem de filtro.</p>
+
+<!-- 2 LIBRARY -->
+<h2>2 · Library: busca e categorias, escolhendo o timbre da Parte 3</h2>
+<div class="frame"><div class="scr">
+  <div class="bar"><span>LIBRARY · CHOOSE TIMBRE FOR <b>PART 3</b></span><span>1,284 instruments · 412 GB</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>strings<span class="caret"></span><i style="margin-left:auto">on-screen keyboard</i></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Piano</span><span>E.Piano</span><span>Organ</span><span class="on">Strings</span><span>Brass</span><span>Choir &amp; Vocal</span><span>Synth Pad</span><span>World</span><span>…</span></div>
+    <div class="grid">
+      <div class="sel">Chamber Strings<small>STRINGS · FACTORY</small><em>★</em></div><div>Cinematic Strings<small>STRINGS · FACTORY</small></div><div>Solo Cello<small>STRINGS · FACTORY</small></div>
+      <div>Pizzicato Ensemble<small>STRINGS · FACTORY</small></div><div>Strings Legato Pro<small>STRINGS · IMPORTED</small></div><div>Vintage String Machine<small>STRINGS · FACTORY</small></div>
+      <div>Violin Section<small>STRINGS · IMPORTED</small></div><div>Strings Tremolo<small>STRINGS · FACTORY</small></div><div>Brazilian Viola<small>STRINGS · IMPORTED</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>preview while browsing</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
+</div></div>
+
+<!-- 3 IMPORT -->
+<h2>3 · Import: pendrive ou SSD, com sugestão de categoria</h2>
+<div class="frame"><div class="scr">
+  <div class="bar"><span>IMPORT · USB DRIVE "SANDISK 128GB"</span><span>7 instruments found · 18.4 GB</span></div>
+  <div class="cnt">
+    <div class="imp">
+      <div><span>Rhodes_Mk1.sfz<br><small>2.1 GB · SFZ</small></span><span class="cat sug">E.Piano ✓ suggested</span><small>ready</small></div>
+      <div><span>Upright_Bass_Jazz.sfz<br><small>1.4 GB · SFZ</small></span><span class="cat sug">Bass ✓ suggested</span><small>ready</small></div>
+      <div><span>Viola_Caipira.sfz<br><small>0.9 GB · SFZ</small></span><span class="cat need">Choose category ▾</span><small>needs category</small></div>
+      <div><span>GrandPiano_Steinway_D.sf2<br><small>6.8 GB · SF2</small></span><span class="cat sug">Piano ✓ suggested</span><small>ready</small></div>
+      <div><span>Choir_Ensemble.sfz<br><small>3.2 GB · SFZ</small></span><span class="cat sug">Choir &amp; Vocal ✓ suggested</span><small>ready</small></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:1.4cqw;color:#88938c"><span>Apply one category to all ▾</span><span>Free space after import: 529 GB</span></div>
+    <div class="prog"><span></span></div><div style="font-size:1.35cqw;color:#88938c">Importing 2 of 7 · Upright_Bass_Jazz · converting &amp; verifying (lossless) · you can keep playing</div>
+  </div>
+  <div class="hint"><span><b>WRITE</b>start import</span><span><b>EXIT</b>import in background</span><span style="margin-left:auto;color:#cdb86c">● 1 instrument needs a category before import</span></div>
+</div></div>
+
+<!-- 4 WRITE -->
+<h2>4 · Write: confirmação ao salvar</h2>
+<div class="frame"><div class="scr">
+  <div class="bar dim"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span>♩ 72</span></div>
+  <div class="cnt dim" style="font-size:5cqw;padding-top:3cqw">Perfect</div>
+  <div class="hint dim"><span>VOICES 142 / 256</span></div>
+  <div class="modal">
+    <h3>Write changes?</h3>
+    <div class="opt"><span class="on">Scene 2 "Verse"</span><span>Whole Live Set</span><span>Save as new…</span></div>
+    <div class="name">Perfect</div>
+    <div style="font-size:1.4cqw;color:#88938c">Changed: Part 2 volume, Reverb send, Drawbars (Part 4)</div>
+    <div class="act"><span>EXIT · Cancel</span><span class="yes">WRITE · Yes</span></div>
+  </div>
+</div></div>
+
+<!-- 5 SETTINGS -->
+<h2>5 · Settings</h2>
+<div class="frame"><div class="scr">
+  <div class="bar"><span>SETTINGS</span><span>Velora 73 · firmware 1.2.0</span></div>
+  <div class="cnt"><div class="set">
+    <div class="list"><div class="sel">Display &amp; Language</div><div>Keyboard &amp; Pedals</div><div>MIDI &amp; Clock</div><div>Knobs · Global Assign</div><div>Computer (Velora Studio)</div><div>Storage &amp; Library</div><div>System &amp; Update</div></div>
+    <div class="rows">
+      <div><span>Theme</span><span class="seg"><span class="on">Stage</span><span>Studio</span><span>Auto</span></span></div>
+      <div><span>Language</span><span>English ▾</span></div>
+      <div><span>Brightness</span><span>85%</span></div>
+      <div><span>Large text on Performance</span><span>On</span></div>
+      <div><span>Boot into</span><span>Last sound used</span></div>
+      <div><span>Accidental-press guard</span><span>Hold Write 0.5 s</span></div>
+    </div>
+  </div></div>
+  <div class="hint"><span><b>VALUE</b>change</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Languages: English · Português (Brasil) · Español</span></div>
+</div></div>
+
+<!-- 6 BOOT -->
+<h2>6 · Boot (≤ 10 s)</h2>
+<div class="frame"><div class="scr" style="grid-template-rows:1fr">
+  <div class="boot">
+    <svg width="120" height="96" viewBox="0 0 80 64"><g fill="#e7ebe8"><rect x="8" y="4" width="9" height="56" rx="4.5"/><rect x="22" y="44" width="9" height="16" rx="4.5"/><rect x="36" y="44" width="9" height="16" rx="4.5"/><rect x="50" y="44" width="9" height="16" rx="4.5"/><rect x="64" y="44" width="9" height="16" rx="4.5"/></g></svg>
+    <div style="font-size:2.4cqw;letter-spacing:1.2cqw">VELORA</div>
+    <div class="bootbar"><span></span></div>
+    <small>RESTORING · PERFECT · SCENE 2</small>
+  </div>
+</div></div>
+
+<div class="notes"><b>Comportamentos que estas telas fixam:</b>
+<ul>
+  <li>Carregar outro setlist ou importar uma biblioteca <b>nunca interrompe o som atual</b>, e a importação roda em segundo plano.</li>
+  <li>Na Library, tocar no teclado faz uma <b>pré-escuta</b> do timbre destacado antes de confirmar.</li>
+  <li>O <b>Write</b> mostra o que mudou e pergunta o escopo: cena, Live Set inteira ou "salvar como novo".</li>
+  <li><b>Proteção contra toque acidental</b> (nos Ajustes): o Write exige segurar o botão por 0,5 s.</li>
+  <li>O boot termina <b>no último som usado</b>, e a tela de boot diz o que está restaurando.</li>
+</ul></div>
+</div>
+</body>
+</html>
