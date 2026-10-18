@@ -1,4 +1,8 @@
-add_library(velora_core STATIC src/version.cpp)
+add_library(velora_core STATIC
+  src/version.cpp
+  src/engine_registry.cpp
+  src/test_tone_engine.cpp
+  src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
 target_include_directories(velora_core PUBLIC include)
 # Dependency rule: core may link only core and ports targets.
@@ -7,6 +11,10 @@ target_link_libraries(velora_core PUBLIC velora_ports)
 add_executable(core_tests tests/core_test.cpp)
 target_link_libraries(core_tests PRIVATE velora_core)
 add_test(NAME core_tests COMMAND core_tests)
+
+add_executable(engine_tests tests/engine_test.cpp)
+target_link_libraries(engine_tests PRIVATE velora_core)
+add_test(NAME engine_tests COMMAND engine_tests)
 
 # --- RealtimeSanitizer gate -------------------------------------------------
 if(VELORA_RTSAN)
@@ -28,6 +36,11 @@ if(VELORA_RTSAN)
       target_compile_options(${t} PRIVATE -fsanitize=realtime -g)
       target_link_options(${t} PRIVATE -fsanitize=realtime)
     endforeach()
+    add_executable(rtsan_block_loop_test tests/rtsan_block_loop_test.cpp)
+    target_link_libraries(rtsan_block_loop_test PRIVATE velora_core)
+    target_compile_options(rtsan_block_loop_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_block_loop_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_block_loop_test COMMAND rtsan_block_loop_test)
     add_test(NAME rtsan_safe_test COMMAND rtsan_safe_test)
     # The deliberately RT-unsafe test must be aborted by RTSan: expected failure.
     add_test(NAME rtsan_unsafe_test COMMAND rtsan_unsafe_test)
