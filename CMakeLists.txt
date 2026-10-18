@@ -12,6 +12,7 @@ enable_testing()
 add_subdirectory(engine/ports)
 add_subdirectory(engine/core)
 add_subdirectory(engine/host)
+add_subdirectory(formatlib)
 add_subdirectory(tools/offline-render)
 add_subdirectory(tools/spikes)
 

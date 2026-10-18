@@ -23,6 +23,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install libFLAC
+        run: brew install flac
       - run: cmake -S . -B build
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure --no-tests=error
@@ -34,6 +36,8 @@ jobs:
       CXX: g++
     steps:
       - uses: actions/checkout@v4
+      - name: Install libFLAC
+        run: sudo apt-get update && sudo apt-get install -y libflac-dev
       - run: cmake -S . -B build
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure --no-tests=error
@@ -47,7 +51,7 @@ jobs:
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm20.list
           sudo apt-get update
-          sudo apt-get install -y clang-20 libclang-rt-20-dev
+          sudo apt-get install -y clang-20 libclang-rt-20-dev libflac-dev
       - name: Configure (RTSan must be available)
         run: cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++-20 -DCMAKE_C_COMPILER=clang-20
       - name: Require RTSan

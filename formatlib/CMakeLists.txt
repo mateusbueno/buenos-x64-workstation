@@ -1,0 +1,71 @@
+# libFLAC is the only third-party dependency (BSD, linked as a library; no flac/metaflac binaries).
+# Discovery order: CMake package config, pkg-config, then plain find_path/find_library.
+# Nothing is downloaded or vendored.
+set(VELORA_FLAC_VERSION "")
+find_package(FLAC CONFIG QUIET)
+if(TARGET FLAC::FLAC)
+  set(VELORA_FLAC_TARGET FLAC::FLAC)
+  set(VELORA_FLAC_VERSION "${FLAC_VERSION}")
+else()
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(VELORA_FLAC_PC QUIET IMPORTED_TARGET flac)
+  endif()
+  if(TARGET PkgConfig::VELORA_FLAC_PC)
+    set(VELORA_FLAC_TARGET PkgConfig::VELORA_FLAC_PC)
+    set(VELORA_FLAC_VERSION "${VELORA_FLAC_PC_VERSION}")
+  else()
+    find_path(VELORA_FLAC_INCLUDE_DIR FLAC/stream_encoder.h
+              HINTS /opt/homebrew/include /usr/local/include)
+    find_library(VELORA_FLAC_LIBRARY NAMES FLAC
+                 HINTS /opt/homebrew/lib /usr/local/lib)
+    if(VELORA_FLAC_INCLUDE_DIR AND VELORA_FLAC_LIBRARY)
+      add_library(velora_flac_import UNKNOWN IMPORTED)
+      set_target_properties(velora_flac_import PROPERTIES
+        IMPORTED_LOCATION "${VELORA_FLAC_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${VELORA_FLAC_INCLUDE_DIR}")
+      set(VELORA_FLAC_TARGET velora_flac_import)
+      # Ask the library itself (FLAC__VERSION_STRING) when no package metadata is available.
+      file(WRITE "${CMAKE_BINARY_DIR}/flac_version.cpp"
+           "#include <FLAC/format.h>\n#include <cstdio>\nint main(){std::printf(\"%s\",FLAC__VERSION_STRING);}\n")
+      try_run(_flac_run _flac_compile
+              "${CMAKE_BINARY_DIR}/flac_version_try" "${CMAKE_BINARY_DIR}/flac_version.cpp"
+              LINK_LIBRARIES velora_flac_import
+              RUN_OUTPUT_VARIABLE VELORA_FLAC_VERSION)
+    endif()
+  endif()
+endif()
+if(NOT VELORA_FLAC_TARGET)
+  message(FATAL_ERROR "libFLAC development files not found. Install them "
+          "(macOS: brew install flac; Debian/Ubuntu: apt-get install libflac-dev).")
+endif()
+string(STRIP "${VELORA_FLAC_VERSION}" VELORA_FLAC_VERSION)
+if(NOT VELORA_FLAC_VERSION)
+  message(FATAL_ERROR "libFLAC found but its version could not be determined; >= 1.4 required")
+endif()
+if(VELORA_FLAC_VERSION VERSION_LESS 1.4)
+  message(FATAL_ERROR "libFLAC ${VELORA_FLAC_VERSION} found, >= 1.4 required (target 1.5.0)")
+endif()
+message(STATUS "formatlib: libFLAC ${VELORA_FLAC_VERSION} (target ${VELORA_FLAC_TARGET})")
+
+add_library(velora_format STATIC
+  src/common.cpp
+  src/error.cpp
+  src/hash.cpp
+  src/codec.cpp
+  src/writer.cpp
+  src/reader.cpp
+  src/wav_source.cpp)
+add_library(velora::format ALIAS velora_format)
+target_include_directories(velora_format PUBLIC include PRIVATE src)
+# Dependency rule: formatlib links only libFLAC; it never uses engine/core or engine/host.
+target_link_libraries(velora_format PRIVATE ${VELORA_FLAC_TARGET})
+target_compile_options(velora_format PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+
+foreach(t hash_test bundle_test wav_test)
+  add_executable(format_${t} tests/${t}.cpp)
+  target_link_libraries(format_${t} PRIVATE velora_format)
+  target_include_directories(format_${t} PRIVATE src)
+  add_test(NAME format_${t} COMMAND format_${t})
+endforeach()
