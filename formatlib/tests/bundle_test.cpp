@@ -361,7 +361,7 @@ void test_corrupt_block() {
 Bytes forge_one_block(const PcmFormat& f, std::uint32_t frames, const Bytes& payload) {
   // Hand-made valid container (all hashes right) around an arbitrary block payload.
   Bytes m;
-  layout::put_u32(m, kFormatVersion);
+  layout::put_u32(m, 1);  // hand-built in the v1 manifest layout (no region table)
   m.insert(m.end(), 16, 0);
   layout::put_u32(m, 1); layout::put_u32(m, 1); layout::put_u64(m, 1);
   m.insert(m.end(), 32, 0);
@@ -380,7 +380,7 @@ Bytes forge_one_block(const PcmFormat& f, std::uint32_t frames, const Bytes& pay
   Bytes out(kBlockFrames, 0);
   out.clear();
   out.insert(out.end(), {'V', 'L', 'R', 'B'});
-  layout::put_u32(out, kFormatVersion);
+  layout::put_u32(out, 1);
   layout::put_u64(out, 128); layout::put_u64(out, m.size()); layout::put_u64(out, io);
   layout::put_u64(out, 48); layout::put_u64(out, data_off); layout::put_u64(out, payload.size());
   layout::put_u64(out, data_off + payload.size());
@@ -670,6 +670,181 @@ void test_open_source() {
 
 }  // namespace
 
+Region sample_region(std::uint32_t sample) {
+  Region r;
+  r.sample = sample;
+  r.key_lo = 36; r.key_hi = 48; r.key_center = 40; r.vel_lo = 10; r.vel_hi = 100;
+  r.transpose = -3; r.tune_cents = 12.5f; r.volume_db = -6.25f; r.pan = 33.f;
+  r.offset = 7; r.seq_length = 3; r.seq_position = 2; r.lorand = 0.125f; r.hirand = 0.875f;
+  r.loop_mode = LoopMode::kLoopSustain; r.has_loop_points = true; r.loop_start = 100; r.loop_end = 900;
+  r.ampeg = {0.01f, 5.f, 0.02f, 0.03f, 0.4f, 70.f, 1.5f};
+  r.trigger = TriggerMode::kRelease;
+  return r;
+}
+
+void test_regions() {
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
+  BundleWriter w;
+  const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+  CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(w.add_sample(i0, {"s1", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+  Region plain;  // all defaults
+  const Region full = sample_region(1);
+  CHECK_ERR(w.add_region(i0, plain), Error::kNone);
+  CHECK_ERR(w.add_region(i0, full), Error::kNone);
+  CHECK_ERR(w.add_region(i1, sample_region(0)), Error::kNone);
+  const Bytes b = w.finalize().take();
+  auto r = BundleReader::open_memory(b);
+  CHECK(r.ok() && r.value().format_version() == 2);
+  if (r.ok()) {
+    CHECK(r.value().instruments()[0].regions.size() == 2 && r.value().instruments()[1].regions.size() == 1);
+    CHECK(r.value().instruments()[0].regions[0] == plain);
+    CHECK(r.value().instruments()[0].regions[1] == full);
+    CHECK(r.value().instruments()[1].regions[0] == sample_region(0));
+    CHECK(r.value().verify_all() == Error::kNone);
+  }
+  // Regions are part of the manifest, hence of bundle_id; the sample content fingerprint is not.
+  BundleWriter w2;
+  const std::size_t j0 = w2.add_instrument("A", "a.sfz").value(), j1 = w2.add_instrument("B", "b.sfz").value();
+  CHECK_ERR(w2.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(w2.add_sample(j0, {"s1", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(w2.add_sample(j1, {"s0", f, 1000, pcm}), Error::kNone);
+  const Bytes b2 = w2.finalize().take();
+  auto r2 = BundleReader::open_memory(b2);
+  CHECK(r2.ok() && r2.value().library_id() == r.value().library_id());
+  CHECK(r2.ok() && r2.value().bundle_id() != r.value().bundle_id());
+  CHECK(r2.ok() && r2.value().instruments()[0].regions.empty());
+
+  // Writer-side validation.
+  { BundleWriter v; const auto i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    Region bad;
+    bad = plain; bad.sample = 1; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.key_lo = 90; bad.key_hi = 80; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.vel_hi = 128; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.seq_position = 2; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.lorand = 0.9f; bad.hirand = 0.1f; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.offset = 1001; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.has_loop_points = true; bad.loop_end = 1000; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.has_loop_points = true; bad.loop_start = 5; bad.loop_end = 4; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.tune_cents = std::nanf(""); CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    bad = plain; bad.ampeg.release = -1.f; CHECK_ERR(v.add_region(i, bad), Error::kInvalidArgument);
+    CHECK_ERR(v.add_region(7, plain), Error::kInvalidArgument);
+    CHECK_ERR(v.add_region(i, plain), Error::kNone);
+  }
+
+  // Format version 1 (N-1): no region table is written, regions are refused, reads give empty tables.
+  { BundleWriter v(WriterOptions{1}); const auto i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    const Bytes v1 = v.finalize().take();
+    auto rv = BundleReader::open_memory(v1);
+    CHECK(rv.ok() && rv.value().format_version() == 1 && rv.value().instruments()[0].regions.empty());
+    CHECK(rv.ok() && matches_source(rv.value(), 0, pcm));
+    CHECK_ERR(v.add_region(i, plain), Error::kNone);
+    CHECK_ERR(v.finalize().error(), Error::kInvalidArgument);
+  }
+
+  // Corrupt region records with valid hashes are rejected by the reader.
+  {
+    BundleWriter v; const auto i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(v.add_region(i, plain), Error::kNone);
+    const Bytes good = v.finalize().take();
+    const std::size_t rec = rd64(good, 8) + rd64(good, 16) - layout::kRegionRecordSize;  // the only region
+    auto expect_bad = [&](Bytes bad, const char* what) {
+      rehash(bad);
+      auto rb = BundleReader::open_memory(bad);
+      if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL region corruption not rejected: %s\n", what); ++g_fail; }
+    };
+    { Bytes b3 = good; wr32(b3, rec, 5); expect_bad(b3, "sample index"); }
+    { Bytes b3 = good; b3[rec + 4] = 100; b3[rec + 5] = 50; expect_bad(b3, "key range"); }
+    { Bytes b3 = good; b3[rec + 9] = 9; expect_bad(b3, "loop mode"); }
+    { Bytes b3 = good; b3[rec + 11] = 2; expect_bad(b3, "loop flag"); }
+    { Bytes b3 = good; wr32(b3, rec - 4, 0x00ffffffu); expect_bad(b3, "region count"); }
+    { Bytes b3 = good; wr64(b3, rec + 28, 5000); expect_bad(b3, "offset beyond sample"); }
+    { Bytes b3 = good; wr32(b3, rec + 24, 0x7fc00000u); expect_bad(b3, "NaN pan"); }
+    // Truncated record: cut the manifest and fix sizes is covered by the generic truncation sweep.
+    CHECK(BundleReader::open_memory(good).ok());
+  }
+
+  // Ranges match what the SFZ importer enforces.
+  { BundleWriter v; const auto i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad_region = [&](auto mutate) { Region x = plain; mutate(x); return v.add_region(i, x); };
+    CHECK_ERR(bad_region([](Region& x) { x.transpose = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(bad_region([](Region& x) { x.tune_cents = 1201.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad_region([](Region& x) { x.volume_db = -145.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad_region([](Region& x) { x.volume_db = 49.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad_region([](Region& x) { x.offset = 1000; }), Error::kInvalidArgument);
+    CHECK_ERR(bad_region([](Region& x) { x.ampeg.attack = 101.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad_region([](Region& x) { x.transpose = -127; x.tune_cents = -1200.f; x.volume_db = 48.f; x.offset = 999; }), Error::kNone);
+  }
+
+  // Sweeps over a bundle that has regions: no crash, truncation always fails, and any single bit
+  // flip inside the region records (hashes recomputed so only the container checks can object) is
+  // either still a valid bundle or kCorruptManifest.
+  {
+    BundleWriter v; const auto i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(v.add_region(i, plain), Error::kNone);
+    CHECK_ERR(v.add_region(i, sample_region(0)), Error::kNone);
+    const Bytes good = v.finalize().take();
+    for (std::size_t n = 0; n < good.size(); n += (n < 400 ? 1 : 13)) {
+      auto r3 = BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n));
+      CHECK(!r3.ok());
+    }
+    const std::size_t mo = rd64(good, 8), ms = rd64(good, 16);
+    const std::size_t first = mo + ms - 2 * layout::kRegionRecordSize;
+    for (std::size_t off = first - 4; off < mo + ms; ++off)
+      for (int bit = 0; bit < 8; ++bit) {
+        Bytes bad = good;
+        bad[off] ^= std::uint8_t(1 << bit);
+        rehash(bad);
+        auto r3 = BundleReader::open_memory(bad);
+        if (!r3.ok() && r3.error() != Error::kCorruptManifest) {
+          std::printf("FAIL region flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error()));
+          ++g_fail;
+        }
+      }
+  }
+
+  // Golden v2: the region record serialization is pinned (it does not depend on libFLAC).
+  {
+    BundleWriter v; const auto i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(v.add_region(i, sample_region(0)), Error::kNone);
+    const Bytes b4 = v.finalize().take();
+    const std::size_t end = rd64(b4, 8) + rd64(b4, 16);
+    std::string got;
+    static const char* hexd = "0123456789abcdef";
+    for (std::size_t k = end - layout::kRegionRecordSize; k < end; ++k) { got += hexd[b4[k] >> 4]; got += hexd[b4[k] & 15]; }
+    CHECK(got == "000000002430280a64030101fdffffff000048410000c8c000000442070000000000000003000000020000000000003e0000603f640000000000000084030000000000000ad7233c0000a0400ad7a33c8fc2f53ccdcccc3e00008c420000c03f");
+    CHECK(layout::kRegionRecordSize == 96);
+  }
+
+  // library_id from a source id: stable across content changes, distinct per source.
+  { BundleWriter e; CHECK_ERR(e.set_source_id(""), Error::kInvalidArgument); }  // empty is refused
+  {
+    auto bytes = [&](const char* src, std::uint64_t seed, bool vendor) {
+      BundleWriter v; CHECK_ERR(v.set_source_id(src), Error::kNone);
+      if (vendor) { Uuid u{}; u[0] = 9; v.set_library_id(u); }
+      const auto i = v.add_instrument("A", "a.sfz").value();
+      const auto p = vt::make_int(f, 1000, Kind::kMixed, seed);
+      CHECK_ERR(v.add_sample(i, {"s", f, 1000, p}), Error::kNone);
+      return v.finalize().take(); };
+    const Bytes x1 = bytes("/lib/Piano.sfz", 1, false), x2 = bytes("/lib/Piano.sfz", 2, false), y = bytes("/lib/Other.sfz", 1, false);
+    const Bytes vend = bytes("/lib/Piano.sfz", 1, true);
+    auto a = BundleReader::open_memory(x1), b3 = BundleReader::open_memory(x2), c = BundleReader::open_memory(y), d = BundleReader::open_memory(vend);
+    CHECK(a.ok() && b3.ok() && c.ok() && d.ok());
+    CHECK(a.value().library_id() == b3.value().library_id() && a.value().bundle_id() != b3.value().bundle_id());
+    CHECK(a.value().library_id() != c.value().library_id());
+    CHECK((a.value().library_id()[6] >> 4) == 5);
+    CHECK(d.value().library_id()[0] == 9);  // vendor-assigned wins
+  }
+}
+
 int main() {
   test_open_source();
   test_roundtrip_all_formats();
@@ -685,6 +860,7 @@ int main() {
   test_golden_identity();
   test_atomic_file_write();
   test_version();
+  test_regions();
   test_identity();
   test_file_io();
   if (g_fail == 0) std::printf("bundle_test OK\n");

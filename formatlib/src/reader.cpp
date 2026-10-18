@@ -70,6 +70,7 @@ class Cursor {
   std::uint8_t u8() { return take(1) ? p_[pos_ - 1] : 0; }
   std::uint32_t u32() { return take(4) ? get_u32(p_ + pos_ - 4) : 0; }
   std::uint64_t u64() { return take(8) ? get_u64(p_ + pos_ - 8) : 0; }
+  float f32() { return bits_to_float(static_cast<std::int32_t>(u32())); }
   void bytes(void* dst, std::size_t n) {
     if (take(n)) std::memcpy(dst, p_ + pos_ - n, n);
   }
@@ -208,6 +209,34 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
         return Error::kCorruptManifest;
       next_block += si.block_count;
       r.samples_.push_back(std::move(si));
+    }
+    if (version >= 2) {
+      const std::uint32_t n_regions = c.u32();
+      if (!c.ok() || n_regions > c.remaining() / kRegionRecordSize) return Error::kCorruptManifest;
+      ins.regions.reserve(n_regions);
+      for (std::uint32_t k = 0; k < n_regions; ++k) {
+        Region rg;
+        rg.sample = c.u32();
+        rg.key_lo = c.u8(); rg.key_hi = c.u8(); rg.key_center = c.u8();
+        rg.vel_lo = c.u8(); rg.vel_hi = c.u8();
+        const std::uint8_t lm = c.u8(), tr = c.u8(), hl = c.u8();
+        rg.transpose = static_cast<std::int32_t>(c.u32());
+        rg.tune_cents = c.f32(); rg.volume_db = c.f32(); rg.pan = c.f32();
+        rg.offset = c.u64();
+        rg.seq_length = c.u32(); rg.seq_position = c.u32();
+        rg.lorand = c.f32(); rg.hirand = c.f32();
+        rg.loop_start = c.u64(); rg.loop_end = c.u64();
+        rg.ampeg.delay = c.f32(); rg.ampeg.start = c.f32(); rg.ampeg.attack = c.f32();
+        rg.ampeg.hold = c.f32(); rg.ampeg.decay = c.f32(); rg.ampeg.sustain = c.f32();
+        rg.ampeg.release = c.f32();
+        if (!c.ok() || lm > 3 || tr > 1 || hl > 1 || rg.sample >= cnt) return Error::kCorruptManifest;
+        rg.loop_mode = static_cast<LoopMode>(lm);
+        rg.trigger = static_cast<TriggerMode>(tr);
+        rg.has_loop_points = hl == 1;
+        if (validate_region(rg, r.samples_[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+          return Error::kCorruptManifest;
+        ins.regions.push_back(rg);
+      }
     }
     r.instruments_.push_back(std::move(ins));
   }

@@ -47,7 +47,7 @@ Contributors to `sfizz`, in chronologic order:
 
 ## 2. Abseil C++ (c2435f83) — Apache License 2.0
 
-Copyright The Abseil Authors. Any modified Abseil file carries a prominent change notice in its header.
+Copyright The Abseil Authors. No vendored Abseil file is modified (any modified Abseil file would carry a prominent change notice in its header). Vendored under `formatlib/third_party/abseil-cpp/`.
 
 Apache License
                            Version 2.0, January 2004
@@ -254,6 +254,8 @@ Apache License
 ## 3. ghc::filesystem (8a2edd6d) — MIT
 
 Copyright (c) 2018, Steffen Schümann <s.schuemann@pobox.com>
+
+Only `ghc/fs_std.hpp` is vendored (`formatlib/third_party/ghc/`), modified to always use `std::filesystem` (stated in its header); no ghc code is compiled.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

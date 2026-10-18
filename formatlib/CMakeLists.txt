@@ -48,11 +48,14 @@ if(VELORA_FLAC_VERSION VERSION_LESS 1.4)
 endif()
 message(STATUS "formatlib: libFLAC ${VELORA_FLAC_VERSION} (target ${VELORA_FLAC_TARGET})")
 
+add_subdirectory(third_party)
+
 add_library(velora_format STATIC
   src/common.cpp
   src/error.cpp
   src/hash.cpp
   src/codec.cpp
+  src/instrument_model.cpp
   src/writer.cpp
   src/reader.cpp
   src/wav_source.cpp)
@@ -63,9 +66,22 @@ target_link_libraries(velora_format PRIVATE ${VELORA_FLAC_TARGET})
 target_compile_options(velora_format PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
 
+# SFZ -> instrument model on top of the vendored parser. A separate target on purpose: the vendored
+# abseil headers must not share an include path with libFLAC's (a system abseil may live there).
+add_library(velora_sfz STATIC src/sfz_import.cpp)
+add_library(velora::sfz ALIAS velora_sfz)
+target_include_directories(velora_sfz PUBLIC include PRIVATE src)
+target_link_libraries(velora_sfz PUBLIC velora_format PRIVATE velora_sfizz_parser)
+target_compile_options(velora_sfz PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+
 foreach(t hash_test bundle_test wav_test)
   add_executable(format_${t} tests/${t}.cpp)
   target_link_libraries(format_${t} PRIVATE velora_format)
   target_include_directories(format_${t} PRIVATE src)
   add_test(NAME format_${t} COMMAND format_${t})
 endforeach()
+
+add_executable(format_sfz_test tests/sfz_test.cpp)
+target_link_libraries(format_sfz_test PRIVATE velora_sfz)
+add_test(NAME format_sfz_test COMMAND format_sfz_test)
