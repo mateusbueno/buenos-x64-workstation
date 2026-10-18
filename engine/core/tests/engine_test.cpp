@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 
 #include "velora/core/block_renderer.hpp"
@@ -230,6 +231,34 @@ static void test_deferred_order_and_overflow() {
   }
 }
 
+static void test_detune_param() {
+  auto run = [](float cents, bool second_note, bool set, Block& b2) {
+    auto br = std::make_unique<BlockRenderer>();
+    br->submit({make_note_on(0, 0, 60, 0xFFFF), 0});
+    render(*br);
+    if (set) br->test_tone().set_param(TestToneEngine::kParamDetuneCents, cents);
+    if (second_note) br->submit({make_note_on(0, 0, 64, 0xFFFF), 0});
+    b2 = render(*br);
+  };
+  auto same = [](const Block& x, const Block& y) {
+    return std::memcmp(x.l, y.l, sizeof x.l) == 0 && std::memcmp(x.r, y.r, sizeof x.r) == 0;
+  };
+  Block base, early, plain2, det2, big, mx, nan, inf;
+  run(0, false, false, base);
+  run(1200, false, true, early);  // already-running voice unaffected
+  CHECK(same(base, early));
+  run(0, true, false, plain2);
+  run(1200, true, true, det2);  // later voice detuned
+  CHECK(!same(plain2, det2));
+  run(1e6f, true, true, big);
+  run(4800, true, true, mx);
+  CHECK(same(big, mx));  // clamped to +-4800
+  run(std::nanf(""), true, true, nan);
+  run(INFINITY, true, true, inf);
+  CHECK(same(nan, plain2) && same(inf, plain2));  // non-finite ignored
+  for (int i = 0; i < 64; ++i) CHECK(std::isfinite(big.l[i]));
+}
+
 int main() {
   test_offset_onset();
   test_offset_release();
@@ -244,6 +273,7 @@ int main() {
   test_arena();
   test_zero_capacity();
   test_deferred_order_and_overflow();
+  test_detune_param();
   std::printf(g_fail ? "engine_tests: %d failures\n" : "engine_tests: ok\n", g_fail);
   return g_fail ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -1,0 +1,3 @@
+reference=../golden/golden.wav
+tolerance_db=-90
+bogus_key=1

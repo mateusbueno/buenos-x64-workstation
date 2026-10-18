@@ -27,7 +27,7 @@ EngineStatus TestToneEngine::start_voice(std::uint32_t channel, std::uint32_t no
     v.note = note;
     v.start_time = clock_;
     v.phase = 0.25f;
-    v.inc = 440.0f * std::pow(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f) / 48000.0f;
+    v.inc = 440.0f * std::pow(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f) * detune_ratio_ / 48000.0f;
     v.env = 0.0f;
     v.amp = 0.25f * vel;
     return EngineStatus::kOk;
@@ -48,7 +48,9 @@ EngineStatus TestToneEngine::stop_voice(std::uint32_t channel, std::uint32_t not
 }
 
 void TestToneEngine::set_param(std::uint32_t param_id, float value) noexcept {
-  if (param_id == kParamGain && std::isfinite(value)) gain_ = value;
+  if (!std::isfinite(value)) return;
+  if (param_id == kParamGain) gain_ = value;
+  else if (param_id == kParamDetuneCents) detune_ratio_ = std::pow(2.0f, std::fmax(-4800.0f, std::fmin(4800.0f, value)) / 1200.0f);
 }
 
 void TestToneEngine::render(float* left, float* right, std::uint32_t frames) noexcept {

@@ -12,6 +12,7 @@ namespace velora::core {
 class TestToneEngine final : public Engine {
  public:
   static constexpr std::uint32_t kParamGain = 1;
+  static constexpr std::uint32_t kParamDetuneCents = 2;  // clamped to +-4800, non-finite ignored; later voices only
   static constexpr std::uint32_t kAttackFrames = 48;
   static constexpr std::uint32_t kReleaseFrames = 48;
 
@@ -48,6 +49,7 @@ class TestToneEngine final : public Engine {
   std::uint32_t capacity_ = 0;
   std::uint64_t clock_ = 0;
   float gain_ = 1.0f;
+  float detune_ratio_ = 1.0f;
 };
 
 }  // namespace velora::core

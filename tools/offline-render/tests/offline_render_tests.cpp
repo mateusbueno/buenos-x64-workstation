@@ -1,0 +1,358 @@
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include "nulltest.hpp"
+#include "render.hpp"
+#include "smf.hpp"
+#include "wav.hpp"
+
+using namespace velora::offline;
+
+static int g_fail = 0;
+#define CHECK(c)                                                       \
+  do {                                                                 \
+    if (!(c)) {                                                        \
+      std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c);         \
+      ++g_fail;                                                        \
+    }                                                                  \
+  } while (0)
+
+using Bytes = std::vector<std::uint8_t>;
+
+static void be32(Bytes& v, std::uint32_t x) { for (int i = 3; i >= 0; --i) v.push_back(static_cast<std::uint8_t>(x >> (8 * i))); }
+static void be16(Bytes& v, std::uint32_t x) { v.push_back(static_cast<std::uint8_t>(x >> 8)); v.push_back(static_cast<std::uint8_t>(x)); }
+static void vlq(Bytes& v, std::uint32_t n) {
+  Bytes t{static_cast<std::uint8_t>(n & 0x7F)};
+  for (n >>= 7; n; n >>= 7) t.push_back(static_cast<std::uint8_t>((n & 0x7F) | 0x80));
+  v.insert(v.end(), t.rbegin(), t.rend());
+}
+static Bytes header(int format, int ntrks, int ppq) {
+  Bytes v{'M', 'T', 'h', 'd'};
+  be32(v, 6); be16(v, format); be16(v, ntrks); be16(v, ppq);
+  return v;
+}
+static void track(Bytes& file, const Bytes& body, bool eot = true) {
+  Bytes b = body;
+  if (eot) { vlq(b, 0); b.push_back(0xFF); b.push_back(0x2F); b.push_back(0); }
+  file.insert(file.end(), {'M', 'T', 'r', 'k'});
+  be32(file, static_cast<std::uint32_t>(b.size()));
+  file.insert(file.end(), b.begin(), b.end());
+}
+static void tempo(Bytes& b, std::uint32_t delta, std::uint32_t us) {
+  vlq(b, delta);
+  b.insert(b.end(), {0xFF, 0x51, 3, static_cast<std::uint8_t>(us >> 16), static_cast<std::uint8_t>(us >> 8), static_cast<std::uint8_t>(us)});
+}
+
+static void test_smf_basic() {
+  Bytes f = header(0, 1, 480), b;
+  vlq(b, 0); b.insert(b.end(), {0x90, 60, 100});
+  vlq(b, 480); b.insert(b.end(), {0x80, 60, 0});
+  track(f, b);
+  SmfResult r = parse_smf(f);
+  CHECK(r.ok && r.events.size() == 2);
+  CHECK(r.events[0].on && r.events[0].frame == 0 && r.events[0].note == 60);
+  CHECK(!r.events[1].on && r.events[1].frame == 24000);  // 1 beat at 120 bpm = 0.5 s
+  CHECK(r.events[0].velocity16 == (100u * 65535u + 63u) / 127u);
+}
+
+static void test_smf_running_status_vel0_long_delta() {
+  Bytes f = header(0, 1, 96), b;
+  vlq(b, 0); b.insert(b.end(), {0x91, 60, 100});
+  vlq(b, 0); b.insert(b.end(), {64, 100});                   // running status
+  vlq(b, 300); b.insert(b.end(), {60, 0});                   // vel 0 => off, 2-byte delta
+  vlq(b, 20000); b.insert(b.end(), {64, 0});                 // 3-byte delta
+  vlq(b, 0); b.insert(b.end(), {0xFF, 0x01, 2, 'h', 'i'});   // text meta ignored
+  vlq(b, 0); b.insert(b.end(), {0xF0, 2, 0x7D, 0xF7});       // sysex ignored, clears running status
+  vlq(b, 0); b.insert(b.end(), {0xC1, 5});                   // program change ignored
+  track(f, b);
+  SmfResult r = parse_smf(f);
+  CHECK(r.ok && r.events.size() == 4);
+  if (r.events.size() == 4) {
+    CHECK(r.events[1].on && r.events[1].note == 64 && r.events[1].channel == 1);
+    CHECK(!r.events[2].on && r.events[2].note == 60);
+    CHECK(r.events[2].tick == 300 && r.events[3].tick == 20300);
+    CHECK(r.events[2].frame == 300ull * 500000 * 48000 / (96ull * 1000000));
+  }
+}
+
+static void test_smf_tempo_map() {
+  Bytes f = header(1, 2, 480), t0, t1;
+  tempo(t0, 0, 500000);
+  tempo(t0, 480, 250000);  // 240 bpm from tick 480
+  track(f, t0);
+  vlq(t1, 0); t1.insert(t1.end(), {0x90, 60, 100});
+  vlq(t1, 480); t1.insert(t1.end(), {0x80, 60, 0});
+  vlq(t1, 480); t1.insert(t1.end(), {0x90, 62, 100});
+  track(f, t1);
+  SmfResult r = parse_smf(f);
+  CHECK(r.ok && r.events.size() == 3);
+  if (r.events.size() == 3) {
+    CHECK(r.events[1].frame == 24000);
+    CHECK(r.events[2].frame == 24000 + 12000);  // second beat is half as long
+  }
+}
+
+static void test_smf_malformed() {
+  Bytes good = header(0, 1, 480), b;
+  vlq(b, 0); b.insert(b.end(), {0x90, 60, 100});
+  track(good, b);
+  CHECK(parse_smf(good).ok);
+  Bytes bad = good; bad[0] = 'X';
+  CHECK(!parse_smf(bad).ok);
+  Bytes trunc(good.begin(), good.end() - 3);
+  CHECK(!parse_smf(trunc).ok);
+  CHECK(!parse_smf(Bytes{}).ok);
+  Bytes smpte = header(0, 1, 0xE728); track(smpte, b);
+  CHECK(!parse_smf(smpte).ok);
+  Bytes fmt2 = header(2, 1, 480); track(fmt2, b);
+  CHECK(!parse_smf(fmt2).ok);
+  Bytes nodata = header(0, 1, 480), b2; vlq(b2, 0); b2.insert(b2.end(), {60, 100});
+  track(nodata, b2);  // data byte with no running status
+  CHECK(!parse_smf(nodata).ok);
+  Bytes cut = header(0, 1, 480), b3; vlq(b3, 0); b3.insert(b3.end(), {0x90, 60});
+  track(cut, b3, false);  // channel message truncated inside a complete chunk
+  CHECK(!parse_smf(cut).ok);
+}
+
+static WavData noise(std::size_t frames, std::uint32_t seed = 1) {
+  WavData w;
+  w.samples.resize(frames * 2);
+  std::uint32_t s = seed;
+  for (auto& x : w.samples) {
+    s = s * 1664525u + 1013904223u;
+    x = (static_cast<float>(s >> 8) / 8388608.0f - 1.0f) * 0.3f;
+  }
+  return w;
+}
+static WavData delayed(const WavData& w, std::size_t k) {
+  WavData d = w;
+  d.samples.insert(d.samples.begin(), k * 2, 0.0f);
+  return d;
+}
+
+static void test_wav_roundtrip() {
+  WavData w = noise(1000);
+  Bytes e = encode_wav(w);
+  CHECK(e.size() == 44 + 1000 * 8);
+  WavData r;
+  std::string err;
+  CHECK(decode_wav(e, r, err));
+  CHECK(r.samples == w.samples && r.channels == 2 && r.sample_rate == 48000);
+  e[20] = 1;  // PCM tag: unsupported
+  CHECK(!decode_wav(e, r, err));
+}
+
+static void test_null_identical_and_offset() {
+  NullParams p; p.tolerance_db = -90; p.max_offset_frames = 16;
+  WavData a = noise(20000);
+  NullResult r = null_test(a, a, p);
+  CHECK(r.pass && r.residual_db <= -299.0 && r.offset_frames == 0);
+  // delayed within max
+  r = null_test(a, delayed(a, 11), p);
+  CHECK(r.pass && r.offset_frames == 11);
+  CHECK(r.length_diff_frames == 11);
+  // candidate advanced (negative offset)
+  WavData adv = a; adv.samples.erase(adv.samples.begin(), adv.samples.begin() + 2 * 5);
+  r = null_test(a, adv, p);
+  CHECK(r.pass && r.offset_frames == -5);
+  // beyond max
+  r = null_test(a, delayed(a, 17), p);
+  CHECK(!r.pass && r.comparable);
+  // different content
+  r = null_test(a, noise(20000, 7), p);
+  CHECK(!r.pass && r.residual_db > -10.0);
+}
+
+static void test_null_mismatch_and_silence() {
+  NullParams p; p.tolerance_db = -90;
+  WavData a = noise(1000), b = a;
+  b.sample_rate = 44100;
+  NullResult r = null_test(a, b, p);
+  CHECK(!r.pass && !r.comparable && !r.message.empty());
+  b = a; b.channels = 1;
+  r = null_test(a, b, p);
+  CHECK(!r.pass && !r.comparable);
+  // length difference: compare overlap, report it
+  b = a; b.samples.resize(1600);
+  r = null_test(a, b, p);
+  CHECK(r.pass && r.overlap_frames == 800 && r.length_diff_frames == -200);
+  // silent reference
+  WavData s; s.samples.assign(2000, 0.0f);
+  r = null_test(s, s, p);
+  CHECK(r.pass && !r.message.empty());
+  r = null_test(s, a, p);
+  CHECK(!r.pass);
+}
+
+static void test_worst_window() {
+  NullParams p; p.tolerance_db = -90;
+  WavData a = noise(48000);
+  WavData b = a;
+  // corrupt 1000 frames inside the window starting at 4800*5
+  for (std::size_t i = 4800 * 5 + 100; i < 4800 * 5 + 1100; ++i) b.samples[i * 2] += 0.1f;
+  NullResult r = null_test(a, b, p);
+  CHECK(!r.pass && r.worst_window_start == 4800 * 5);
+  CHECK(r.worst_window_db > r.residual_db);
+  std::string rep = format_report("cand.wav", r, p);
+  CHECK(rep.find("residual:") != std::string::npos && rep.find("worst 100 ms window") != std::string::npos);
+  CHECK(rep.find("cand.wav") != std::string::npos);
+}
+
+static SmfResult note_smf() {
+  Bytes f = header(0, 1, 480), b;
+  vlq(b, 0); b.insert(b.end(), {0x90, 69, 100});
+  vlq(b, 100); b.insert(b.end(), {0x80, 69, 0});
+  vlq(b, 33); b.insert(b.end(), {0x90, 72, 90});  // frame not on a block boundary
+  vlq(b, 200); b.insert(b.end(), {0x80, 72, 0});
+  track(f, b);
+  return parse_smf(f);
+}
+
+static void test_render_determinism_and_onsets() {
+  SmfResult s = note_smf();
+  CHECK(s.ok);
+  RenderOptions o; o.tail_seconds = 0.1;
+  WavData a, b;
+  std::string err;
+  CHECK(render_events(s.events, o, a, err) && render_events(s.events, o, b, err));
+  CHECK(encode_wav(a) == encode_wav(b));  // byte-equal
+  // Note 1 onset at frame 0; second note onset at its exact tempo-map frame.
+  CHECK(a.samples[0] != 0.0f);
+  const std::uint64_t f2 = s.events[2].frame;
+  CHECK(f2 % 64 != 0);
+  CHECK(a.samples[(f2 - 1) * 2] == 0.0f && a.samples[(f2 - 1) * 2 + 1] == 0.0f);  // note 1 released
+  CHECK(a.samples[f2 * 2] != 0.0f && a.samples[f2 * 2 + 1] != 0.0f);              // exact onset
+  RenderOptions d = o; d.detune_cents = 50.0f;
+  WavData c;
+  CHECK(render_events(s.events, d, c, err));
+  NullParams p; p.tolerance_db = -60;
+  CHECK(!null_test(a, c, p).pass);
+  CHECK(null_test(a, b, p).pass);
+}
+
+#ifdef OFFLINE_RENDER_EXE
+static void test_cli_malformed_no_output() {
+  const std::string dir = OFFLINE_TEST_DIR;
+  const std::string in = dir + "/malformed.mid", out = dir + "/malformed.wav";
+  std::remove(out.c_str());
+  { std::ofstream f(in, std::ios::binary); f.write("MThd\0\0\0\6garbage", 14); }
+  const std::string cmd = std::string("\"") + OFFLINE_RENDER_EXE + "\" --midi \"" + in + "\" --out \"" + out + "\" 2>/dev/null";
+  CHECK(std::system(cmd.c_str()) != 0);
+  CHECK(!std::ifstream(out).good());
+}
+#endif
+
+static void test_smf_more() {
+  // meta event cancels running status: following bare data bytes are invalid
+  Bytes f = header(0, 1, 480), b;
+  vlq(b, 0); b.insert(b.end(), {0x90, 60, 100});
+  vlq(b, 0); b.insert(b.end(), {0xFF, 0x01, 1, 'x'});
+  vlq(b, 0); b.insert(b.end(), {60, 0});
+  track(f, b);
+  CHECK(!parse_smf(f).ok);
+  Bytes g = header(0, 1, 480), c;
+  vlq(c, 0); c.insert(c.end(), {0x90, 60, 100});
+  vlq(c, 0); c.insert(c.end(), {0xF0, 1, 0xF7});
+  vlq(c, 0); c.insert(c.end(), {60, 0});
+  track(g, c);
+  CHECK(!parse_smf(g).ok);
+  Bytes z = header(1, 0, 480);
+  CHECK(!parse_smf(z).ok);
+  // 64-bit overflow of tick*tempo*rate is an error, not a wrapped frame number
+  Bytes o = header(0, 1, 1), ob;
+  tempo(ob, 0, 0xFFFFFF);
+  for (int i = 0; i < 1000; ++i) { vlq(ob, 0x0FFFFFFF); ob.insert(ob.end(), {0x90, 60, 100}); }
+  track(o, ob);
+  SmfResult r = parse_smf(o);
+  CHECK(!r.ok && r.error.find("overflow") != std::string::npos);
+}
+
+static void test_null_robustness() {
+  NullParams p; p.tolerance_db = -90; p.max_offset_frames = 200;
+  WavData a = noise(5000);
+  WavData bad = a;
+  bad.samples[100] = std::nanf("");
+  NullResult r = null_test(a, bad, p);
+  CHECK(!r.pass && !r.comparable && r.message.find("non-finite") != std::string::npos);
+  r = null_test(bad, a, p);
+  CHECK(!r.pass && !r.comparable);
+  bad.samples[100] = INFINITY;
+  CHECK(!null_test(a, bad, p).pass);
+  // sound outside the overlap must not pass a silent reference
+  WavData sil; sil.samples.assign(2000, 0.0f);
+  WavData loud = sil; loud.samples.resize(2000 + 2000, 0.0f);
+  for (std::size_t i = 2000; i < loud.samples.size(); ++i) loud.samples[i] = 0.2f;
+  CHECK(!null_test(sil, loud, p).pass);
+  // reference with a short burst then silence; silent candidate must fail even though some
+  // offsets overlap only silence
+  WavData burst = noise(100);
+  burst.samples.resize(5100 * 2, 0.0f);
+  WavData zeros; zeros.samples.assign(5100 * 2, 0.0f);
+  r = null_test(burst, zeros, p);
+  CHECK(!r.pass && r.residual_db > -1.0);
+  // delay beyond max on material with silent edges still fails
+  WavData edge; edge.samples.assign(3000 * 2, 0.0f);
+  WavData mid = noise(1000, 3);
+  edge.samples.insert(edge.samples.end(), mid.samples.begin(), mid.samples.end());
+  edge.samples.resize(edge.samples.size() + 3000 * 2, 0.0f);
+  NullParams q = p; q.max_offset_frames = 16;
+  CHECK(null_test(edge, delayed(edge, 10), q).pass);
+  CHECK(!null_test(edge, delayed(edge, 200), q).pass);
+}
+
+static void test_null_length_limit() {
+  NullParams p; p.tolerance_db = -90; p.max_length_diff_frames = 0;
+  WavData a = noise(1000), b = a;
+  CHECK(null_test(a, b, p).pass);
+  b.samples.resize(1600);
+  NullResult r = null_test(a, b, p);
+  CHECK(!r.pass && r.comparable && r.length_diff_frames == -200);
+  p.max_length_diff_frames = 200;
+  CHECK(null_test(a, b, p).pass);
+  p.window_frames = 9600;
+  CHECK(format_report("x", null_test(a, b, p), p).find("200 ms") != std::string::npos);
+}
+
+static void test_render_frame_count() {
+  Bytes f = header(0, 1, 480), b;
+  vlq(b, 0); b.insert(b.end(), {0x90, 60, 100});
+  vlq(b, 480); b.insert(b.end(), {0x80, 60, 0});
+  track(f, b);
+  SmfResult s = parse_smf(f);
+  RenderOptions o; o.tail_seconds = 0.1;
+  WavData w;
+  std::string err;
+  CHECK(s.ok && render_events(s.events, o, w, err));
+  // last event at frame 24000 + 4800 tail = 28800 -> (28800 + 64) / 64 = 451 blocks
+  CHECK(w.frames() == 451 * 64);
+}
+
+int main() {
+  test_smf_more();
+  test_null_robustness();
+  test_null_length_limit();
+  test_render_frame_count();
+  test_smf_basic();
+  test_smf_running_status_vel0_long_delta();
+  test_smf_tempo_map();
+  test_smf_malformed();
+  test_wav_roundtrip();
+  test_null_identical_and_offset();
+  test_null_mismatch_and_silence();
+  test_worst_window();
+  test_render_determinism_and_onsets();
+#ifdef OFFLINE_RENDER_EXE
+  test_cli_malformed_no_output();
+#endif
+  if (g_fail) {
+    std::printf("%d check(s) failed\n", g_fail);
+    return 1;
+  }
+  std::printf("offline_render_tests: all passed\n");
+  return 0;
+}

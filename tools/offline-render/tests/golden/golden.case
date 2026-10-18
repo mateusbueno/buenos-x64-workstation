@@ -1,0 +1,7 @@
+# Null-test case for the test-tone golden render.
+# Tolerance is loose enough for libm/FMA differences across platforms, far tighter than any
+# audible or pitch error (a 20 cent detune lands around -3 dB).
+reference=golden.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
