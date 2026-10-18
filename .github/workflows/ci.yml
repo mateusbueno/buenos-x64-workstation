@@ -1,8 +1,8 @@
 name: ci
+# Validation runs locally (macOS: cmake + ctest; Linux gcc/clang-RTSan: tools/ci/docker-check.sh)
+# to save GitHub Actions minutes. This workflow is manual-only (Actions tab > Run workflow).
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
