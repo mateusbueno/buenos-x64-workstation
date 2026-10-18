@@ -90,7 +90,7 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Effects | This part's insert chain (opens Effects on this part); Reverb send; Delay send |
 | Arpeggiator | See below |
 
-**Arpeggiator** (CAP-19; per part; Part surface and Velora Studio Part Editor) **[ASSUMPTION — confirm with user]:**
+**Arpeggiator** (CAP-19; per part; Part surface and Velora Studio Part Editor):
 
 | Field | Values |
 |---|---|
@@ -103,7 +103,7 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Latch | On / Off |
 | Tempo | The Live Set tempo (shared by all parts) when Clock source is Internal; read-only with the source shown when following DIN or USB clock |
 
-Arpeggiator settings belong to the Live Set; whether a scene may switch Arp on/off is part of this assumption. On clock loss the arpeggiator keeps running at the last received tempo.
+Arpeggiator settings belong to the Live Set; whether a scene may switch Arp on/off is still open (see Open Questions). On clock loss the arpeggiator keeps running at the last received tempo.
 
 **Effects** (topology fixed by AD-28; effect types per engines.md).
 
@@ -114,7 +114,7 @@ Arpeggiator settings belong to the Live Set; whether a scene may switch Arp on/o
 | Master | Master EQ, compressor; line-in level (line-in mixes into the master only) |
 | Outputs | Per-part assignment to Main or Aux |
 
-**Scenes** **[ASSUMPTION — confirm with user]** for the action set.
+**Scenes** for the action set.
 
 | Section | Content |
 |---|---|
@@ -307,7 +307,7 @@ Canonical home for press rules, shortcuts and timings; other sections refer here
 | VALUE | Any surface | Turn: scroll, move highlight or change the highlighted value | — |
 | LIVE SET ◀ ▶ / SCENE ◀ ▶ | Any surface | Step through the setlist / scenes (seamless) | — |
 
-**Touch on Performance** **[ASSUMPTION — confirm with user]** (Settings › Display & Language; default **Safe**). On press-down every target shows an armed state (raised + accent edge).
+**Touch on Performance** (Settings › Display & Language; default **Safe**). On press-down every target shows an armed state (raised + accent edge).
 
 | Target | Full | Safe (default) | Off |
 |---|---|---|---|
@@ -493,7 +493,7 @@ Failure: EXIT cancels without changing the part. Search with no results → "No 
 
 ### Flow 4 — Building a Live Set on the keyboard (Mateus, Saturday, preparing "Goodness of God" for Sunday Service)
 
-1. MENU › Setlist; in "Sunday Service" he selects **+ New Live Set** **[ASSUMPTION — confirm with user: entry point]**, types "Goodness of God" on the On-screen Keyboard, WRITE. Performance shows the new Live Set with 8 empty parts and one scene.
+1. MENU › Setlist; in "Sunday Service" he selects **+ New Live Set**, types "Goodness of God" on the On-screen Keyboard, WRITE. Performance shows the new Live Set with 8 empty parts and one scene.
 2. He long-presses part 1 → Part → Change timbre → Library: Piano chip, "Concert Grand", WRITE. EXIT back to Part 1; in Zone & keyboard he sets Low key C3.
 3. Part 2 → Change timbre → Synth Pad "Warm Pad", full range: a layer over the piano. Part 3 → Bass "Upright Bass", High key B2: a split under the piano.
 4. MENU › Effects: Sends — reverb Hall, part 1 send 25%, part 2 send 40%; Part inserts — a compressor on part 3.
@@ -506,6 +506,7 @@ Failure paths: EXIT from any surface never discards edits — they stay in memor
 
 ## Open Questions
 
+- **Arpeggiator in scenes:** can a scene switch a part's arpeggiator on/off, or is Arp on/off a Live Set setting only?
 - **Favorites on the device:** how a timbre or Live Set is starred (★) on the device is not defined.
 - **Part surface without touch:** it is reachable only from a Part Strip; there is no panel path.
 - **Stage guard for hardware buttons:** whether LIVE SET ◀ ▶ (song change) and part-off presses need a hold or double press (review M8).
