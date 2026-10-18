@@ -258,7 +258,7 @@ development_status:
   10-8-pseudo-localization-qa-and-truncation-rules: backlog
   epic-10-retrospective: optional
 
-  epic-11: backlog
+  epic-11: in-progress
   11-1-trademark-clearance-and-inpi-filing-for-ladiani-and-velora: backlog
   11-2-register-domains-and-social-handles: backlog
   11-3-run-the-brazil-keyboardist-survey: backlog
@@ -270,7 +270,7 @@ development_status:
   11-9-power-fail-timing-codec-and-thermal-measurements-from-the-pa: backlog
   11-10-inmetro-power-supply-requirement-and-iec-62368-1-test-plan: backlog
   11-11-ssd-qualification-for-streaming-latency-and-endurance: backlog
-  11-12-license-check-of-the-vendored-sfizz-parser-and-dependencies: backlog
+  11-12-license-check-of-the-vendored-sfizz-parser-and-dependencies: review
   11-13-hammond-m-solo-drawbar-cc-nrpn-numbers-for-automated-organ-a: backlog
   11-14-tonewheel-b-3-and-rotary-cabinet-reference-recordings-and-ab: backlog
   11-15-final-typeface-licensed-and-delivered-by-a-designer: backlog

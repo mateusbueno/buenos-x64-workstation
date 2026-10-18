@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 tools/ci/check_core_deps.py
       - run: python3 tools/ci/check_core_deps.py --self-test
+      - run: python3 tools/ci/check_third_party_notices.py
+      - run: python3 tools/ci/check_third_party_notices.py --self-test
 
   macos:
     runs-on: macos-latest

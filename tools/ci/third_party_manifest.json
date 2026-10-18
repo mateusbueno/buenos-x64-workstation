@@ -1,0 +1,29 @@
+{
+  "sfizz_commit": "4e70dc0bef53b41f2853ed46e26f5911114c92d0",
+  "components": [
+    {
+      "name": "sfizz",
+      "version": "1.2.3",
+      "license": "BSD-2-Clause",
+      "notice_marker": "## 1. sfizz 1.2.3"
+    },
+    {
+      "name": "abseil-cpp",
+      "version": "c2435f83",
+      "license": "Apache-2.0",
+      "notice_marker": "## 2. Abseil C++"
+    },
+    {
+      "name": "ghc-filesystem",
+      "version": "8a2edd6d",
+      "license": "MIT",
+      "notice_marker": "## 3. ghc::filesystem"
+    },
+    {
+      "name": "simde",
+      "version": "2bf459d4",
+      "license": "MIT",
+      "notice_marker": "## 4. SIMDe"
+    }
+  ]
+}
