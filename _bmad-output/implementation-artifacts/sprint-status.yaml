@@ -1,0 +1,298 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 10-18-2026 19:03
+last_updated: 10-18-2026 19:03
+project: Ladiani Velora 73
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: backlog
+  1-1-preempt_rt-latency-spike-on-mainline-rk3588-under-load: backlog
+  1-2-audio-output-bring-up-on-the-dev-board: backlog
+  1-3-monorepo-skeleton-with-host-build-and-ci: backlog
+  1-4-minimal-yocto-dev-image-for-the-dev-board: backlog
+  1-5-mipi-dsi-7-panel-spike-on-mainline-rk3588: backlog
+  1-6-secure-boot-chain-selection-and-signed-image-on-an-unfused-b: backlog
+  1-7-fused-dev-board-boots-signed-and-derives-a-per-device-key: backlog
+  1-8-engine-core-block-loop-and-engine-interface: backlog
+  1-9-offline-renderer-and-null-test-harness: backlog
+  1-10-engine-plays-live-on-the-developer-s-mac-macos-host-adapters: backlog
+  1-11-engine-runs-live-on-the-dev-board: backlog
+  1-12-formatlib-lossless-block-indexed-bundle: backlog
+  1-13-import-the-demo-sfz-library-subset-into-bundles: backlog
+  1-14-1-tb-library-resolved-from-the-index-without-scanning: backlog
+  1-15-sample-engine-plays-ram-resident-instruments-and-passes-the: backlog
+  1-16-instrument-heads-decoded-into-locked-ram-at-load: backlog
+  1-17-streaming-from-nvme-ahead-of-the-playhead: backlog
+  1-18-parallel-voice-render-on-the-three-isolated-cores: backlog
+  1-19-voice-pool-arbiter-with-the-sample-floor: backlog
+  1-20-timestamped-event-path-from-a-usb-midi-keyboard: backlog
+  1-21-in-ram-diagnostics-counters-and-latency-histogram: backlog
+  1-22-24-hour-soak-gate-on-the-dev-board: backlog
+  1-23-milestone-1-investor-demo-proving-nfr1-nfr4: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-parameter-registry-and-control-thread-snapshots-for-engine-s: backlog
+  2-2-tonewheel-generator-and-drawbar-voices-at-full-polyphony: backlog
+  2-3-organ-percussion-and-key-click: backlog
+  2-4-vibrato-chorus-scanner-and-tonewheel-leakage: backlog
+  2-5-multi-contact-onset-hook-in-the-organ: backlog
+  2-6-rotary-speaker-in-the-organ-voice-path: backlog
+  2-7-fixed-routing-topology-with-insert-chains-sends-master-and-o: backlog
+  2-8-eq-and-compressor-as-inserts-and-in-the-master-section: backlog
+  2-9-chorus-phaser-ep-amp-drive-and-rotary-speaker-inserts: backlog
+  2-10-reverb-send: backlog
+  2-11-delay-send-with-tempo-sync: backlog
+  2-12-full-effects-load-within-the-latency-and-dropout-budget: backlog
+  2-13-organ-objective-a-b-against-hammond-m-solo-renders: backlog
+  2-14-organ-blind-abx-listening-test-with-professional-keyboardist: backlog
+  2-15-design-story-effects-surface-mockup: backlog
+  2-16-design-story-organ-section-of-the-part-surface: backlog
+  2-17-device-ui-shell-on-the-lvgl-simulator-and-the-dev-board: backlog
+  2-18-design-tokens-stage-and-studio-themes-and-the-contrast-gate: backlog
+  2-19-hint-bar-list-row-segmented-control-and-the-mac-virtual-pane: backlog
+  2-20-effects-surface-part-inserts: backlog
+  2-21-effects-surface-sends-master-and-outputs: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-versioned-mcu-frame-protocol-library-and-control-led-id-maps: backlog
+  3-2-prototype-board-bring-up: backlog
+  3-3-keybed-mcu-firmware-with-raw-per-contact-timestamps: backlog
+  3-4-mcu-dual-bank-bootloader-and-reflash-from-the-soc: backlog
+  3-5-keybed-reader-on-the-soc-with-drift-tracked-device-time-and: backlog
+  3-6-attack-and-release-velocity-with-selectable-curves: backlog
+  3-7-aftertouch-read-and-routed-when-the-keybed-has-it: backlog
+  3-8-panel-mcu-firmware-inputs: backlog
+  3-9-panel-mcu-firmware-soc-driven-leds: backlog
+  3-10-panel-reader-on-the-soc-and-the-mac-virtual-panel: backlog
+  3-11-pedals-with-half-pedal-calibration-and-expression: backlog
+  3-12-soc-driven-led-state-and-toggle-state-with-led-per-state: backlog
+  3-13-pcm3168a-codec-as-clock-master-with-the-alsa-machine-driver: backlog
+  3-14-balanced-outputs-and-headphone-output: backlog
+  3-15-stereo-line-input-mixed-into-the-master: backlog
+  3-16-hardware-mute-for-pop-free-power-on-and-power-off: backlog
+  3-17-midi-din-in-and-out: backlog
+  3-18-power-fail-fade-and-write-freeze-within-the-hold-up-window: backlog
+  3-19-key-to-sound-latency-on-the-prototype: backlog
+  3-20-24-hour-thermal-run-in-the-closed-chassis: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-tier-profile-read-at-boot: backlog
+  4-2-versioned-live-set-format-with-parts-scenes-and-assign-map: backlog
+  4-3-live-set-load-with-8-parts-zones-layers-and-splits: backlog
+  4-4-scene-recall-as-a-parameter-only-snapshot-swap: backlog
+  4-5-seamless-live-set-switching-with-background-load: backlog
+  4-6-setlists-setlist-tags-and-live-set-stepping: backlog
+  4-7-next-live-set-preload-within-the-head-budget: backlog
+  4-8-seamless-switching-render-suite: backlog
+  4-9-edits-in-memory-and-write-scopes: backlog
+  4-10-assign-maps-with-a-global-default: backlog
+  4-11-live-set-favorites-and-recent-in-the-catalog: backlog
+  4-12-fader-bindings-with-pickup: backlog
+  4-13-encoder-bindings-for-part-all-and-assign: backlog
+  4-14-design-story-bring-existing-mockups-in-line-with-the-spines: backlog
+  4-15-design-story-launcher-grid-mockup: backlog
+  4-16-design-story-on-screen-keyboard-mockup: backlog
+  4-17-design-story-scenes-surface-mockup: backlog
+  4-18-design-story-part-surface-mockup: backlog
+  4-19-design-story-action-sheet-and-assign-overlay-mockups: backlog
+  4-20-performance-surface-top-bar-live-set-hero-and-scene-strip: backlog
+  4-21-performance-surface-part-strips-volume-bars-and-status-bar: backlog
+  4-22-navigation-rules-menu-and-the-launcher: backlog
+  4-23-parts-scenes-toggle-and-the-part-scene-buttons: backlog
+  4-24-pickup-ghost-and-the-status-bar-takeover: backlog
+  4-25-drawbars-mixer-toggle-with-the-organ-card-and-drawbar-column: backlog
+  4-26-part-all-assign-toggle-and-encoder-led-rings: backlog
+  4-27-assign-overlay: backlog
+  4-28-on-screen-keyboard: backlog
+  4-29-setlist-surface: backlog
+  4-30-setlist-browser-with-search-chips-tags-and-favorites: backlog
+  4-31-scenes-surface: backlog
+  4-32-write-dialog-write-hold-and-the-unsaved-indicator: backlog
+  4-33-part-surface-timbre-zone-and-keyboard-level-and-output: backlog
+  4-34-part-surface-sound-envelope-and-eq-effects: backlog
+  4-35-settings-surface-with-knobs-global-assign: backlog
+  4-36-footswitch-function: backlog
+  4-37-accidental-press-guards-and-touch-on-performance: backlog
+  4-38-first-playable-unit-full-show-run-through: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-full-sfz-v1-opcode-subset-in-the-importer: backlog
+  5-2-sample-engine-plays-keyswitches-cc-crossfades-and-basic-filt: backlog
+  5-3-sf2-import-into-the-same-instrument-model: backlog
+  5-4-reference-corpus-imports-and-plays-with-mapping-intact: backlog
+  5-5-category-model-localized-labels-and-auto-suggestion: backlog
+  5-6-librarian-libraries-catalog-import-api-and-atomic-publish: backlog
+  5-7-import-preflight-batch-scan-free-space-and-duplicates: backlog
+  5-8-import-execution-survives-drive-removal-and-power-loss: backlog
+  5-9-sandboxed-librarian-and-read-only-usb-a-drives-on-the-board: backlog
+  5-10-design-story-notice-toast-mockup: backlog
+  5-11-design-story-category-picker-mockup: backlog
+  5-12-import-surface-rows-categories-and-apply-to-all: backlog
+  5-13-import-surface-progress-background-and-failure-states: backlog
+  5-14-usb-drive-found-notice: backlog
+  5-15-300-gb-ssd-library-imports-and-plays-end-to-end: backlog
+  5-16-library-surface-search-categories-favorites-and-recent: backlog
+  5-17-choose-a-timbre-for-a-part-with-audition: backlog
+  5-18-design-story-action-sheet-library-variants-missing-library-r: backlog
+  5-19-favorites-by-long-press-and-from-the-part-surface: backlog
+  5-20-missing-library-state-and-recovery: backlog
+  5-21-storage-library-free-space-installed-libraries-and-removal: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  6-1-signing-and-content-key-hierarchy-with-dev-roots: backlog
+  6-2-protected-bundle-format-in-formatlib: backlog
+  6-3-content-pack-tool: backlog
+  6-4-librarian-verifies-and-installs-protected-bundles: backlog
+  6-5-engine-decrypts-protected-bundles-on-i-o-edge-threads: backlog
+  6-6-op-tee-content-key-trusted-application-on-the-board: backlog
+  6-7-a-copied-or-tampered-library-does-not-play-elsewhere: backlog
+  6-8-device-registry-and-content-key-vault: backlog
+  6-9-factory-library-packaging: backlog
+  6-10-production-signing-root-ceremony-in-an-offline-hsm: backlog
+  6-11-read-only-root-filesystem-and-journaled-data-partition: backlog
+  6-12-rauc-a-b-slots-with-rollback-on-failed-boot: backlog
+  6-13-dev-and-factory-test-image-variants-with-per-root-keyrings: backlog
+  6-14-production-image-with-secure-boot-and-debug-lockdown: backlog
+  6-15-otp-anti-rollback-counter-for-security-releases: backlog
+  6-16-factory-provisioning-station: backlog
+  6-17-som-swap-re-provisioning: backlog
+  epic-6-retrospective: optional
+
+  epic-7: backlog
+  7-1-single-tempo-and-transport-clock-on-the-rt-plane: backlog
+  7-2-event-processor-framework-and-arpeggiator-note-generation: backlog
+  7-3-swing-latch-and-arpeggiator-performance-behaviour: backlog
+  7-4-arpeggiator-settings-in-live-sets-and-scenes: backlog
+  7-5-part-surface-arpeggiator-section-and-live-set-tempo: backlog
+  7-6-external-midi-clock-follower-and-clock-lost-behaviour: backlog
+  7-7-clock-source-setting-and-din-usb-clock-inputs: backlog
+  7-8-top-bar-tempo-clock-source-and-clock-lost-display: backlog
+  7-9-arpeggiator-timing-acceptance-on-the-board: backlog
+  epic-7-retrospective: optional
+
+  epic-8: backlog
+  8-1-sysd-as-the-sole-installer-from-a-usb-a-stick: backlog
+  8-2-production-release-signing-and-per-root-update-bundles: backlog
+  8-3-install-flow-on-the-device: backlog
+  8-4-mcu-firmware-manifest-in-the-a-b-image-and-boot-time-version: backlog
+  8-5-format-versions-n-n-1-and-migrations-only-after-the-slot-is: backlog
+  8-6-a-firmware-update-adds-a-new-engine-on-a-v1-unit: backlog
+  8-7-boot-screen-with-drawbar-animation-and-reduced-motion: backlog
+  8-8-journaled-boot-into-pointer: backlog
+  8-9-boot-into-setting-and-restoring-the-target: backlog
+  8-10-boot-to-playable-in-10-s-with-a-1-tb-library: backlog
+  8-11-power-fail-acceptance-brown-out-recovery-and-scope-verificat: backlog
+  8-12-startup-reconcile-of-interrupted-imports-fault-injection-and: backlog
+  8-13-power-cut-rig-100-cuts-during-update-and-100-during-import: backlog
+  8-14-kernel-lts-migration-plan: backlog
+  epic-8-retrospective: optional
+
+  epic-9: backlog
+  9-1-usb-c-gadget-composition-with-class-compliant-midi: backlog
+  9-2-usb-audio-interface-that-follows-the-codec-clock: backlog
+  9-3-sysd-ws-v1-bridge-on-usb-ncm-with-a-single-open-port: backlog
+  9-4-design-story-velora-studio-footer-dialog-banner-and-backup-r: backlog
+  9-5-velora-studio-app-shell-offline: backlog
+  9-6-pairing-velora-studio-with-the-unit: backlog
+  9-7-connection-states-version-mismatch-disconnect-and-reconnect: backlog
+  9-8-live-set-view-scenes-and-part-strips: backlog
+  9-9-part-editor-layout-with-studio-knobs: backlog
+  9-10-live-edit-state-stale-edits-and-disconnect-mid-edit: backlog
+  9-11-add-a-timbre-to-an-empty-part-from-velora-studio: backlog
+  9-12-write-to-velora-with-the-device-s-scopes: backlog
+  9-13-setlists-view-in-velora-studio: backlog
+  9-14-library-management-and-heavy-sfz-conversion-on-the-computer: backlog
+  9-15-library-transfer-to-the-unit: backlog
+  9-16-backup-to-a-velorabackup-file: backlog
+  9-17-restore-with-merge-or-replace-and-offline-backup-editing: backlog
+  9-18-export-selected-live-sets-and-timbres-individually-or-as-a-b: backlog
+  9-19-import-partial-exports-with-per-item-merge-decisions: backlog
+  9-20-send-firmware-from-velora-studio: backlog
+  9-21-device-view-and-diagnostics-export: backlog
+  9-22-velora-studio-accessibility-audit: backlog
+  epic-9-retrospective: optional
+
+  epic-10: backlog
+  10-1-settings-surface-with-the-seven-canonical-sections: backlog
+  10-2-settings-keyboard-pedals-and-midi-clock-rows: backlog
+  10-3-theme-selection-on-the-device: backlog
+  10-4-screen-and-panel-led-brightness: backlog
+  10-5-brightness-quick-path-hold-exit-and-turn-value: backlog
+  10-6-large-text-on-performance-and-reduced-motion: backlog
+  10-7-pt-br-and-es-locale-catalogs-and-language-selection: backlog
+  10-8-pseudo-localization-qa-and-truncation-rules: backlog
+  epic-10-retrospective: optional
+
+  epic-11: backlog
+  11-1-trademark-clearance-and-inpi-filing-for-ladiani-and-velora: backlog
+  11-2-register-domains-and-social-handles: backlog
+  11-3-run-the-brazil-keyboardist-survey: backlog
+  11-4-tax-advisor-validation-of-margin-at-r-17-990-19-990: backlog
+  11-5-price-and-feature-priority-decision-from-survey-and-tax-resu: backlog
+  11-6-fatar-oem-resupply-terms-and-73sw-contact-and-aftertouch-con: backlog
+  11-7-som-longevity-commitment-and-board-level-partner-deliverable: backlog
+  11-8-panel-display-led-and-legend-specifications-agreed-with-part: backlog
+  11-9-power-fail-timing-codec-and-thermal-measurements-from-the-pa: backlog
+  11-10-inmetro-power-supply-requirement-and-iec-62368-1-test-plan: backlog
+  11-11-ssd-qualification-for-streaming-latency-and-endurance: backlog
+  11-12-license-check-of-the-vendored-sfizz-parser-and-dependencies: backlog
+  11-13-hammond-m-solo-drawbar-cc-nrpn-numbers-for-automated-organ-a: backlog
+  11-14-tonewheel-b-3-and-rotary-cabinet-reference-recordings-and-ab: backlog
+  11-15-final-typeface-licensed-and-delivered-by-a-designer: backlog
+  11-16-final-logo-symbol-app-icon-and-avatar-delivered-by-a-designe: backlog
+  11-17-factory-library-content-plan-and-source-delivery: backlog
+  11-18-direct-sales-channel-for-the-first-100-units: backlog
+  11-19-brand-assets-integration-final-typeface-app-icon-and-boot-ar: backlog
+  epic-11-retrospective: optional
+
+  epic-12: backlog
+  12-1-clean-room-6-operator-fm-voice-in-the-engine-core: backlog
+  12-2-fm-null-test-against-an-unshipped-reference-oracle: backlog
+  12-3-import-6-op-sysex-banks-and-single-voices-from-files-usb-a-a: backlog
+  12-4-receive-6-op-sysex-over-usb-midi-and-din: backlog
+  12-5-fm-voices-in-the-shared-pool-with-a-128-voice-floor: backlog
+  12-6-clean-room-virtual-analog-voice-in-the-engine-core: backlog
+  12-7-va-voices-in-the-shared-pool-with-a-64-voice-floor: backlog
+  12-8-fm-and-va-timbre-parameters-in-the-versioned-formats: backlog
+  12-9-init-and-factory-fm-va-timbres-in-the-library: backlog
+  12-10-design-story-fm-and-va-sound-sections-and-not-available-stat: backlog
+  12-11-part-surface-sound-section-for-fm-timbres: backlog
+  12-12-part-surface-sound-section-for-va-timbres: backlog
+  12-13-velora-studio-part-editor-sound-sections-for-fm-and-va: backlog
+  12-14-fm-and-va-firmware-update-reaches-shipped-v1-units: backlog
+  epic-12-retrospective: optional

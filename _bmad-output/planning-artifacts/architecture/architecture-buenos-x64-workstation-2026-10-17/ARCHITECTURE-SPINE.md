@@ -395,12 +395,21 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
 ### AD-31 — Live Set data model ownership
 
 - **Binds:** CAP-7, CAP-21, CAP-22, CAP-23
-- **Prevents:** a second owner of setlist or ASSIGN data; backups that bypass the single writer; Live Set files a later firmware cannot open
+- **Prevents:** a second owner of setlist or ASSIGN data; backups or partial exports that bypass the single writer; Live Set files a later firmware cannot open; encrypted vendor content leaving the device
 - **Rule:**
   - Setlists, Live Sets (8 parts, up to 8 scenes, the ASSIGN map), the global default ASSIGN map and setlist tags are structural state owned by the engine control thread (AD-1, AD-9).
   - A new Live Set copies the global default ASSIGN map at creation.
   - Each persisted form, including the `.velorabackup` file, carries an AD-12 version.
   - Velora Studio backup reads published state. Restore (merge or replace) reaches the device only as control-thread commands.
+  - Export scopes and file types (each with a manifest that declares scope and carries an AD-12 version; readers accept N and N−1):
+    - full backup: `.velorabackup`;
+    - a Live Set selection, or a Live Set bundle (the selected Live Sets plus the timbres they use): `.velorasets`, scope `sets` or `bundle`;
+    - a timbre selection: `.veloratimbre`.
+  - Export routing: Live Set data comes from published control-thread state. Timbre data comes only through `librarian` commands, which return user-imported (SFZ/SF2) instruments as lossless formatlib bundle data (AD-11).
+  - Factory and partner timbres are never exported, encrypted or decrypted (AD-14). The file carries only their `library_id` and `instrument_key` (AD-10). On restore an unresolved reference plays silent and shows "Missing library" (AD-10), never a substitute.
+  - Partial import routing: Live Sets reach the device only as control-thread commands, and user timbres only as `librarian` import commands (AD-9 owners). Nothing writes device files directly.
+  - Partial import resolves collisions per item: skip, replace, or keep both. Keep both mints a new ID for the incoming item (AD-10), and the incoming Live Sets are rewritten to reference it.
+  - Studio computes a size estimate from the manifest before export, so a large bundle can be warned about before any data moves.
 
 ## Consistency Conventions
 
@@ -492,7 +501,7 @@ flowchart LR
 | CAP-19 arpeggiator | engine/core event processors | AD-2, AD-8, AD-21 |
 | CAP-20 seamless switching | control thread, engine/host streaming | AD-23, AD-24, AD-30 |
 | CAP-21 setlists, Live Sets, scenes | control thread, ui | AD-1, AD-9, AD-30, AD-31 |
-| CAP-22 backup and restore | desktop, sysd bridge, control thread | AD-12, AD-13, AD-31 |
+| CAP-22 backup and restore (full and partial) | desktop, sysd bridge, control thread, librarian | AD-9, AD-10, AD-12, AD-13, AD-14, AD-31 |
 | CAP-23 ASSIGN knobs | panel MCU, control thread, RT | AD-2, AD-16, AD-31 |
 
 ## Open Questions

@@ -30,11 +30,11 @@ colors:
   line-light: '#cbd4cd'
   line-strong-light: '#728a77'
   text-light: '#131714'
-  muted-light: '#606a62'
-  accent-light: '#4b6f58'
+  muted-light: '#5a635c'
+  accent-light: '#466853'
   on-accent-light: '#f2f4f2'
-  warn-light: '#7a6620'
-  ok-light: '#4b6f58'
+  warn-light: '#725f1e'
+  ok-light: '#466853'
   # Theme-invariant (no -dark/-light twin): drawbar, panel, LED and logo tokens below.
   # Drawbar heads (traditional colors, desaturated to sit inside Sálvia)
   drawbar-brown: '#7f5e47'
@@ -125,6 +125,13 @@ typography:
     fontSize: 15px
     letterSpacing: 0.25em
     note: 'uppercase'
+  mode-mirror:
+    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontSize: 20px
+    fontWeight: '700'
+    lineHeight: '1.2'
+    letterSpacing: 0.06em
+    note: 'uppercase; Top Bar mode mirror (DRAWBARS/MIXER, PARTS/SCENES, KNOBS PART n / ALL / ASSIGN)'
   status:
     fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
     fontSize: 14px
@@ -213,12 +220,15 @@ spacing:
   selection-device: 3px
   selection-desktop: 2px
   focus-ring: 2px
+  mode-underline: 2px
 components:
   top-bar:
     background: '{colors.surface-dark}'
     foreground: '{colors.muted-dark}'
     active-mode: '{colors.accent-dark}'
+    active-underline: '{spacing.mode-underline} {colors.accent-dark} under the active mode; no fill'
     type: '{typography.bar-label}'
+    mode-mirror: '{typography.mode-mirror}'
     height: '{spacing.device-topbar}'
     clock-lost: '{colors.warn-dark}'
   live-set-hero:
@@ -310,7 +320,7 @@ components:
     selected-background: '{colors.raised-dark}'
     selected-border: '{spacing.selection-device} {colors.accent-dark}'
     current-marker: '▶ glyph + NOW tag in {typography.meta-caps}, {colors.accent-dark}'
-    pending-edits: '● in {colors.warn-dark} after the name'
+    pending-edits: '◆ in {colors.warn-dark} after the name'
     type: '{typography.list-item}'
   search-field:
     background: '{colors.surface-dark}'
@@ -330,7 +340,7 @@ components:
     selected-background: '{colors.raised-dark}'
     selected-border: '{spacing.selection-device} {colors.accent-dark}'
     favorite-star: '{colors.accent-dark}'
-    pending-edits: '● in {colors.warn-dark} after the name'
+    pending-edits: '◆ in {colors.warn-dark} after the name'
     radius: '{rounded.md}'
   import-row:
     background: '{colors.surface-dark}'
@@ -355,7 +365,7 @@ components:
     disabled-option: '{colors.muted-dark} with reason line'
     backdrop: 'underlying screen dimmed to 35% brightness; nothing on it is interactive'
   unsaved-indicator:
-    glyph: '●'
+    glyph: '◆'
     color: '{colors.warn-dark}'
     type: '{typography.next-title}'
   notice-toast:
@@ -438,12 +448,23 @@ components:
     background: '{colors.surface-dark}'
     foreground: '{colors.muted-dark}'
     warn: '{colors.warn-dark}'
+    unsaved-glyph: '◆ in {colors.warn-dark}'
     type: '{typography.desktop-body}'
   studio-dialog:
     background: '{colors.raised-dark}'
     border: '{colors.line-strong-dark}'
     radius: '{rounded.lg}'
     title: '{typography.desktop-live-set-name}'
+    body: '{typography.desktop-body}'
+  studio-selection-list:
+    row-background: '{colors.surface-dark}'
+    row-divider: '{colors.line-dark}'
+    radius: '{rounded.md}'
+    checkbox: '{colors.line-strong-dark} outline, {colors.accent-dark} fill when checked'
+    focus-ring: '{spacing.focus-ring} {colors.accent-dark}, 2px offset'
+    meta: '{colors.muted-dark}'
+    reference-tag: '{colors.muted-dark}'
+    size-warning: '{colors.warn-dark}'
     body: '{typography.desktop-body}'
   studio-banner:
     background: '{colors.raised-dark}'
@@ -482,7 +503,7 @@ components:
 
 ## Brand & Style
 
-> Mockups in `mockups/` are visual evidence; this spine and EXPERIENCE.md win on any conflict. Known deviations in the mocks: the Performance mock shows engine type under part names (category wins), a text-colored ghost (warn ghost with keylines wins), off parts at 42% opacity, no ⏻ icon and the old bar heights; `color-themes-1.html` is palette evidence only (its PT-BR copy, "Programa" and engine-type sub-labels are superseded); the Studio mock lacks the ● after the Live Set name; `key-screen-drawbars-categories.html` intro says `88 8000 000` (the card's `88 8600 000` wins); the Settings mock lacks Reduced motion and the new Display rows; `key-screens-device.html` says "songs" where the UI says "Live Sets".
+> Mockups in `mockups/` are visual evidence; this spine and EXPERIENCE.md win on any conflict. Known deviations in the mocks: the Performance mock shows engine type under part names (category wins), a text-colored ghost (warn ghost with keylines wins), off parts at 42% opacity, no ⏻ icon and the old bar heights; `color-themes-1.html` is palette evidence only (its PT-BR copy, "Programa" and engine-type sub-labels are superseded); the mocks predate the ◆ Unsaved Indicator (they show ● or nothing) and the 20 px underlined Top Bar mode mirror; the Studio mock lacks the Unsaved Indicator after the Live Set name; `key-screen-drawbars-categories.html` intro says `88 8000 000` (the card's `88 8600 000` wins); the Settings mock lacks Reduced motion and the new Display rows; `key-screens-device.html` says "songs" where the UI says "Live Sets".
 
 Ladiani is "the Apple of keyboards": a late entrant that arrives with a better product and says so quietly. The posture is **elegance, luxury, discretion** — Nord's artisanal care, Apple's restraint and build quality, Ferrari's exclusivity. Nothing shouts. The instrument should look as composed under stage light as it does in a studio, and every surface (aluminum, screen, desktop app) speaks the same calm, precise voice.
 
@@ -510,11 +531,11 @@ Palette **Sálvia** — a muted green-grey, organic and calm, "with a touch of w
 | line | `#2b322e` | `#cbd4cd` | Hairline dividers, progress track |
 | line-strong | `#5a6860` | `#728a77` | Borders that identify a control or empty slot: search field, chips, segments, keycaps, empty slots, volume track, off-part LED ring (≥ 3:1) |
 | text | `#e7ebe8` | `#131714` | Primary text |
-| muted | `#88938c` | `#606a62` | Labels, meta, hints, off-part names |
-| accent | `#9fbaa8` | `#4b6f58` | Current scene, selection edge, active mode, levels, primary action |
+| muted | `#88938c` | `#5a635c` | Labels, meta, hints, off-part names |
+| accent | `#9fbaa8` | `#466853` | Current scene, selection edge, active mode, levels, primary action |
 | on-accent | `#0b0d0c` | `#f2f4f2` | All text on accent fills, at 100% |
-| warn | `#cdb86c` | `#7a6620` | Semantic only: pickup ghost and takeover line, needs-category, missing library, clock lost, unsaved-changes ● |
-| ok | `#9fbaa8` | `#4b6f58` | Semantic only: streaming ok, ready, connected |
+| warn | `#cdb86c` | `#725f1e` | Semantic only: pickup ghost and takeover line, needs-category, missing library, clock lost, unsaved-changes ◆ |
+| ok | `#9fbaa8` | `#466853` | Semantic only: streaming ok, ready, connected (● is the ok glyph; `● READY` never shares its shape with the warn ◆ Unsaved Indicator) |
 
 - **Accent is neutral by intent.** No orange (Studiologic/Roland) and no red (Nord) brand references. Accent fills appear on exactly one thing per area — the current scene, the active chip, the confirm button.
 - **Warn and ok are semantic, never brand.** They never decorate. `ok` shares the accent hue; `warn` is a soft yellow. Accent and warn differ by chroma, not luminance, so a warn state always carries a glyph or text as well.
@@ -529,26 +550,26 @@ Palette **Sálvia** — a muted green-grey, organic and calm, "with a touch of w
 | Pair | Stage | Studio theme |
 |---|---|---|
 | text / bg · surface · raised | 16.2 · 14.7 · 12.8 | 16.4 · 14.6 · 18.1 |
-| muted / bg · surface · raised (incl. off-part name and category) | 6.1 · 5.6 · 4.8 | 5.09 · 4.53 · 5.62 |
-| accent / bg · surface · raised | 9.3 · 8.5 · 7.4 | 5.1 · 4.56 · 5.65 |
-| warn / bg · surface · raised | 9.9 · 9.0 · 7.8 | 5.07 · 4.52 · 5.60 |
-| on-accent / accent (current Scene Tile number, name and sub-label) | 9.3 | 5.1 |
+| muted / bg · surface · raised (incl. off-part name and category) | 6.1 · 5.6 · 4.8 | 5.63 · 5.02 · 6.22 |
+| accent / bg · surface · raised | 9.3 · 8.5 · 7.4 | 5.64 · 5.03 · 6.24 |
+| warn / bg · surface · raised | 9.9 · 9.0 · 7.8 | 5.64 · 5.02 · 6.23 |
+| on-accent / accent (current Scene Tile number, name and sub-label) | 9.3 | 5.64 |
 | line-strong / surface · bg | 3.03 · 3.33 | 3.01 · 3.38 |
-| pickup-ghost keyline (bg) / accent level fill | 9.3 | 5.1 |
+| pickup-ghost keyline (bg) / accent level fill | 9.3 | 5.64 |
 | drawbar brown / slot · ink on brown | 3.04 · 4.86 | 4.71 · 4.86 |
 | drawbar black edge / slot · black head | 3.45 · 3.20 | (black head on slot 13.3) |
 | drawbar white edge / slot · raised | (white head on slot 14.0) | 3.03 · 3.75 |
 | panel legend / alu-high · alu-mid · alu-low | 7.66 · 6.14 · 5.06 | — |
 | panel ink / alu-high · alu-low | 9.6 · 6.4 | — |
 
-Studio-theme muted, accent and warn clear 4.5:1 on surface by < 0.1; see Open Questions.
+Studio-theme muted, accent and warn use the darker set (`#5a635c` / `#466853` / `#725f1e`) so every text pair clears 5:1, leaving margin if the final face renders thin.
 
 ## Typography
 
 One humanist-technical sans family across panel, screen and desktop (Gill Sans as stand-in; final face drawn or licensed — see Deferred). Roles:
 
 - **Live Set name** `{typography.live-set-name}` is the largest element on the device and the only one read at a glance from 1.5 m.
-- **Uppercase tracked labels** (`{typography.bar-label}`, `{typography.meta-caps}`, `{typography.status}`) carry system state and structure. Content names (Live Sets, timbres, scenes) stay in sentence/title case.
+- **Uppercase tracked labels** (`{typography.bar-label}`, `{typography.meta-caps}`, `{typography.status}`) carry system state and structure. The Top Bar mode mirror uses `{typography.mode-mirror}` (20 px bold) so mode reads at a glance. Content names (Live Sets, timbres, scenes) stay in sentence/title case.
 - **Numerals** for drawbar values and registrations (`{typography.drawbar-value}`, `{typography.organ-registration}`) are tabular; the registration is written as organists say it, e.g. `88 8600 000`.
 - **Velora Studio** uses a denser desktop ramp in rem (`{typography.desktop-live-set-name}`, `{typography.desktop-part-name}`, `{typography.desktop-body}`, `{typography.desktop-section-label}`); minimum body 13 px, minimum label 11 px at weight 600.
 - **Wordmarks**: `{typography.wordmark-brand}` light and wide; `{typography.wordmark-model}` spaced wider and smaller.
@@ -585,7 +606,7 @@ Large mode drops Scene Tile sub-labels and Part Strip categories and keeps every
 
 **Velora Studio (desktop).** Title bar · body (sidebar `{spacing.desktop-sidebar}` + main) · Studio Footer. Main stacks Live Set header, 8 Scene Tiles, 8 Studio Part Strips and a four-column Part Editor (Sound · Amp envelope + EQ · Effects inserts + sends · Zone & keyboard + Arpeggiator + Assign), gutter `{spacing.desktop-gutter}`. At ≥ 150% text size or zoom the Part Editor reflows to 2 columns, then 1; nothing scrolls horizontally at 200%. → [mockups/key-screen-studio.html](mockups/key-screen-studio.html).
 
-**Physical panel (layout A).** Left: lockup, MASTER, ROTARY STOP and S/F; pitch and mod wheels on the left below. Mixer zone: 9 faders (1–8 + REV) with the DRAWBARS/MIXER toggle, 8 part/scene buttons with the PARTS/SCENES toggle. Center: 7" display. Navigation column: LIVE SET ◀ ▶, SCENE ◀ ▶, VALUE encoder, then a row of three buttons EXIT · MENU · WRITE (MENU in the middle). Right: 8 encoders in two rows (DELAY, BRIGHTNESS, ATTACK, RELEASE / LOW, MID, MID FREQ, HIGH) with the PART/ALL/ASSIGN toggle. → [mockups/panel-v2.html](mockups/panel-v2.html) (the mock shows two LEDs on the knob toggle; the approved version is 3-state PART/ALL/ASSIGN).
+**Physical panel (layout A).** Left: lockup, MASTER, ROTARY STOP and S/F; pitch and mod wheels on the left below. Mixer zone: 9 faders (1–8 + REV) with the DRAWBARS/MIXER toggle, 8 part/scene buttons with the PARTS/SCENES toggle. Center: 7" display. Navigation column: LIVE SET ◀ ▶, SCENE ◀ ▶, VALUE encoder, then a row of three buttons EXIT · MENU · WRITE (MENU in the middle). Right: 8 encoders in two rows (DELAY, BRIGHTNESS, ATTACK, RELEASE / LOW, MID, MID FREQ, HIGH) with the PART/ALL/ASSIGN toggle. The VALUE encoder has a push switch. **Pro tier (16 parts):** two banks of 8 (A/B) toggled by a bank button; part buttons and faders act on the active bank; details deferred to Pro. → [mockups/panel-v2.html](mockups/panel-v2.html) (the mock shows two LEDs on the knob toggle; the approved version is 3-state PART/ALL/ASSIGN).
 
 ## Elevation & Depth
 
@@ -601,7 +622,7 @@ Visual specs; behavior lives in EXPERIENCE.md Component Patterns. Tokens in fron
 
 | Component | Anatomy & appearance |
 |---|---|
-| **Top Bar** | Left: context (e.g. `SETLIST · WEDDING ANA & PEDRO · 3 / 12`, or `NO SETLIST`). Right: the mode mirror — DRAWBARS/MIXER, PARTS/SCENES, `KNOBS PART n / ALL / ASSIGN` — with the active state in accent, then tempo with its clock source (`♩ 72`, `♩ 72 · DIN`, `♩ 72 · USB`); clock lost reads `⚠ CLOCK LOST` in warn. |
+| **Top Bar** | Left: context (e.g. `SETLIST · WEDDING ANA & PEDRO · 3 / 12`, or `NO SETLIST`). Right: the mode mirror in `{typography.mode-mirror}` (20 px bold) — DRAWBARS/MIXER, PARTS/SCENES, `KNOBS PART n / ALL / ASSIGN` — with the active state in accent text and a `{spacing.mode-underline}` accent underline, no fill (keeps one accent fill per area), then tempo with its clock source (`♩ 72`, `♩ 72 · DIN`, `♩ 72 · USB`); clock lost reads `⚠ CLOCK LOST` in warn. |
 | **Live Set Hero** | Small label `LIVE SET 03`, the Live Set name in `{typography.live-set-name}` followed by the Unsaved Indicator when edits are pending; right-aligned `NEXT`, next title and `● READY` in ok (or `Loading <name>… Ns` in muted while a jump target loads; `End of setlist` on the last song). Hairline divider below. |
 | **Scene Tile** | Number + name, sub-label (e.g. "piano + pad") in muted. Current scene is the only accent-filled tile; its number, name and sub-label are all on-accent at 100%. Empty slots dashed (`line-strong`) with a muted number. Also used in Velora Studio's Live Set header. |
 | **Part Strip** | Part number + LED dot, ⏻ power icon (hit area ≥ `{spacing.touch-target-min}`), timbre name (up to 2 lines), **category short label** (not engine type) in meta caps, Volume Bar. Selected: accent border + raised. **Off:** name and category in muted at full opacity, hollow `line-strong` LED ring, `OFF` tag in place of the volume value. Empty: "—" / "empty". Missing library: "Missing library" in warn in place of the category. Pending pickup: 2 px dashed warn outline. |
@@ -611,22 +632,22 @@ Visual specs; behavior lives in EXPERIENCE.md Component Patterns. Tokens in fron
 | **Hint Bar** | Keycap-outlined (`line-strong`) physical control names (`VALUE`, `WRITE`, `EXIT`, `KEYS`) + verb; right-aligned reassurance or warning. |
 | **Organ Card** | `PART 4 · DRAWBARS`, organ name in `{typography.organ-name}`, category `ORGAN` in accent, percussion/vibrato/rotary meta, numeric registration. Raised with accent border. |
 | **Drawbar Column** | Footage label (16' … 1'), slot with rod and colored head showing 0–8, numeric value below. Nine across. Head edges per Colors (black edge in Stage theme, white edge in Studio theme). |
-| **List Row** | Name left, count/meta right; selected = raised + accent border; the now-playing row carries a ▶ glyph and `NOW` tag (accent); a Live Set with pending edits shows a warn ● after its name; dragged row dashed-accent outline. |
+| **List Row** | Name left, count/meta right; selected = raised + accent border; the now-playing row carries a ▶ glyph and `NOW` tag (accent); a Live Set with pending edits shows a warn ◆ after its name; dragged row dashed-accent outline. |
 | **Search Field** | ⌕ glyph, query, accent caret, `line-strong` border, muted scope hint ("searches setlists and Live Sets"). |
 | **Filter Chip** | Pill with `line-strong` outline; active chip accent-filled. Fixed chips first, then categories or user tags. |
-| **Result Tile** | Name, meta caps line (`STRINGS · FACTORY`, `LIVE SET · IN SUNDAY SERVICE`), ★ in accent for favorites, warn ● for pending edits; 3-column grid. |
+| **Result Tile** | Name, meta caps line (`STRINGS · FACTORY`, `LIVE SET · IN SUNDAY SERVICE`), ★ in accent for favorites, warn ◆ for pending edits; 3-column grid. |
 | **Import Row** | File name + size/format, Category Chip, row status (`ready` / `needs category` / `skipped: …` / `already imported`) — problem states in warn with text. |
 | **Category Chip** | `E.Piano ✓ suggested` in accent; `Choose category ▾` with warn border and text. |
 | **Progress Bar** | Thin pill track in line, accent fill; used for import, firmware update, transfer and boot. |
 | **Write Dialog** | Title "Write changes?", scope options (Scene · Whole Live Set · Save as new…; an unavailable scope in muted with a one-line reason), name field, muted "Changed: …" line, `EXIT · Cancel` and accent-filled `WRITE · Yes`. |
-| **Unsaved Indicator** | A `●` in warn immediately after the Live Set name in the Live Set Hero (and after the name in Velora Studio's Live Set header); no text, no dialog. |
+| **Unsaved Indicator** | A `◆` in warn immediately after the Live Set name in the Live Set Hero (and after the name in Velora Studio's Live Set header); no text, no dialog. |
 | **Notice Toast** | Non-modal pill on raised with `line-strong` border: message in text (`USB drive found`), separator `·`, action in accent (`Import?`). Also hosts the brightness overlay (label + Progress Bar). Never covers the Live Set Hero or Scene strip. |
 | **Launcher Grid** | 7 tiles (list in EXPERIENCE.md IA), tile label in `{typography.tile-label}`, each ≥ `{spacing.touch-target-min}`; highlighted tile raised + accent border. |
 | **ASSIGN Overlay** | Card over the part area listing K1–K8 (meta caps) with the assigned parameter name under each in `{typography.tile-label}`; the turned knob's slot raised with accent border. |
 | **Segmented Control** | Inline options (e.g. Stage / Studio, Full / Safe / Off, On / Off) with `line-strong` outline; active segment accent-filled. Also the on/off control in Settings. |
 | **On-screen Keyboard** | Locale layout with accented letters reachable, keys ≥ `{spacing.touch-target-min}` on raised with `line-strong` edge, Done key accent-filled. |
 | **Category Picker** | Raised panel with the 17 categories as a grid of full localized labels; highlighted tile accent-bordered; "Apply to all" row in Import batches. |
-| **Action Sheet** | Raised card, `{rounded.lg}`, title in `{typography.modal-title}`, 2–4 actions as rows ≥ 56 px with their control (`WRITE · Replace timbre`, `EXIT · Cancel`); used for missing-library choices, pairing code, firmware install. |
+| **Action Sheet** | Raised card, `{rounded.lg}`, title in `{typography.modal-title}`, 2–4 actions as rows ≥ 56 px with their control (`WRITE · Replace timbre`, `EXIT · Cancel`); used for missing-library choices, pairing code, firmware install and `★ Add to Favorites` (long press on a Result Tile). |
 | **Boot Screen** | Centered symbol and VELORA on bg, thin Progress Bar, muted status (`RESTORING · PERFECT · SCENE 2`, `UPDATING TO 1.3`). |
 | **Studio Title Bar** | App name, connection status in ok (`● VELORA 73 · CONNECTED VIA USB · PAIRED`), buttons Import, Backup, Primary Button "Write to Velora". |
 | **Studio Sidebar** | Sections SETLISTS (nested Live Sets), LIBRARY (by category), DEVICE (storage, firmware, backups); active item raised with accent left edge. |
@@ -634,14 +655,15 @@ Visual specs; behavior lives in EXPERIENCE.md Component Patterns. Tokens in fron
 | **Part Editor** | Four sections divided by hairlines, each titled in `{typography.desktop-section-label}`; envelope drawn as an accent polyline; insert/send chains as rows with a dashed "+ Add insert". |
 | **Studio Knob** | Raised disc with accent value arc, label in caps, value below; keyboard focus shows a 2 px accent ring at 2 px offset. |
 | **Primary Button** | Accent fill, on-accent text; one per window. |
-| **Studio Footer** | Status line in muted: unsaved scope (`UNSAVED: SCENE 2`, ● in warn), `● LIVE EDIT ON`, write/transfer progress, last backup time. |
-| **Studio Dialog** | Modal on raised, `{rounded.lg}`, title in `{typography.desktop-live-set-name}`; used for pairing-code entry, Write to Velora scope and Restore (Merge / Replace). |
+| **Studio Footer** | Status line in muted: unsaved scope (`UNSAVED: SCENE 2`, ◆ in warn), `● LIVE EDIT ON`, write/transfer progress, last backup time. |
+| **Studio Dialog** | Modal on raised, `{rounded.lg}`, title in `{typography.desktop-live-set-name}`; used for pairing-code entry, Write to Velora scope, Restore (Merge / Replace), Export and Import. |
+| **Studio Selection List** | Rows on surface divided by line hairlines inside a Studio Dialog, `{rounded.md}`; each row a checkbox (line-strong outline, accent fill when checked), name, category and size in muted; "Reference only" tag in muted for factory/partner timbres; collision rows end in a Segmented Control Skip / Replace / Keep both; total size and the large-bundle warning sit under the list, the warning in warn. |
 | **Studio Banner** | Non-modal strip at the top of the main area, raised with a 4 px warn left edge, message + one action (Reconnect, Update, Reload). |
 | **MENU Button** | Same cap and edge as the Navigation Buttons, no LED; English legend `MENU` below the cap in `{typography.panel-legend}`, centered between EXIT and WRITE. |
 | **Navigation Button** | EXIT, WRITE, LIVE SET ◀ ▶, SCENE ◀ ▶: button-cap with button-edge, no LED, legend in `{typography.panel-legend}`; tactile differences per Deferred › Hardware asks. |
 | **Panel Toggle Button** | Single button with one legend above and one below, an LED beside each legend; only the active mode's LED is lit. The knob toggle has three legends/LEDs (PART / ALL / ASSIGN). |
 | **Part/Scene Button** | Cap with LED strip above; strong LED, weak LED (lit, low drive) or off (unlit lens); meaning per mode in EXPERIENCE.md. |
-| **Encoder** | Endless encoder with an LED ring showing the value arc; the rest of the ring is unlit lens, never weak-lit. |
+| **Encoder** | Endless encoder with an LED ring showing the value arc; the rest of the ring is unlit lens, never weak-lit. The VALUE encoder also has a push switch (behaviour in EXPERIENCE.md Interaction Primitives). |
 | **Fader** | Dark cap on a grey track; non-motorized in v1. |
 
 ## Do's and Don'ts
@@ -665,10 +687,9 @@ Visual specs; behavior lives in EXPERIENCE.md Component Patterns. Tokens in fron
 
 ## Open Questions
 
-- **Studio-theme margins.** muted/accent/warn clear 4.5:1 on surface by < 0.1 (4.53 / 4.56 / 4.52). A darker set (`#5a635c` / `#466853` / `#725f1e`, ≥ 5.0:1) is available if the final face renders thin.
-- **Unsaved ● vs Ready ●.** Same glyph, hue-only difference at equal luminance; a distinct Unsaved shape (✱ or ◆) would survive glare.
-- **Top Bar mode mirror size.** At 15 px it does not confirm mode at a glance; a ≥ 20 px active pill conflicts with "one accent fill per area".
-- **Visual design of the Part, Effects and Scenes surfaces** is not drawn (content is fixed in EXPERIENCE.md); Launcher Grid, Notice Toast, ASSIGN Overlay, On-screen Keyboard, Category Picker, Action Sheet and the Velora Studio footer/dialog/banner have token specs but no mockup.
+None open; earlier questions are resolved in .memlog.md (Studio-theme darker set, ◆ Unsaved Indicator, 20 px underlined mode mirror).
+
+- **Design backlog.** The undrawn surfaces — Part, Effects, Scenes, Launcher Grid, On-screen Keyboard, Category Picker, Action Sheet and the Velora Studio footer/dialog/banner (Notice Toast and ASSIGN Overlay likewise have token specs but no mockup) — become design stories in the epics, each drawn before its surface is implemented.
 
 ## Deferred
 
@@ -683,4 +704,4 @@ Not open UX questions; owned by other parties and tracked here for handoff.
 1. **Display:** 7" 1024×600 panel, ≥ 1000 cd/m², optically bonded cover glass with anti-glare + anti-reflection (≤ 2% reflectance), backlight dimmable to ≤ 5 cd/m² (UI range 5–100%).
 2. **LEDs:** diffused, ≥ 3 mm; luminous intensity giving ≥ 10:1 on:off at 50 klx ambient (e.g. ≥ 150 mcd at full drive); weak level fixed at ~15% PWM; user brightness (3 steps) driven by firmware.
 3. **Legends:** color `{colors.panel-legend}` (≥ 5:1 on the darkest aluminum), cap height ≥ 2.5 mm, printed on a matte or bead-blasted band. Dark-stage plan: tactile cues below at minimum; optional backlight for the navigation column and toggles, or a USB-A powered lamp port.
-4. **Tactile cues:** WRITE with a concave cap or raised ring and MENU with a centre dot (EXIT · MENU · WRITE are adjacent); VALUE encoder larger (≥ 30 mm) and knurled, parameter encoders with a pointer line; REV fader cap distinct from faders 1–8; nubs on part/scene buttons 1 and 5; toggle buttons slightly taller than momentary buttons.
+4. **Tactile cues:** WRITE with a concave cap or raised ring and MENU with a centre dot (EXIT · MENU · WRITE are adjacent); VALUE encoder larger (≥ 30 mm), knurled and with a push switch (push-click), parameter encoders with a pointer line; REV fader cap distinct from faders 1–8; nubs on part/scene buttons 1 and 5; toggle buttons slightly taller than momentary buttons.

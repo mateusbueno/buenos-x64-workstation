@@ -16,6 +16,7 @@
 - **Scene:** a stored set of parameters within a Live Set (part volumes, part on/off, FX, drawbars). A scene never changes a part's instrument.
 - **Setlist Browser:** the screen that searches across setlists and Live Sets, filters by setlist tag, and jumps off-script.
 - **Timbre:** the instrument assigned to a part, chosen from the library.
+- **Live Set bundle:** a partial export from Velora Studio (`.velorasets` file) holding a selection of Live Sets plus the timbres they use, to move a repertoire to another Velora. User-imported timbres travel with their audio; factory and partner timbres travel only as references and must already be installed on the target. Not to be confused with a library bundle (the immutable on-device form of a library).
 - **ASSIGN:** the encoder mode that maps the 8 encoders to user-chosen parameters, saved per Live Set and seeded from a global default.
 - **Pickup:** after a recall, a non-motorized fader changes nothing until it crosses the stored value.
 - **Boot into:** the setting for what is playable after power-on: last sound used, start of setlist, or default Live Set.

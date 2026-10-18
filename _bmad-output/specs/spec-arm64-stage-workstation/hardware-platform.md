@@ -38,9 +38,10 @@
 Layout and legends are in the adopted `DESIGN.md` and `EXPERIENCE.md`. Legends are English only.
 
 - **Faders:** 9 dual-function faders: drawbars in DRAWBARS mode, parts 1–8 plus REV in MIXER mode. Non-motorized in v1, with pickup. Motorized faders are Pro only.
-- **Encoders:** 8 endless encoders with LED rings. Fixed functions are DELAY, BRIGHTNESS, ATTACK, RELEASE, LOW, MID, MID FREQ, HIGH. In ASSIGN they follow the Live Set's map. A VALUE encoder scrolls lists and changes values.
+- **Encoders:** 8 endless encoders with LED rings. Fixed functions are DELAY, BRIGHTNESS, ATTACK, RELEASE, LOW, MID, MID FREQ, HIGH. In ASSIGN they follow the Live Set's map. A VALUE encoder scrolls lists and changes values; it has a push switch (push-click), which on Performance opens the Part surface of the knob-target part.
 - **Toggle buttons:** 3, each with one LED per state: DRAWBARS/MIXER, PARTS/SCENES, and PART/ALL/ASSIGN (3 states).
-- **Buttons:** 8 part/scene buttons, LIVE SET ◀ ▶, SCENE ◀ ▶, EXIT · MENU · WRITE (MENU opens the Launcher), ROTARY STOP and S/F (slow/fast).
+- **Buttons:** 8 part/scene buttons, LIVE SET ◀ ▶, SCENE ◀ ▶, EXIT · MENU · WRITE (MENU opens the Launcher), ROTARY STOP and S/F (slow/fast). An optional Panel guard setting (default Off) makes LIVE SET ◀ ▶ act only after a 300 ms hold; the long-press threshold is a user setting (400 / 500 / 800 ms, default 500 ms).
+- **Pro tier (16 parts):** two banks of 8 (A/B) toggled by a bank button; part buttons and faders act on the active bank. Details are deferred to Pro.
 - **Wheels and footswitch:** pitch and mod wheels. The footswitch advances the scene by default, and can be set to previous scene, next Live Set or rotary speed.
 - **Display:** 7-inch capacitive touchscreen, native 1024×600 landscape. Luminance, glass, LED and legend floors are in `HARDWARE-INTERFACES.md`.
 

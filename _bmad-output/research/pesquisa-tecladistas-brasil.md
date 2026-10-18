@@ -61,7 +61,7 @@
     - Trocar de som, cena ou música **sem cortar** as notas que estão soando
     - Setlist com busca, cenas por música e acesso rápido a qualquer música
     - Importar seus próprios sons (SFZ/SF2)
-    - Órgão com drawbars físicos e Leslie realista
+    - Órgão com drawbars físicos e caixa rotativa (rotary) realista
     - Interface de áudio USB embutida (grava direto no computador)
     - Tela touch de 7" legível no palco
     - 73 teclas semipesadas com acabamento waterfall

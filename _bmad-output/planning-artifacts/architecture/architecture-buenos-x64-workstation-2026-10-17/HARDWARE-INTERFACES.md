@@ -47,10 +47,10 @@ flowchart LR
 
 | Element | Requirement |
 |---|---|
-| Encoders | 8 **endless** rotary encoders, each with an **LED ring**, plus 1 endless VALUE encoder. Report relative steps (signed delta per event); no pickup needed |
+| Encoders | 8 **endless** rotary encoders, each with an **LED ring**, plus 1 endless VALUE encoder that **must have a push switch** (push-click). Report relative steps (signed delta per event); no pickup needed. The VALUE push is reported in the panel MCU frame as a debounced `BUTTON` press/release (its own button ID) |
 | 9 faders | Dual function (drawbars / mixer). ≥10-bit, debounced, reported on change, ≥500 Hz update rate. **Non-motorized in v1**; motorized faders only on Pro |
 | Wheels | Pitch and mod wheels, ≥10-bit |
-| Buttons | Debounced press/release events. Set: 8 part/scene buttons; LIVE SET ◀ ▶; SCENE ◀ ▶; EXIT, MENU, WRITE; ROTARY STOP and S/F (slow/fast); 3 toggle buttons — DRAWBARS/MIXER and PARTS/SCENES (2 states), PART/ALL/ASSIGN (3 states) |
+| Buttons | Debounced press/release events. Set: 8 part/scene buttons; LIVE SET ◀ ▶; SCENE ◀ ▶; EXIT, MENU, WRITE; VALUE push switch; ROTARY STOP and S/F (slow/fast); 3 toggle buttons — DRAWBARS/MIXER and PARTS/SCENES (2 states), PART/ALL/ASSIGN (3 states) |
 | LEDs | Driven by commands from the SoC. The MCU never sets LED state on its own. One LED per toggle-button state (2 or 3), part/scene button LEDs, encoder LED rings. Diffused, **on:off contrast ≥10:1 at 50 klx** ambient, brightness user-adjustable from the SoC |
 | Pedals | Continuous sustain (half-pedal), expression, 1 switch. ≥10-bit ADC, polarity auto-detect at boot, TRS jacks |
 | Link | Same as the keybed MCU (its own UART or SPI) |
@@ -76,7 +76,7 @@ Panel legends are English only, **cap height ≥2.5 mm**, in a dark ink on a mat
 | `KEY_CONTACT` | MCU→SoC | Key index, contact index, closed/open |
 | `AFTERTOUCH` | MCU→SoC | Channel or per-key value (16-bit) |
 | `CONTROL` | MCU→SoC | Control ID, 16-bit value (faders, wheels, pedals) or signed step delta (encoders) |
-| `BUTTON` | MCU→SoC | Button ID, pressed/released |
+| `BUTTON` | MCU→SoC | Button ID, pressed/released (includes the VALUE encoder push switch) |
 | `LED_SET` | SoC→MCU | LED ID, brightness/colour |
 | `TIME_SYNC` | SoC→MCU→SoC | Reply with the current tick (used for drift tracking) |
 | `ENTER_BOOTLOADER` | SoC→MCU | Starts a firmware update |

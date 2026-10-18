@@ -71,7 +71,7 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
   - **success:** A 300 GB SFZ library on an external SSD imports through USB-A and becomes playable. The desktop app transfers and activates a library through a mediated USB protocol. Neither path exposes the internal NVMe as mass storage.
 - **CAP-15**
   - **intent:** A player can find any timbre in a library of hundreds of GB quickly, on stage, by search, the 17 categories, favorites, or recent.
-  - **success:** With a library of 1,000+ instruments, a player reaches any favorite with one touch, and any instrument within 3 interactions through search or categories on the touchscreen. Every timbre name in the UI shows its category, not its engine type.
+  - **success:** With a library of 1,000+ instruments, a player reaches any favorite within 2 interactions from the Library, and any instrument within 3 interactions through search or categories on the touchscreen. Every timbre name in the UI shows its category, not its engine type.
 - **CAP-16**
   - **intent:** A player can play soon after power-on.
   - **success:** The user's Boot into target (last sound used, start of setlist, or default Live Set, chosen in Settings) is playable ≤10 s after power-on with a 1 TB library installed.
@@ -88,11 +88,11 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
   - **intent:** Changing scene, Live Set, or setlist never cuts held, sustained, or releasing notes.
   - **success:** An automated test switches scene, Live Set, and setlist during held, pedal-sustained, and releasing notes, and finds no audible gap or truncation. The next Live Set of the loaded setlist is preloaded, so an in-setlist switch is immediate. A jump to a non-preloaded Live Set keeps the current sound playing until the target is ready.
 - **CAP-21**
-  - **intent:** A player organises songs as Setlist → Live Set (one per song) → 8 Parts plus up to 8 Scenes. The Live Set holds the instrument of each part; a scene stores parameters only and never changes an instrument.
+  - **intent:** A player organises songs as Setlist → Live Set (one per song) → 8 Parts plus up to 8 Scenes. The Live Set holds the instrument of each part; a scene stores parameters only (including arpeggiator on/off and all arpeggiator settings, with the Live Set holding the initial values) and never changes an instrument.
   - **success:** Recalling any scene changes no part's instrument. The Setlist Browser finds a Live Set by name across all setlists and filters by user-created setlist tags. A player jumps off-script to any Live Set without cutting sound (CAP-20), and LIVE SET ◀ ▶ returns to the loaded setlist.
 - **CAP-22**
-  - **intent:** A user can back up and restore setlists and Live Sets with Velora Studio, and use Studio without the unit connected.
-  - **success:** Studio writes a `.velorabackup` file to a location the user chooses. Restore asks Merge (add and update, keep what the backup lacks) or Replace (unit content becomes the backup), and both produce that result. With no unit connected, Studio opens and edits backups and the computer-side library.
+  - **intent:** A user can back up and restore setlists and Live Sets with Velora Studio, and use Studio without the unit connected. Backup and restore can also be partial: individual Live Sets or a selection, individual timbres or a selection, or a Live Set bundle (a selection of Live Sets plus the timbres they use) to move a repertoire to another Velora.
+  - **success:** Studio writes a full `.velorabackup` file to a location the user chooses. Restore asks Merge (add and update, keep what the backup lacks) or Replace (unit content becomes the backup), and both produce that result. With no unit connected, Studio opens and edits backups and the computer-side library. Partial exports write a versioned `.velorasets` file (a Live Set selection or a Live Set bundle) or a `.veloratimbre` file (a timbre selection), each with a manifest that declares its scope. Studio shows a size estimate before any export and warns when a bundle with large user timbres is big. User-imported timbres (SFZ/SF2) are exported with their audio, losslessly. Factory and partner timbres are never exported: the file carries only their `library_id` and `instrument_key`, and on restore a part whose library is not installed shows "Missing library". Importing a partial file asks per item, on a collision: skip, replace, or keep both (the copy gets a new ID), and each choice produces that result.
 - **CAP-23**
   - **intent:** A player can map the 8 encoders to parameters of their choice per Live Set (ASSIGN mode).
   - **success:** In ASSIGN, each encoder controls its mapped parameter in the current Live Set, and turning one shows the K1–K8 names for 3 s. A new Live Set starts from the global default map, which the user can edit. The map survives Write and a power cycle.
@@ -105,7 +105,7 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - The UI runs in a process isolated from the audio engine, so a UI crash never interrupts sound.
 - English is the default and source UI language. PT-BR and ES are selectable, and more languages arrive by system update. User content (setlist, Live Set, scene, tag names) is never translated.
 - Physical panel legends are English only. Rotary-speaker controls read ROTARY, and "Leslie" is never a product label.
-- The v1 panel control set is fixed (detail in `hardware-platform.md`): 9 dual-function faders (drawbars / mixer), 8 endless encoders with LED rings, 3 toggle buttons with one LED per state (DRAWBARS/MIXER, PARTS/SCENES, PART/ALL/ASSIGN), a MENU button, ROTARY stop and slow/fast buttons, and a footswitch that advances the scene by default. v1 faders are non-motorized and use pickup.
+- The v1 panel control set is fixed (detail in `hardware-platform.md`): 9 dual-function faders (drawbars / mixer), 8 endless encoders with LED rings, a VALUE encoder with a push switch, 3 toggle buttons with one LED per state (DRAWBARS/MIXER, PARTS/SCENES, PART/ALL/ASSIGN), a MENU button, ROTARY stop and slow/fast buttons, and a footswitch that advances the scene by default. v1 faders are non-motorized and use pickup.
 - The touchscreen is 7-inch at a native 1024×600, landscape.
 - Engines are clean-room or licensed. GPL code (e.g. Dexed/MSFA, setBfree) must not ship. Permissively licensed code such as sfizz (BSD-2) and libFLAC (BSD) is allowed. Marketing uses no third-party trademarks (no "DX7", no "Hammond").
 - The architecture spine (`ARCHITECTURE-SPINE.md`, AD-1 to AD-31) and `HARDWARE-INTERFACES.md` are binding companions.
@@ -158,4 +158,3 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - sfizz was archived upstream (final 1.2.3, BSD-2). The architecture vendors its SFZ parser (AD-15). Do the licenses of the vendored parts and their dependencies allow closed-product use?
 - Which MIDI CC numbers does the Hammond M-solo use for drawbars? The Drawbar Data List on pp. 64–65 of the manual is an image.
 - Can the founder record a real tonewheel B-3 through a real rotary speaker cabinet for organ reference? This is recommended, not blocking.
-- CAP-15 promises a favorite in one touch, but the UX flow needs at least 2 interactions (open the Library, tap ★ Favorites, select). Should CAP-15 change, or the UX?

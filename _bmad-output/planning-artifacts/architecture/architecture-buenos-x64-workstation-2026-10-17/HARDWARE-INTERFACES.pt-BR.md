@@ -54,10 +54,10 @@ flowchart LR
 
 | Elemento | Requisito |
 |---|---|
-| Encoders | 8 encoders rotativos **sem fim**, cada um com **anel de LEDs**, mais 1 encoder VALUE sem fim. Reportam passos relativos (delta com sinal por evento); não precisam de pickup |
+| Encoders | 8 encoders rotativos **sem fim**, cada um com **anel de LEDs**, mais 1 encoder VALUE sem fim que **deve ter chave de pressão** (push-click). Reportam passos relativos (delta com sinal por evento); não precisam de pickup. O push do VALUE é reportado no frame do MCU do painel como evento `BUTTON` de pressionar/soltar, com debounce (ID de botão próprio) |
 | 9 faders | Dupla função (drawbars / mixer). ≥10 bits, com debounce, reportados quando mudam, atualização ≥500 Hz. **Sem motor na v1**; faders motorizados só no Pro |
 | Rodas | Pitch e modulação, ≥10 bits |
-| Botões | Eventos de pressionar e soltar, com debounce. Conjunto: 8 botões de part/cena; LIVE SET ◀ ▶; SCENE ◀ ▶; EXIT, MENU, WRITE; ROTARY STOP e S/F (lento/rápido); 3 botões de alternância — DRAWBARS/MIXER e PARTS/SCENES (2 estados), PART/ALL/ASSIGN (3 estados) |
+| Botões | Eventos de pressionar e soltar, com debounce. Conjunto: 8 botões de part/cena; LIVE SET ◀ ▶; SCENE ◀ ▶; EXIT, MENU, WRITE; chave de pressão do VALUE; ROTARY STOP e S/F (lento/rápido); 3 botões de alternância — DRAWBARS/MIXER e PARTS/SCENES (2 estados), PART/ALL/ASSIGN (3 estados) |
 | LEDs | Comandados pelo SoC. O MCU nunca muda o estado de um LED por conta própria. Um LED por estado de cada botão de alternância (2 ou 3), LEDs dos botões de part/cena, anéis de LEDs dos encoders. Difusos, **contraste aceso:apagado ≥10:1 sob 50 klx** de luz ambiente, brilho ajustável pelo usuário via SoC |
 | Pedais | Sustain contínuo (meio-pedal), expressão e 1 switch. ADC ≥10 bits, detecção automática de polaridade no boot, conectores TRS |
 | Ligação | A mesma do MCU do keybed, numa UART ou SPI própria |
@@ -83,7 +83,7 @@ As legendas do painel são só em inglês, com **altura de maiúscula ≥2,5 mm*
 | `KEY_CONTACT` | MCU→SoC | Índice da tecla, índice do contato, fechado/aberto |
 | `AFTERTOUCH` | MCU→SoC | Valor por canal ou por tecla (16 bits) |
 | `CONTROL` | MCU→SoC | ID do controle e valor de 16 bits (faders, rodas, pedais) ou delta de passos com sinal (encoders) |
-| `BUTTON` | MCU→SoC | ID do botão, pressionado/solto |
+| `BUTTON` | MCU→SoC | ID do botão, pressionado/solto (inclui a chave de pressão do encoder VALUE) |
 | `LED_SET` | SoC→MCU | ID do LED, brilho/cor |
 | `TIME_SYNC` | SoC→MCU→SoC | O MCU responde com o tick atual, usado para acompanhar o drift |
 | `ENTER_BOOTLOADER` | SoC→MCU | Inicia a atualização de firmware |
