@@ -35,10 +35,10 @@ project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: backlog
+  epic-1: in-progress
   1-1-preempt_rt-latency-spike-on-mainline-rk3588-under-load: backlog
   1-2-audio-output-bring-up-on-the-dev-board: backlog
-  1-3-monorepo-skeleton-with-host-build-and-ci: backlog
+  1-3-monorepo-skeleton-with-host-build-and-ci: done
   1-4-minimal-yocto-dev-image-for-the-dev-board: backlog
   1-5-mipi-dsi-7-panel-spike-on-mainline-rk3588: backlog
   1-6-secure-boot-chain-selection-and-signed-image-on-an-unfused-b: backlog
