@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 
+#include "velora/format/byte_source.hpp"
 #include "velora/format/error.hpp"
 #include "velora/format/hash.hpp"
 
@@ -156,13 +157,14 @@ class BlockDecoder {
   std::unique_ptr<Impl> impl_;
 };
 
-class ByteSource;  // internal
-
 class BundleReader {
  public:
   // Memory is borrowed and must outlive the reader.
   static Result<BundleReader> open_memory(std::span<const std::uint8_t> bytes,
                                           ReaderOptions opt = {});
+  // Reads header, manifest and index from a caller-supplied source (e.g. one that goes through a
+  // counting file-system port); blocks are read on demand through the same source.
+  static Result<BundleReader> open_source(std::unique_ptr<ByteSource> src, ReaderOptions opt = {});
   // Reads header, manifest and index; blocks are read on demand (pread).
   static Result<BundleReader> open_file(const std::string& path, ReaderOptions opt = {});
 

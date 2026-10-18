@@ -13,15 +13,6 @@
 namespace velora::format {
 using namespace layout;
 
-class ByteSource {
- public:
-  virtual ~ByteSource() = default;
-  virtual std::uint64_t size() const = 0;
-  // Pointer to [off, off+n) when the bytes are directly addressable, else nullptr.
-  virtual const std::uint8_t* direct(std::uint64_t off, std::size_t n) const = 0;
-  virtual Error read_at(std::uint64_t off, void* dst, std::size_t n) const = 0;
-};
-
 namespace {
 
 class MemorySource final : public ByteSource {
@@ -115,6 +106,11 @@ BundleReader::~BundleReader() = default;
 Result<BundleReader> BundleReader::open_memory(std::span<const std::uint8_t> bytes,
                                                ReaderOptions opt) {
   return open(std::make_unique<MemorySource>(bytes), opt);
+}
+
+Result<BundleReader> BundleReader::open_source(std::unique_ptr<ByteSource> src, ReaderOptions opt) {
+  if (!src) return Error::kInvalidArgument;
+  return open(std::move(src), opt);
 }
 
 Result<BundleReader> BundleReader::open_file(const std::string& path, ReaderOptions opt) {

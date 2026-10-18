@@ -14,6 +14,7 @@ add_subdirectory(engine/core)
 add_subdirectory(engine/host)
 add_subdirectory(formatlib)
 add_subdirectory(tools/offline-render)
+add_subdirectory(tools/library-gen)
 add_subdirectory(tools/spikes)
 
 # Dependency-purity gate for engine/core (see tools/ci/check_core_deps.py).

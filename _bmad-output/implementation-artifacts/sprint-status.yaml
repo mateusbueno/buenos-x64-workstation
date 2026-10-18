@@ -49,7 +49,7 @@ development_status:
   1-11-engine-runs-live-on-the-dev-board: backlog
   1-12-formatlib-lossless-block-indexed-bundle: done
   1-13-import-the-demo-sfz-library-subset-into-bundles: backlog
-  1-14-1-tb-library-resolved-from-the-index-without-scanning: backlog
+  1-14-1-tb-library-resolved-from-the-index-without-scanning: done
   1-15-sample-engine-plays-ram-resident-instruments-and-passes-the: backlog
   1-16-instrument-heads-decoded-into-locked-ram-at-load: backlog
   1-17-streaming-from-nvme-ahead-of-the-playhead: backlog

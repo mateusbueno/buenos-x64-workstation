@@ -13,4 +13,6 @@ Container (target `velora_format`, namespace `velora::format`):
 - Versions: `kFormatVersion` = 1; the reader accepts N and N-1 and rejects anything else with `Error::kUnsupportedVersion`. Zero-length samples are allowed.
 - PCM exchange convention: interleaved `int32_t`; float32 is carried as its IEEE bit pattern.
 
+Custom sources: `BundleReader::open_source` takes a `ByteSource` (`velora/format/byte_source.hpp`) so a host can back a reader with its own file-system port (used by the library resolver).
+
 Tests: `format_hash_test`, `format_bundle_test` (round trips, seek, truncation and bit-flip sweeps, corruption, version, identity), `format_wav_test`.

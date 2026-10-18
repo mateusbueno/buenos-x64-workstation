@@ -633,9 +633,45 @@ void test_file_io() {
   std::filesystem::remove(path);
 }
 
+// ByteSource with no direct addressing: every byte goes through read_at.
+class IndirectSource final : public ByteSource {
+ public:
+  explicit IndirectSource(Bytes b) : b_(std::move(b)) {}
+  std::uint64_t size() const override { return b_.size(); }
+  const std::uint8_t* direct(std::uint64_t, std::size_t) const override { return nullptr; }
+  Error read_at(std::uint64_t off, void* dst, std::size_t n) const override {
+    if (off > b_.size() || n > b_.size() - off) return Error::kTruncated;
+    if (n) std::memcpy(dst, b_.data() + off, n);
+    return Error::kNone;
+  }
+
+ private:
+  Bytes b_;
+};
+
+void test_open_source() {
+  BundleWriter w;
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 6000, Kind::kMixed);
+  const std::size_t i = w.add_instrument("a", "a.sfz").value();
+  CHECK_ERR(w.add_sample(i, {"s", f, 6000, pcm}), Error::kNone);
+  const Bytes bytes = w.finalize().take();
+  auto r = BundleReader::open_source(std::make_unique<IndirectSource>(bytes));
+  CHECK(r.ok());
+  if (r.ok()) {
+    CHECK(r.value().instruments().size() == 1 && r.value().instruments()[0].key == "a.sfz");
+    CHECK(matches_source(r.value(), 0, pcm));
+  }
+  CHECK_ERR(BundleReader::open_source(nullptr).error(), Error::kInvalidArgument);
+  Bytes cut(bytes.begin(), bytes.begin() + 100);
+  CHECK_ERR(BundleReader::open_source(std::make_unique<IndirectSource>(cut)).error(),
+            Error::kTruncated);
+}
+
 }  // namespace
 
 int main() {
+  test_open_source();
   test_roundtrip_all_formats();
   test_silence_noise_lengths();
   test_seek();
