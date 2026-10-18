@@ -33,10 +33,16 @@
 - The keybed model is a calibration table, so a different Fatar model needs no code change.
 - Resupply beyond the first ~100 units needs Fatar OEM terms (open question).
 
-## Control surface and display (UI option A)
+## Control surface and display (UI option A, refined by UX)
 
-- One knob per function for piano, samples, and effects, plus 9 physical sliders as drawbars.
-- A 7-inch touchscreen for library search, categories, and favorites.
+Layout and legends are in the adopted `DESIGN.md` and `EXPERIENCE.md`. Legends are English only.
+
+- **Faders:** 9 dual-function faders: drawbars in DRAWBARS mode, parts 1–8 plus REV in MIXER mode. Non-motorized in v1, with pickup. Motorized faders are Pro only.
+- **Encoders:** 8 endless encoders with LED rings. Fixed functions are DELAY, BRIGHTNESS, ATTACK, RELEASE, LOW, MID, MID FREQ, HIGH. In ASSIGN they follow the Live Set's map. A VALUE encoder scrolls lists and changes values.
+- **Toggle buttons:** 3, each with one LED per state: DRAWBARS/MIXER, PARTS/SCENES, and PART/ALL/ASSIGN (3 states).
+- **Buttons:** 8 part/scene buttons, LIVE SET ◀ ▶, SCENE ◀ ▶, EXIT · MENU · WRITE (MENU opens the Launcher), ROTARY STOP and S/F (slow/fast).
+- **Wheels and footswitch:** pitch and mod wheels. The footswitch advances the scene by default, and can be set to previous scene, next Live Set or rotary speed.
+- **Display:** 7-inch capacitive touchscreen, native 1024×600 landscape. Luminance, glass, LED and legend floors are in `HARDWARE-INTERFACES.md`.
 
 ## Audio path
 

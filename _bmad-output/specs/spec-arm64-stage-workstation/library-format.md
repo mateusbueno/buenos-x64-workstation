@@ -25,3 +25,9 @@ The goal is to deter extraction, not to be unbreakable. User imports (SFZ/SF2) a
 - **Desktop companion app:** manages libraries, does heavy SFZ conversion on the computer, and activates partner libraries (future). It transfers over a mediated, MTP-like USB protocol and never over mass storage.
 - **Imports are atomic:** a library becomes visible only after it has been fully written and verified.
 - The NVMe is sealed and not user-accessible.
+
+## Categories
+
+Every instrument carries exactly one category, shown under its name in the UI and used as a Library filter. Imports require one: it is auto-suggested from filename or metadata, and the user confirms or changes it. Localized labels are in `EXPERIENCE.md`.
+
+Piano, E.Piano, Organ, Keys, Mallet & Bells, Strings, Brass, Woodwind, Choir & Vocal, Guitar, Bass, Synth Lead, Synth Pad, Synth Poly, Drums & Perc, World, FX & Ambient.

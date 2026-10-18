@@ -11,7 +11,7 @@
 
 **Organ references:**
 - The Hammond M-solo, which is MIDI-driven, sends and receives CC/NRPN, and is used for automated A/B renders.
-- Recordings of a real tonewheel B-3 + Leslie. Recommended.
+- Recordings of a real tonewheel B-3 through a real rotary speaker cabinet. Recommended.
 
 ## SFZ v1 opcode subset
 
@@ -33,4 +33,5 @@ Salamander Grand Piano, VSCO2, Sonatina Symphonic Orchestra, Karoryfer libraries
 
 - 24 h stress test at 256 voices with the SSD near full: zero dropouts.
 - 100 random power cuts during firmware update and during library import: the unit boots every time, and no library is partially imported.
-- Boot: playable default program ≤10 s with a 1 TB library.
+- Boot: the Boot into target (each of the 3 options) playable ≤10 s with a 1 TB library.
+- Seamless switching (CAP-20): automated renders switch scene, in-setlist Live Set, setlist, and a non-preloaded Live Set during held, sustained and releasing notes. Pass: no gap or truncation in the output.

@@ -7,13 +7,13 @@ Audience: the hardware partners building the v1 boards. This document is the bin
 ```mermaid
 flowchart LR
   KB["Fatar 73SW keybed"] --> KMCU["Keybed MCU"]
-  PANEL["Knobs, 9 drawbar sliders,<br/>buttons, LEDs, pedals"] --> PMCU["Panel MCU"]
+  PANEL["8 encoders + VALUE, 9 faders,<br/>buttons, LEDs, wheels, pedals"] --> PMCU["Panel MCU"]
   KMCU -- "UART ≥3 Mbaud or SPI + IRQ" --> SOM["RK3588 SoM"]
   PMCU -- "UART ≥3 Mbaud or SPI + IRQ" --> SOM
   SOM -- "I2S/TDM + I2C" --> CODEC["PCM3168A codec<br/>(clock master, 24.576 MHz)"]
   CODEC --> OUT["4 balanced outs, line in"]
   CODEC --> HP["Headphone amp"]
-  SOM -- "MIPI DSI + I2C" --> LCD["7in display + capacitive touch"]
+  SOM -- "MIPI DSI + I2C" --> LCD["7in 1024x600 display + capacitive touch"]
   SOM -- "PCIe Gen3 x4" --> NVME["M.2 2280 NVMe (sealed)"]
   SOM -- "USB3 OTG (device)" --> USBC["USB-C to computer"]
   SOM -- "USB3 host" --> USBA["USB-A"]
@@ -47,12 +47,15 @@ flowchart LR
 
 | Element | Requirement |
 |---|---|
-| Knobs | Report position changes with ≥10-bit resolution (absolute pots or encoders, to be decided with UX) |
-| 9 drawbar sliders | ≥10-bit, debounced, reported on change, ≥500 Hz update rate |
-| Buttons | Debounced press/release events |
-| LEDs | Driven by commands from the SoC. The MCU never sets LED state on its own |
+| Encoders | 8 **endless** rotary encoders, each with an **LED ring**, plus 1 endless VALUE encoder. Report relative steps (signed delta per event); no pickup needed |
+| 9 faders | Dual function (drawbars / mixer). ≥10-bit, debounced, reported on change, ≥500 Hz update rate. **Non-motorized in v1**; motorized faders only on Pro |
+| Wheels | Pitch and mod wheels, ≥10-bit |
+| Buttons | Debounced press/release events. Set: 8 part/scene buttons; LIVE SET ◀ ▶; SCENE ◀ ▶; EXIT, MENU, WRITE; ROTARY STOP and S/F (slow/fast); 3 toggle buttons — DRAWBARS/MIXER and PARTS/SCENES (2 states), PART/ALL/ASSIGN (3 states) |
+| LEDs | Driven by commands from the SoC. The MCU never sets LED state on its own. One LED per toggle-button state (2 or 3), part/scene button LEDs, encoder LED rings. Diffused, **on:off contrast ≥10:1 at 50 klx** ambient, brightness user-adjustable from the SoC |
 | Pedals | Continuous sustain (half-pedal), expression, 1 switch. ≥10-bit ADC, polarity auto-detect at boot, TRS jacks |
 | Link | Same as the keybed MCU (its own UART or SPI) |
+
+Panel legends are English only, **cap height ≥2.5 mm**, in a dark ink on a matte band. Layout and legend text follow the UX `DESIGN.md` (panel layout A); rotary-speaker controls read ROTARY.
 
 ## 5. Frame protocol (both MCUs)
 
@@ -72,7 +75,7 @@ flowchart LR
 | `HELLO` | MCU→SoC | Firmware version, protocol version, board ID, keybed contact count |
 | `KEY_CONTACT` | MCU→SoC | Key index, contact index, closed/open |
 | `AFTERTOUCH` | MCU→SoC | Channel or per-key value (16-bit) |
-| `CONTROL` | MCU→SoC | Control ID, 16-bit value (knobs, sliders, pedals) |
+| `CONTROL` | MCU→SoC | Control ID, 16-bit value (faders, wheels, pedals) or signed step delta (encoders) |
 | `BUTTON` | MCU→SoC | Button ID, pressed/released |
 | `LED_SET` | SoC→MCU | LED ID, brightness/colour |
 | `TIME_SYNC` | SoC→MCU→SoC | Reply with the current tick (used for drift tracking) |
@@ -97,9 +100,10 @@ All multi-byte fields are little-endian. The software team owns the exact contro
 
 ## 8. Display and touch
 
-- **Panel:** 7" on MIPI DSI. Software has an internal-HDMI fallback if DSI bring-up on mainline fails, so the board should provide a footprint or variant for it.
+- **Panel:** 7" on MIPI DSI, **native 1024×600**, landscape. Software has an internal-HDMI fallback if DSI bring-up on mainline fails, so the board should provide a footprint or variant for it.
+- **Luminance and glass:** **≥1000 cd/m²**, optically bonded anti-glare/anti-reflection cover glass (the device has no light sensor; the player sets brightness by hand).
 - **Touch:** capacitive over I2C, on a controller with a **mainline Linux driver** (e.g. Goodix or FocalTech families). Interrupt and reset lines go to the SoC.
-- **Backlight:** PWM-dimmable and controlled by the SoC.
+- **Backlight:** PWM-dimmable, controlled by the SoC, down to **≤5 cd/m²** for dark stages.
 
 ## 9. USB
 
@@ -137,7 +141,8 @@ All multi-byte fields are little-endian. The software team owns the exact contro
 1. SoM vendor, part number and the written longevity commitment.
 2. Keybed contact count (2 or 3) and aftertouch presence on the 73SW stock.
 3. Chosen MCU family, and the bootloader approach for both MCUs.
-4. DSI panel and touch controller part numbers.
+4. DSI panel and touch controller part numbers, with measured luminance range (§8).
+8. Encoder and LED part numbers, with LED on:off contrast measured at 50 klx (§4).
 5. Measured `POWER_FAIL` timing and hold-up duration.
 6. Codec reference design measurements (latency, noise).
 7. Thermal test result at full load.

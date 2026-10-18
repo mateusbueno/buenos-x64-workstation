@@ -2,12 +2,20 @@
 
 - **Head:** the opening portion of a sample, kept resident in RAM so a voice can start instantly while the rest streams from NVMe.
 - **Streaming (virtual memory):** playing a sample from its RAM head and then from disk-backed buffers that refill ahead of the playhead.
-- **Part:** one instrument slot in a performance (a layer or split zone). v1 has 8 and Pro has 16.
+- **Part:** one instrument slot in a Live Set (a layer or split zone). v1 has 8 and Pro has 16.
 - **Voice floor:** the minimum polyphony an engine is guaranteed, even when the shared pool is saturated.
 - **Clean-room:** an implementation written without copying third-party source code.
 - **UAC2:** USB Audio Class 2, the class-compliant USB audio standard that needs no driver.
 - **Milestone 1:** the investor demo of the sample engine on an RK3588 dev board, proving the targets in `performance-targets.md`.
 - **73SW:** a 73-key semi-weighted keybed.
 - **Multi-contact onset:** organ notes fade in as successive key contacts close, emulating the 9 contacts per key of a B-3.
-- **Companion app:** the desktop software that manages, converts, and activates libraries over a mediated USB protocol.
+- **Companion app (Velora Studio):** the desktop software that manages, converts, and activates libraries, and backs up and restores setlists and Live Sets, over a mediated USB protocol.
 - **Pro:** a later tier with a sequencer, 16 parts, and 32 GB of RAM, on the same SoC and software base.
+- **Setlist:** an ordered list of Live Sets for a show. Users can tag setlists.
+- **Live Set:** one song's sound: the timbre, zone, volume and FX of 8 parts, plus up to 8 scenes and an ASSIGN map. Earlier spec and architecture text calls this a "performance" or "program"; the terms mean the same thing, and the UI uses only "Live Set".
+- **Scene:** a stored set of parameters within a Live Set (part volumes, part on/off, FX, drawbars). A scene never changes a part's instrument.
+- **Setlist Browser:** the screen that searches across setlists and Live Sets, filters by setlist tag, and jumps off-script.
+- **Timbre:** the instrument assigned to a part, chosen from the library.
+- **ASSIGN:** the encoder mode that maps the 8 encoders to user-chosen parameters, saved per Live Set and seeded from a global default.
+- **Pickup:** after a recall, a non-motorized fader changes nothing until it crosses the stored value.
+- **Boot into:** the setting for what is playable after power-on: last sound used, start of setlist, or default Live Set.

@@ -11,6 +11,8 @@ companions:
   - glossary.md
   - ../../planning-artifacts/architecture/architecture-buenos-x64-workstation-2026-10-17/ARCHITECTURE-SPINE.md
   - ../../planning-artifacts/architecture/architecture-buenos-x64-workstation-2026-10-17/HARDWARE-INTERFACES.md
+  - ../../planning-artifacts/ux-designs/ux-buenos-x64-workstation-2026-10-18/DESIGN.md
+  - ../../planning-artifacts/ux-designs/ux-buenos-x64-workstation-2026-10-18/EXPERIENCE.md
 sources:
   - ../../forge/kronos-64bit-os/forged-idea.md
 ---
@@ -44,11 +46,11 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
   - **intent:** A player can play a virtual-analog synth engine.
   - **success:** The engine sustains ≥64 voices and reaches shipped v1 units by firmware update.
 - **CAP-7**
-  - **intent:** A player can combine up to 8 parts as layers and splits in a v1 performance.
-  - **success:** A performance with 8 parts across engines plays with correct zones and layering. The Pro tier raises the limit to 16 parts.
+  - **intent:** A player can combine up to 8 parts as layers and splits in a v1 Live Set.
+  - **success:** A Live Set with 8 parts across engines plays with correct zones and layering. The Pro tier raises the limit to 16 parts.
 - **CAP-8**
   - **intent:** A user can import their own SFZ+WAV libraries (priority) and SF2 libraries and play them, unencrypted.
-  - **success:** Every library in the reference corpus in `acceptance-tests.md` imports and plays with its key, velocity, round-robin, and loop mapping intact, within the v1 opcode subset.
+  - **success:** Every library in the reference corpus in `acceptance-tests.md` imports and plays with its key, velocity, round-robin, and loop mapping intact, within the v1 opcode subset. Every imported instrument carries one of the 17 categories in `library-format.md`, auto-suggested from filename or metadata; an instrument without a category cannot import.
 - **CAP-9**
   - **intent:** Factory libraries, and future partner libraries, ship in a proprietary lossless format that resists extraction.
   - **success:** An encrypted library cannot be decoded with off-the-shelf tools or by copying it to another unit. A tampered file is rejected at load. A custom OS cannot boot to read the keys. The design is in `library-format.md`.
@@ -63,16 +65,16 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
   - **success:** A firmware update that adds a new engine installs on a v1 unit, and the engine runs inside the shared voice pool.
 - **CAP-13**
   - **intent:** A player can shape the sound with built-in effects: rotary speaker, reverb, delay, chorus/phaser, EP amp/drive, EQ, compressor.
-  - **success:** All effects run on an 8-part performance with full polyphony and do not break the latency or dropout targets.
+  - **success:** All effects run on an 8-part Live Set with full polyphony and do not break the latency or dropout targets.
 - **CAP-14**
   - **intent:** A user can move libraries of hundreds of GB onto the unit, either from an external drive or from a desktop companion app, without opening the unit.
   - **success:** A 300 GB SFZ library on an external SSD imports through USB-A and becomes playable. The desktop app transfers and activates a library through a mediated USB protocol. Neither path exposes the internal NVMe as mass storage.
 - **CAP-15**
-  - **intent:** A player can find any sound in a library of hundreds of GB quickly, on stage.
-  - **success:** With a library of 1,000+ instruments, a player reaches any favorite with one touch, and any instrument within 3 interactions through search or categories on the touchscreen.
+  - **intent:** A player can find any timbre in a library of hundreds of GB quickly, on stage, by search, the 17 categories, favorites, or recent.
+  - **success:** With a library of 1,000+ instruments, a player reaches any favorite with one touch, and any instrument within 3 interactions through search or categories on the touchscreen. Every timbre name in the UI shows its category, not its engine type.
 - **CAP-16**
   - **intent:** A player can play soon after power-on.
-  - **success:** The default program is playable ≤10 s after power-on with a 1 TB library installed.
+  - **success:** The user's Boot into target (last sound used, start of setlist, or default Live Set, chosen in Settings) is playable ≤10 s after power-on with a 1 TB library installed.
 - **CAP-17**
   - **intent:** A power loss never bricks the unit or corrupts its library.
   - **success:** Power cut at random points during a firmware update or a library import, repeated 100 times: the unit boots every time, into the previous or the new firmware, and holds no partially imported library.
@@ -82,6 +84,18 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - **CAP-19**
   - **intent:** A player can run an arpeggiator on any part, synced to the internal tempo or to external MIDI clock.
   - **success:** With an arpeggiator active on 2 parts, notes land sample-accurately on the tempo grid. Following external MIDI clock from DIN or USB, the timing jitter stays ≤1 ms against the incoming clock.
+- **CAP-20**
+  - **intent:** Changing scene, Live Set, or setlist never cuts held, sustained, or releasing notes.
+  - **success:** An automated test switches scene, Live Set, and setlist during held, pedal-sustained, and releasing notes, and finds no audible gap or truncation. The next Live Set of the loaded setlist is preloaded, so an in-setlist switch is immediate. A jump to a non-preloaded Live Set keeps the current sound playing until the target is ready.
+- **CAP-21**
+  - **intent:** A player organises songs as Setlist → Live Set (one per song) → 8 Parts plus up to 8 Scenes. The Live Set holds the instrument of each part; a scene stores parameters only and never changes an instrument.
+  - **success:** Recalling any scene changes no part's instrument. The Setlist Browser finds a Live Set by name across all setlists and filters by user-created setlist tags. A player jumps off-script to any Live Set without cutting sound (CAP-20), and LIVE SET ◀ ▶ returns to the loaded setlist.
+- **CAP-22**
+  - **intent:** A user can back up and restore setlists and Live Sets with Velora Studio, and use Studio without the unit connected.
+  - **success:** Studio writes a `.velorabackup` file to a location the user chooses. Restore asks Merge (add and update, keep what the backup lacks) or Replace (unit content becomes the backup), and both produce that result. With no unit connected, Studio opens and edits backups and the computer-side library.
+- **CAP-23**
+  - **intent:** A player can map the 8 encoders to parameters of their choice per Live Set (ASSIGN mode).
+  - **success:** In ASSIGN, each encoder controls its mapped parameter in the current Live Set, and turning one shows the K1–K8 names for 3 s. A new Live Set starts from the global default map, which the user can edit. The map survives Write and a power cycle.
 
 ## Constraints
 
@@ -89,8 +103,12 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - RK3588 is the single SoC for the v1 (16 GB) and Pro (32 GB) tiers, and production uses an industrial SoM with a written 7–10 year longevity commitment. Milestone 1 first validates realtime latency and the display path on mainline. The fallback (CM5 or Intel N-series) is allowed only if that validation fails.
 - v1 and Pro use one software base. The sequencer is a module, not a fork.
 - The UI runs in a process isolated from the audio engine, so a UI crash never interrupts sound.
+- English is the default and source UI language. PT-BR and ES are selectable, and more languages arrive by system update. User content (setlist, Live Set, scene, tag names) is never translated.
+- Physical panel legends are English only. Rotary-speaker controls read ROTARY, and "Leslie" is never a product label.
+- The v1 panel control set is fixed (detail in `hardware-platform.md`): 9 dual-function faders (drawbars / mixer), 8 endless encoders with LED rings, 3 toggle buttons with one LED per state (DRAWBARS/MIXER, PARTS/SCENES, PART/ALL/ASSIGN), a MENU button, ROTARY stop and slow/fast buttons, and a footswitch that advances the scene by default. v1 faders are non-motorized and use pickup.
+- The touchscreen is 7-inch at a native 1024×600, landscape.
 - Engines are clean-room or licensed. GPL code (e.g. Dexed/MSFA, setBfree) must not ship. Permissively licensed code such as sfizz (BSD-2) and libFLAC (BSD) is allowed. Marketing uses no third-party trademarks (no "DX7", no "Hammond").
-- The architecture spine (`ARCHITECTURE-SPINE.md`, AD-1 to AD-29) and `HARDWARE-INTERFACES.md` are binding companions.
+- The architecture spine (`ARCHITECTURE-SPINE.md`, AD-1 to AD-31) and `HARDWARE-INTERFACES.md` are binding companions.
 - The audio thread never does disk I/O, makes blocking syscalls, or takes page faults. Sample heads stay resident in locked RAM.
 - Sample data is never lossy-compressed.
 - Main audio output goes over I2S/TDM to a codec that is the clock master, with its own crystal in the 48 kHz family. USB is never in the main output path.
@@ -115,11 +133,12 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - A partner library store in v1. The format supports it later.
 - Retail distribution for the first ~100 units, which are sold direct.
 - SFZ scripting and SFZ effect buses.
+- Motorized faders in v1, which are reserved for the Pro tier.
 
 ## Success signal
 
 - **Milestone 1 (month 6, investor demo):** on an RK3588 dev board, the sample engine plays 256 stereo voices streamed from a library of up to 1 TB, at ≤5 ms latency, with zero dropouts over 24 h.
-- **v1 (month 18):** a production unit boots in ≤10 s, plays the factory piano and the organ with Leslie live on stage, and records into a laptop over USB-C. The first ~100 units sell direct at R$ 17,990–19,990.
+- **v1 (month 18):** a production unit boots in ≤10 s, plays the factory piano and the organ with its rotary speaker live on stage, and records into a laptop over USB-C. The first ~100 units sell direct at R$ 17,990–19,990.
 
 ## Assumptions
 
@@ -138,4 +157,5 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - Does MIPI DSI work on mainline RK3588 for the 7-inch panel, or is an internal HDMI panel needed?
 - sfizz was archived upstream (final 1.2.3, BSD-2). The architecture vendors its SFZ parser (AD-15). Do the licenses of the vendored parts and their dependencies allow closed-product use?
 - Which MIDI CC numbers does the Hammond M-solo use for drawbars? The Drawbar Data List on pp. 64–65 of the manual is an image.
-- Can the founder record a real tonewheel B-3 with a Leslie for organ reference? This is recommended, not blocking.
+- Can the founder record a real tonewheel B-3 through a real rotary speaker cabinet for organ reference? This is recommended, not blocking.
+- CAP-15 promises a favorite in one touch, but the UX flow needs at least 2 interactions (open the Library, tap ★ Favorites, select). Should CAP-15 change, or the UX?

@@ -7,10 +7,11 @@ paradigm: 'Single-writer control plane over a realtime data plane (actor-style p
 scope: 'All device software (engine, ui, librarian, sysd), its hardware-facing interfaces, the desktop companion app, content pipeline, build, provisioning and update — v1 and the shared Pro base'
 status: final
 created: '2026-10-17'
-updated: '2026-10-17'
-binds: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7, CAP-8, CAP-9, CAP-10, CAP-11, CAP-12, CAP-13, CAP-14, CAP-15, CAP-16, CAP-17, CAP-18, CAP-19]
+updated: '2026-10-18'
+binds: [CAP-1, CAP-2, CAP-3, CAP-4, CAP-5, CAP-6, CAP-7, CAP-8, CAP-9, CAP-10, CAP-11, CAP-12, CAP-13, CAP-14, CAP-15, CAP-16, CAP-17, CAP-18, CAP-19, CAP-20, CAP-21, CAP-22, CAP-23]
 sources:
   - ../../../specs/spec-arm64-stage-workstation/SPEC.md
+  - ../../ux-designs/ux-buenos-x64-workstation-2026-10-18/EXPERIENCE.md
 companions:
   - HARDWARE-INTERFACES.md
 ---
@@ -73,7 +74,7 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
 - **Binds:** CAP-3, CAP-7, CAP-12, CAP-19, all clients
 - **Prevents:** two owners of patch state; a UI crash losing sound; clients racing each other's edits
 - **Rule:**
-  - Structural state is written only by the engine control thread. It covers programs, parts, splits, routing (AD-28), processor settings (AD-21) and save.
+  - Structural state is written only by the engine control thread. It covers Live Sets ("programs"), parts, splits, scenes, setlists and ASSIGN maps (AD-31), routing (AD-28), processor settings (AD-21) and save.
   - Clients only send commands.
   - The control thread hands state to the RT threads only as immutable snapshot generations, swapped with an atomic pointer (lifetimes per AD-23).
 
@@ -162,7 +163,7 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
 |---|---|---|
 | Library bundles under `/data/lib` | librarian | engine (read-only, AD-10) |
 | Catalog: search, categories, favorites and tags for libraries **and** programs (SQLite WAL) | librarian | ui, desktop, via the librarian API only |
-| Programs and performances | engine control thread | ui, via published state |
+| Setlists, Live Sets (programs) with parts, scenes and per-Live-Set ASSIGN maps, the global default ASSIGN map, setlist tags (AD-31) | engine control thread | ui, desktop, via published state |
 | System config (velocity curves, calibration, MIDI, clock source) | sysd | others, at start and on change |
 | Device and content keys | OP-TEE | engine, on request |
 
@@ -207,7 +208,7 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
   - All IPC uses Protocol Buffers `ws.v1` over Unix domain sockets. The desktop app uses the same schema, framed on one TCP port over USB CDC-NCM and bridged by `sysd`.
   - `ws.v1` only grows by addition. Every connection starts with a version and feature handshake.
   - `request_id = (client_id, seq)`. Deltas carry `(epoch, seq)`, and edits carry `base_revision`. A stale edit is rejected.
-  - On the USB network, nftables admits only that one port, and a pairing code shown on the device screen is required. There is no SSH in production.
+  - On the USB network, nftables admits only that one port. Pairing requires a code shown on the device screen and typed into Velora Studio. There is no SSH in production.
   - The gadget composition is fixed: UAC2, MIDI 2.0/1.0 and NCM. Never mass storage, never a console.
   - USB-A drives are mounted read-only with `nosuid,nodev,noexec`, and only the sandboxed `librarian` parses them.
 
@@ -236,10 +237,11 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
 
 ### AD-16 — Physical control interface [ADOPTED]
 
-- **Binds:** CAP-2, CAP-11, CAP-18
+- **Binds:** CAP-2, CAP-11, CAP-18, CAP-23
 - **Prevents:** panel work disturbing keybed timing; ad-hoc protocols per board; units that cannot be fixed or are bricked by a bad flash
 - **Rule:**
-  - There are two MCUs: the keybed MCU (keys only, ≥10 kHz scan, per-contact times) and the panel MCU (knobs, 9 drawbars, buttons, LEDs, pedals).
+  - There are two MCUs: the keybed MCU (keys only, ≥10 kHz scan, per-contact times) and the panel MCU (endless encoders with LED rings, 9 dual-function faders, buttons with per-state LEDs, wheels, pedals).
+  - Encoders report relative steps and never need pickup. v1 faders are non-motorized, so the ui and engine apply pickup after any recall. Motorized faders exist only on Pro (AD-27).
   - Both use the versioned frame protocol in `HARDWARE-INTERFACES.md`.
   - Each MCU has an immutable dual-bank bootloader. Its firmware ships inside the A/B image, and `sysd` reflashes it at boot only on a version mismatch.
 
@@ -254,7 +256,7 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
 
 ### AD-18 — Updates, power loss and write discipline [ADOPTED]
 
-- **Binds:** CAP-12, CAP-16, CAP-17
+- **Binds:** CAP-12, CAP-16, CAP-17, CAP-20
 - **Prevents:** bricked units; SSD corruption on power loss; PA pops; disk writes during a show
 - **Rule:**
   - The root filesystem is read-only. RAUC A/B slots roll back on a failed boot. Data lives on a journaled partition.
@@ -262,7 +264,8 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
   - During a performance the disk only reads:
     - Logs and metrics stay in RAM and are flushed at idle.
     - SQLite checkpoints and `fstrim` run only at idle.
-    - Writes happen only on save, import and update.
+    - Writes happen only on save (Write), import and update.
+    - The one exception is the Boot-into pointer (last Live Set and scene): a tiny record, written atomically to the journaled partition on a Live Set or scene change, deferred to an idle-safe moment.
 
 ### AD-19 — Platform-independent engine core
 
@@ -275,8 +278,11 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
 ### AD-20 — Externalized strings
 
 - **Binds:** ui, desktop app
-- **Prevents:** a localization refactor before export
-- **Rule:** no user-facing text is hard-coded. Every string is a locale-catalog key, with PT-BR as the source locale.
+- **Prevents:** a localization refactor before export; locales that need a new image to fix
+- **Rule:**
+  - No user-facing text is hard-coded. Every string is a locale-catalog key.
+  - English is the source and default locale. PT-BR and ES ship in v1. Further locales arrive by system update.
+  - User content (setlist, Live Set, scene and tag names) is never translated. Panel legends are English only.
 
 ### AD-21 — Event processors and the single clock
 
@@ -318,7 +324,7 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
   - Each head covers the qualified SSD's measured p99.99 read latency plus margin.
   - The head budget comes from the tier profile (AD-27); v1 gets 4–6 GB.
   - Reads use `O_DIRECT`. Decoding and block-hash checks happen on the I/O edge threads.
-  - At boot, the engine opens the `current` links and the indexes and never scans libraries. Heads for favorites load first.
+  - At boot, the engine opens the `current` links and the indexes and never scans libraries. The heads of the Boot-into target (AD-18) load first, then favorites.
 
 ### AD-25 — Provisioning and key custody
 
@@ -375,18 +381,40 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
     - a Yocto build with a license manifest;
     - a 24 h soak on the dev board with zero xruns.
 
+### AD-30 — Seamless switching and preload
+
+- **Binds:** CAP-1, CAP-16, CAP-20, CAP-21
+- **Prevents:** cut or truncated notes on a scene, Live Set or setlist change; silence while a Live Set loads
+- **Rule:**
+  - On a Live Set change the control thread prepares the next generation (AD-23) and swaps it in only when its heads are resident. Voices started on the old generation finish on it.
+  - The next Live Set of the loaded setlist is preloaded: its heads stay resident within the AD-24 head budget, so an in-setlist change swaps at once.
+  - A jump to a Live Set that is not preloaded keeps the current generation playing until the target's heads are resident, then swaps. The ui shows the remaining load time.
+  - Scene recall is a structural snapshot swap that changes parameters only. Scenes never change a part's instrument, so a scene recall never loads heads.
+  - Loading a setlist never stops the current generation.
+
+### AD-31 — Live Set data model ownership
+
+- **Binds:** CAP-7, CAP-21, CAP-22, CAP-23
+- **Prevents:** a second owner of setlist or ASSIGN data; backups that bypass the single writer; Live Set files a later firmware cannot open
+- **Rule:**
+  - Setlists, Live Sets (8 parts, up to 8 scenes, the ASSIGN map), the global default ASSIGN map and setlist tags are structural state owned by the engine control thread (AD-1, AD-9).
+  - A new Live Set copies the global default ASSIGN map at creation.
+  - Each persisted form, including the `.velorabackup` file, carries an AD-12 version.
+  - Velora Studio backup reads published state. Restore (merge or replace) reaches the device only as control-thread commands.
+
 ## Consistency Conventions
 
 | Concern | Convention |
 | --- | --- |
 | Naming | Processes `engine`, `ui`, `librarian`, `sysd`. Protobuf package `ws.v1`, with messages `PascalCase` and fields `snake_case`. C++ namespaces mirror directories |
 | IDs | AD-10. All IDs are opaque strings on the wire |
+| Domain terms | "Program" and "performance" in ADs mean the Live Set. User-facing text uses only Setlist, Live Set, Scene, Part, Timbre (UX `EXPERIENCE.md`) |
 | Time | Device-monotonic nanoseconds (AD-8). Audio positions in frames at 48 kHz. Wall-clock time only in logs, and optional |
 | Errors | `{code, message, details}` with a closed code enum in `ws.v1`. No exception crosses a process boundary |
 | Commands and state | `request_id`, `(epoch, seq)` and `base_revision` per AD-13. State is published as a full snapshot on connect, then deltas |
 | Logging | Structured journald messages tagged with the process name. RAM-buffered during performance (AD-18). RT threads push records to a queue drained by the control thread |
 | Config | Protobuf with `schema_version`, owned by `sysd` |
-| Strings | Locale-catalog keys (AD-20) |
+| Strings | Locale-catalog keys, English source (AD-20) |
 
 ## Stack
 
@@ -458,10 +486,14 @@ flowchart LR
 | CAP-13 effects | engine/core | AD-5, AD-22, AD-28 |
 | CAP-14 transfer | librarian, sysd bridge, desktop | AD-11, AD-13 |
 | CAP-15 browse | ui, librarian catalog | AD-9, AD-10 |
-| CAP-16 boot ≤10 s | sysd, engine start | AD-4, AD-24 |
+| CAP-16 boot ≤10 s to Boot-into target | sysd, engine start | AD-4, AD-18, AD-24 |
 | CAP-17 power loss | sysd, RAUC, librarian | AD-11, AD-12, AD-18 |
 | CAP-18 keybed expression | keybed MCU, input edge thread, organ | AD-8, AD-16 |
 | CAP-19 arpeggiator | engine/core event processors | AD-2, AD-8, AD-21 |
+| CAP-20 seamless switching | control thread, engine/host streaming | AD-23, AD-24, AD-30 |
+| CAP-21 setlists, Live Sets, scenes | control thread, ui | AD-1, AD-9, AD-30, AD-31 |
+| CAP-22 backup and restore | desktop, sysd bridge, control thread | AD-12, AD-13, AD-31 |
+| CAP-23 ASSIGN knobs | panel MCU, control thread, RT | AD-2, AD-16, AD-31 |
 
 ## Open Questions
 
@@ -476,11 +508,10 @@ flowchart LR
 | Item | Revisit when |
 | --- | --- |
 | MCU family | Partners choose by month 7. Any family that meets AD-16 and `HARDWARE-INTERFACES.md` is fine |
-| UI and desktop visual design | `bmad-ux` around month 5–6 |
 | Partner licensing server and activation flow | After v1 launch. AD-14 and AD-25 already provide the registry and wrapping |
 | Pro sequencer internals | After v1. It is an AD-21 processor and an AD-1 client |
 | Sampling feature, line-in into engines | Post-launch or Pro (AD-28 allows line-in to master only) |
-| Locales beyond PT-BR | Before export |
+| Locales beyond EN, PT-BR, ES | Delivered by system update when a market needs them |
 | Kernel LTS migration (6.18 EOL ≈ Dec 2027) | 6 months before EOL: move to the next LTS with a full RT soak |
 | Lossless float codec | When float sources exceed 20% of library size |
 | Multi-library dedup and storage quotas | When test libraries exceed 500 GB |

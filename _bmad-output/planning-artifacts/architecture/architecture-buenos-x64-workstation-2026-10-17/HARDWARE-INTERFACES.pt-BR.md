@@ -12,13 +12,13 @@ Este documento é o contrato por trás das regras AD-16, AD-17, AD-18, AD-25 e A
 ```mermaid
 flowchart LR
   KB["Keybed Fatar 73SW"] --> KMCU["MCU do keybed"]
-  PANEL["Knobs, 9 sliders de drawbar,<br/>botões, LEDs, pedais"] --> PMCU["MCU do painel"]
+  PANEL["8 encoders + VALUE, 9 faders,<br/>botões, LEDs, rodas, pedais"] --> PMCU["MCU do painel"]
   KMCU -- "UART ≥3 Mbaud ou SPI + IRQ" --> SOM["SoM RK3588"]
   PMCU -- "UART ≥3 Mbaud ou SPI + IRQ" --> SOM
   SOM -- "I2S/TDM + I2C" --> CODEC["Codec PCM3168A<br/>(clock master, 24,576 MHz)"]
   CODEC --> OUT["4 saídas balanceadas, entrada de linha"]
   CODEC --> HP["Amplificador de fone"]
-  SOM -- "MIPI DSI + I2C" --> LCD["Tela 7 pol. + touch capacitivo"]
+  SOM -- "MIPI DSI + I2C" --> LCD["Tela 7 pol. 1024x600 + touch capacitivo"]
   SOM -- "PCIe Gen3 x4" --> NVME["NVMe M.2 2280 (lacrado)"]
   SOM -- "USB3 OTG (device)" --> USBC["USB-C para o computador"]
   SOM -- "USB3 host" --> USBA["USB-A"]
@@ -54,12 +54,15 @@ flowchart LR
 
 | Elemento | Requisito |
 |---|---|
-| Knobs | Reportar mudanças de posição com resolução ≥10 bits. Potenciômetro absoluto ou encoder, a definir com o UX |
-| 9 sliders de drawbar | ≥10 bits, com debounce, reportados quando mudam, atualização ≥500 Hz |
-| Botões | Eventos de pressionar e soltar, com debounce |
-| LEDs | Comandados pelo SoC. O MCU nunca muda o estado de um LED por conta própria |
+| Encoders | 8 encoders rotativos **sem fim**, cada um com **anel de LEDs**, mais 1 encoder VALUE sem fim. Reportam passos relativos (delta com sinal por evento); não precisam de pickup |
+| 9 faders | Dupla função (drawbars / mixer). ≥10 bits, com debounce, reportados quando mudam, atualização ≥500 Hz. **Sem motor na v1**; faders motorizados só no Pro |
+| Rodas | Pitch e modulação, ≥10 bits |
+| Botões | Eventos de pressionar e soltar, com debounce. Conjunto: 8 botões de part/cena; LIVE SET ◀ ▶; SCENE ◀ ▶; EXIT, MENU, WRITE; ROTARY STOP e S/F (lento/rápido); 3 botões de alternância — DRAWBARS/MIXER e PARTS/SCENES (2 estados), PART/ALL/ASSIGN (3 estados) |
+| LEDs | Comandados pelo SoC. O MCU nunca muda o estado de um LED por conta própria. Um LED por estado de cada botão de alternância (2 ou 3), LEDs dos botões de part/cena, anéis de LEDs dos encoders. Difusos, **contraste aceso:apagado ≥10:1 sob 50 klx** de luz ambiente, brilho ajustável pelo usuário via SoC |
 | Pedais | Sustain contínuo (meio-pedal), expressão e 1 switch. ADC ≥10 bits, detecção automática de polaridade no boot, conectores TRS |
 | Ligação | A mesma do MCU do keybed, numa UART ou SPI própria |
+
+As legendas do painel são só em inglês, com **altura de maiúscula ≥2,5 mm**, em tinta escura sobre uma faixa fosca. Layout e textos das legendas seguem o `DESIGN.md` do UX (layout A do painel); os controles do alto-falante rotativo se chamam ROTARY.
 
 ## 5. Protocolo de frames (os dois MCUs)
 
@@ -79,7 +82,7 @@ flowchart LR
 | `HELLO` | MCU→SoC | Versão do firmware, versão do protocolo, ID da placa, número de contatos do keybed |
 | `KEY_CONTACT` | MCU→SoC | Índice da tecla, índice do contato, fechado/aberto |
 | `AFTERTOUCH` | MCU→SoC | Valor por canal ou por tecla (16 bits) |
-| `CONTROL` | MCU→SoC | ID do controle e valor de 16 bits (knobs, sliders, pedais) |
+| `CONTROL` | MCU→SoC | ID do controle e valor de 16 bits (faders, rodas, pedais) ou delta de passos com sinal (encoders) |
 | `BUTTON` | MCU→SoC | ID do botão, pressionado/solto |
 | `LED_SET` | SoC→MCU | ID do LED, brilho/cor |
 | `TIME_SYNC` | SoC→MCU→SoC | O MCU responde com o tick atual, usado para acompanhar o drift |
@@ -109,11 +112,12 @@ flowchart LR
 
 ## 8. Tela e touch
 
-- **Painel:** 7" em MIPI DSI.
+- **Painel:** 7" em MIPI DSI, **resolução nativa 1024×600**, paisagem.
   - O software tem plano B por HDMI interno, caso o DSI não funcione no kernel mainline.
   - A placa deve prever footprint ou variante para isso.
 - **Touch:** capacitivo por I2C, com controlador que tenha **driver no Linux mainline** (por exemplo, as famílias Goodix ou FocalTech). As linhas de interrupção e reset vão para o SoC.
-- **Backlight:** dimerizável por PWM, controlado pelo SoC.
+- **Luminância e vidro:** **≥1000 cd/m²**, vidro de cobertura com colagem óptica e tratamento antirreflexo/antiofuscamento (o aparelho não tem sensor de luz; o músico ajusta o brilho manualmente).
+- **Backlight:** dimerizável por PWM, controlado pelo SoC, até **≤5 cd/m²** para palcos escuros.
 
 ## 9. USB
 
@@ -163,7 +167,8 @@ flowchart LR
 1. Fabricante e part number do SoM, mais o compromisso de longevidade por escrito.
 2. Número de contatos (2 ou 3) e presença de aftertouch no estoque de keybeds 73SW.
 3. Família de MCU escolhida e a abordagem de bootloader para os dois MCUs.
-4. Part numbers do painel DSI e do controlador de touch.
+4. Part numbers do painel DSI e do controlador de touch, com a faixa de luminância medida (§8).
+8. Part numbers dos encoders e dos LEDs, com o contraste aceso:apagado dos LEDs medido sob 50 klx (§4).
 5. Tempo medido do `POWER_FAIL` e duração da sustentação.
 6. Medições do projeto de referência do codec (latência, ruído).
 7. Resultado do teste térmico em carga máxima.

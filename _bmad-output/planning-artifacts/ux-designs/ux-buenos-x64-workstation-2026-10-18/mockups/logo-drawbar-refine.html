@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ladiani — refinamento Drawbar</title>
+<style>
+  /* Monochrome: ink #111 · paper #F4F2EE · boot #050505 */
+  :root { --ink:#111; --paper:#f4f2ee; --muted:#6b6b6b; --line:#d9d6d0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.5 -apple-system,"Helvetica Neue",Arial,sans-serif; }
+  .wrap { max-width:1180px; margin:auto; padding:36px 16px 60px; }
+  h1 { font-size:22px; font-weight:500; margin:0 0 6px; }
+  h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:36px 0 4px; font-weight:600; }
+  p.lead, p.why { color:var(--muted); max-width:780px; margin:0 0 14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:14px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:28px 16px 16px; position:relative; display:flex; flex-direction:column; align-items:center; gap:14px; min-width:0; }
+  .card.dark { background:#050505; border-color:#050505; color:#f2f2f2; }
+  .tag { position:absolute; left:12px; top:9px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:#9a9a9a; }
+  .dark .tag { color:#555; }
+  .note { font-size:12px; color:#8a8a8a; text-align:center; }
+  .minis { display:flex; gap:12px; align-items:flex-end; }
+  .ic { background:#111; border-radius:22%; display:flex; align-items:center; justify-content:center; }
+  svg { display:block; max-width:100%; height:auto; overflow:visible; }
+  .fOpt { font-family:Optima,Candara,"Segoe UI",sans-serif; }
+  .fAv { font-family:"Avenir Next","Helvetica Neue",sans-serif; }
+  .fGill { font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; }
+  .fDid { font-family:Didot,"Bodoni 72",Georgia,serif; }
+  /* Boot animation concept: drawbars pull out one by one */
+  @keyframes pull { from { transform:scaleY(.05); } to { transform:scaleY(1); } }
+  .anim rect { transform-box:fill-box; transform-origin:bottom; animation:pull .7s cubic-bezier(.2,.8,.2,1) both; }
+  .anim rect:nth-child(2){ animation-delay:.25s } .anim rect:nth-child(3){ animation-delay:.35s }
+  .anim rect:nth-child(4){ animation-delay:.45s } .anim rect:nth-child(5){ animation-delay:.55s }
+  .anim .word { animation:fade 1s .9s both; } @keyframes fade { from{opacity:0} to{opacity:1} }
+  @media (prefers-reduced-motion:reduce){ .anim rect,.anim .word{ animation:none } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Drawbar: refinamento</h1>
+  <p class="lead">Três eixos para decidir: <b>o símbolo</b> (proporção e forma das barras), <b>a tipografia</b> do nome e <b>como o Velora se relaciona</b> com a marca. Escolha um item de cada bloco, ou misture.</p>
+
+  <h2>1 · Símbolo</h2>
+  <p class="why">Cada variação aparece grande, em fundo escuro e nos tamanhos de ícone. Repare no tamanho de 16 px: é onde muitos símbolos morrem.</p>
+  <div class="grid">
+    <!-- S1 original -->
+    <div class="card"><span class="tag">S1 · Original</span>
+      <svg width="90" height="72" viewBox="0 0 80 64"><g fill="#111"><rect x="8" y="4" width="9" height="56" rx="4.5"/><rect x="22" y="44" width="9" height="16" rx="4.5"/><rect x="36" y="44" width="9" height="16" rx="4.5"/><rect x="50" y="44" width="9" height="16" rx="4.5"/><rect x="64" y="44" width="9" height="16" rx="4.5"/></g></svg>
+      <div class="minis"><div class="ic" style="width:32px;height:32px"><svg width="20" height="16" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="8" y="2" width="14" height="60" rx="7"/><rect x="30" y="40" width="14" height="22" rx="7"/><rect x="52" y="40" width="14" height="22" rx="7"/></g></svg></div><div class="ic" style="width:16px;height:16px;border-radius:4px"><svg width="10" height="9" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="12" y="0" width="22" height="64" rx="6"/><rect x="44" y="36" width="24" height="28" rx="6"/></g></svg></div></div>
+      <div class="note">1 alta + 4 curtas, pontas arredondadas</div>
+    </div>
+    <!-- S2 registration 888000000 -->
+    <div class="card"><span class="tag">S2 · Registro</span>
+      <svg width="130" height="72" viewBox="0 0 116 64"><g fill="#111"><rect x="4" y="4" width="8" height="56" rx="4"/><rect x="16" y="4" width="8" height="56" rx="4"/><rect x="28" y="4" width="8" height="56" rx="4"/><rect x="40" y="50" width="8" height="10" rx="4"/><rect x="52" y="50" width="8" height="10" rx="4"/><rect x="64" y="50" width="8" height="10" rx="4"/><rect x="76" y="50" width="8" height="10" rx="4"/><rect x="88" y="50" width="8" height="10" rx="4"/><rect x="100" y="50" width="8" height="10" rx="4"/></g></svg>
+      <div class="minis"><div class="ic" style="width:32px;height:32px"><svg width="22" height="14" viewBox="0 0 116 64"><g fill="#f4f2ee"><rect x="4" y="2" width="14" height="60" rx="7"/><rect x="24" y="2" width="14" height="60" rx="7"/><rect x="44" y="2" width="14" height="60" rx="7"/><rect x="64" y="46" width="14" height="16" rx="7"/><rect x="84" y="46" width="14" height="16" rx="7"/></g></svg></div><div class="ic" style="width:16px;height:16px;border-radius:4px"><svg width="11" height="7" viewBox="0 0 116 64"><g fill="#f4f2ee"><rect x="0" y="0" width="30" height="64" rx="8"/><rect x="40" y="0" width="30" height="64" rx="8"/><rect x="80" y="40" width="30" height="24" rx="8"/></g></svg></div></div>
+      <div class="note">9 barras no registro clássico "888000000". Organista reconhece na hora</div>
+    </div>
+    <!-- S3 precise square -->
+    <div class="card"><span class="tag">S3 · Precisão</span>
+      <svg width="90" height="72" viewBox="0 0 80 64"><g fill="#111"><rect x="10" y="4" width="6" height="56"/><rect x="24" y="46" width="6" height="14"/><rect x="38" y="46" width="6" height="14"/><rect x="52" y="46" width="6" height="14"/><rect x="66" y="46" width="6" height="14"/></g></svg>
+      <div class="minis"><div class="ic" style="width:32px;height:32px"><svg width="20" height="16" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="10" y="2" width="12" height="60"/><rect x="34" y="42" width="12" height="20"/><rect x="58" y="42" width="12" height="20"/></g></svg></div><div class="ic" style="width:16px;height:16px;border-radius:4px"><svg width="10" height="9" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="12" y="0" width="22" height="64"/><rect x="46" y="36" width="22" height="28"/></g></svg></div></div>
+      <div class="note">Barras finas e retas: mais técnico e mais "joia"</div>
+    </div>
+    <!-- S4 drawbar heads -->
+    <div class="card"><span class="tag">S4 · Puxador</span>
+      <svg width="96" height="76" viewBox="0 0 84 68"><g fill="#111">
+        <rect x="11" y="10" width="5" height="54"/><rect x="7.5" y="2" width="12" height="12" rx="3"/>
+        <rect x="27" y="50" width="5" height="14"/><rect x="23.5" y="42" width="12" height="12" rx="3"/>
+        <rect x="43" y="50" width="5" height="14"/><rect x="39.5" y="42" width="12" height="12" rx="3"/>
+        <rect x="59" y="50" width="5" height="14"/><rect x="55.5" y="42" width="12" height="12" rx="3"/>
+        <rect x="75" y="50" width="5" height="14"/><rect x="71.5" y="42" width="12" height="12" rx="3"/></g></svg>
+      <div class="minis"><div class="ic" style="width:32px;height:32px"><svg width="20" height="16" viewBox="0 0 84 68"><g fill="#f4f2ee"><rect x="12" y="12" width="8" height="54"/><rect x="6" y="0" width="20" height="18" rx="5"/><rect x="44" y="50" width="8" height="16"/><rect x="38" y="38" width="20" height="18" rx="5"/></g></svg></div><div class="ic" style="width:16px;height:16px;border-radius:4px"><svg width="10" height="9" viewBox="0 0 80 64"><g fill="#f4f2ee"><rect x="12" y="0" width="22" height="64" rx="6"/><rect x="44" y="36" width="24" height="28" rx="6"/></g></svg></div></div>
+      <div class="note">A silhueta real do drawbar, com haste e puxador. Mais artesanal. Em 16 px simplifica</div>
+    </div>
+  </div>
+
+  <h2>2 · Tipografia do nome</h2>
+  <p class="why">O mesmo símbolo (S1) com quatro vozes diferentes.</p>
+  <div class="grid">
+    <div class="card"><span class="tag">T1 · Humanista (Optima)</span>
+      <svg width="250" height="60" viewBox="0 0 250 60"><g fill="#111"><rect x="4" y="10" width="6" height="40" rx="3"/><rect x="14" y="38" width="6" height="12" rx="3"/><rect x="24" y="38" width="6" height="12" rx="3"/><rect x="34" y="38" width="6" height="12" rx="3"/></g><text x="54" y="44" class="fOpt" font-size="30" letter-spacing="5">LADIANI</text></svg>
+      <div class="note">Gravado em pedra, clássico e quente</div></div>
+    <div class="card"><span class="tag">T2 · Geométrica leve</span>
+      <svg width="250" height="60" viewBox="0 0 250 60"><g fill="#111"><rect x="4" y="10" width="6" height="40" rx="3"/><rect x="14" y="38" width="6" height="12" rx="3"/><rect x="24" y="38" width="6" height="12" rx="3"/><rect x="34" y="38" width="6" height="12" rx="3"/></g><text x="54" y="44" class="fAv" font-size="28" font-weight="300" letter-spacing="8">LADIANI</text></svg>
+      <div class="note">Mais Apple: limpa e contemporânea</div></div>
+    <div class="card"><span class="tag">T3 · Humanista técnica</span>
+      <svg width="250" height="60" viewBox="0 0 250 60"><g fill="#111"><rect x="4" y="10" width="6" height="40" rx="3"/><rect x="14" y="38" width="6" height="12" rx="3"/><rect x="24" y="38" width="6" height="12" rx="3"/><rect x="34" y="38" width="6" height="12" rx="3"/></g><text x="54" y="44" class="fGill" font-size="30" font-weight="300" letter-spacing="6">LADIANI</text></svg>
+      <div class="note">Britânica e industrial, como um instrumento de precisão</div></div>
+    <div class="card"><span class="tag">T4 · Serifa de luxo</span>
+      <svg width="250" height="60" viewBox="0 0 250 60"><g fill="#111"><rect x="4" y="10" width="6" height="40" rx="3"/><rect x="14" y="38" width="6" height="12" rx="3"/><rect x="24" y="38" width="6" height="12" rx="3"/><rect x="34" y="38" width="6" height="12" rx="3"/></g><text x="54" y="44" class="fDid" font-size="30" letter-spacing="5">LADIANI</text></svg>
+      <div class="note">Drawbar com alma de Atelier (B): mais Ferrari</div></div>
+  </div>
+
+  <h2>3 · Velora: logo do modelo</h2>
+  <p class="why">O Velora tem identidade própria, mas é da família. Estas regras valeriam para os próximos modelos do portfólio.</p>
+  <div class="grid">
+    <div class="card"><span class="tag">V1 · Caixa-alta espaçada</span>
+      <svg width="220" height="44" viewBox="0 0 220 44"><text x="110" y="30" text-anchor="middle" class="fOpt" font-size="24" letter-spacing="10">VELORA</text></svg>
+      <div class="note">Irmão direto do nome da marca</div></div>
+    <div class="card"><span class="tag">V2 · Minúscula itálica</span>
+      <svg width="220" height="48" viewBox="0 0 220 48"><text x="110" y="34" text-anchor="middle" class="fOpt" font-size="34" font-style="italic" letter-spacing="1">velora</text></svg>
+      <div class="note">Mais fluido, como uma assinatura; contrasta com a marca</div></div>
+    <div class="card"><span class="tag">V3 · Com barra-acento</span>
+      <svg width="220" height="48" viewBox="0 0 220 48"><rect x="18" y="6" width="4" height="34" rx="2" fill="#111"/><text x="32" y="34" class="fOpt" font-size="26" letter-spacing="9">VELORA</text></svg>
+      <div class="note">Uma única drawbar como assinatura da família. O próximo modelo ganha a sua</div></div>
+    <div class="card dark"><span class="tag">Família no painel</span>
+      <svg width="230" height="80" viewBox="0 0 230 80"><g fill="#f2f2f2"><rect x="4" y="8" width="5" height="32" rx="2.5"/><rect x="12" y="30" width="5" height="10" rx="2.5"/><rect x="20" y="30" width="5" height="10" rx="2.5"/><rect x="28" y="30" width="5" height="10" rx="2.5"/></g><text x="42" y="36" class="fOpt" font-size="22" letter-spacing="4" fill="#f2f2f2">LADIANI</text><line x1="4" y1="52" x2="226" y2="52" stroke="#333"/><text x="4" y="74" class="fOpt" font-size="15" letter-spacing="7" fill="#bbb">VELORA 73</text></svg>
+      <div class="note" style="color:#777">Marca e modelo juntos, como no painel</div></div>
+  </div>
+
+  <h2>4 · Boot animado (conceito)</h2>
+  <p class="why">No boot, as drawbars "puxam" uma a uma, como um organista preparando o registro. Recarregue a página para ver de novo. Se o sistema pedir menos movimento, a animação fica estática.</p>
+  <div class="grid">
+    <div class="card dark" style="grid-column:1/-1; aspect-ratio:1024/600; justify-content:center;"><span class="tag">Tela 7" · 1024×600</span>
+      <svg class="anim" width="120" height="96" viewBox="0 0 80 64"><g fill="#f2f2f2"><rect x="8" y="4" width="9" height="56" rx="4.5"/><rect x="22" y="44" width="9" height="16" rx="4.5"/><rect x="36" y="44" width="9" height="16" rx="4.5"/><rect x="50" y="44" width="9" height="16" rx="4.5"/><rect x="64" y="44" width="9" height="16" rx="4.5"/></g></svg>
+      <svg class="anim" width="260" height="40" viewBox="0 0 260 40"><text class="word fOpt" x="130" y="28" text-anchor="middle" font-size="20" letter-spacing="10" fill="#f2f2f2">VELORA</text></svg>
+    </div>
+  </div>
+</div>
+</body>
+</html>

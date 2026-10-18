@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Performance screen</title>
+<style>
+  /* Sálvia tokens
+     dark:  bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on-accent #0b0d0c warn #cdb86c
+     light: bg #f2f4f2 surface #e3e8e4 raised #ffffff line #cbd4cd text #131714 muted #606a62 accent #4b6f58 on-accent #f2f4f2 warn #7a6620 */
+  * { box-sizing:border-box; }
+  body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
+  .wrap { max-width:1120px; margin:auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; font-weight:500; margin:0 0 6px; } h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:30px 0 6px; }
+  p { color:#555; max-width:860px; margin:0 0 12px; }
+  .frame { background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab); padding:12px; border-radius:12px; }
+  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; grid-template-rows:7% 22% 12% 1fr 8%; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; background:var(--bg); color:var(--text); container-type:inline-size; }
+  .dark { --bg:#0b0d0c; --surface:#151917; --raised:#202622; --line:#2b322e; --text:#e7ebe8; --muted:#88938c; --accent:#9fbaa8; --on:#0b0d0c; --warn:#cdb86c; }
+  .light { --bg:#f2f4f2; --surface:#e3e8e4; --raised:#ffffff; --line:#cbd4cd; --text:#131714; --muted:#606a62; --accent:#4b6f58; --on:#f2f4f2; --warn:#7a6620; }
+  .bar { display:flex; align-items:center; justify-content:space-between; padding:0 2.2cqw; background:var(--surface); color:var(--muted); font-size:1.5cqw; letter-spacing:.25em; }
+  .bar .modes span { margin-left:1.6cqw; } .bar .modes b { color:var(--accent); font-weight:600; }
+  .hero { display:grid; grid-template-columns:1fr auto; align-items:center; padding:0 2.2cqw; border-bottom:1px solid var(--line); }
+  .hero small { display:block; color:var(--muted); font-size:1.5cqw; letter-spacing:.2em; }
+  .hero .ls { font-size:5.2cqw; line-height:1.05; }
+  .hero .next { text-align:right; font-size:1.5cqw; color:var(--muted); letter-spacing:.08em; }
+  .hero .next b { display:block; color:var(--text); font-size:2.1cqw; font-weight:400; letter-spacing:0; }
+  .hero .next i { font-style:normal; color:var(--accent); }
+  .scenes { display:grid; grid-template-columns:repeat(8,1fr); gap:.8cqw; padding:1cqw 2.2cqw; }
+  .scenes div { border:1px solid var(--line); border-radius:.8cqw; display:flex; flex-direction:column; justify-content:center; padding:0 1cqw; font-size:1.6cqw; background:var(--surface); }
+  .scenes div small { color:var(--muted); font-size:1.2cqw; }
+  .scenes .cur { background:var(--accent); color:var(--on); border-color:var(--accent); }
+  .scenes .cur small { color:var(--on); opacity:.75; }
+  .scenes .empty { background:transparent; color:var(--muted); border-style:dashed; }
+  .parts { display:grid; grid-template-columns:repeat(8,1fr); gap:.8cqw; padding:1cqw 2.2cqw; min-height:0; }
+  .p { background:var(--surface); border-radius:.8cqw; padding:1cqw; display:grid; grid-template-rows:auto auto 1fr auto; min-height:0; border:1px solid transparent; }
+  .p.sel { border-color:var(--accent); background:var(--raised); }
+  .p.off { opacity:.42; }
+  .p .n { font-size:1.2cqw; color:var(--muted); letter-spacing:.15em; display:flex; justify-content:space-between; }
+  .p .n i { width:1cqw; height:1cqw; border-radius:50%; background:var(--accent); display:inline-block; }
+  .p.off .n i { background:var(--line); }
+  .p .t { font-size:1.7cqw; line-height:1.15; margin:.4cqw 0; }
+  .p .e { font-size:1.15cqw; color:var(--muted); }
+  .vol { position:relative; background:var(--line); border-radius:.5cqw; margin-top:.8cqw; height:100%; min-height:3cqw; overflow:hidden; }
+  .vol .lv { position:absolute; left:0; right:0; bottom:0; background:var(--accent); opacity:.85; }
+  .vol .ghost { position:absolute; left:-2px; right:-2px; height:0; border-top:2px dashed var(--text); }
+  .status { display:flex; gap:2.4cqw; align-items:center; padding:0 2.2cqw; background:var(--surface); color:var(--muted); font-size:1.4cqw; letter-spacing:.06em; }
+  .status .ok { color:var(--accent); } .status .w { color:var(--warn); }
+  .notes { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; margin-top:12px; }
+  .notes div { background:#fff; border:1px solid #d6d4cf; border-radius:8px; padding:10px 12px; font-size:13px; color:#444; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Performance: a tela inicial</h1>
+<p>A tela foi feita para ser lida a 1,5 m de distância sob luz de palco. O nome da Live Set é o maior elemento, a cena atual é o único bloco preenchido e a próxima música aparece com o status "Ready" (pré-carregada). Os textos da tela estão em inglês, o idioma padrão.</p>
+
+<h2>Palco (escuro) · modo MIXER + PARTS + PART</h2>
+<div class="frame"><div class="scr dark">
+  <div class="bar"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span><b>MIXER</b></span><span><b>PARTS</b></span><span>KNOBS <b>PART 1</b></span><span>♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
+  <div class="scenes"><div>1 Intro<small>piano</small></div><div class="cur">2 Verse<small>piano + pad</small></div><div>3 Chorus<small>+ strings</small></div><div>4 Bridge<small>organ</small></div><div>5 Final<small>tutti</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts">
+    <div class="p sel"><div class="n">1 <i></i></div><div class="t">Concert Grand</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:78%"></div></div></div>
+    <div class="p"><div class="n">2 <i></i></div><div class="t">Warm Pad</div><div class="e">VA</div><div class="vol"><div class="lv" style="height:40%"></div></div></div>
+    <div class="p off"><div class="n">3 <i></i></div><div class="t">Chamber Strings</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:55%"></div></div></div>
+    <div class="p off"><div class="n">4 <i></i></div><div class="t">Gospel B</div><div class="e">Tonewheel</div><div class="vol"><div class="lv" style="height:62%"></div></div></div>
+    <div class="p off"><div class="n">5 <i></i></div><div class="t">Choir Aahs</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:30%"></div></div></div>
+    <div class="p off"><div class="n">6 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p off"><div class="n">7 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p off"><div class="n">8 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+  </div>
+  <div class="status"><span>VOICES 142 / 256</span><span class="ok">● STREAMING OK</span><span>ROTARY SLOW</span><span>REV 35%</span></div>
+</div></div>
+
+<h2>Estúdio (claro) · mesma tela</h2>
+<div class="frame"><div class="scr light">
+  <div class="bar"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span><b>MIXER</b></span><span><b>PARTS</b></span><span>KNOBS <b>PART 1</b></span><span>♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
+  <div class="scenes"><div>1 Intro<small>piano</small></div><div class="cur">2 Verse<small>piano + pad</small></div><div>3 Chorus<small>+ strings</small></div><div>4 Bridge<small>organ</small></div><div>5 Final<small>tutti</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts">
+    <div class="p sel"><div class="n">1 <i></i></div><div class="t">Concert Grand</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:78%"></div></div></div>
+    <div class="p"><div class="n">2 <i></i></div><div class="t">Warm Pad</div><div class="e">VA</div><div class="vol"><div class="lv" style="height:40%"></div></div></div>
+    <div class="p off"><div class="n">3 <i></i></div><div class="t">Chamber Strings</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:55%"></div></div></div>
+    <div class="p off"><div class="n">4 <i></i></div><div class="t">Gospel B</div><div class="e">Tonewheel</div><div class="vol"><div class="lv" style="height:62%"></div></div></div>
+    <div class="p off"><div class="n">5 <i></i></div><div class="t">Choir Aahs</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:30%"></div></div></div>
+    <div class="p off"><div class="n">6 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p off"><div class="n">7 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p off"><div class="n">8 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+  </div>
+  <div class="status"><span>VOICES 142 / 256</span><span class="ok">● STREAMING OK</span><span>ROTARY SLOW</span><span>REV 35%</span></div>
+</div></div>
+
+<h2>Estado · troca para a cena "Chorus" com fader fora de posição (pickup)</h2>
+<div class="frame"><div class="scr dark">
+  <div class="bar"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span><b>MIXER</b></span><span><b>SCENES</b></span><span>KNOBS <b>ASSIGN</b></span><span>♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
+  <div class="scenes"><div>1 Intro<small>piano</small></div><div>2 Verse<small>piano + pad</small></div><div class="cur">3 Chorus<small>+ strings</small></div><div>4 Bridge<small>organ</small></div><div>5 Final<small>tutti</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts">
+    <div class="p"><div class="n">1 <i></i></div><div class="t">Concert Grand</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:70%"></div></div></div>
+    <div class="p"><div class="n">2 <i></i></div><div class="t">Warm Pad</div><div class="e">VA</div><div class="vol"><div class="lv" style="height:50%"></div></div></div>
+    <div class="p sel"><div class="n">3 <i></i></div><div class="t">Chamber Strings</div><div class="e">Sample · fader at 20%</div><div class="vol"><div class="lv" style="height:65%"></div><div class="ghost" style="bottom:20%"></div></div></div>
+    <div class="p off"><div class="n">4 <i></i></div><div class="t">Gospel B</div><div class="e">Tonewheel</div><div class="vol"><div class="lv" style="height:62%"></div></div></div>
+    <div class="p"><div class="n">5 <i></i></div><div class="t">Choir Aahs</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:35%"></div></div></div>
+    <div class="p off"><div class="n">6 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p off"><div class="n">7 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p off"><div class="n">8 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+  </div>
+  <div class="status"><span>VOICES 188 / 256</span><span class="ok">● STREAMING OK</span><span class="w">● FADER 3: MOVE UP TO 65% TO TAKE OVER</span></div>
+</div></div>
+
+<div class="notes">
+  <div><b>Leitura sob luz forte:</b> o nome da Live Set ocupa cerca de 5% da largura, e a cena atual é o único bloco cheio de cor. O contraste é alto nos dois temas.</div>
+  <div><b>Pickup:</b> a linha tracejada mostra onde o fader físico está. O volume real (a barra) só muda quando o fader cruza o valor salvo.</div>
+  <div><b>Modos sempre à vista:</b> a barra do topo repete o estado dos três botões de alternância: MIXER/DRAWBARS, PARTS/SCENES e PART/ALL/ASSIGN.</div>
+  <div><b>Próxima música:</b> "● Ready" confirma que a próxima Live Set já está carregada. Trocar de música não corta o som.</div>
+</div>
+</div>
+</body>
+</html>

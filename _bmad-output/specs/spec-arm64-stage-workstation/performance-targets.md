@@ -8,7 +8,7 @@
 | RAM | 16 GB (v1), 32 GB (Pro) | ~4–6 GB reserved for sample heads |
 | Sample format on disk | up to 32-bit float / 96 kHz | Lossless, ~50% ratio, see `library-format.md` |
 | Robustness | zero dropouts in a 24 h stress run, SSD near full | |
-| Boot | ≤10 s from power-on to playable default program | Favorites' heads load first, and the rest indexes in the background |
+| Boot | ≤10 s from power-on to the playable Boot into target | Its heads load first, then favorites; the rest indexes in the background |
 | Power-loss | 100 random power cuts during update or import, no brick, no corrupt library | See CAP-17 |
 
 ## Sizing estimates (forge, unmeasured)
