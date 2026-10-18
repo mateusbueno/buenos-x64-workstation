@@ -1,5 +1,18 @@
 # Go-to-Market
 
+## Naming
+
+- **Brand:** Ladiani (Ladislau + Oliani).
+- **Model:** Velora. v1 = **Ladiani Velora 73**, Pro = **Ladiani Velora 73 Pro**, desktop app = **Velora Studio**.
+- **Preliminary screening (Oct 2026):**
+  - WIPO Global Brand Database shows no conflicting marks in Nice classes 15 and 9.
+  - The domains ladiani.com, .com.br, .net, .io, .music and .audio were free.
+  - `@ladiani` is taken on Instagram and YouTube. `@ladianimusic` and `@ladiani.instruments` were free on both.
+- **Before branding spend:**
+  - A formal clearance search by a trademark attorney.
+  - INPI filing in classes 15 and 9, then a Madrid Protocol filing for export.
+  - Registering the domains and handles.
+
 ## Market and price
 
 - Launch market: Brazil first, export later.
