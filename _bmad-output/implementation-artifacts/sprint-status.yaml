@@ -45,7 +45,7 @@ development_status:
   1-7-fused-dev-board-boots-signed-and-derives-a-per-device-key: backlog
   1-8-engine-core-block-loop-and-engine-interface: done
   1-9-offline-renderer-and-null-test-harness: done
-  1-10-engine-plays-live-on-the-developer-s-mac-macos-host-adapters: backlog
+  1-10-engine-plays-live-on-the-developer-s-mac-macos-host-adapters: done
   1-11-engine-runs-live-on-the-dev-board: backlog
   1-12-formatlib-lossless-block-indexed-bundle: backlog
   1-13-import-the-demo-sfz-library-subset-into-bundles: backlog
