@@ -13,6 +13,7 @@
 
 #include "nulltest.hpp"
 #include "velora/core/compressor.hpp"
+#include "velora/core/delay.hpp"
 #include "velora/core/eq.hpp"
 #include "velora/core/reverb.hpp"
 #include "render.hpp"
@@ -120,12 +121,13 @@ static void test_assignment_sends_master() {
     const WavData sum = mix({{1.0f, &main}, {1.0f, &aux}});
     CHECK(max_diff(sum, base) < 2e-6);
   }
-  // Send levels (the delay is a unity placeholder return; the reverb return is muted here, the real reverb is tested in reverb_test.cpp)
+  // Send levels (the reverb and delay returns are muted here, the real reverb and delay are tested in reverb_test.cpp and delay_test.cpp / test_delay below)
   // and a master trim of -6 dB; part 3 on Aux with a send too.
   {
     RenderOptions o;
     o.routing.enabled = true;
     o.routing.reverb_level = 0.0f;
+    o.routing.delay_level = 0.0f;
     o.routing.output[3] = 1;
     o.routing.send_reverb[0] = 0.5f;
     o.routing.send_delay[1] = 0.25f;
@@ -134,7 +136,7 @@ static void test_assignment_sends_master() {
     WavData aux;
     const WavData main = render(all, o, &aux);
     const float g = std::pow(10.0f, -6.0f * 0.05f);
-    const WavData em = mix({{g, &p[0]}, {g, &p[1]}, {g, &p[2]}, {0.25f * g, &p[1]}});
+    const WavData em = mix({{g, &p[0]}, {g, &p[1]}, {g, &p[2]}});
     const WavData ea = mix({{g, &p[3]}});  // an Aux part's send is returned to Aux: Main is untouched by it
     NullParams np;
     np.tolerance_db = -110;
@@ -425,6 +427,167 @@ static void test_reverb() {
   }
 }
 
+// The delay through the offline renderer (Story 2.11): the wet signal equals the stand-alone DelaySend fed with the part's dry signal scaled by the send
+// level, per bus, including a tempo change (a tempo_bpm event in the middle of the render reaches the delay at the next block); with every send at 0 (or the
+// return level at 0) the render is bit-identical to the default path.
+struct DelaySettings {
+  float time_ms = 350.0f, feedback = 0.35f, level = 1.0f, damping = 0.25f, pingpong = 0.0f, tempo = 120.0f;
+  bool sync = false;
+  std::uint8_t note = 1;
+  std::vector<std::pair<double, float>> tempo_changes;
+};
+
+static void apply_delay(RenderOptions& o, const DelaySettings& d) {
+  o.routing.enabled = true;
+  o.routing.delay_time_ms = d.time_ms;
+  o.routing.delay_feedback = d.feedback;
+  o.routing.delay_level = d.level;
+  o.routing.delay_damping = d.damping;
+  o.routing.delay_pingpong = d.pingpong;
+  o.routing.delay_sync = d.sync;
+  o.routing.delay_note = d.note;
+  o.routing.tempo_bpm = d.tempo;
+  o.routing.tempo_changes = d.tempo_changes;
+}
+
+static WavData delay_of(const WavData& dry, float gain, const DelaySettings& st, std::size_t frames) {
+  velora::core::DelaySend dl;
+  dl.set_tempo(st.tempo);
+  dl.configure(st.time_ms, st.sync, static_cast<velora::core::DelayNote>(st.note), st.feedback, st.level, st.damping, st.pingpong, /*instant=*/true);
+  WavData out;
+  out.samples.assign(frames * 2, 0.0f);
+  float l[64], r[64];
+  for (std::size_t pos = 0; pos < frames; pos += 64) {
+    // the tempo of the last event before this block (an event inside block k is read by the delay at the start of block k + 1)
+    float bpm = st.tempo;
+    for (const auto& tc : st.tempo_changes)
+      if (static_cast<std::uint64_t>(std::llround(tc.first * 48000.0)) < pos) bpm = tc.second;
+    dl.set_tempo(bpm);
+    for (std::size_t i = 0; i < 64; ++i) {
+      const std::size_t k = (pos + i) * 2;
+      l[i] = k < dry.samples.size() ? gain * dry.samples[k] : 0.0f;
+      r[i] = k + 1 < dry.samples.size() ? gain * dry.samples[k + 1] : 0.0f;
+    }
+    velora::core::StereoBlock b{l, r, 64};
+    dl.process(b);
+    for (std::size_t i = 0; i < 64 && pos + i < frames; ++i) {
+      out.samples[(pos + i) * 2] = l[i];
+      out.samples[(pos + i) * 2 + 1] = r[i];
+    }
+  }
+  return out;
+}
+
+static void test_delay() {
+  const std::vector<NoteEvent> all = notes({{0, 60}, {1, 64}, {2, 67}, {3, 72}});
+  const RenderOptions plain;
+  const WavData base = render(all, plain);
+  WavData p0 = render(notes({{0, 60}}), plain), p3 = render(notes({{3, 72}}), plain);
+  // idle settings: bit-identical to the default path whatever the delay settings (all sends 0)
+  for (int variant = 0; variant < 3; ++variant) {
+    RenderOptions o;
+    DelaySettings d;
+    d.time_ms = variant == 0 ? 2000.0f : 7.0f;
+    d.feedback = 0.95f;
+    d.sync = variant == 2;
+    d.pingpong = 1.0f;
+    d.tempo = 77.0f;
+    apply_delay(o, d);
+    const WavData w = render(all, o);
+    CHECK(w.samples.size() == base.samples.size() && std::memcmp(w.samples.data(), base.samples.data(), w.samples.size() * sizeof(float)) == 0);
+  }
+  {  // sends up but the return level 0: the wet is silent, the dry untouched, bit for bit
+    RenderOptions o;
+    DelaySettings d;
+    d.level = 0.0f;
+    apply_delay(o, d);
+    o.routing.send_delay[0] = 1.0f;
+    o.routing.send_delay[3] = 0.5f;
+    const WavData w = render(all, o);
+    CHECK(w.samples.size() == base.samples.size() && std::memcmp(w.samples.data(), base.samples.data(), w.samples.size() * sizeof(float)) == 0);
+  }
+  // Main and Aux each have their own delay instance; the send level scales the input. Milliseconds mode, then tempo sync with a tempo change.
+  DelaySettings ms;
+  ms.time_ms = 130.0f;
+  ms.feedback = 0.6f;
+  ms.level = 0.7f;
+  ms.damping = 0.3f;
+  ms.pingpong = 0.4f;
+  DelaySettings sy;
+  sy.sync = true;
+  sy.note = 4;  // dotted eighth
+  sy.tempo = 100.0f;
+  sy.tempo_changes = {{0.3, 112.0f}, {0.7, 90.0f}};  // moderate steps: the delay time glides at a limited rate, a big step is still on its way when the next one arrives
+  sy.feedback = 0.55f;
+  sy.level = 0.8f;
+  sy.damping = 0.2f;
+  int which = 0;
+  for (const DelaySettings* st : {&ms, &sy}) {
+    RenderOptions o;
+    apply_delay(o, *st);
+    o.routing.output[3] = 1;
+    o.routing.send_delay[0] = 0.5f;
+    o.routing.send_delay[3] = 1.0f;
+    o.routing.reverb_level = 0.0f;
+    WavData aux;
+    const WavData main = render(all, o, &aux);
+    const std::size_t frames = main.samples.size() / 2;
+    const WavData wet_main = delay_of(p0, 0.5f, *st, frames), wet_aux = delay_of(p3, 1.0f, *st, frames);
+    const WavData dry_main = render(notes({{0, 60}, {1, 64}, {2, 67}}), plain);
+    const WavData em = mix({{1.0f, &dry_main}, {1.0f, &wet_main}}), ea = mix({{1.0f, &p3}, {1.0f, &wet_aux}});
+    NullParams np;
+    np.tolerance_db = -110;
+    CHECK(null_test(em, main, np).pass && null_test(ea, aux, np).pass);
+    CHECK(max_diff(em, main) < 3e-6 && max_diff(ea, aux) < 3e-6);
+    CHECK(peak(wet_main) > 0.005 && peak(wet_aux) > 0.005);
+    ++which;
+  }
+  // the tempo change matters: without it (or at another time or value) the render differs; so do the other settings
+  RenderOptions o;
+  apply_delay(o, sy);
+  o.routing.send_delay[0] = 0.5f;
+  const WavData ref = render(all, o);
+  RenderOptions w1 = o, w2 = o, w3 = o, w4 = o, w5 = o, w6 = o;
+  w1.routing.tempo_changes.clear();
+  w2.routing.tempo_changes[0].first = 0.35;
+  w3.routing.tempo_changes[0].second = 106.0f;
+  w4.routing.delay_note = 5;
+  w5.routing.delay_sync = false;
+  w6.routing.tempo_bpm = 101.0f;
+  const RenderOptions* const wrong[] = {&w1, &w2, &w3, &w4, &w5, &w6};
+  for (int k = 0; k < 6; ++k) {
+    const RenderOptions* w = wrong[k];
+    NullParams np;
+    np.tolerance_db = -100;
+    if (null_test(ref, render(all, *w), np).pass) std::printf("wrong delay variant %d did not differ\n", k + 1);
+    CHECK(!null_test(ref, render(all, *w), np).pass);
+  }
+  // a tempo event and a note on in the same block, the tempo event at the later frame (submitted first): the renderer orders them by frame, so the notes
+  // still start at their exact frames (the render equals the one without the tempo change until the first echo, and the onsets at frames 100/200/300 are there)
+  {
+    RenderOptions a;
+    apply_delay(a, sy);
+    a.routing.tempo_changes.clear();
+    a.routing.send_delay[0] = 0.5f;
+    RenderOptions b = a;
+    b.routing.tempo_changes = {{120.0 / 48000.0, 140.0f}};  // frame 120: block 1, offset 56; the note of part 1 starts at frame 100 (offset 36)
+    const WavData ra = render(all, a), rb = render(all, b);
+    CHECK(ra.samples.size() == rb.samples.size() && std::memcmp(ra.samples.data(), rb.samples.data(), 2000 * 2 * sizeof(float)) == 0);
+    CHECK(peak(rb) > 0.01);
+    CHECK(rb.samples[2 * 99 + 0] == p0.samples[2 * 99 + 0] && std::fabs(rb.samples[2 * 150]) > 0.0f);
+  }
+  // a tempo change is ignored while sync is off (the render equals the one without it)
+  {
+    RenderOptions a;
+    apply_delay(a, ms);
+    a.routing.send_delay[0] = 0.5f;
+    RenderOptions b = a;
+    b.routing.tempo_changes = {{0.2, 200.0f}};
+    const WavData ra = render(all, a), rb = render(all, b);
+    CHECK(ra.samples.size() == rb.samples.size() && std::memcmp(ra.samples.data(), rb.samples.data(), ra.samples.size() * sizeof(float)) == 0);
+  }
+}
+
 #ifdef OFFLINE_RENDER_EXE
 static bool run(const std::string& args) {
   const std::string cmd = std::string("\"") + OFFLINE_RENDER_EXE + "\" " + args + " >/dev/null 2>&1";
@@ -444,19 +607,20 @@ static void test_cli() {
   CHECK(peak(wa) > 0.001);  // part 0 (the golden MIDI's channel) is on Aux
   const WavData sum = mix({{1.0f, &wm}, {1.0f, &wa}});
   CHECK(max_diff(sum, wp) < 2e-6);
-  // sends reach Main through the unity placeholder return (delay; the reverb return is muted)
+  // sends with both returns muted add nothing
   const std::string sent = d + "/routing_sent.wav";
-  CHECK(run("--midi " + mid + " --tail-seconds 0.25 --send 0:0.5:0.25 --reverb-level 0 --out \"" + sent + "\""));
+  CHECK(run("--midi " + mid + " --tail-seconds 0.25 --send 0:0.5:0.25 --reverb-level 0 --delay-level 0 --out \"" + sent + "\""));
   WavData ws;
   CHECK(read_wav(sent, ws, err));
-  const WavData es = mix({{1.25f, &wp}});
+  const WavData es = mix({{1.0f, &wp}});
   CHECK(max_diff(es, ws) < 3e-6);
   // bad arguments are refused with exit status 2 and no output
   const std::string none = d + "/routing_none.wav";
   std::remove(none.c_str());
   const char* const bad[] = {"--part-output 8:aux", "--part-output 0:side", "--send 0:1.5", "--send 9:0.1", "--inserts 0:reverb",
                              "--inserts 0:eq,eq,eq,eq,eq,eq", "--master-level 20", "--line-in-level 2", "--inserts x:eq",
-                             "--reverb cave", "--reverb-time 11", "--reverb-time 0.1", "--reverb-level 2", "--rev-master -1", "--rev-master nan"};
+                             "--reverb cave", "--reverb-time 11", "--reverb-time 0.1", "--reverb-level 2", "--rev-master -1", "--rev-master nan",
+                             "--delay-time 0", "--delay-feedback 1", "--delay-sync yes", "--delay-note 1/2", "--tempo 19", "--tempo 301", "--tempo-change 1:301", "--tempo-change 1"};
   for (const char* b : bad) {
     const std::string cmd = std::string("\"") + OFFLINE_RENDER_EXE + "\" --midi " + mid + " --out \"" + none + "\" " + b + " >/dev/null 2>&1";
     const int rc = std::system(cmd.c_str());
@@ -471,6 +635,7 @@ int main() {
   test_master_and_insert_effects();
   test_channel_limit();
   test_reverb();
+  test_delay();
 #ifdef OFFLINE_RENDER_EXE
   test_cli();
 #endif

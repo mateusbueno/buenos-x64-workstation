@@ -10,7 +10,8 @@
     "percussion_decay": ["fast", "slow"],
     "percussion_volume": ["soft", "normal"],
     "vibrato_chorus_type": ["v1", "v2", "v3", "c1", "c2", "c3"],
-    "reverb_type": ["room", "hall", "plate"]
+    "reverb_type": ["room", "hall", "plate"],
+    "delay_note": ["quarter", "eighth", "sixteenth", "dotted_quarter", "dotted_eighth", "dotted_sixteenth", "triplet_quarter", "triplet_eighth", "triplet_sixteenth"]
   },
   "reserved": [
     {"id": 99, "name": "organ_master_draft", "note": "draft drawbar master, retired before release"}
@@ -59,9 +60,17 @@
     {"id": 530, "name": "reverb_type", "class": "structural", "type": "enum", "scope": "master", "unit": "enum", "enum": "reverb_type", "default": "hall"},
     {"id": 531, "name": "reverb_time", "class": "structural", "type": "float", "scope": "master", "unit": "s", "min": 0.2, "max": 10, "default": 2},
     {"id": 532, "name": "reverb_level", "class": "structural", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 1},
+    {"id": 540, "name": "delay_time", "class": "structural", "type": "float", "scope": "master", "unit": "ms", "min": 1, "max": 2000, "default": 350},
+    {"id": 541, "name": "delay_sync", "class": "structural", "type": "bool", "scope": "master", "unit": "flag", "min": 0, "max": 1, "default": 0},
+    {"id": 542, "name": "delay_note", "class": "structural", "type": "enum", "scope": "master", "unit": "enum", "enum": "delay_note", "default": "eighth"},
+    {"id": 543, "name": "delay_feedback", "class": "structural", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 0.95, "default": 0.35},
+    {"id": 544, "name": "delay_level", "class": "structural", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 1},
+    {"id": 545, "name": "delay_damping", "class": "structural", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 0.25},
+    {"id": 546, "name": "delay_pingpong", "class": "structural", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 0},
     {"id": 600, "name": "part_output", "class": "structural", "type": "enum", "scope": "part", "unit": "enum", "enum": "part_output", "default": "main"},
     {"id": 700, "name": "timbre_ref", "class": "structural", "type": "uint", "scope": "part", "unit": "id", "min": 0, "max": 4294967295, "default": 0},
     {"id": 800, "name": "line_in_level", "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 0},
-    {"id": 801, "name": "send_reverb_master", "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 1}
+    {"id": 801, "name": "send_reverb_master", "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 1},
+    {"id": 802, "name": "tempo_bpm", "class": "performance", "type": "float", "scope": "master", "unit": "bpm", "min": 20, "max": 300, "default": 120}
   ]
 }

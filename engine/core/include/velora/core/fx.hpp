@@ -1,8 +1,8 @@
 #pragma once
 // Effect framework (Story 2.7): the effect-instance interface, the factory, the insert chain and the fixed costs of the
 // routing topology. Every insert type is a real effect since Story 2.9: EQ and compressor (Story 2.8, eq.hpp, compressor.hpp), chorus/phaser,
-// EP amp/drive and rotary (Story 2.9, chorus_phaser.hpp, ep_amp.hpp, rotary_effect.hpp). PassThroughEffect stays for the delay send placeholder of
-// the Mixer (Story 2.11; the reverb send is real since Story 2.10, reverb.hpp; see engine/core/README.md, "Routing topology").
+// EP amp/drive and rotary (Story 2.9, chorus_phaser.hpp, ep_amp.hpp, rotary_effect.hpp). The sends are real DSP: the reverb since Story 2.10 (reverb.hpp) and the
+// delay since Story 2.11 (delay.hpp); see engine/core/README.md, "Routing topology". PassThroughEffect only remains as the factory's fallback.
 //
 // Threading: effects are created, prepared and destroyed ONLY by the control thread (make_effect(), FxChain construction and
 // destruction, i.e. snapshot generations being built and freed). The RT thread only calls process() on instances that a
@@ -74,8 +74,11 @@ static_assert(effect_cost_units(EffectType::kRotary) <= kMaxInsertCost && effect
 // Reverb (Story 2.10), host-measured with engine/core/tests/reverb_bench.cpp (Release build, longest time, 64-frame blocks): one instance
 // costs about 1.1x an EQ insert (~0.75 us), 2.2x while a type cross-fade runs two engines (~1.5 us); the declared figure covers the
 // cross-fade case ratio-wise (EQ = 16 units -> ~36) with a margin. Placeholder until the dev board measurement of Story 2.12.
-constexpr std::uint32_t kReverbSendCost = 48;
-constexpr std::uint32_t kDelaySendCost = 16;
+constexpr std::uint32_t kReverbSendCost = 64;  // was 48: the bench now runs on -O3 code in every configuration, where the cross-fade case measures 2.2..3.5 x an EQ insert across runs
+// Delay (Story 2.11), host-measured with engine/core/tests/delay_bench.cpp (Release build, 64-frame blocks, loud input, damping and ping-pong on, the time gliding all the
+// time): one instance costs about 0.9x an EQ insert (~0.55 us; steady ~0.4 us). The declared 40 units cover the ratio (EQ = 16 units -> 14..22 on the Mac, up to ~36 on x86 gcc in Docker where the gliding path is relatively dearer) with a margin (the first block after an idle spell costs like any other: no bulk clear). Placeholder until the dev board measurement of Story 2.12 (it was a 16-unit placeholder; raising it
+// raises kFixedFxCost by 48).
+constexpr std::uint32_t kDelaySendCost = 40;
 // Note (Story 2.8): re-basing the EQ from 6 to 16 units raises the fixed topology by 20 units (two buses) and every EQ insert by 10, so a
 // Live Set accepted against an older, tighter FX budget can now exceed it and be refused with FX_BUDGET_EXCEEDED; budgets are derived from these
 // constants (kMaxFxCost) and the dev-board numbers of Story 2.12 will replace the placeholders anyway.
@@ -119,7 +122,7 @@ class Effect {
   static inline std::atomic<std::int64_t> live_{0};
 };
 
-// The placeholder every effect type is until its DSP lands: leaves the block untouched.
+// The placeholder every effect type was until its DSP landed: leaves the block untouched (now only the factory's fallback).
 class PassThroughEffect final : public Effect {
  public:
   PassThroughEffect(EffectType t, std::uint32_t cost) noexcept : type_(t), cost_(cost) {}

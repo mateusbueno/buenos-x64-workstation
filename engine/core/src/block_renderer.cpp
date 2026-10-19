@@ -79,7 +79,7 @@ void BlockRenderer::adopt_generation() noexcept {
   }
   applied_valid_ = true;
   held_ = next;
-  mixer_.adopt(*next);  // part outputs, master level and the insert chains (the generation is held: safe to read)
+  mixer_.adopt(*next, &last_);  // part outputs, master level and the insert chains (the generation is held: safe to read)
 }
 
 void BlockRenderer::forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept {
@@ -228,6 +228,11 @@ void BlockRenderer::render_segment(float* l, float* r, std::uint32_t from, std::
   float* rs[Engine::kSplitChannels];
   mixer_.part_sinks(from, ls, rs);  // each engine adds its parts into the part buses
   for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->render_split(ls, rs, to - from);
+}
+
+float BlockRenderer::tempo_bpm() const noexcept {
+  const params::ParamDef* d = params::find(params::kTempoBpm);
+  return d ? delaymap::tempo_bpm(last_.load(params::perf_slot(*d, 0))) : delaymap::kDefaultTempoBpm;
 }
 
 void BlockRenderer::process_block(float* left, float* right) noexcept {

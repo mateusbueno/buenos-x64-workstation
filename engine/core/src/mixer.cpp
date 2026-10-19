@@ -30,10 +30,19 @@ Mixer::Mixer(SnapshotExchange& exchange) : exchange_(exchange) {
       reverb_idx_[i] = d ? d->master_index : static_cast<std::int16_t>(-1);
     }
   }
+  if (const params::ParamDef* d = params::find(params::kTempoBpm)) tempo_slot_ = static_cast<std::int16_t>(params::perf_slot(*d, 0));
+  {
+    static constexpr std::uint16_t kDlyIds[7] = {params::kDelayTime,  params::kDelaySync,  params::kDelayNote,    params::kDelayFeedback,
+                                                 params::kDelayLevel, params::kDelayDamping, params::kDelayPingpong};
+    for (std::size_t i = 0; i < 7; ++i) {
+      const params::ParamDef* d = params::find(kDlyIds[i]);
+      delay_idx_[i] = d ? d->master_index : static_cast<std::int16_t>(-1);
+    }
+  }
   if (const params::ParamDef* d = params::find(params::kLineInLevel)) line_slot_ = static_cast<std::int16_t>(params::perf_slot(*d, 0));
   for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
     reverb_send_[b] = std::make_unique<ReverbSend>();
-    delay_send_[b] = std::make_unique<PassThroughEffect>(EffectType::kNone, kDelaySendCost);
+    delay_send_[b] = std::make_unique<DelaySend>();
     eq_wet_[b].cur = eq_wet_[b].tgt = 1.0f;
     comp_wet_[b].cur = comp_wet_[b].tgt = 1.0f;
     master_eq_[b].prepare(kEqSampleRate, kFxBlockFrames);
@@ -82,7 +91,7 @@ void Mixer::push_chain(Part& p, FxChain* chain, std::uint32_t ledger, bool insta
   p.entries[p.count++] = e;
 }
 
-void Mixer::adopt(const Snapshot& s) noexcept {
+void Mixer::adopt(const Snapshot& s, const LastValueTable* live) noexcept {
   const bool first = !primed_;
   for (std::uint32_t i = 0; i < kParts; ++i) {
     Part& p = parts_[i];
@@ -146,6 +155,21 @@ void Mixer::adopt(const Snapshot& s) noexcept {
     const float time = rv(1, reverbmap::kDefaultTimeS), level = rv(2, 1.0f);
     for (std::uint32_t b = 0; b < kOutputBusCount; ++b) reverb_send_[b]->configure(type, time, level, /*instant=*/first);
   }
+  // Delay (Story 2.11): time, sync, note value, feedback, return level, damping and ping-pong of this generation (registry defaults when the registry lacks one).
+  {
+    auto dv = [&](std::size_t i, float dflt) {
+      return delay_idx_[i] >= 0 ? s.master[static_cast<std::size_t>(delay_idx_[i])] : dflt;
+    };
+    const float time = dv(0, delaymap::kDefaultTimeMs), fb = dv(3, delaymap::kDefaultFeedback), level = dv(4, delaymap::kDefaultLevel),
+                damping = dv(5, delaymap::kDefaultDamping), pp = dv(6, delaymap::kDefaultPingPong);
+    const bool sync = delaymap::sync(dv(1, 0.0f));
+    if (live && tempo_slot_ >= 0) {  // the current tempo first: an instant (first-generation) sync target must already use it
+      tempo_bpm_ = delaymap::tempo_bpm(live->load(static_cast<std::size_t>(tempo_slot_)));
+      for (const auto& d : delay_send_) d->set_tempo(tempo_bpm_);
+    }
+    const DelayNote note = delaymap::note(dv(2, static_cast<float>(params::kDelayNoteEighth)));
+    for (std::uint32_t b = 0; b < kOutputBusCount; ++b) delay_send_[b]->configure(time, sync, note, fb, level, damping, pp, /*instant=*/first);
+  }
   primed_ = true;
 }
 
@@ -162,6 +186,9 @@ bool Mixer::begin_block(LastValueTable& live) noexcept {
   const std::uint32_t ramp = instant_levels_ ? 0 : kLevelRampFrames;
   const std::uint32_t fade = instant_levels_ ? 0 : kFadeFrames;
   bool trivial = true;
+  // The RT plane's single tempo value (BlockRenderer::tempo_bpm()): read once per block, so a tempo change takes effect at the next block.
+  tempo_bpm_ = tempo_slot_ >= 0 ? delaymap::tempo_bpm(live.load(static_cast<std::size_t>(tempo_slot_))) : delaymap::kDefaultTempoBpm;
+  for (const auto& d : delay_send_) d->set_tempo(tempo_bpm_);
   if (rev_master_slot_ >= 0) rev_master_g_.retarget(clamp01(live.load(static_cast<std::size_t>(rev_master_slot_))), ramp);
   const bool rev_master_off = rev_master_g_.steady(0.0f);
   for (std::uint32_t i = 0; i < kParts; ++i) {
@@ -175,6 +202,7 @@ bool Mixer::begin_block(LastValueTable& live) noexcept {
               p.count == 1 && p.entries[0].chain == nullptr;
   }
   for (const auto& r : reverb_send_) trivial = trivial && r->quiet();  // a tail that still rings is not transparent
+  for (const auto& d : delay_send_) trivial = trivial && d->quiet();
   master_g_.retarget(master_target_, ramp);
   if (line_slot_ >= 0) line_g_.retarget(clamp01(live.load(static_cast<std::size_t>(line_slot_))), ramp);
   trivial = trivial && master_g_.steady(1.0f) && line_g_.steady(0.0f) && master_trivial();
@@ -268,12 +296,17 @@ void Mixer::finish(const OutputBuses& out, LastValueTable& live) noexcept {
   const bool rev_master_on = !rev_master_g_.steady(0.0f);
   for (std::uint32_t f = 0; f < kN; ++f) rev_m[f] = rev_master_g_.next();
   bool rev_in[kOutputBusCount] = {false, false};  // some part may feed the reverb of this bus in this block
+  bool dly_in[kOutputBusCount] = {false, false};  // ... and the delay
   for (std::uint32_t i = 0; i < kParts; ++i) {
     Part& p = parts_[i];
     StereoBlock in{&bus_l_[i * kN], &bus_r_[i * kN], kN};
     if (rev_master_on && !p.rev_g.steady(0.0f)) {  // this part may feed the reverb of the bus(es) it sits on (judged before the ramps advance)
       rev_in[0] = rev_in[0] || !p.main_g.steady(0.0f);
       rev_in[1] = rev_in[1] || !p.aux_g.steady(0.0f);
+    }
+    if (!p.dly_g.steady(0.0f)) {
+      dly_in[0] = dly_in[0] || !p.main_g.steady(0.0f);
+      dly_in[1] = dly_in[1] || !p.aux_g.steady(0.0f);
     }
     float acc_l[kN], acc_r[kN];
     const float* ol;
@@ -333,13 +366,14 @@ void Mixer::finish(const OutputBuses& out, LastValueTable& live) noexcept {
     }
   }
 
-  // The sends, one instance per bus, returned into the same bus. Reverb (Story 2.10): skipped while nothing feeds it and nothing rings;
-  // the delay is still a placeholder (Story 2.11, unity return).
+  // The sends, one instance per bus, returned into the same bus. Reverb (Story 2.10) and delay (Story 2.11): skipped while nothing feeds
+  // them and nothing rings.
   for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
     StereoBlock rev{rev_l[b], rev_r[b], kN}, dly{dly_l[b], dly_r[b], kN};
     if (rev_in[b] || !reverb_send_[b]->quiet()) reverb_send_[b]->process(rev);
     else std::fill(rev_l[b], rev_l[b] + kN, 0.0f), std::fill(rev_r[b], rev_r[b] + kN, 0.0f);
-    delay_send_[b]->process(dly);
+    if (dly_in[b] || !delay_send_[b]->quiet()) delay_send_[b]->process(dly);
+    else std::fill(dly_l[b], dly_l[b] + kN, 0.0f), std::fill(dly_r[b], dly_r[b] + kN, 0.0f);
     for (std::uint32_t f = 0; f < kN; ++f) {
       bus_l[b][f] += rev_l[b][f] + dly_l[b][f];
       bus_r[b][f] += rev_r[b][f] + dly_r[b][f];

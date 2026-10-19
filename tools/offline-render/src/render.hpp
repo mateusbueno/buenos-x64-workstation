@@ -41,6 +41,13 @@ struct RoutingOptions {
   // Reverb (Story 2.10), registry defaults: type 1 (hall), time 2 s, return level 1, REV master send level 1. type: 0 room, 1 hall, 2 plate.
   std::uint8_t reverb_type = 1;
   float reverb_time_s = 2.0f, reverb_level = 1.0f, reverb_master = 1.0f;
+  // Delay (Story 2.11), registry defaults: 350 ms, tempo sync off, note 1 (eighth; the registry enum delay_note index), feedback 0.35, return level 1,
+  // damping 0.25, ping-pong 0. tempo_bpm is the initial value of the RT plane's tempo (registry default 120); tempo_changes are (seconds, bpm) events
+  // sent to the renderer as `tempo_bpm` performance parameter events at that frame (sorted by the renderer).
+  float delay_time_ms = 350.0f, delay_feedback = 0.35f, delay_level = 1.0f, delay_damping = 0.25f, delay_pingpong = 0.0f, tempo_bpm = 120.0f;
+  bool delay_sync = false;
+  std::uint8_t delay_note = 1;
+  std::vector<std::pair<double, float>> tempo_changes;
   MasterEq master_eq;
   MasterComp master_comp;
   float line_in_level = 0.0f;                         // 0..1

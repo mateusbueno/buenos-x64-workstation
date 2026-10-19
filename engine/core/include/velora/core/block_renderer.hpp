@@ -117,6 +117,12 @@ class BlockRenderer {
   std::uint64_t param_events_applied() const noexcept { return param_applied_.load(std::memory_order_relaxed); }
   std::uint64_t param_events_rejected() const noexcept { return param_rejected_.load(std::memory_order_relaxed); }
 
+  // The RT plane's single tempo value in bpm (Story 2.11): the live value of the performance parameter `tempo_bpm` (master scope, 20..300, default 120), clamped.
+  // Today it is set by an ordinary parameter event (ws.v1 SetPerformanceParam, a UMP, the offline renderer's options): the internal tempo is the only
+  // source. Epic 7's external clock follower will write the same slot, so every consumer (the Mixer's delays read it once per block, at the start of
+  // the block, so a change takes effect at the next block) keeps this one API. Any thread.
+  float tempo_bpm() const noexcept;
+
   bool ready() const noexcept { return bound_; }
   const EngineRegistry& registry() const noexcept { return registry_; }
   TestToneEngine& test_tone() noexcept { return tone_; }

@@ -140,6 +140,20 @@ std::size_t perf(std::uint16_t id, std::uint32_t part) { return params::perf_slo
 // Story 2.10: the reverb send is real DSP now (its tests are in reverb_test.cpp). These routing tests keep their analytic unity-return
 // references by muting the reverb return (reverb_level 0: the reverb adds nothing) wherever a reverb send level is set.
 void mute_reverb_return(Snapshot& s) { s.master[static_cast<std::size_t>(params::find(params::kReverbLevel)->master_index)] = 0.0f; }
+// Story 2.11: the delay send is real DSP now (its tests are in delay_test.cpp). These routing tests either mute its return (delay_level 0) or use it as a
+// pure 1 ms echo -- no feedback, no damping, no ping-pong, return level 1 -- whose wet signal is the send-weighted mono send sum delayed by exactly 48 frames
+// (the test-tone engine is mono, so the wet signal equals the dry one shifted).
+void mute_delay_return(Snapshot& s) { s.master[static_cast<std::size_t>(params::find(params::kDelayLevel)->master_index)] = 0.0f; }
+void short_delay(Snapshot& s) {
+  auto set = [&](std::uint16_t id, float v) { s.master[static_cast<std::size_t>(params::find(id)->master_index)] = v; };
+  set(params::kDelayTime, 1.0f);
+  set(params::kDelayFeedback, 0.0f);
+  set(params::kDelayDamping, 0.0f);
+  set(params::kDelayPingpong, 0.0f);
+  set(params::kDelayLevel, 1.0f);
+}
+constexpr std::size_t kEchoFrames = 48;
+float echo_at(const std::vector<float>& x, std::size_t i) { return i >= kEchoFrames ? x[i - kEchoFrames] : 0.0f; }
 
 // --- bus summation, Main/Aux, sends, master level ---------------------------------------------------------------------------
 void test_main_aux_sends_master() {
@@ -168,7 +182,7 @@ void test_main_aux_sends_master() {
     CHECK(rig.br->mixer().routed());
   }
 
-  // Sends (the delay is still a unity pass-through return into the bus the sending part sits on: an Aux part's send leaves Main untouched;
+  // Sends (the delay is a 1 ms echo returned into the bus the sending part sits on: an Aux part's send leaves Main untouched;
   // the reverb return is muted here, its send levels are set to show that a muted return adds nothing) and the master level trim on both buses.
   {
     constexpr float kMasterDb = -6.0f;
@@ -177,6 +191,7 @@ void test_main_aux_sends_master() {
     s.parts[2].output = params::kPartOutputAux;
     s.master[static_cast<std::size_t>(params::find(params::kMasterLevel)->master_index)] = kMasterDb;
     mute_reverb_return(s);
+    short_delay(s);
     s.perf_init[perf(params::kSendReverbLevel, 0)] = 0.5f;
     s.perf_init[perf(params::kSendDelayLevel, 1)] = 0.25f;
     s.perf_init[perf(params::kSendReverbLevel, 2)] = 1.0f;
@@ -189,8 +204,8 @@ void test_main_aux_sends_master() {
     const float g = db_gain(kMasterDb);
     std::vector<float> em(c.frames()), ea(c.frames());
     for (std::size_t i = 0; i < c.frames(); ++i) {
-      em[i] = g * (p0.l[i] + p1.l[i] + 0.25f * p1.l[i]);
-      ea[i] = g * (p2.l[i] + 0.125f * p2.l[i]);
+      em[i] = g * (p0.l[i] + p1.l[i] + 0.25f * echo_at(p1.l, i));
+      ea[i] = g * (p2.l[i] + 0.125f * echo_at(p2.l, i));
     }
     CHECK(max_diff(c.l, em) < 2e-6 && max_diff(c.r, em) < 2e-6);
     CHECK(max_diff(c.al, ea) < 2e-6 && max_diff(c.ar, ea) < 2e-6);
@@ -211,7 +226,9 @@ void test_main_aux_sends_master() {
   // A send level changed live (a UMP parameter event) reaches the output within a block and ramps.
   {
     Rig rig;
-    rig.publish(Snapshot::defaults());
+    Snapshot sd = Snapshot::defaults();
+    short_delay(sd);
+    rig.publish(sd);
     rig.note(true, 0, 60);
     const Cap before = rig.run(10);
     CHECK(max_diff(before.l, p0.l, 0, 10 * kBlockFrames) < 1e-7);  // trivial routing: untouched
@@ -221,7 +238,7 @@ void test_main_aux_sends_master() {
     const std::size_t o = 10 * kBlockFrames;
     CHECK(std::fabs(after.l[5] - p0.l[o + 5]) < 1e-7);  // not yet
     for (std::size_t i = 4 * kBlockFrames; i < 7 * kBlockFrames; ++i)
-      if (std::fabs(after.l[i] - 2.0f * p0.l[o + i]) > 2e-6f) { CHECK(false); break; }
+      if (std::fabs(after.l[i] - (p0.l[o + i] + p0.l[o + i - kEchoFrames])) > 2e-6f) { CHECK(false); break; }
   }
 }
 
@@ -405,6 +422,7 @@ void test_sample_engine_routed() {
       Snapshot s = Snapshot::defaults();
       s.parts[2].output = params::kPartOutputAux;
       mute_reverb_return(s);
+      mute_delay_return(s);  // the sample engine is stereo, the delay send is a mono sum: delay_test.cpp covers the delay, here the muted return adds nothing
       s.perf_init[perf(params::kSendReverbLevel, 2)] = 0.5f;
       s.perf_init[perf(params::kSendDelayLevel, 0)] = 0.25f;
       rig.publish(s);
@@ -420,8 +438,8 @@ void test_sample_engine_routed() {
   CHECK(peak(a0.l) > 0.05 && peak(a2.r) > 0.05);
   std::vector<float> em(all.frames()), er(all.frames()), ea(all.frames()), ear(all.frames());
   for (std::size_t i = 0; i < all.frames(); ++i) {
-    em[i] = a0.l[i] + a1.l[i] + 0.25f * a0.l[i];
-    er[i] = a0.r[i] + a1.r[i] + 0.25f * a0.r[i];
+    em[i] = a0.l[i] + a1.l[i];
+    er[i] = a0.r[i] + a1.r[i];
     ea[i] = a2.l[i];
     ear[i] = a2.r[i];
   }
@@ -565,12 +583,13 @@ void test_mixer_robustness() {
     Rig rig;
     rig.run(5);
     Snapshot s = Snapshot::defaults();
+    short_delay(s);
     s.perf_init[perf(params::kSendDelayLevel, 0)] = 0.5f;
     rig.publish(s);
     rig.note(true, 0, 60);
     const Cap c = rig.run(10);
     bool ok = true;
-    for (std::size_t i = 0; i < c.frames(); ++i) ok = ok && std::fabs(c.l[i] - 1.5f * p0.l[i]) < 2e-6f;
+    for (std::size_t i = 0; i < c.frames(); ++i) ok = ok && std::fabs(c.l[i] - (p0.l[i] + 0.5f * echo_at(p0.l, i))) < 2e-6f;
     CHECK(ok);
   }
   {  // two generations published before the first block with chains: no generation reference is left behind once they settle

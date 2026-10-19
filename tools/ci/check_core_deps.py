@@ -32,7 +32,7 @@ assert.h ctype.h errno.h fenv.h float.h inttypes.h limits.h locale.h math.h setj
 stdbool.h stddef.h stdint.h stdio.h stdlib.h string.h time.h uchar.h wchar.h wctype.h
 """.split())
 
-ALLOWED_LINK = re.compile(r"^(velora_core|velora_ports|velora::core|velora::ports)$")
+ALLOWED_LINK = re.compile(r"^(velora_core|velora_core_o2|velora_ports|velora::core|velora::ports)$")
 LINK_CMD_RE = re.compile(
     r"(target_link_libraries|target_link_options|link_libraries|add_dependencies)\s*\(([^)]*)\)",
     re.I | re.S)

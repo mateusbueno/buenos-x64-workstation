@@ -972,6 +972,114 @@ static void test_reverb_through_control() {
   CHECK(muted < 1e-4f);
 }
 
+// Story 2.11: the delay settings through SetMasterParams (structural, all or nothing, range-checked), tempo_bpm as a performance parameter with master scope
+// (the RT plane's single tempo value, read back through the renderer), the per-part delay send (id 401, CC 94, unchanged) and the delay heard.
+static void test_delay_through_control() {
+  auto master = [](std::initializer_list<std::pair<ws::v1::ParamId, float>> vals) {
+    ws::v1::ClientMessage m;
+    m.set_request_id(++g_rid);
+    for (const auto& kv : vals) {
+      auto* v = m.mutable_set_master_params()->add_values();
+      v->set_param_id(kv.first);
+      v->set_value(kv.second);
+    }
+    return m;
+  };
+  Rig rig;
+  CHECK(rig.load("{}"));
+  bool changed = false;
+  auto master_value = [&](ws::v1::ParamId id, float& out) {
+    ws::v1::ClientMessage gs;
+    gs.set_request_id(++g_rid);
+    gs.mutable_get_state();
+    const ws::v1::ServerMessage r = rig.plane.handle(gs, changed);
+    for (const auto& pv : r.state().master())
+      if (pv.param_id() == id) {
+        out = pv.value();
+        return true;
+      }
+    return false;
+  };
+  float v = -1;
+  // registry defaults are in the state
+  CHECK(master_value(ws::v1::PARAM_DELAY_TIME, v) && v == 350.0f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_SYNC, v) && v == 0.0f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_NOTE, v) && v == 1.0f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_FEEDBACK, v) && v == 0.35f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_LEVEL, v) && v == 1.0f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_DAMPING, v) && v == 0.25f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_PINGPONG, v) && v == 0.0f);
+  CHECK(ws::v1::DELAY_NOTE_QUARTER == 0 && ws::v1::DELAY_NOTE_EIGHTH == 1 && ws::v1::DELAY_NOTE_TRIPLET_SIXTEENTH == 8);
+  // a valid change of everything at once
+  CHECK(rig.plane.handle(master({{ws::v1::PARAM_DELAY_TIME, 1200.0f}, {ws::v1::PARAM_DELAY_SYNC, 1}, {ws::v1::PARAM_DELAY_NOTE, 4}, {ws::v1::PARAM_DELAY_FEEDBACK, 0.9f},
+                                 {ws::v1::PARAM_DELAY_LEVEL, 0.5f}, {ws::v1::PARAM_DELAY_DAMPING, 0.6f}, {ws::v1::PARAM_DELAY_PINGPONG, 1}}),
+                         changed).has_ack() && changed);
+  CHECK(master_value(ws::v1::PARAM_DELAY_TIME, v) && v == 1200.0f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_SYNC, v) && v == 1.0f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_NOTE, v) && v == 4.0f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_FEEDBACK, v) && v == 0.9f);
+  CHECK(master_value(ws::v1::PARAM_DELAY_PINGPONG, v) && v == 1.0f);
+  // refused: out of range (the feedback cap is the registry's, strictly below unity), a fractional enum, a bad flag; nothing changes
+  for (const auto& bad : {master({{ws::v1::PARAM_DELAY_TIME, 2000.5f}}), master({{ws::v1::PARAM_DELAY_TIME, 0.5f}}), master({{ws::v1::PARAM_DELAY_FEEDBACK, 0.96f}}),
+                          master({{ws::v1::PARAM_DELAY_FEEDBACK, 1.0f}}), master({{ws::v1::PARAM_DELAY_FEEDBACK, -0.1f}}), master({{ws::v1::PARAM_DELAY_NOTE, 9}}),
+                          master({{ws::v1::PARAM_DELAY_NOTE, 1.5f}}), master({{ws::v1::PARAM_DELAY_LEVEL, 1.5f}}), master({{ws::v1::PARAM_DELAY_DAMPING, 2}}),
+                          master({{ws::v1::PARAM_DELAY_SYNC, 2}}),
+                          master({{ws::v1::PARAM_DELAY_LEVEL, 0.25f}, {ws::v1::PARAM_DELAY_FEEDBACK, 5}})}) {
+    const ws::v1::ServerMessage r = rig.plane.handle(bad, changed);
+    CHECK(!changed && is_err(r, ws::v1::ERROR_CODE_OUT_OF_RANGE));
+  }
+  CHECK(master_value(ws::v1::PARAM_DELAY_LEVEL, v) && v == 0.5f);  // the valid value of the failed pair did not stick
+  // the tempo is a performance parameter: refused through SetMasterParams, set live through SetPerformanceParam, range checked, listed
+  CHECK(is_err(rig.plane.handle(master({{ws::v1::PARAM_TEMPO_BPM, 100.0f}}), changed), ws::v1::ERROR_CODE_WRONG_CLASS));
+  ws::v1::ClientMessage bad_perf;
+  bad_perf.set_request_id(++g_rid);
+  bad_perf.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_DELAY_TIME);
+  bad_perf.mutable_set_performance_param()->set_value(100.0f);
+  CHECK(is_err(rig.plane.handle(bad_perf, changed), ws::v1::ERROR_CODE_WRONG_CLASS));
+  CHECK(std::fabs(rig.live(p::kTempoBpm, 0) - 120.0f) < 1e-3f && std::fabs(rig.br->tempo_bpm() - 120.0f) < 1e-3f);
+  ws::v1::ClientMessage tm;
+  tm.set_request_id(++g_rid);
+  tm.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_TEMPO_BPM);
+  tm.mutable_set_performance_param()->set_value(93.5f);
+  CHECK(rig.plane.handle(tm, changed).has_ack() && !changed);
+  rig.step(4);
+  CHECK(std::fabs(rig.live(p::kTempoBpm, 0) - 93.5f) < 1e-3f && std::fabs(rig.br->tempo_bpm() - 93.5f) < 1e-3f);
+  // synced dotted eighth at 93.5 bpm now reaches the delay: 0.75 x 60 / 93.5 s
+  CHECK(std::fabs(rig.br->mixer().delay(0).target_delay_samples() - 0.75 * 60.0 / 93.5 * 48000.0) < 0.5);
+  for (float bad_bpm : {19.0f, 301.0f}) {
+    tm.set_request_id(++g_rid);
+    tm.mutable_set_performance_param()->set_value(bad_bpm);
+    CHECK(is_err(rig.plane.handle(tm, changed), ws::v1::ERROR_CODE_OUT_OF_RANGE));
+  }
+  ws::v1::ClientMessage gp;
+  gp.set_request_id(++g_rid);
+  gp.mutable_get_performance_values();
+  const ws::v1::ServerMessage pv = rig.plane.handle(gp, changed);
+  bool listed = false;
+  for (const auto& e : pv.performance_values().values())
+    if (e.param_id() == ws::v1::PARAM_TEMPO_BPM) listed = std::fabs(e.value() - 93.5f) < 1e-3f;
+  CHECK(listed);
+
+  // heard: a 1 ms echo of the held tone raises the level (the tone at 262 Hz plus itself 1 ms later is about 1.36 times as loud); send 0 leaves it alone
+  auto held_peak = [&](float send) {
+    Rig r;
+    CHECK(r.load("{}"));
+    CHECK(r.plane.handle(master({{ws::v1::PARAM_DELAY_TIME, 1.0f}, {ws::v1::PARAM_DELAY_FEEDBACK, 0.0f}, {ws::v1::PARAM_DELAY_DAMPING, 0.0f}}), changed).has_ack());
+    ws::v1::ClientMessage sl;
+    sl.set_request_id(++g_rid);
+    sl.mutable_set_send_levels()->set_part(0);
+    sl.mutable_set_send_levels()->set_delay(send);
+    CHECK(r.plane.handle(sl, changed).has_ack());
+    r.step(6);
+    const std::uint32_t on[] = {0x2000'0000u | (0x9u << 20) | (0u << 16) | (60u << 8) | 100u};
+    r.ingest.on_ump(on, 1, r.now());
+    r.step(60);
+    return window_peak(r, 20);
+  };
+  const float dry = held_peak(0.0f), wet = held_peak(1.0f);
+  CHECK(dry > 0.01f && wet > 1.2f * dry);
+}
+
 static void test_render_block_buses_equivalence() {
   Rig a, b;
   CHECK(a.load("{}") && b.load("{}"));
@@ -1326,6 +1434,7 @@ int main() {
   test_chain_identity_and_budget_lowering();
   test_master_level_and_line_in_through_control();
   test_reverb_through_control();
+  test_delay_through_control();
   test_render_block_buses_equivalence();
   test_concurrent_clients();
   test_generation_exhaustion();

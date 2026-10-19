@@ -4,7 +4,7 @@
 //   engine voices --(per part)--> part bus (stereo, 64 frames)
 //   part bus --> insert chain (<= 5 effects, cross-faded when the chain changes) --> post-insert signal
 //   post-insert --> Reverb send bus  (x send_reverb_level x send_reverb_master) --> Reverb (Story 2.10, one instance per output bus) --> Main or Aux
-//   post-insert --> Delay send bus   (x send_delay_level)   --> Delay return  (placeholder, unity) --> Main
+//   post-insert --> Delay send bus   (x send_delay_level)   --> Delay (Story 2.11, one instance per output bus, x delay_level) --> Main or Aux (the bus of the part)
 //   post-insert --> Main bus or Aux bus (part_output; switched with a short ramp)
 //   line-in (x line_in_level) --> Main bus
 //   Main, Aux --> master section per bus: master EQ, then master compressor (Story 2.8, each with its own bypass), then master_level trim --> outputs
@@ -17,7 +17,7 @@
 // (SnapshotExchange::rt_ref), so the control thread cannot free the instances while RT still processes through them (AD-23).
 //
 // When the routing is trivial (all parts to Main at unity, no effect in any chain, sends at 0 (or the REV master send at 0) and the reverb
-// tail gone (ReverbSend::quiet()), line-in at 0, master at 0 dB)
+// and delay tails gone (ReverbSend::quiet(), DelaySend::quiet()), line-in at 0, master at 0 dB)
 // the Mixer is "inactive": the block loop renders the engines straight into the Main output exactly as before this story,
 // so such renders are bit-identical to the pre-2.7 goldens. The master EQ and compressor count as trivial when they cannot change
 // the signal: bypassed (cross-fade finished) or at identity settings (EQ 0 dB on every band, compressor ratio 1 and makeup 0 dB).
@@ -32,6 +32,7 @@
 #include <memory>
 
 #include "velora/core/compressor.hpp"
+#include "velora/core/delay.hpp"
 #include "velora/core/eq.hpp"
 #include "velora/core/fx.hpp"
 #include "velora/core/reverb.hpp"
@@ -68,7 +69,8 @@ class Mixer {
   // --- RT, serial phase ---------------------------------------------------------------------------------
   // A new generation was adopted: part outputs, master level and chains. Where a part's chain changed, a new chain entry is
   // started (cross-fade); the very first generation applies instantly.
-  void adopt(const Snapshot& s) noexcept VELORA_NONBLOCKING;
+  // `live` (optional): the RT last-value table, read for the current tempo so that the delays' targets are right in the generation's own configure().
+  void adopt(const Snapshot& s, const LastValueTable* live = nullptr) noexcept VELORA_NONBLOCKING;
   // Once per block, before the voices render: updates level targets from the live values. True = routed block (render into the
   // part buses, then finish()); false = trivial routing, render straight into Main and do not call finish().
   bool begin_block(LastValueTable& live) noexcept VELORA_NONBLOCKING;
@@ -82,6 +84,10 @@ class Mixer {
   std::uint32_t chain_entries(std::uint32_t part) const noexcept { return part < kParts ? parts_[part].count : 0; }
   // The reverb instance of an output bus (0 = Main, 1 = Aux): tests and the host's introspection.
   const ReverbSend& reverb(std::uint32_t bus) const noexcept { return *reverb_send_[bus < kOutputBusCount ? bus : 0]; }
+  // The delay instance of an output bus (0 = Main, 1 = Aux): tests and the host's introspection.
+  const DelaySend& delay(std::uint32_t bus) const noexcept { return *delay_send_[bus < kOutputBusCount ? bus : 0]; }
+  // The tempo value (bpm) the delays follow, as read from the RT plane's last-value table at the start of the last block.
+  float tempo_bpm() const noexcept { return tempo_bpm_; }
   // True when every part has settled on a single chain entry (no cross-fade running or waiting).
   bool chains_settled() const noexcept {
     for (const Part& p : parts_)
@@ -160,10 +166,12 @@ class Mixer {
   bool instant_levels_ = true;  // level targets apply without a ramp (before and in the block of the first adopted generation)
   std::int16_t send_rev_perf_ = -1, send_dly_perf_ = -1, line_slot_ = -1;  // -1: not in the registry (the level stays 0)
 
-  // The sends, owned by the mixer, built at construction: the reverb (Story 2.10, one instance per output bus) and the delay placeholder
-  // (DSP in Story 2.11).
+  // The sends, owned by the mixer, built at construction: the reverb (Story 2.10) and the delay (Story 2.11), one instance per output bus.
   std::array<std::unique_ptr<ReverbSend>, kOutputBusCount> reverb_send_;
-  std::array<std::unique_ptr<Effect>, kOutputBusCount> delay_send_;
+  std::array<std::unique_ptr<DelaySend>, kOutputBusCount> delay_send_;
+  std::array<std::int16_t, 7> delay_idx_{};               // registry master_index of delay_time, _sync, _note, _feedback, _level, _damping, _pingpong
+  std::int16_t tempo_slot_ = -1;                          // last-value slot of tempo_bpm (-1: not in the registry, the tempo stays at the default)
+  float tempo_bpm_ = delaymap::kDefaultTempoBpm;
   Ramp rev_master_g_;                                     // REV master send level (send_reverb_master): scales every part's reverb send
   std::int16_t rev_master_slot_ = -1;                     // its last-value slot (-1: not in the registry, the scale stays 1)
   std::array<std::int16_t, 3> reverb_idx_{};              // registry master_index of reverb_type, reverb_time, reverb_level

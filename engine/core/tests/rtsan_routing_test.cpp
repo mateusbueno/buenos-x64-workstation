@@ -8,6 +8,10 @@
 // Story 2.10 adds the reverb: type, time (0.2 s .. 10 s) and return level cycle with every generation (so cross-fades run all the time, and
 // the level reaches 0 where the reverb clears itself), the part sends cycle with the events of every block, and the REV master send level moves
 // through 0..1 with live events; the run checks that both reverb instances worked (their tails are not required to fade out within the run: at 10 s they outlast it).
+// Story 2.11 adds the delay: time (1 ms .. 2 s), tempo sync on/off, every note value, feedback (including values beyond the cap, which the engine clamps),
+// return level, damping and ping-pong cycle with every generation (so the time glides, the sync mode switches and the smoothed parameters move all the time), the
+// per-part delay sends keep cycling with the events of every block, and the tempo (20 .. 300 bpm) is changed by live events every few blocks; the run checks that
+// both delay instances worked and that every note value and both sync modes were seen.
 // The control side (building snapshots and effect instances, freeing generations) runs outside it, as on the control thread. Built
 // twice: with RealtimeSanitizer (rtsan_routing_test, clang >= 20) and without (routing_traffic_test, everywhere) -- the second also
 // proves determinism: two runs give bit-identical output.
@@ -56,6 +60,7 @@ struct Control {
   // Story 2.9 coverage: generations whose chains held each of the new types, chorus/phaser in each mode, rotary at each speed.
   std::uint64_t type_seen[6] = {0, 0, 0, 0, 0, 0};
   std::uint64_t reverb_type_seen[3] = {0, 0, 0};
+  std::uint64_t delay_note_seen[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, delay_sync_seen[2] = {0, 0};
   std::uint64_t chorus_mode_seen[2] = {0, 0}, rotary_speed_seen[3] = {0, 0, 0};
 
   explicit Control(SnapshotExchange& e) : ex(e) {}
@@ -121,6 +126,20 @@ struct Control {
       setm(params::kReverbLevel, kLevels[(k / 5) % 4]);
       ++reverb_type_seen[k % 3];
     }
+    {  // the delay (Story 2.11)
+      static constexpr float kTimes[5] = {1.0f, 20.0f, 350.0f, 1000.0f, 2000.0f}, kFeedback[5] = {0.0f, 0.5f, 0.95f, 1.5f, 0.8f}, kLevels[4] = {1.0f, 0.0f, 0.5f, 0.8f},
+                             kDamping[4] = {0.0f, 0.25f, 1.0f, 0.6f}, kPingPong[3] = {0.0f, 1.0f, 0.5f};
+      const bool sync = k % 3 == 1;
+      setm(params::kDelayTime, kTimes[(k * 3) % 5]);
+      setm(params::kDelaySync, sync ? 1.0f : 0.0f);
+      setm(params::kDelayNote, static_cast<float>(k % 9));
+      setm(params::kDelayFeedback, kFeedback[(k * 2) % 5]);
+      setm(params::kDelayLevel, kLevels[(k / 4) % 4]);
+      setm(params::kDelayDamping, kDamping[(k * 3) % 4]);
+      setm(params::kDelayPingpong, kPingPong[(k / 2) % 3]);
+      ++delay_note_seen[k % 9];
+      ++delay_sync_seen[sync ? 1 : 0];
+    }
     reclaim();
     std::uint32_t idx = 0;
     while (idx < SnapshotExchange::kLedgerSlots && used(idx)) ++idx;
@@ -142,6 +161,8 @@ void run_block(BlockRenderer& br, OutputBuses ob, std::uint32_t i) noexcept VELO
   if (i % 2 == 0)
     br.submit({make_param_event(*params::find(params::kSendDelayLevel), (part + 1) % 4, static_cast<double>((i / 2) % 7) / 6.0), 17});
   if (i % 4 == 0) br.submit({make_param_event(*params::find(params::kSendReverbMaster), 0, static_cast<double>((i / 4) % 5) / 4.0), 29});
+  if (i % 3 == 0)  // the RT plane's tempo: 20 .. 300 bpm in steps, the extremes included
+    br.submit({make_param_event(*params::find(params::kTempoBpm), 0, 20.0 + 28.0 * static_cast<double>(((i / 3) * 7) % 11)), 33});
   if (i % 5 == 0) br.submit({make_param_event(*params::find(params::kLineInLevel), 0, static_cast<double>((i / 5) % 4) / 3.0), 40});
   br.process_block(ob);
 }
@@ -185,6 +206,9 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& chains_published) {
   for (int m = 0; m < 2; ++m) covered = covered && ctl.chorus_mode_seen[m] > 100;
   for (int sp = 0; sp < 3; ++sp) covered = covered && ctl.rotary_speed_seen[sp] > 100;
   for (int ty = 0; ty < 3; ++ty) covered = covered && ctl.reverb_type_seen[ty] > 300;
+  for (int n = 0; n < 9; ++n) covered = covered && ctl.delay_note_seen[n] > 300;
+  covered = covered && ctl.delay_sync_seen[0] > 300 && ctl.delay_sync_seen[1] > 300;
+  const bool delay_worked = br->mixer().delay(0).engine_blocks() > 1000 && br->mixer().delay(1).engine_blocks() > 1000;
   const bool reverb_worked = br->mixer().reverb(0).engine_blocks() > 1000 && br->mixer().reverb(1).engine_blocks() > 1000;
   // settle: everything fades out, RT holds no reference but the live notes' and the current chains'
   for (int i = 0; i < 40; ++i) br->process_block(OutputBuses{l, r, al, ar});
@@ -192,6 +216,7 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& chains_published) {
   bool ok = true;
   if (!br->mixer().chains_settled()) { std::printf("FAIL: chains did not settle\n"); ok = false; }
   if (!reverb_worked) { std::printf("FAIL: the reverb instances did not run\n"); ok = false; }
+  if (!delay_worked) { std::printf("FAIL: the delay instances did not run\n"); ok = false; }
   if (!finite) { std::printf("FAIL: non-finite output\n"); ok = false; }
   if (!covered) { std::printf("FAIL: the Story 2.9 insert types / modes / speeds were not all exercised\n"); ok = false; }
   if (!gr_ok || !(max_gr > 1.0f)) { std::printf("FAIL: gain reduction invalid or never published (max %g dB)\n", static_cast<double>(max_gr)); ok = false; }

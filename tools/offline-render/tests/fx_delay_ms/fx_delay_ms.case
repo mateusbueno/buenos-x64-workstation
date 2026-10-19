@@ -1,0 +1,8 @@
+# Null-test case for the delay golden render in milliseconds mode (Story 2.11): the golden test-tone MIDI with part 0 sending to the delay (230 ms,
+# feedback 0.5, damping 0.4, ping-pong 0.5), then a 1.5 s tail (the tail is the delay ringing out: the dry render has none). -100 dB residual: far
+# below the audible effect of the settings, loose enough for libm/FMA differences between macOS and Linux builds. check_excess: a tail in one file only fails as well.
+reference=fx_delay_ms.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
+check_excess=1

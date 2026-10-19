@@ -5,6 +5,8 @@
 //                       [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[@p1/p2/..][!][,...]] [--master-level DB]
 //                       [--master-eq LOW:MID:MIDHZ:HIGH[!]] [--master-comp THRESH:RATIO:ATTACK:RELEASE:MAKEUP[!]]   (Story 2.8)
 //                       [--reverb room|hall|plate] [--reverb-time S] [--reverb-level 0..1] [--rev-master 0..1]   (reverb, Story 2.10)
+//                       [--delay-time MS] [--delay-sync on|off] [--delay-note 1/4|1/8|1/16|1/4d|1/8d|1/16d|1/4t|1/8t|1/16t] [--delay-feedback 0..0.95]
+//                       [--delay-level 0..1] [--delay-damping 0..1] [--delay-pingpong 0..1] [--tempo BPM] [--tempo-change SECONDS:BPM]   (delay, Story 2.11)
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
@@ -36,6 +38,9 @@ static int usage() {
                "                     [--master-level DB] [--master-eq LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]]\n"
                "                     [--master-comp THRESHOLD_DB:RATIO:ATTACK_MS:RELEASE_MS:MAKEUP_DB[!]]\n"
                "                     [--reverb room|hall|plate] [--reverb-time 0.2..10] [--reverb-level 0..1] [--rev-master 0..1]\n"
+               "                     [--delay-time 1..2000] [--delay-sync on|off] [--delay-note 1/4|1/8|1/16|1/4d|1/8d|1/16d|1/4t|1/8t|1/16t]\n"
+               "                     [--delay-feedback 0..0.95] [--delay-level 0..1] [--delay-damping 0..1] [--delay-pingpong 0..1]\n"
+               "                     [--tempo 20..300] [--tempo-change SECONDS:BPM] (repeatable)\n"
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
   return 2;
@@ -47,7 +52,8 @@ int main(int argc, char** argv) {
   std::string drawbars, percussion;
   bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false, rotary_given = false;
   RenderOptions opt;
-  bool master_eq_seen = false, master_comp_seen = false, reverb_seen = false, reverb_time_seen = false, reverb_level_seen = false, rev_master_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
+  bool master_eq_seen = false, master_comp_seen = false, reverb_seen = false, reverb_time_seen = false, reverb_level_seen = false, rev_master_seen = false;
+  bool delay_seen[7] = {false, false, false, false, false, false, false}, tempo_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
   std::string line_in_path, aux_out_path;
   WavData line_in_wav, aux_wav;
   // "P:rest" -> part index 0..7 and the text after the colon.
@@ -206,6 +212,55 @@ int main(int argc, char** argv) {
       double lv = 0;
       if (!parse_double(v, 0.0, 1.0, lv)) { std::fprintf(stderr, "error: invalid --rev-master (0..1)\n"); return 2; }
       opt.routing.reverb_master = static_cast<float>(lv);
+      opt.routing.enabled = true;
+    } else if ((a == "--delay-time" || a == "--delay-feedback" || a == "--delay-level" || a == "--delay-damping" || a == "--delay-pingpong") && val(v)) {
+      // Story 2.11: the delay settings of the snapshot the routing options publish (each given once; the ranges are the registry's)
+      struct Opt { const char* name; double lo, hi; float RoutingOptions::*field; int idx; };
+      static const Opt kOpts[] = {{"--delay-time", 1.0, 2000.0, &RoutingOptions::delay_time_ms, 0}, {"--delay-feedback", 0.0, 0.95, &RoutingOptions::delay_feedback, 1},
+                                  {"--delay-level", 0.0, 1.0, &RoutingOptions::delay_level, 2}, {"--delay-damping", 0.0, 1.0, &RoutingOptions::delay_damping, 3},
+                                  {"--delay-pingpong", 0.0, 1.0, &RoutingOptions::delay_pingpong, 4}};
+      for (const Opt& o : kOpts) {
+        if (a != o.name) continue;
+        if (delay_seen[o.idx]) { std::fprintf(stderr, "error: duplicate %s\n", o.name); return 2; }
+        delay_seen[o.idx] = true;
+        double x = 0;
+        if (!parse_double(v, o.lo, o.hi, x)) { std::fprintf(stderr, "error: invalid %s (%g..%g)\n", o.name, o.lo, o.hi); return 2; }
+        opt.routing.*(o.field) = static_cast<float>(x);
+      }
+      opt.routing.enabled = true;
+    } else if (a == "--delay-sync" && val(v)) {
+      if (delay_seen[5]) { std::fprintf(stderr, "error: duplicate --delay-sync\n"); return 2; }
+      delay_seen[5] = true;
+      if (std::strcmp(v, "on") != 0 && std::strcmp(v, "off") != 0) { std::fprintf(stderr, "error: invalid --delay-sync (on or off)\n"); return 2; }
+      opt.routing.delay_sync = std::strcmp(v, "on") == 0;
+      opt.routing.enabled = true;
+    } else if (a == "--delay-note" && val(v)) {
+      if (delay_seen[6]) { std::fprintf(stderr, "error: duplicate --delay-note\n"); return 2; }
+      delay_seen[6] = true;
+      static const char* const kNotes[9] = {"1/4", "1/8", "1/16", "1/4d", "1/8d", "1/16d", "1/4t", "1/8t", "1/16t"};  // the registry enum delay_note, in order
+      int found = -1;
+      for (int k = 0; k < 9; ++k)
+        if (std::strcmp(v, kNotes[k]) == 0) found = k;
+      if (found < 0) { std::fprintf(stderr, "error: invalid --delay-note (1/4 1/8 1/16, d = dotted, t = triplet)\n"); return 2; }
+      opt.routing.delay_note = static_cast<std::uint8_t>(found);
+      opt.routing.enabled = true;
+    } else if (a == "--tempo" && val(v)) {
+      if (tempo_seen) { std::fprintf(stderr, "error: duplicate --tempo\n"); return 2; }
+      tempo_seen = true;
+      double bpm = 0;
+      if (!parse_double(v, 20.0, 300.0, bpm)) { std::fprintf(stderr, "error: invalid --tempo (20..300 bpm)\n"); return 2; }
+      opt.routing.tempo_bpm = static_cast<float>(bpm);
+      opt.routing.enabled = true;
+    } else if (a == "--tempo-change" && val(v)) {  // SECONDS:BPM, repeatable
+      const char* colon = std::strchr(v, ':');
+      double sec = 0, bpm = 0;
+      if (!colon || colon == v) { std::fprintf(stderr, "error: invalid --tempo-change (SECONDS:BPM)\n"); return 2; }
+      const std::string left(v, static_cast<std::size_t>(colon - v));
+      if (!parse_double(left.c_str(), 0.0, 3600.0, sec) || !parse_double(colon + 1, 20.0, 300.0, bpm)) {
+        std::fprintf(stderr, "error: invalid --tempo-change (SECONDS 0..3600 : BPM 20..300)\n");
+        return 2;
+      }
+      opt.routing.tempo_changes.emplace_back(sec, static_cast<float>(bpm));
       opt.routing.enabled = true;
     } else if (a == "--master-eq" && val(v)) {  // LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]   (! = bypassed)
       if (master_eq_seen) { std::fprintf(stderr, "error: duplicate --master-eq\n"); return 2; }

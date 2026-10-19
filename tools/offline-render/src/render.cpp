@@ -127,6 +127,14 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     set_master(params::kReverbTime, ro.reverb_time_s);
     set_master(params::kReverbLevel, ro.reverb_level);
     routing_snapshot->perf_init[params::perf_slot(*params::find(params::kSendReverbMaster), 0)] = ro.reverb_master;
+    set_master(params::kDelayTime, ro.delay_time_ms);
+    set_master(params::kDelaySync, ro.delay_sync ? 1.0f : 0.0f);
+    set_master(params::kDelayNote, static_cast<float>(ro.delay_note));
+    set_master(params::kDelayFeedback, ro.delay_feedback);
+    set_master(params::kDelayLevel, ro.delay_level);
+    set_master(params::kDelayDamping, ro.delay_damping);
+    set_master(params::kDelayPingpong, ro.delay_pingpong);
+    routing_snapshot->perf_init[params::perf_slot(*params::find(params::kTempoBpm), 0)] = ro.tempo_bpm;
     set_master(params::kMasterEqLowGain, ro.master_eq.low_db);
     set_master(params::kMasterEqMidGain, ro.master_eq.mid_db);
     set_master(params::kMasterEqMidFreq, ro.master_eq.mid_hz);
@@ -224,10 +232,25 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     opt.aux_out->samples.assign(static_cast<std::size_t>(blocks * kBlockFrames * 2), 0.0f);
   }
 
+  // Tempo changes (Story 2.11): ordered by time, submitted in the block that contains their frame like every other event.
+  std::vector<std::pair<std::uint64_t, float>> tempo_events;
+  for (const auto& tc : opt.routing.tempo_changes)
+    tempo_events.emplace_back(static_cast<std::uint64_t>(std::llround(tc.first * kSampleRate)), tc.second);
+  std::stable_sort(tempo_events.begin(), tempo_events.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::size_t next_tempo = 0;
+
   float l[kBlockFrames], r[kBlockFrames], al[kBlockFrames], ar[kBlockFrames];
   std::size_t next = 0;
   for (std::uint64_t b = 0; b < blocks; ++b) {
     const std::uint64_t end = (b + 1) * kBlockFrames;
+    while (next_tempo < tempo_events.size() && tempo_events[next_tempo].first < end) {
+      const auto& te = tempo_events[next_tempo++];
+      const std::uint32_t off = te.first < b * kBlockFrames ? 0u : static_cast<std::uint32_t>(te.first - b * kBlockFrames);
+      if (!br->submit({make_param_event(*params::find(params::kTempoBpm), 0, static_cast<double>(te.second)), off})) {
+        error = "event queue overflow (too many events in one block)";
+        return false;
+      }
+    }
     while (next < events.size() && events[next].frame < end) {
       const NoteEvent& e = events[next++];
       const std::uint32_t off = static_cast<std::uint32_t>(e.frame - b * kBlockFrames);

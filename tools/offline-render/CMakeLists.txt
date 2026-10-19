@@ -223,6 +223,80 @@ foreach(_bad "--reverb;cave" "--reverb-time;11" "--reverb-time;0.1" "--reverb-le
   set_tests_properties(fx_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid ${_opt}")
 endforeach()
 
+# Delay send (Story 2.11): the golden test-tone MIDI with part 0 sending to the delay and a 1.5 s tail, one golden in milliseconds mode (with damping and
+# ping-pong) and one tempo-synced (dotted eighth) with a tempo change during the render (option-driven: --tempo-change SECONDS:BPM sends the tempo_bpm
+# performance event, the RT plane's single tempo value). Same scheme as the other goldens: render twice (byte-equal), null-test against the committed golden
+# at -100 dB, and require a wrong setting to fail it. Regenerate after an intentional change with the command in the README.
+set(_dl_base --midi ${_golden}/golden.mid --tail-seconds 1.5)
+set(_dl_ms_good ${_dl_base} --send 0:0:0.7 --delay-time 230 --delay-feedback 0.5 --delay-level 0.8 --delay-damping 0.4 --delay-pingpong 0.5)
+set(_dl_ms_wrong_time ${_dl_base} --send 0:0:0.7 --delay-time 232 --delay-feedback 0.5 --delay-level 0.8 --delay-damping 0.4 --delay-pingpong 0.5)
+set(_dl_ms_wrong_feedback ${_dl_base} --send 0:0:0.7 --delay-time 230 --delay-feedback 0.45 --delay-level 0.8 --delay-damping 0.4 --delay-pingpong 0.5)
+set(_dl_ms_wrong_level ${_dl_base} --send 0:0:0.7 --delay-time 230 --delay-feedback 0.5 --delay-level 0.7 --delay-damping 0.4 --delay-pingpong 0.5)
+set(_dl_ms_wrong_damping ${_dl_base} --send 0:0:0.7 --delay-time 230 --delay-feedback 0.5 --delay-level 0.8 --delay-damping 0.5 --delay-pingpong 0.5)
+set(_dl_ms_wrong_pingpong ${_dl_base} --send 0:0:0.7 --delay-time 230 --delay-feedback 0.5 --delay-level 0.8 --delay-damping 0.4 --delay-pingpong 0.4)
+set(_dl_ms_wrong_send ${_dl_base} --send 0:0:0.6 --delay-time 230 --delay-feedback 0.5 --delay-level 0.8 --delay-damping 0.4 --delay-pingpong 0.5)
+set(_dl_ms_wrong_sync ${_dl_base} --send 0:0:0.7 --delay-time 230 --delay-sync on --delay-feedback 0.5 --delay-level 0.8 --delay-damping 0.4 --delay-pingpong 0.5)
+set(_dl_sync_common --send 0:0:0.7 --delay-sync on --delay-feedback 0.55 --delay-level 0.8 --delay-damping 0.3)
+set(_dl_sync_good ${_dl_base} ${_dl_sync_common} --delay-note 1/8d --tempo 100 --tempo-change 0.5:140)
+set(_dl_sync_wrong_note ${_dl_base} ${_dl_sync_common} --delay-note 1/8t --tempo 100 --tempo-change 0.5:140)
+set(_dl_sync_wrong_tempo ${_dl_base} ${_dl_sync_common} --delay-note 1/8d --tempo 110 --tempo-change 0.5:140)
+set(_dl_sync_wrong_change ${_dl_base} ${_dl_sync_common} --delay-note 1/8d --tempo 100 --tempo-change 0.5:130)
+set(_dl_sync_wrong_when ${_dl_base} ${_dl_sync_common} --delay-note 1/8d --tempo 100 --tempo-change 0.6:140)
+set(_dl_sync_wrong_nochange ${_dl_base} ${_dl_sync_common} --delay-note 1/8d --tempo 100)
+set(_dl_sync_wrong_syncoff ${_dl_base} --send 0:0:0.7 --delay-note 1/8d --tempo 100 --tempo-change 0.5:140 --delay-feedback 0.55 --delay-level 0.8 --delay-damping 0.3)
+foreach(_dl "ms;time:wt;feedback:wf;level:wl;damping:wd;pingpong:wp;send:ws;sync:wy" "sync;note:wn;tempo:wt;change:wc;when:ww;nochange:wx;syncoff:wo")
+  list(GET _dl 0 _dn)
+  list(REMOVE_AT _dl 0)
+  set(_d ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_delay_${_dn})
+  set(_pre fx_delay_${_dn})
+  add_test(NAME ${_pre}_clean
+           COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/${_pre}_a.wav ${_out}/${_pre}_b.wav ${_out}/${_pre}_wt.wav ${_out}/${_pre}_wf.wav ${_out}/${_pre}_wl.wav
+                   ${_out}/${_pre}_wd.wav ${_out}/${_pre}_wp.wav ${_out}/${_pre}_ws.wav ${_out}/${_pre}_wy.wav ${_out}/${_pre}_wn.wav ${_out}/${_pre}_wc.wav
+                   ${_out}/${_pre}_ww.wav ${_out}/${_pre}_wx.wav ${_out}/${_pre}_wo.wav)
+  set_tests_properties(${_pre}_clean PROPERTIES FIXTURES_SETUP ${_pre}_clean)
+  add_test(NAME ${_pre}_render_a COMMAND velora-offline-render ${_dl_${_dn}_good} --out ${_out}/${_pre}_a.wav)
+  add_test(NAME ${_pre}_render_b COMMAND velora-offline-render ${_dl_${_dn}_good} --out ${_out}/${_pre}_b.wav)
+  set_tests_properties(${_pre}_render_a PROPERTIES FIXTURES_REQUIRED ${_pre}_clean FIXTURES_SETUP ${_pre}_a)
+  set_tests_properties(${_pre}_render_b PROPERTIES FIXTURES_REQUIRED ${_pre}_clean FIXTURES_SETUP ${_pre}_b)
+  add_test(NAME ${_pre}_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/${_pre}_a.wav ${_out}/${_pre}_b.wav)
+  set_tests_properties(${_pre}_bit_identical PROPERTIES FIXTURES_REQUIRED "${_pre}_a;${_pre}_b")
+  add_test(NAME ${_pre}_null_golden COMMAND velora-null-test --case ${_d}/${_pre}.case --candidate ${_out}/${_pre}_a.wav)
+  set_tests_properties(${_pre}_null_golden PROPERTIES FIXTURES_REQUIRED ${_pre}_a PASS_REGULAR_EXPRESSION "overall: PASS")
+  foreach(_w ${_dl})
+    string(REPLACE ":" ";" _wl "${_w}")
+    list(GET _wl 0 _wn)
+    list(GET _wl 1 _wf)
+    add_test(NAME ${_pre}_wrong_${_wn} COMMAND velora-offline-render ${_dl_${_dn}_wrong_${_wn}} --out ${_out}/${_pre}_${_wf}.wav)
+    set_tests_properties(${_pre}_wrong_${_wn} PROPERTIES FIXTURES_REQUIRED ${_pre}_clean FIXTURES_SETUP ${_pre}_${_wf})
+    add_test(NAME ${_pre}_wrong_${_wn}_fails COMMAND velora-null-test --case ${_d}/${_pre}.case --candidate ${_out}/${_pre}_${_wf}.wav)
+    set_tests_properties(${_pre}_wrong_${_wn}_fails PROPERTIES FIXTURES_REQUIRED ${_pre}_${_wf} PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+  endforeach()
+endforeach()
+# Regenerate the delay goldens: cmake --build build --target update-delay-goldens (review the diff before commit).
+add_custom_target(update-delay-goldens
+  COMMAND velora-offline-render ${_dl_ms_good} --out ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_delay_ms/fx_delay_ms.wav
+  COMMAND velora-offline-render ${_dl_sync_good} --out ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_delay_sync/fx_delay_sync.wav)
+foreach(_dup "--delay-time;100;200" "--delay-sync;on;off" "--delay-note;1/4;1/8" "--delay-feedback;0.1;0.2" "--delay-level;0.5;0.6" "--delay-damping;0.1;0.2"
+             "--delay-pingpong;0.1;0.2" "--tempo;100;110")
+  list(GET _dup 0 _opt)
+  list(GET _dup 1 _v1)
+  list(GET _dup 2 _v2)
+  string(MAKE_C_IDENTIFIER "${_opt}" _id)
+  add_test(NAME fx_rejects_duplicate${_id}
+           COMMAND velora-offline-render ${_render_args} ${_opt} ${_v1} ${_opt} ${_v2} --out ${_out}/never.wav)
+  set_tests_properties(fx_rejects_duplicate${_id} PROPERTIES PASS_REGULAR_EXPRESSION "duplicate ${_opt}")
+endforeach()
+foreach(_bad "--delay-time;0.5" "--delay-time;2001" "--delay-time;nan" "--delay-feedback;0.96" "--delay-feedback;1" "--delay-feedback;-0.1" "--delay-level;2" "--delay-damping;-1"
+             "--delay-pingpong;2" "--delay-sync;maybe" "--delay-note;1/2" "--delay-note;eighth" "--tempo;19" "--tempo;301" "--tempo;inf" "--tempo-change;5" "--tempo-change;5:19"
+             "--tempo-change;5:301" "--tempo-change;-1:100" "--tempo-change;:100" "--tempo-change;x:100")
+  list(GET _bad 0 _opt)
+  list(GET _bad 1 _val)
+  string(MAKE_C_IDENTIFIER "${_opt}_${_val}" _id)
+  add_test(NAME fx_rejects_${_id}
+           COMMAND velora-offline-render ${_render_args} ${_opt} ${_val} --out ${_out}/never.wav)
+  set_tests_properties(fx_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid ${_opt}")
+endforeach()
+
 # Option parsing.
 add_test(NAME organ_perc_rejects_bad_percussion
          COMMAND velora-offline-render ${_perc_args} --percussion third,third --out ${_out}/never.wav)

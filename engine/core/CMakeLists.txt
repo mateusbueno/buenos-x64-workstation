@@ -1,8 +1,7 @@
 include(${CMAKE_SOURCE_DIR}/proto/params.cmake)
 velora_params_output(core VELORA_PARAMS_CORE_HPP)
 
-add_library(velora_core STATIC
-  ${VELORA_PARAMS_CORE_HPP}
+set(VELORA_CORE_SOURCES
   src/snapshot.cpp
   src/version.cpp
   src/engine_registry.cpp
@@ -18,8 +17,10 @@ add_library(velora_core STATIC
   src/ep_amp.cpp
   src/rotary_effect.cpp
   src/reverb.cpp
+  src/delay.cpp
   src/mixer.cpp
   src/block_renderer.cpp)
+add_library(velora_core STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
 add_library(velora::core ALIAS velora_core)
 target_include_directories(velora_core PUBLIC include ${VELORA_GENERATED_DIR}/core)
 # Dependency rule: core may link only core and ports targets.
@@ -87,6 +88,17 @@ add_executable(reverb_tests tests/reverb_test.cpp)
 target_link_libraries(reverb_tests PRIVATE velora_core)
 add_test(NAME reverb_tests COMMAND reverb_tests)
 
+add_executable(delay_tests tests/delay_test.cpp)
+target_link_libraries(delay_tests PRIVATE velora_core)
+add_test(NAME delay_tests COMMAND delay_tests)
+set_tests_properties(delay_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
+
+# The 10-minute feedback run (Story 2.11): ~86 M frames, a separate, labelled slow test with its own timeout (about a minute in an unoptimised build).
+add_executable(delay_longrun_tests tests/delay_longrun_test.cpp)
+target_link_libraries(delay_longrun_tests PRIVATE velora_core)
+add_test(NAME delay_longrun_tests COMMAND delay_longrun_tests)
+set_tests_properties(delay_longrun_tests PROPERTIES TIMEOUT 900 LABELS slow PASS_REGULAR_EXPRESSION "delay_longrun_tests: ok" FAIL_REGULAR_EXPRESSION "FAIL")
+
 add_executable(rotary_insert_tests tests/rotary_insert_test.cpp)
 target_link_libraries(rotary_insert_tests PRIVATE velora_core)
 add_test(NAME rotary_insert_tests COMMAND rotary_insert_tests)
@@ -98,17 +110,36 @@ target_link_libraries(routing_traffic_test PRIVATE velora_core)
 add_test(NAME routing_traffic_test COMMAND routing_traffic_test)
 set_tests_properties(routing_traffic_test PROPERTIES TIMEOUT 120)
 
+# The cost benchmarks assert the declared cost units, which only means something on optimised code: they link a bench-private copy of the core sources built
+# with -O3 -DNDEBUG (and are compiled -O2 themselves), so the assertions run in every configuration, the default unoptimised builds included.
+add_library(velora_core_o2 STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
+target_include_directories(velora_core_o2 PUBLIC include ${VELORA_GENERATED_DIR}/core)
+target_link_libraries(velora_core_o2 PUBLIC velora_ports)
+target_compile_options(velora_core_o2 PRIVATE -O3 -DNDEBUG)
+
 # Host micro-benchmark (Story 2.2): cost per voice and per generator; host figures, not representative of the board.
 add_executable(organ_bench tests/organ_bench.cpp)
-target_link_libraries(organ_bench PRIVATE velora_core)
+target_link_libraries(organ_bench PRIVATE velora_core_o2)
+target_compile_options(organ_bench PRIVATE -O3 -DNDEBUG)
 add_test(NAME organ_bench COMMAND organ_bench)
 set_tests_properties(organ_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative" FAIL_REGULAR_EXPRESSION "FAILED")
 
 # Reverb host benchmark (Story 2.10): worst-case reverb cost against the declared cost units; host figures, not representative of the board.
 add_executable(reverb_bench tests/reverb_bench.cpp)
-target_link_libraries(reverb_bench PRIVATE velora_core)
+target_link_libraries(reverb_bench PRIVATE velora_core_o2)
+target_compile_options(reverb_bench PRIVATE -O3 -DNDEBUG)
 add_test(NAME reverb_bench COMMAND reverb_bench)
 set_tests_properties(reverb_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative" FAIL_REGULAR_EXPRESSION "FAIL" TIMEOUT 120)
+
+# Delay host benchmark (Story 2.11): worst-case delay cost against the declared cost units; host figures, not representative of the board.
+add_executable(delay_bench tests/delay_bench.cpp)
+target_link_libraries(delay_bench PRIVATE velora_core_o2)
+target_compile_options(delay_bench PRIVATE -O3 -DNDEBUG)
+add_test(NAME delay_bench COMMAND delay_bench)
+set_tests_properties(delay_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative" FAIL_REGULAR_EXPRESSION "FAIL" TIMEOUT 120)
+
+# Timing tests must not compete with other tests for the cores (the cost ratios would be noise): they run alone.
+set_tests_properties(organ_bench reverb_bench delay_bench PROPERTIES RUN_SERIAL TRUE)
 
 # --- RealtimeSanitizer gate -------------------------------------------------
 if(VELORA_RTSAN)
