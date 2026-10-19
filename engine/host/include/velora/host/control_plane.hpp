@@ -27,6 +27,35 @@ struct ControlFail;  // validation failure: closed error code + message + detail
 
 using ControlEventQueue = HostEventQueue;  // single producer: the control thread; consumer: RenderDriver
 
+// Scene commands (Story 4.4). The plane parses the ws.v1 commands; the work (build a parameter-only generation from the loaded Live Set's
+// scenes) is the SceneController's, reached through this seam so the plane does not depend on it.
+enum class SceneResult : std::uint8_t {
+  kOk = 0,           // the scene was recalled (a new generation was published)
+  kAtFirst,          // previous_scene() at the first scene: nothing changed
+  kAtLast,           // next_scene() at the last scene: nothing changed
+  kNoSuchScene,      // recall_scene(index) with index >= the Live Set's scene count
+  kNoLiveSet,        // no Live Set loaded (or the current generation is not the loaded Live Set's)
+  kLoadInProgress,   // a Live Set load is running: nothing changed
+  kBusy,             // the snapshot ledger is full: nothing changed
+  kFxBudgetExceeded, // the scene's effects would cost more than the FX budget: nothing changed
+  kInternal,
+};
+const char* to_string(SceneResult r);
+struct SceneOutcome {
+  SceneResult result = SceneResult::kInternal;
+  std::int32_t scene = -1;       // the current scene after the call (-1 = none)
+  std::uint64_t revision = 0;    // the plane's revision after the call
+  bool published = false;        // a new generation went out
+  const char* busy_reason = "";  // kBusy / kLoadInProgress: "ledger_full" or "load_in_progress" (for the ws.v1 error details)
+  bool ok() const { return result == SceneResult::kOk || result == SceneResult::kAtFirst || result == SceneResult::kAtLast; }
+};
+class SceneHandler {
+ public:
+  enum class Op : std::uint8_t { kRecall, kNext, kPrevious };
+  virtual ~SceneHandler() = default;
+  virtual SceneOutcome run(Op op, std::uint32_t index) = 0;
+};
+
 class ControlPlane {
  public:
   using Clock = std::function<std::uint64_t()>;  // host time in ns, the same clock the MIDI adapter stamps with
@@ -53,6 +82,16 @@ class ControlPlane {
   PublishStatus publish_snapshot(const core::Snapshot& work, std::string& detail);
   // Test hook: the next publish_snapshot() returns `status` without committing anything (one shot), to exercise a late failure.
   void inject_publish_fault_for_tests(PublishStatus status) noexcept { fault_ = status; fault_set_ = true; }
+
+  // Scene commands (Story 4.4): the SceneController registers itself here (and unregisters in its destructor). Control thread only.
+  void set_scene_handler(SceneHandler* h) noexcept { scene_handler_ = h; }
+  // The generation RT is (or will be) playing; control thread only, valid until the next publish. nullptr before the first generation.
+  const core::Snapshot* current_snapshot() const noexcept { return current_; }
+  // A program_generation number that was never handed out before (Snapshot::program_generation, AD-2); control thread only.
+  std::uint64_t next_program_generation() noexcept { return ++program_generation_; }
+  // The generation RT announced it is reading (hazard pointer), nullptr before RT ran. Control thread only: it is the only thread that frees
+  // generations, so the pointee stays valid for the duration of the call.
+  const core::Snapshot* rt_held_snapshot() const noexcept { return exchange_.rt_held(); }
 
   // Executes one command (anything but Hello, which the server owns). `changed` is set when a new
   // generation was published. The reply carries request_id and the current revision.
@@ -91,6 +130,8 @@ class ControlPlane {
   ControlEventQueue& rt_events_;
   Clock clock_;
   const core::Snapshot* current_ = nullptr;
+  SceneHandler* scene_handler_ = nullptr;
+  std::uint64_t program_generation_ = 0;
   std::vector<core::Snapshot*> generations_;  // everything not yet freed, oldest first
   std::uint32_t ledger_used_ = 0;             // bit i = ledger slot i in use
   std::atomic<std::uint64_t> revision_{0};

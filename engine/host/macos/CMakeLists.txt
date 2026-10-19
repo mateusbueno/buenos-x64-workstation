@@ -17,3 +17,11 @@ add_executable(coremidi_virtual_test coremidi_virtual_test.cpp)
 target_link_libraries(coremidi_virtual_test PRIVATE velora_host_macos)
 add_test(NAME coremidi_virtual_test COMMAND coremidi_virtual_test)
 set_tests_properties(coremidi_virtual_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+
+# engine-host wiring smoke test (Story 4.4): a subprocess loads the scenes fixture and a ws.v1 client recalls a scene. Skipped (77) without an audio/MIDI device.
+add_executable(engine_host_scene_smoke engine_host_scene_smoke.cpp)
+target_link_libraries(engine_host_scene_smoke PRIVATE velora_control)
+add_dependencies(engine_host_scene_smoke engine-host)
+set(_ehs_dir ${CMAKE_SOURCE_DIR}/tools/offline-render/tests/live_set)
+add_test(NAME engine_host_scene_smoke COMMAND engine_host_scene_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/scenes.liveset ${_ehs_dir}/root)
+set_tests_properties(engine_host_scene_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)

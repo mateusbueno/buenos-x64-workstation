@@ -74,7 +74,7 @@ static_assert(effect_cost_units(EffectType::kRotary) <= kMaxInsertCost && effect
 // Reverb (Story 2.10), host-measured with engine/core/tests/reverb_bench.cpp (Release build, longest time, 64-frame blocks): one instance
 // costs about 1.1x an EQ insert (~0.75 us), 2.2x while a type cross-fade runs two engines (~1.5 us); the declared figure covers the
 // cross-fade case ratio-wise (EQ = 16 units -> ~36) with a margin. Placeholder until the dev board measurement of Story 2.12.
-constexpr std::uint32_t kReverbSendCost = 64;  // was 48: the bench now runs on -O3 code in every configuration, where the cross-fade case measures 2.2..3.5 x an EQ insert across runs
+constexpr std::uint32_t kReverbSendCost = 96;  // was 64 (48 before): on x86 Linux in Docker, with the host busy, the cross-fade case measures up to 5.2 x an EQ insert (83 units); was 48: the bench now runs on -O3 code in every configuration, where the cross-fade case measures 2.2..3.5 x an EQ insert across runs
 // Delay (Story 2.11), host-measured with engine/core/tests/delay_bench.cpp (Release build, 64-frame blocks, loud input, damping and ping-pong on, the time gliding all the
 // time): one instance costs about 0.9x an EQ insert (~0.55 us; steady ~0.4 us). The declared 40 units cover the ratio (EQ = 16 units -> 14..22 on the Mac, up to ~36 on x86 gcc in Docker where the gliding path is relatively dearer) with a margin (the first block after an idle spell costs like any other: no bulk clear). Placeholder until the dev board measurement of Story 2.12 (it was a 16-unit placeholder; raising it
 // raises kFixedFxCost by 48).

@@ -16,6 +16,13 @@
 
 namespace velora::offline {
 
+// A scene recall at a time (Story 4.4, `--scene-at SECONDS:INDEX`): the recall is made between blocks, at the first block boundary at or
+// after `frame` (48 kHz), through the SceneController -- the same code path as a ws.v1 RecallScene. Recalls are applied in order of time.
+struct SceneRecallAt {
+  std::uint64_t frame = 0;
+  std::uint32_t index = 0;
+};
+
 struct LiveSetRenderOptions {
   std::string live_set_path;
   std::string library_root;
@@ -23,6 +30,7 @@ struct LiveSetRenderOptions {
   std::uint64_t seed = 1;        // sample engine RNG seed (round robin / random layers)
   std::uint32_t sample_voices = 340;  // sample engine voice capacity (the 256 voice floor plus the 64 voice fade headroom)
   double tail_seconds = 1.0;
+  std::vector<SceneRecallAt> scene_recalls;  // sorted by frame (stable) by render_live_set()
 };
 
 struct LiveSetRenderReport {
@@ -30,6 +38,8 @@ struct LiveSetRenderReport {
   std::uint64_t pool_exhausted = 0;
   std::uint64_t dropped_out_of_range = 0;
   std::uint64_t unzoned_keys = 0;
+  std::uint64_t scenes_recalled = 0;
+  std::uint64_t generations_published = 0;  // by the recalls
 };
 
 // False with `error` set when the Live Set does not load (nothing is rendered) or the input is unusable.

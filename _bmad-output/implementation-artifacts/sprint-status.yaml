@@ -112,7 +112,7 @@ development_status:
   4-1-tier-profile-read-at-boot: backlog
   4-2-versioned-live-set-format-with-parts-scenes-and-assign-map: done
   4-3-live-set-load-with-8-parts-zones-layers-and-splits: done
-  4-4-scene-recall-as-a-parameter-only-snapshot-swap: backlog
+  4-4-scene-recall-as-a-parameter-only-snapshot-swap: done
   4-5-seamless-live-set-switching-with-background-load: backlog
   4-6-setlists-setlist-tags-and-live-set-stepping: backlog
   4-7-next-live-set-preload-within-the-head-budget: backlog

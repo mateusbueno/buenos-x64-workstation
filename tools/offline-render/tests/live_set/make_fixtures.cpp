@@ -1,6 +1,7 @@
 // Writes the committed fixtures of the Live Set golden (Story 4.3):  live-set-fixture-gen OUT_DIR
 //   OUT_DIR/root/lib/<library_id>/<bundle_id>/bundle.vlb + OUT_DIR/root/lib/<library_id>/current -> <bundle_id>   (three tiny libraries)
 //   OUT_DIR/layer_split.liveset, wrong_split.liveset, wrong_octave.liveset                                       (the Live Set and two wrong variants)
+//   OUT_DIR/scenes.liveset                                                                                       (Story 4.4: the same libraries, an organ part and three scenes)
 // Everything is integer arithmetic (no libm), so the files are identical on every platform. Regenerate only on purpose:
 //   cmake --build build --target live-set-fixtures   (then review the diff, then re-render the golden: update-live-set-golden)
 #include <sys/stat.h>
@@ -150,6 +151,80 @@ int main(int argc, char** argv) {
     std::string bytes;
     if (ls::serialize(s, bytes) != ls::Status::kOk) return 1;
     std::ofstream f(out + "/" + var.file, std::ios::binary | std::ios::trunc);
+    f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  }
+
+  // Story 4.4: scenes.liveset. Bass / piano split at B2 / C3, a pad (an octave down, Aux) and an organ, with three scenes that move parameters
+  // only: verse (the pad joins on the low keys), chorus (the pad on the whole keyboard and the organ come in) and outro (the piano alone).
+  // The base has the pad and the organ keyboards off, so the scenes decide who plays.
+  {
+    lsp::LiveSet s = ls::make_default_live_set("c24a7e51-9d0b-4f3e-8a62-5b1e0d7f3c94", "Scenes show", 8);
+    s.set_tempo(120.0f);
+    auto timbre = [&](int p, const std::string& lib, const char* key) {
+      s.mutable_parts(p)->mutable_timbre()->set_library_id(lib);
+      s.mutable_parts(p)->mutable_timbre()->set_instrument_key(key);
+    };
+    timbre(0, bass, "bass/electric.sfz");
+    s.mutable_parts(0)->set_high_key(47);
+    s.mutable_parts(0)->set_volume(0.9f);
+    timbre(1, piano, "piano/grand.sfz");
+    s.mutable_parts(1)->set_low_key(48);
+    s.mutable_parts(1)->set_volume(0.8f);
+    s.mutable_parts(1)->set_send_reverb(0.25f);
+    timbre(2, pad, "pad/strings.sfz");
+    s.mutable_parts(2)->set_octave(-1);
+    s.mutable_parts(2)->set_volume(0.5f);
+    s.mutable_parts(2)->set_output(ws::v1::PART_OUTPUT_AUX);
+    s.mutable_parts(2)->set_keyboard_on(false);
+    lsp::Part* organ = s.mutable_parts(3);  // part 3: the organ, drawbars 8 8 0 (16' 8'), no keyboard until the chorus
+    organ->mutable_engine()->set_engine_type_id(2);
+    organ->set_volume(0.5f);
+    organ->set_keyboard_on(false);
+    auto add_param = [](google::protobuf::RepeatedPtrField<lsp::ParamEntry>* l, std::uint32_t id, float v) {
+      lsp::ParamEntry* e = l->Add();
+      e->set_param_id(id);
+      e->set_value(v);
+    };
+    add_param(organ->mutable_engine()->mutable_params(), 100, 8);  // drawbar_16
+    add_param(organ->mutable_engine()->mutable_params(), 102, 6);  // drawbar_8
+    // verse: the pad joins on the low keys (up to B3), the piano a little back.
+    lsp::Scene* verse = s.add_scenes();
+    verse->set_name("Verse");
+    verse->add_parts();
+    verse->mutable_parts(0)->set_volume(0.8f);
+    lsp::ScenePart* v1 = verse->add_parts();
+    v1->set_volume(0.6f);
+    lsp::ScenePart* v2 = verse->add_parts();
+    v2->set_keyboard_on(true);
+    v2->set_high_key(59);
+    // chorus: the pad on the whole keyboard, the organ comes in with a brighter registration, more reverb on the piano.
+    lsp::Scene* chorus = s.add_scenes();
+    chorus->set_name("Chorus");
+    chorus->add_parts();
+    lsp::ScenePart* c1 = chorus->add_parts();
+    c1->set_send_reverb(0.4f);
+    lsp::ScenePart* c2 = chorus->add_parts();
+    c2->set_keyboard_on(true);
+    c2->set_volume(0.7f);
+    lsp::ScenePart* c3 = chorus->add_parts();
+    c3->set_keyboard_on(true);
+    add_param(c3->mutable_engine_params(), 102, 8);  // drawbar_8
+    add_param(c3->mutable_engine_params(), 104, 5);  // drawbar_2_2_3
+    // outro: the piano alone, softer; the pad and organ keyboards off, the bass off.
+    lsp::Scene* outro = s.add_scenes();
+    outro->set_name("Outro");
+    lsp::ScenePart* o0 = outro->add_parts();
+    o0->set_keyboard_on(false);
+    lsp::ScenePart* o1 = outro->add_parts();
+    o1->set_volume(0.55f);
+    o1->set_send_reverb(0.15f);
+    if (!ls::validate(s, 8).ok()) {
+      std::fprintf(stderr, "the scenes fixture Live Set is not valid\n");
+      return 1;
+    }
+    std::string bytes;
+    if (ls::serialize(s, bytes) != ls::Status::kOk) return 1;
+    std::ofstream f(out + "/scenes.liveset", std::ios::binary | std::ios::trunc);
     f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   return 0;

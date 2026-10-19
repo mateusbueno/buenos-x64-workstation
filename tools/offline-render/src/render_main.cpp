@@ -10,7 +10,7 @@
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
-//                       [--live-set FILE --library-root DIR [--seed N] [--tail-seconds S]]   (Live Set mode, Story 4.3: --midi, --out; no other engine option)
+//                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--seed N] [--tail-seconds S]]   (Live Set mode, Story 4.3: --midi, --out; no other engine option)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,7 +45,7 @@ static int usage() {
                "                     [--tempo 20..300] [--tempo-change SECONDS:BPM] (repeatable)\n"
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n"
-               "       Live Set: --live-set FILE --library-root DIR --midi in.mid --out out.wav [--seed N] [--tail-seconds S]\n"
+               "       Live Set: --live-set FILE --library-root DIR --midi in.mid --out out.wav [--scene-at SECONDS:INDEX]... [--seed N] [--tail-seconds S]\n"
                "                 (every note on any channel is fanned out to the Live Set's parts by zone; no other engine option)\n");
   return 2;
 }
@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
   bool delay_seen[7] = {false, false, false, false, false, false, false}, tempo_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
   std::string line_in_path, aux_out_path, live_set_path, library_root;
   bool seed_given = false;
+  std::vector<SceneRecallAt> scene_recalls;
   WavData line_in_wav, aux_wav;
   // "P:rest" -> part index 0..7 and the text after the colon.
   auto split_part = [](const std::string& arg, std::uint32_t& part, std::string& rest) {
@@ -333,6 +334,20 @@ int main(int argc, char** argv) {
     } else if (a == "--aux-out" && val(v)) {
       aux_out_path = v;
       opt.routing.enabled = true;
+    } else if (a == "--scene-at" && val(v)) {
+      // SECONDS:INDEX -- Live Set mode: recall scene INDEX at that time (repeatable).
+      const std::string sv = v;
+      const std::size_t colon = sv.find(':');
+      double secs = 0;
+      std::uint64_t idx = 0;
+      if (colon == std::string::npos || !parse_double(sv.substr(0, colon), 0.0, 3600.0, secs) || !parse_uint(sv.substr(colon + 1), 7, idx)) {
+        std::fprintf(stderr, "error: invalid --scene-at '%s' (SECONDS:INDEX with SECONDS 0..3600 and INDEX a whole scene number 0..7)\n", sv.c_str());
+        return 2;
+      }
+      SceneRecallAt rc;
+      rc.frame = static_cast<std::uint64_t>(std::llround(secs * 48000.0));
+      rc.index = static_cast<std::uint32_t>(idx);
+      scene_recalls.push_back(rc);
     } else if (a == "--live-set" && val(v)) live_set_path = v;
     else if (a == "--library-root" && val(v)) library_root = v;
     else if (a == "--bundle" && val(v)) bundle_path = v;
@@ -362,6 +377,10 @@ int main(int argc, char** argv) {
       opt.detune_cents = static_cast<float>(c);
     } else return usage();
   }
+  if (!scene_recalls.empty() && live_set_path.empty()) {
+    std::fprintf(stderr, "error: --scene-at needs --live-set\n");
+    return 2;
+  }
   if (!live_set_path.empty() || !library_root.empty()) {
     // Live Set mode (Story 4.3): the Live Set decides the engines, the routing and the instruments.
     if (live_set_path.empty() || library_root.empty() || midi.empty() || out.empty()) return usage();
@@ -382,6 +401,7 @@ int main(int argc, char** argv) {
     lo.library_root = library_root;
     lo.tail_seconds = opt.tail_seconds;
     if (seed_given) lo.seed = opt.seed;
+    lo.scene_recalls = scene_recalls;
     WavData lwav;
     LiveSetRenderReport lrep;
     std::string lerr;
@@ -399,6 +419,7 @@ int main(int argc, char** argv) {
     std::printf("live set: %llu pool exhausted, %llu notes dropped out of range, %llu keys no part took\n",
                 static_cast<unsigned long long>(lrep.pool_exhausted), static_cast<unsigned long long>(lrep.dropped_out_of_range),
                 static_cast<unsigned long long>(lrep.unzoned_keys));
+    if (!scene_recalls.empty()) std::printf("live set: %llu scene recall(s)\n", static_cast<unsigned long long>(lrep.scenes_recalled));
     std::printf("rendered %zu events -> %s (%llu frames, 48000 Hz, 2 ch, float32)\n", lsmf.events.size(), out.c_str(),
                 static_cast<unsigned long long>(lwav.frames()));
     return 0;

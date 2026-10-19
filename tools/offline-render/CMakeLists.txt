@@ -348,9 +348,67 @@ set_tests_properties(live_set_rejects_a_file_that_is_not_a_live_set PROPERTIES P
 add_custom_target(live-set-fixtures
   COMMAND live-set-fixture-gen ${_ls}
   COMMAND python3 ${_ls}/make_midi.py ${_ls}/layer_split.mid
+  COMMAND python3 ${_ls}/make_scenes_midi.py ${_ls}/scenes.mid
   DEPENDS live-set-fixture-gen)
 add_custom_target(update-live-set-golden
   COMMAND velora-offline-render ${_ls_args} --out ${_ls}/layer_split.wav)
+
+# Scene recall (Story 4.4): scenes.liveset (the same libraries plus an organ, three scenes) rendered with --scene-at 0:0 (verse), 2.0:1 (chorus), 4.5:2 (outro) while
+# notes are held, pedal-sustained and releasing across the recalls. Render twice (byte-equal), null-test against the committed golden at -100 dB, and require the
+# scenes in the wrong order, and the same render with no recall at all, to fail it. Regenerate the golden with update-scenes-golden (after live-set-fixtures).
+set(_sc_args --live-set ${_ls}/scenes.liveset --library-root ${_ls}/root --midi ${_ls}/scenes.mid --tail-seconds 1.5)
+set(_sc_good --scene-at 0:0 --scene-at 2.0:1 --scene-at 4.5:2)
+add_test(NAME scenes_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/scenes_a.wav ${_out}/scenes_b.wav ${_out}/scenes_wrong_order.wav ${_out}/scenes_none.wav ${_out}/scenes_unsorted.wav)
+set_tests_properties(scenes_clean PROPERTIES FIXTURES_SETUP scenes_clean)
+add_test(NAME scenes_render_a COMMAND velora-offline-render ${_sc_args} ${_sc_good} --out ${_out}/scenes_a.wav)
+add_test(NAME scenes_render_b COMMAND velora-offline-render ${_sc_args} ${_sc_good} --out ${_out}/scenes_b.wav)
+set_tests_properties(scenes_render_a PROPERTIES FIXTURES_REQUIRED scenes_clean FIXTURES_SETUP scenes_a PASS_REGULAR_EXPRESSION "3 scene recall")
+set_tests_properties(scenes_render_b PROPERTIES FIXTURES_REQUIRED scenes_clean FIXTURES_SETUP scenes_b)
+add_test(NAME scenes_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/scenes_a.wav ${_out}/scenes_b.wav)
+set_tests_properties(scenes_bit_identical PROPERTIES FIXTURES_REQUIRED "scenes_a;scenes_b")
+add_test(NAME scenes_null_golden COMMAND velora-null-test --case ${_ls}/scenes.case --candidate ${_out}/scenes_a.wav)
+set_tests_properties(scenes_null_golden PROPERTIES FIXTURES_REQUIRED scenes_a PASS_REGULAR_EXPRESSION "overall: PASS")
+# The order of --scene-at on the command line does not matter (recalls are applied in time order): same bytes as the sorted command line.
+add_test(NAME scenes_render_unsorted
+         COMMAND velora-offline-render ${_sc_args} --scene-at 4.5:2 --scene-at 0:0 --scene-at 2.0:1 --out ${_out}/scenes_unsorted.wav)
+set_tests_properties(scenes_render_unsorted PROPERTIES FIXTURES_REQUIRED scenes_clean FIXTURES_SETUP scenes_unsorted)
+add_test(NAME scenes_unsorted_is_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/scenes_a.wav ${_out}/scenes_unsorted.wav)
+set_tests_properties(scenes_unsorted_is_identical PROPERTIES FIXTURES_REQUIRED "scenes_a;scenes_unsorted")
+add_test(NAME scenes_wrong_order
+         COMMAND velora-offline-render ${_sc_args} --scene-at 0:0 --scene-at 2.0:2 --scene-at 4.5:1 --out ${_out}/scenes_wrong_order.wav)
+set_tests_properties(scenes_wrong_order PROPERTIES FIXTURES_REQUIRED scenes_clean FIXTURES_SETUP scenes_wrong_order)
+add_test(NAME scenes_wrong_order_fails COMMAND velora-null-test --case ${_ls}/scenes.case --candidate ${_out}/scenes_wrong_order.wav)
+set_tests_properties(scenes_wrong_order_fails PROPERTIES FIXTURES_REQUIRED scenes_wrong_order PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+add_test(NAME scenes_no_recall COMMAND velora-offline-render ${_sc_args} --out ${_out}/scenes_none.wav)
+set_tests_properties(scenes_no_recall PROPERTIES FIXTURES_REQUIRED scenes_clean FIXTURES_SETUP scenes_none)
+add_test(NAME scenes_no_recall_fails COMMAND velora-null-test --case ${_ls}/scenes.case --candidate ${_out}/scenes_none.wav)
+set_tests_properties(scenes_no_recall_fails PROPERTIES FIXTURES_REQUIRED scenes_none PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# Option and input errors of --scene-at.
+foreach(_bad "nope" "1" ":1" "x:1" "1:x" "1:8" "-1:0" "1:-1" "4000:0" "nan:0")
+  string(MAKE_C_IDENTIFIER "scene_at_${_bad}" _id)
+  add_test(NAME scenes_rejects_${_id}
+           COMMAND velora-offline-render ${_sc_args} --scene-at ${_bad} --out ${_out}/never.wav)
+  set_tests_properties(scenes_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid --scene-at")
+endforeach()
+add_test(NAME scenes_rejects_missing_scene
+         COMMAND velora-offline-render ${_sc_args} --scene-at 1.0:5 --out ${_out}/never.wav)
+set_tests_properties(scenes_rejects_missing_scene PROPERTIES PASS_REGULAR_EXPRESSION "scene 5 does not exist \\(the Live Set has 3 scenes\\)")
+add_test(NAME scenes_rejects_recall_after_the_end
+         COMMAND velora-offline-render ${_sc_args} --scene-at 100:1 --out ${_out}/never.wav)
+set_tests_properties(scenes_rejects_recall_after_the_end PROPERTIES PASS_REGULAR_EXPRESSION "after the end of the render")
+add_test(NAME scenes_rejects_fractional_index
+         COMMAND velora-offline-render ${_sc_args} --scene-at 1.0:1.5 --out ${_out}/never.wav)
+set_tests_properties(scenes_rejects_fractional_index PROPERTIES PASS_REGULAR_EXPRESSION "invalid --scene-at '1.0:1.5'.*whole scene number")
+# A recall inside the last block (7.0005 s is frame 336024 of 336064) is applied, not rejected.
+add_test(NAME scenes_recall_in_the_last_block
+         COMMAND velora-offline-render ${_sc_args} --scene-at 0:0 --scene-at 7.0005:1 --out ${_out}/scenes_last_block.wav)
+set_tests_properties(scenes_recall_in_the_last_block PROPERTIES PASS_REGULAR_EXPRESSION "2 scene recall")
+add_test(NAME scenes_rejects_without_live_set
+         COMMAND velora-offline-render ${_render_args} --scene-at 1.0:0 --out ${_out}/never.wav)
+set_tests_properties(scenes_rejects_without_live_set PROPERTIES PASS_REGULAR_EXPRESSION "--scene-at needs --live-set")
+add_custom_target(update-scenes-golden
+  COMMAND velora-offline-render ${_sc_args} ${_sc_good} --out ${_ls}/scenes.wav)
 
 # Option parsing.
 add_test(NAME organ_perc_rejects_bad_percussion

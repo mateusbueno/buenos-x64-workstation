@@ -6,11 +6,17 @@
 
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/params_gen.hpp"
+#include "live_set_detail.hpp"
+#include "velora/host/scene_controller.hpp"
 
 namespace velora::host {
 
 namespace p = core::params;
 namespace lsp = liveset::lsp;
+using detail::apply_entries;
+using detail::fill_inserts;
+using detail::sane;
+using detail::sane_volume;
 
 const char* to_string(LiveSetLoadStatus s) {
   switch (s) {
@@ -60,50 +66,6 @@ LiveSetLoadResult failure(LiveSetLoadStatus s, std::string detail = {}) {
   return r;
 }
 
-// A scalar the registry knows: non-finite takes the default, anything else is clamped to the registry range.
-float sane(const p::ParamDef& d, float v) {
-  if (!std::isfinite(v)) return static_cast<float>(d.def);
-  return static_cast<float>(std::min<double>(std::max<double>(v, d.min), d.max));
-}
-float sane_volume(float v) { return std::isfinite(v) ? std::min(std::max(v, 0.0f), 1.0f) : 1.0f; }
-
-// Applies one ParamEntry list to the generation: a registry performance parameter becomes the initial value of its slot (for `part` when
-// part-scoped); structural master parameters go to the master array; ids this build does not know are preserved in the file and ignored here.
-void apply_entries(core::Snapshot& s, const google::protobuf::RepeatedPtrField<lsp::ParamEntry>& list, std::uint32_t part, bool master_list) {
-  for (const lsp::ParamEntry& e : list) {
-    const p::ParamDef* d = p::find(e.param_id());
-    if (!d || !std::isfinite(e.value())) continue;
-    const float value = sane(*d, e.value());
-    if (d->cls == p::Class::kPerformance) {
-      if (master_list ? d->scope != p::Scope::kMaster : d->scope != p::Scope::kPart) continue;
-      s.perf_init[p::perf_slot(*d, d->scope == p::Scope::kPart ? part : 0)] = value;
-    } else if (master_list && d->scope == p::Scope::kMaster && d->master_index >= 0) {
-      s.master[static_cast<std::size_t>(d->master_index)] = value;
-    }
-  }
-}
-
-void fill_inserts(core::PartCfg& pc, const google::protobuf::RepeatedPtrField<ws::v1::InsertSlot>& slots) {
-  pc.inserts = {};
-  const int n = slots.size() < static_cast<int>(p::kInsertSlotCount) ? slots.size() : static_cast<int>(p::kInsertSlotCount);
-  pc.insert_count = static_cast<std::uint8_t>(n);
-  for (int i = 0; i < n; ++i) {
-    const ws::v1::InsertSlot& in = slots[i];
-    core::InsertSlotCfg& dst = pc.inserts[static_cast<std::size_t>(i)];
-    for (std::uint32_t k = 0; k < p::kInsertParamCount; ++k) {  // missing params take the registry default
-      const p::ParamDef* d = p::find(p::kInsertParam1 + k);
-      dst.params[k] = d ? static_cast<float>(d->def) : 0.5f;
-    }
-    // A type above this build's enum comes from a newer build: it is kept in the file, here the slot is empty ("none").
-    dst.type = in.type() >= 0 && static_cast<std::uint32_t>(in.type()) < p::kInsertTypeCount ? static_cast<std::uint8_t>(in.type()) : 0;
-    dst.bypass = in.bypass() ? 1 : 0;
-    for (int k = 0; k < in.params_size() && k < static_cast<int>(p::kInsertParamCount); ++k) {
-      const p::ParamDef* d = p::find(p::kInsertParam1 + static_cast<std::uint32_t>(k));
-      if (d && std::isfinite(in.params(k))) dst.params[static_cast<std::size_t>(k)] = in.params(k);
-    }
-  }
-}
-
 }  // namespace
 
 LiveSetLoadResult LiveSetLoader::load_file(const std::string& path) {
@@ -126,6 +88,7 @@ LiveSetLoadResult LiveSetLoader::load_file(const std::string& path) {
 
 LiveSetLoadResult LiveSetLoader::load(const lsp::LiveSet& ls) {
   using core::EngineTypeId;
+  SceneController::LoadScope scene_scope(options_.scenes);  // recalls answer "load in progress" until this load ends
   if (options_.is_rendering && options_.is_rendering()) return failure(LiveSetLoadStatus::kNotQuiesced);
   // 1. The format rules for this tier. A Pro-sized (16 part) file fails here on a v1 tier ("exactly the tier's part count").
   liveset::ValidationReport report = liveset::validate(ls, options_.part_count);
@@ -223,13 +186,32 @@ LiveSetLoadResult LiveSetLoader::load(const lsp::LiveSet& ls) {
   apply_entries(snap, ls.master(), 0, true);
   snap.perf_init[p::perf_slot(*p::find(p::kTempoBpm), 0)] = sane(*p::find(p::kTempoBpm), ls.tempo());
   core::build_chains(snap);
+  snap.scene_count = static_cast<std::uint32_t>(ls.scenes_size());
+  snap.scene_index = -1;  // a freshly loaded Live Set has no scene recalled
+  snap.scene_source = scene_scope.token();
 
   // 4. The reservation of the whole Live Set: FX first, the organ + rotary next, then the floors.
   core::VoiceArbiter::LiveSetConfig cfg;
   cfg.budget = options_.arbiter_budget;
   cfg.fx_cost = options_.fx_flat;
   cfg.steal_ramp_frames = options_.steal_ramp_frames;
-  if (!core::fill_fx_costs(snap, cfg)) {
+  // The effects to reserve for: the base, or -- with a scene controller -- the scene that costs the most, so no scene is later refused for
+  // lack of reserved cost (the plane's own budget check still applies at recall time).
+  core::Snapshot worst = snap;
+  if (options_.scenes) {
+    std::uint64_t worst_cost = core::fx_cost_units(snap);
+    for (int sc = 0; sc < ls.scenes_size(); ++sc) {
+      core::Snapshot trial = snap;
+      apply_scene(ls.scenes(sc), snap, trial);
+      for (core::PartCfg& pc : trial.parts) pc.chain.reset();  // cost from the configured insert types
+      const std::uint64_t c = core::fx_cost_units(trial);
+      if (c > worst_cost) {
+        worst_cost = c;
+        worst = std::move(trial);
+      }
+    }
+  }
+  if (!core::fill_fx_costs(worst, cfg)) {
     LiveSetLoadResult f = failure(LiveSetLoadStatus::kArbiterRejected, "too many effect instances");
     f.reserve_status = core::VoiceArbiter::ReserveStatus::kFxExceedsBudget;
     f.parts = std::move(res.parts);
@@ -281,6 +263,7 @@ LiveSetLoadResult LiveSetLoader::load(const lsp::LiveSet& ls) {
     f.parts = std::move(res.parts);
     return f;
   }
+  scene_scope.commit(ls, snap);
   res.status = LiveSetLoadStatus::kOk;
   res.revision = plane_.revision();
   return res;

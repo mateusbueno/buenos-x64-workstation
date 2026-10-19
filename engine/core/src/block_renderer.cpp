@@ -69,8 +69,10 @@ void BlockRenderer::adopt_generation() noexcept {
   router_.configure(*next);
   if (next->live_set) adopt_live_set_parts(*next, remapped);
   std::array<bool, params::kPerfSlotCount> changed{};
+  // A scene recall (new program_generation) also re-applies the slots it stores, once, whatever the previous generation held.
+  const bool program_change = applied_valid_ && next->program_generation != applied_program_generation_;
   for (std::size_t i = 0; i < params::kPerfSlotCount; ++i) {
-    changed[i] = !applied_valid_ || next->perf_init[i] != applied_init_[i];
+    changed[i] = !applied_valid_ || next->perf_init[i] != applied_init_[i] || (program_change && next->perf_force[i] != 0);
     if (changed[i]) last_.store(i, next->perf_init[i]);
     applied_init_[i] = next->perf_init[i];
   }
@@ -85,6 +87,7 @@ void BlockRenderer::adopt_generation() noexcept {
   for (std::uint32_t p = 0; p < params::kPartCount; ++p)  // a part that moved to another engine gets the live values it never saw
     if (remapped[p]) sync_part_params(p);
   applied_valid_ = true;
+  applied_program_generation_ = next->program_generation;
   held_ = next;
   mixer_.adopt(*next, &last_);  // part outputs, master level and the insert chains (the generation is held: safe to read)
 }

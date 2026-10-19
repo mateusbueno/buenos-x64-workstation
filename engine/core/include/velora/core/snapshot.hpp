@@ -74,6 +74,19 @@ struct Snapshot {
   // Initial performance values (send levels, drawbars, ...), indexed by last-value slot. RT applies a slot
   // only when it differs from the previous generation's, i.e. on generation change, never otherwise.
   std::array<float, params::kPerfSlotCount> perf_init{};
+  // Scene recall (Story 4.4, AD-2 program_generation). A scene recall is a generation with a NEW `program_generation` (a number the
+  // control plane never reuses). When RT adopts a generation whose program_generation differs from the one it last applied, it ALSO
+  // applies, once, every slot flagged in `perf_force` even if its initial value equals the previous generation's: that is how a
+  // recall overrides a live knob move for the parameters the scene stores (and only those). Any later generation copied from this
+  // one carries the same program_generation, so the forced slots are applied once and never again. 0 / all clear = no program change
+  // (every generation that is not a scene recall).
+  std::uint64_t program_generation = 0;
+  std::array<std::uint8_t, params::kPerfSlotCount> perf_force{};
+  // The Live Set scene this generation was recalled from (-1 = none: a freshly loaded Live Set, or no Live Set) and how many scenes the
+  // loaded Live Set has. Published in the engine state. `scene_source` identifies the load that owns them (see host SceneController).
+  std::int32_t scene_index = -1;
+  std::uint32_t scene_count = 0;
+  std::uint64_t scene_source = 0;
 
   // Every field at its registry default.
   static Snapshot defaults() noexcept;

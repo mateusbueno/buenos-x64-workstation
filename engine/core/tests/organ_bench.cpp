@@ -13,7 +13,7 @@
 using namespace velora::core;
 
 namespace {
-double us_per_block(OrganEngine& e, int blocks) {
+double us_per_block_once(OrganEngine& e, int blocks) {
   std::vector<float> l(64), r(64);
   float sink = 0;
   const auto t0 = std::chrono::steady_clock::now();
@@ -27,6 +27,12 @@ double us_per_block(OrganEngine& e, int blocks) {
   const auto t1 = std::chrono::steady_clock::now();
   if (sink == 12345.678f) std::printf("%f\n", sink);  // keep the work alive
   return std::chrono::duration<double, std::micro>(t1 - t0).count() / blocks;
+}
+// Best of 5: the least disturbed repeat, so work running beside the benchmark cannot inflate the figure.
+double us_per_block(OrganEngine& e, int blocks) {
+  double best = us_per_block_once(e, blocks);
+  for (int i = 1; i < 5; ++i) best = std::min(best, us_per_block_once(e, blocks));
+  return best;
 }
 }  // namespace
 

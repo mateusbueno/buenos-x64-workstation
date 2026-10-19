@@ -13,6 +13,21 @@ namespace velora::host {
 namespace p = core::params;
 using ws::v1::ErrorCode;
 
+const char* to_string(SceneResult r) {
+  switch (r) {
+    case SceneResult::kOk: return "ok";
+    case SceneResult::kAtFirst: return "at first scene";
+    case SceneResult::kAtLast: return "at last scene";
+    case SceneResult::kNoSuchScene: return "no such scene";
+    case SceneResult::kNoLiveSet: return "no live set loaded";
+    case SceneResult::kLoadInProgress: return "live set load in progress";
+    case SceneResult::kBusy: return "snapshot ledger busy";
+    case SceneResult::kFxBudgetExceeded: return "fx budget exceeded";
+    case SceneResult::kInternal: return "internal error";
+  }
+  return "?";
+}
+
 struct ControlFail {
   ErrorCode code = ws::v1::ERROR_CODE_UNSPECIFIED;
   std::string message;
@@ -219,6 +234,9 @@ ws::v1::ParamId pid(std::uint32_t id) { return static_cast<ws::v1::ParamId>(id);
 void fill_from(const core::Snapshot& s, ws::v1::State* out) {
   out->Clear();
   out->set_revision(s.revision);
+  out->set_live_set_loaded(s.live_set);
+  out->set_current_scene(s.live_set ? s.scene_index : -1);
+  out->set_scene_count(s.live_set ? s.scene_count : 0);
   for (std::uint32_t part = 0; part < p::kPartCount; ++part) {
     const core::PartCfg& pc = s.parts[part];
     ws::v1::PartState* ps = out->add_parts();
@@ -361,6 +379,7 @@ void ControlPlane::fill_state(ws::v1::State* out) const {
 
 void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
   out->Clear();
+  out->set_current_scene(current_ && current_->live_set ? current_->scene_index : -1);
   for (const p::ParamDef& d : p::kParams) {
     if (d.cls != p::Class::kPerformance) continue;
     const std::uint32_t n = d.scope == p::Scope::kPart ? p::kPartCount : 1;
@@ -399,7 +418,48 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   Fail f;
   bool ok = false;
   using B = ws::v1::ClientMessage;
-  if (!current_) {
+  const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;
+  if (scene_cmd) {
+    // Scene commands (Story 4.4) never need a copy of the snapshot here: the handler builds its own.
+    const SceneHandler::Op op = msg.body_case() == B::kRecallScene ? SceneHandler::Op::kRecall
+                                : msg.body_case() == B::kNextScene ? SceneHandler::Op::kNext
+                                                                     : SceneHandler::Op::kPrevious;
+    const std::uint32_t index = op == SceneHandler::Op::kRecall ? msg.recall_scene().index() : 0;
+    SceneOutcome o;
+    o.result = SceneResult::kNoLiveSet;
+    if (scene_handler_ && current_) o = scene_handler_->run(op, index);
+    if (o.ok()) {
+      ws::v1::SceneReply* sr = reply.mutable_scene_reply();
+      sr->set_result(o.result == SceneResult::kOk ? ws::v1::SCENE_STEP_RESULT_OK
+                     : o.result == SceneResult::kAtFirst ? ws::v1::SCENE_STEP_RESULT_AT_FIRST
+                                                         : ws::v1::SCENE_STEP_RESULT_AT_LAST);
+      sr->set_current_scene(o.scene);
+      ok = true;
+      changed = o.published;
+    } else {
+      f.message = to_string(o.result);
+      f.details["result"] = to_string(o.result);
+      switch (o.result) {
+        case SceneResult::kNoSuchScene:
+          f.code = ws::v1::ERROR_CODE_NO_SUCH_SCENE;
+          f.details["index"] = std::to_string(index);
+          f.details["scene_count"] = std::to_string(current_ && current_->live_set ? current_->scene_count : 0);
+          break;
+        case SceneResult::kNoLiveSet: f.code = ws::v1::ERROR_CODE_NO_LIVE_SET; break;
+        case SceneResult::kLoadInProgress:
+        case SceneResult::kBusy:
+          f.code = ws::v1::ERROR_CODE_BUSY;
+          f.details["reason"] = o.busy_reason;
+          break;
+        case SceneResult::kFxBudgetExceeded:
+          f.code = ws::v1::ERROR_CODE_FX_BUDGET_EXCEEDED;
+          f.details["fx_cost"] = std::to_string(fx_cost());
+          f.details["fx_budget"] = std::to_string(fx_budget());
+          break;
+        default: f.code = ws::v1::ERROR_CODE_INTERNAL; break;
+      }
+    }
+  } else if (!current_) {
     fail(f, ws::v1::ERROR_CODE_INTERNAL, "no snapshot generation loaded");
   } else {
     core::Snapshot work = *current_;
@@ -467,6 +527,10 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kSubscribe:
         ok = true;
         break;
+      case B::kRecallScene:
+      case B::kNextScene:
+      case B::kPreviousScene:
+        break;  // handled before the snapshot is copied
       case B::kHello:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "handshake already done on this connection");
         break;

@@ -1,0 +1,9 @@
+# Null-test case for the scene golden (Story 4.4): scenes.liveset (bass / piano split, a pad on the Aux bus, an organ) played by scenes.mid with the
+# recalls verse at 0 s, chorus at 2.0 s and outro at 4.5 s (--scene-at). Notes are held, sustained by the pedal and releasing across both recalls.
+# -100 dB residual: far below the audible effect of a scene, loose enough for libm/FMA differences between macOS and Linux builds.
+# check_excess: a tail in one file only fails as well.
+reference=scenes.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
+check_excess=1

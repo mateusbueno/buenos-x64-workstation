@@ -12,6 +12,7 @@
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/live_set_loader.hpp"
+#include "velora/host/scene_controller.hpp"
 
 namespace velora::offline {
 
@@ -37,7 +38,9 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
   host::ControlPlane plane(br->snapshots(), br->last_values(), unused_events, [] { return std::uint64_t{0}; });
   host::LibraryResolver resolver(host::make_posix_fs(), opt.library_root);
   host::RamHeadProvider heads;
+  host::SceneController scenes(plane);
   host::LiveSetLoaderOptions lo;
+  lo.scenes = &scenes;
   lo.part_count = opt.part_count;
   lo.is_rendering = [] { return false; };  // the offline renderer renders on this thread, after the load
   host::LiveSetLoader loader(*br, plane, resolver, heads, &sample, lo);
@@ -81,9 +84,30 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
   out.channels = 2;
   out.samples.assign(static_cast<std::size_t>(blocks * kBlockFrames * 2), 0.0f);
 
+  std::vector<SceneRecallAt> recalls = opt.scene_recalls;
+  std::stable_sort(recalls.begin(), recalls.end(), [](const SceneRecallAt& a, const SceneRecallAt& b) { return a.frame < b.frame; });
+  for (const SceneRecallAt& rc : recalls)
+    if (rc.index >= scenes.scene_count()) {
+      error = "--scene-at: scene " + std::to_string(rc.index) + " does not exist (the Live Set has " + std::to_string(scenes.scene_count()) + " scene" +
+              (scenes.scene_count() == 1 ? "" : "s") + ")";
+      return false;
+    }
+  std::size_t next_recall = 0;
+  std::uint64_t recalled = 0;
   float l[kBlockFrames], r[kBlockFrames];
   std::size_t next = 0;
   for (std::uint64_t b = 0; b < blocks; ++b) {
+    // Scene recalls land at the start of the block that holds their time (the last block included), before that block's events
+    // (control thread, between blocks): the resolution is one block, 1.3 ms.
+    while (next_recall < recalls.size() && recalls[next_recall].frame < (b + 1) * kBlockFrames) {
+      const host::SceneOutcome o = scenes.recall_scene(recalls[next_recall].index);
+      if (!o.ok()) {
+        error = "scene " + std::to_string(recalls[next_recall].index) + ": " + host::to_string(o.result);
+        return false;
+      }
+      if (o.published) ++recalled;
+      ++next_recall;
+    }
     const std::uint64_t end = (b + 1) * kBlockFrames;
     while (next < events.size() && events[next].frame < end) {
       const NoteEvent& e = events[next++];
@@ -112,10 +136,16 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
       dst[2 * i + 1] = r[i];
     }
   }
+  if (next_recall < recalls.size()) {  // a recall after the last block would silently do nothing
+    error = "--scene-at time is after the end of the render (last note plus tail, rounded up to a 64-frame block)";
+    return false;
+  }
   if (report) {
     report->pool_exhausted = br->status_count(EngineStatus::kPoolExhausted);
     report->dropped_out_of_range = br->router().dropped_out_of_range();
     report->unzoned_keys = br->router().unzoned_keys();
+    report->scenes_recalled = recalled;
+    report->generations_published = recalled;
   }
   return true;
 }

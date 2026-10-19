@@ -14,7 +14,7 @@
 // volume, output (Main/Aux), insert chain (instances built here, off the RT thread), send levels, engine type, the sound parameters of
 // EngineData / envelope / eq (registry performance ids -> the generation's initial values), the load state and the sample engine's
 // prepared bank (core::SampleBank). The Live Set's master list and tempo become the generation's master / tempo values. Scenes and the
-// ASSIGN map are NOT loaded here (Stories 4.4 and 4.10).
+// ASSIGN map are NOT part of the generation (scenes are recalled by SceneController, Story 4.4; ASSIGN is Story 4.10).
 //
 // Threading: control thread only (it allocates and reads files). The voice arbiter's reservation is applied with VoiceArbiter::reserve(),
 // which by contract runs while the audio callback is not rendering: load a Live Set at start-up, or between renders in tests. Rendering
@@ -38,6 +38,7 @@
 #include "velora/core/voice_arbiter.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/library_resolver.hpp"
+#include "velora/host/scene_controller.hpp"
 #include "velora/host/live_set_store.hpp"
 #include "velora/host/sample_bundle_loader.hpp"
 
@@ -104,6 +105,10 @@ struct LiveSetLoaderOptions {
   // before it touches anything and refuses with kNotQuiesced when it returns true. engine-host answers "the audio stream is running";
   // the offline renderer renders on the calling thread, so it is never rendering during a load. Unset = the caller guarantees quiescence.
   std::function<bool()> is_rendering;
+  // Scene recall (Story 4.4). When set, a successful load hands the Live Set (its scenes) and the generation it built to this controller, so
+  // scenes can be recalled afterwards; a load in progress makes recalls answer kLoadInProgress. The FX reservation then covers the worst scene
+  // (a scene with more insert effects than the base is not refused later for lack of reserved cost). Unset = scenes are ignored, as in 4.3.
+  SceneController* scenes = nullptr;
 };
 
 class LiveSetLoader {

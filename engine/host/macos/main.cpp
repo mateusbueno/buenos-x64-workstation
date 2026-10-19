@@ -31,6 +31,7 @@
 #include "velora/host/live_set_loader.hpp"
 #include "velora/host/midi_ingest.hpp"
 #include "velora/host/render_driver.hpp"
+#include "velora/host/scene_controller.hpp"
 
 namespace {
 std::atomic<bool> g_quit{false};
@@ -104,6 +105,7 @@ int main(int argc, char** argv) {
   core::OrganEngine organ;
   host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);
   host::RamHeadProvider heads;
+  std::unique_ptr<host::SceneController> scenes;  // Story 4.4: ws.v1 RecallScene / NextScene / PreviousScene; destroyed before the plane
   std::atomic<bool> audio_running{false};  // set once the audio stream starts; the loader refuses to run while it is true
   if (!live_set_path.empty()) {
     if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ)) {
@@ -114,6 +116,8 @@ int main(int argc, char** argv) {
     // sample floor) before audio runs. A Live Set that cannot be loaded stops the engine here with the reason; nothing is half loaded.
     host::LiveSetLoaderOptions lopt;
     lopt.is_rendering = [&audio_running] { return audio_running.load(); };
+    scenes = std::make_unique<host::SceneController>(plane);
+    lopt.scenes = scenes.get();
     host::LiveSetLoader loader(*renderer, plane, resolver, heads, &sample, lopt);
     const host::LiveSetLoadResult loaded = loader.load_file(live_set_path);
     if (!loaded.ok()) {

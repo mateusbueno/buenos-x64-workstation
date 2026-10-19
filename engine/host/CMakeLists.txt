@@ -42,7 +42,8 @@ add_library(velora_control STATIC
   src/control_server.cpp
   src/dev_config.cpp
   src/live_set_store.cpp
-  src/live_set_loader.cpp)
+  src/live_set_loader.cpp
+  src/scene_controller.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -73,6 +74,18 @@ target_link_libraries(live_set_loader_tests PRIVATE velora_control)
 target_compile_definitions(live_set_loader_tests PRIVATE VELORA_LIVESET_CORPUS_DIR="${VELORA_LIVESET_CORPUS_DIR}")
 add_test(NAME live_set_loader_tests COMMAND live_set_loader_tests)
 set_tests_properties(live_set_loader_tests PROPERTIES TIMEOUT 120)
+
+# Scene recall (Story 4.4): parameter-only snapshot swap, performance values applied once, notes across a recall, stepping, hostile cases, ws.v1.
+add_executable(scene_controller_tests tests/scene_controller_test.cpp)
+target_link_libraries(scene_controller_tests PRIVATE velora_control)
+add_test(NAME scene_controller_tests COMMAND scene_controller_tests)
+set_tests_properties(scene_controller_tests PROPERTIES TIMEOUT 180)
+
+# The same recall storms beside a rendering RT thread without the sanitizer (macOS runs the logic); the RTSan build of it is below.
+add_executable(scene_rt_traffic_test tests/rtsan_scene_test.cpp)
+target_link_libraries(scene_rt_traffic_test PRIVATE velora_control)
+add_test(NAME scene_rt_traffic_test COMMAND scene_rt_traffic_test)
+set_tests_properties(scene_rt_traffic_test PROPERTIES TIMEOUT 300)
 
 # Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
 #   cmake --build build --target live_set_corpus_regen
@@ -125,6 +138,13 @@ if(VELORA_RTSAN AND VELORA_HAVE_RTSAN)
   target_link_options(rtsan_control_test PRIVATE -fsanitize=realtime)
   add_test(NAME rtsan_control_test COMMAND rtsan_control_test)
   set_tests_properties(rtsan_control_test PROPERTIES TIMEOUT 120)
+
+  add_executable(rtsan_scene_test tests/rtsan_scene_test.cpp)
+  target_link_libraries(rtsan_scene_test PRIVATE velora_control)
+  target_compile_options(rtsan_scene_test PRIVATE -fsanitize=realtime -g)
+  target_link_options(rtsan_scene_test PRIVATE -fsanitize=realtime)
+  add_test(NAME rtsan_scene_test COMMAND rtsan_scene_test)
+  set_tests_properties(rtsan_scene_test PROPERTIES TIMEOUT 300)
 endif()
 
 if(APPLE)
