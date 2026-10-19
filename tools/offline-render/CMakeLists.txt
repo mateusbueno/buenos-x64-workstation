@@ -769,6 +769,52 @@ add_dependencies(sample_demo_null_test velora-offline-render velora-null-test)
 add_test(NAME sample_demo_null_test COMMAND sample_demo_null_test)
 set_tests_properties(sample_demo_null_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# --- SF2 import against FluidSynth (Story 5.3) -----------------------------------------------------------
+# Goldens are committed FluidSynth renders (tools/oracle/render-fluidsynth.sh), so no FluidSynth is needed here; the fixtures are
+# SF2 files generated in code by the test-only writer in formatlib/tests; see tests/sf2_suite/README.md.
+set(_sf2suite ${CMAKE_CURRENT_SOURCE_DIR}/tests/sf2_suite)
+add_executable(sf2_suite_test tests/sf2_suite_test.cpp)
+target_link_libraries(sf2_suite_test PRIVATE velora_librarian)
+target_include_directories(sf2_suite_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests ${PROJECT_SOURCE_DIR}/formatlib/tests)
+target_compile_definitions(sf2_suite_test PRIVATE
+  SUITE_DIR="${_sf2suite}"
+  RENDER_EXE="$<TARGET_FILE:velora-offline-render>"
+  NULLTEST_EXE="$<TARGET_FILE:velora-null-test>"
+  OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_dependencies(sf2_suite_test velora-offline-render velora-null-test)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_sf2suite}/cases.txt)
+file(STRINGS ${_sf2suite}/cases.txt _sf2_lines)
+set(_sf2_cases "")
+foreach(_line IN LISTS _sf2_lines)
+  if(_line MATCHES "^[ \t]*(#.*)?$")
+    continue()
+  elseif(_line MATCHES "^[ \t]*([A-Za-z0-9_]+)[ \t]+(-[0-9.]+)[ \t]+([0-9]+)[ \t]*$")
+    # cases.txt and the committed golden/<case>.case must say the same (regenerate_goldens.sh writes the latter from the former).
+    if(NOT EXISTS ${_sf2suite}/golden/${CMAKE_MATCH_1}.case OR NOT EXISTS ${_sf2suite}/golden/${CMAKE_MATCH_1}.wav)
+      message(FATAL_ERROR "tests/sf2_suite: golden/${CMAKE_MATCH_1}.case or .wav is missing (run regenerate_goldens.sh)")
+    endif()
+    file(READ ${_sf2suite}/golden/${CMAKE_MATCH_1}.case _sf2_case)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_sf2suite}/golden/${CMAKE_MATCH_1}.case)
+    string(FIND "${_sf2_case}" "\ntolerance_db=${CMAKE_MATCH_2}\n" _sf2_tol)
+    string(FIND "${_sf2_case}" "\nmax_offset_frames=${CMAKE_MATCH_3}\n" _sf2_off)
+    if(_sf2_tol EQUAL -1 OR _sf2_off EQUAL -1)
+      message(FATAL_ERROR "tests/sf2_suite: golden/${CMAKE_MATCH_1}.case disagrees with cases.txt (tolerance ${CMAKE_MATCH_2}, offset ${CMAKE_MATCH_3}); run regenerate_goldens.sh")
+    endif()
+    add_test(NAME sf2_null_${CMAKE_MATCH_1} COMMAND sf2_suite_test ${CMAKE_MATCH_1})
+    list(APPEND _sf2_cases ${CMAKE_MATCH_1})
+  else()
+    message(FATAL_ERROR "tests/sf2_suite/cases.txt: malformed line '${_line}' (name tolerance_db max_offset_frames)")
+  endif()
+endforeach()
+# The harness must be able to fail: a 1 dB gain error, the MIDI one block late, and the SF2 imported without
+# its envelopes, filters, pans and attenuations are all rejected on residual.
+add_test(NAME sf2_null_neg_gain COMMAND sf2_suite_test sf2_keys --negative gain)
+add_test(NAME sf2_null_neg_lag COMMAND sf2_suite_test sf2_keys --negative lag)
+foreach(_neg sf2_keys sf2_envelope sf2_filter sf2_stereo sf2_kit sf2_single)
+  add_test(NAME sf2_null_neg_strip_${_neg} COMMAND sf2_suite_test ${_neg} --negative strip)
+endforeach()
+add_test(NAME sf2_render_cli COMMAND sf2_suite_test cli-errors)
+
 # EQ and compressor as inserts and in the master section (Story 2.8): the golden test-tone MIDI through an insert effect on part 0 and the
 # master effect. One golden per effect, same scheme as the other goldens: render twice (byte-equal), null-test against the committed golden at
 # -100 dB, and require different settings (insert or master) to fail it.

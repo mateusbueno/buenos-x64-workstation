@@ -6,9 +6,10 @@ unknown license, its notice is missing from THIRD_PARTY_NOTICES.md, or a CMake
 file outside top-level tools/ and any tests/ references sfizz (sfizz is a test-only oracle) other than the
 vendored BSD-2 parser (target velora_sfizz_parser, directory formatlib/third_party/sfizz).
 
-The full sfizz engine is a test oracle only (Story 1.15): tools/oracle/ may hold scripts and docs, never
-sfizz sources (it fetches them into the git-ignored tools/oracle/.work), the ignore rule must be in
-.gitignore, no .gitmodules entry may name sfizz, and no shipped CMake file may reference tools/oracle.
+The full sfizz engine is a test oracle only (Story 1.15), and so is FluidSynth (LGPL-2.1, Story 5.3): tools/oracle/
+may hold scripts and docs, never their sources (it fetches them into the git-ignored tools/oracle/.work), the ignore
+rule must be in .gitignore, no .gitmodules entry may name sfizz or fluidsynth, no shipped CMake file may reference
+tools/oracle, and no shipped CMake file may mention fluidsynth at all (it is never linked, vendored or shipped).
 
 Usage: check_third_party_notices.py [--root DIR] | --self-test
 """
@@ -25,6 +26,7 @@ ALLOWED = {"BSD-2-Clause", "BSD-3-Clause", "MIT", "Apache-2.0", "ISC", "Zlib", "
 SKIP_TOP = {".git", "_bmad", "_bmad-output", "tools", "build"}  # exempt at the repository root only
 SKIP_ANY = {"tests"}  # test directories are exempt at any depth
 SFIZZ_REF = re.compile(r"sfizz", re.I)
+FLUID_REF = re.compile(r"fluidsynth|libfluid", re.I)  # the SF2 test oracle: never in a shipped build file
 # The vendored parser (Story 1.13, closure in 11-12) is the only sfizz code that may ship: its CMake
 # target name anywhere, and path-like references (sfizz/...) inside its own build file only.
 SFIZZ_ALLOWED = re.compile(r"velora_sfizz_parser|velora::sfizz_parser")
@@ -129,8 +131,11 @@ def check_oracle(root):
     gm = os.path.join(root, ".gitmodules")
     if os.path.exists(gm):
         with open(gm, encoding="utf-8", errors="replace") as fh:
-            if re.search(r"sfizz", fh.read(), re.I):
+            text = fh.read()
+            if re.search(r"sfizz", text, re.I):
                 errors.append(".gitmodules: sfizz must not be a submodule (the oracle is fetched into tools/oracle/.work)")
+            if re.search(r"fluidsynth", text, re.I):
+                errors.append(".gitmodules: fluidsynth must not be a submodule (the oracle is fetched into tools/oracle/.work)")
     return errors
 
 
@@ -171,6 +176,8 @@ def check(root):
                         code = SFIZZ_PATH_TOKEN.sub("", code)
                     if SFIZZ_REF.search(code):
                         errors.append(f"{os.path.relpath(p, root)}:{i}: sfizz referenced in a shipped build file")
+                    elif FLUID_REF.search(code):
+                        errors.append(f"{os.path.relpath(p, root)}:{i}: fluidsynth referenced in a shipped build file")
                     elif ORACLE_REF.search(code):
                         errors.append(f"{os.path.relpath(p, root)}:{i}: tools/oracle referenced in a shipped build file")
     return errors
@@ -195,6 +202,9 @@ def self_test():
     assert run("MIT", "nothing", "project(a)\n")
     assert run("MIT", "## X\n", "target_link_libraries(a sfizz::sfizz)\n")
     assert not run("MIT", "## X\n", "# sfizz oracle is test-only\n")
+    assert run("MIT", "## X\n", "target_link_libraries(a fluidsynth)\n")  # the SF2 oracle is never linked
+    assert run("MIT", "## X\n", "find_package(libfluidsynth)\n")
+    assert not run("MIT", "## X\n", "# FluidSynth is the SF2 test oracle\n")
     assert run("MIT", "## X\n", "target_link_libraries(a sfizz_parser)\n")  # upstream target name
     assert not run("MIT", "## X\n", "target_link_libraries(a velora_sfizz_parser)\n")
     assert run("MIT", "## X\n", "add_library(a sfizz/sfizz/Opcode.cpp)\n")  # paths only in the vendor file
@@ -245,7 +255,15 @@ def self_test():
             os.remove(os.path.join(r, ORACLE_DIR, bad))
         _w(os.path.join(r, ".gitmodules"), '[submodule "x"]\n\turl = https://github.com/sfztools/sfizz\n')
         assert any("submodule" in e for e in check(r))
+        _w(os.path.join(r, ".gitmodules"), '[submodule "x"]\n\turl = https://github.com/FluidSynth/fluidsynth\n')
+        assert any("fluidsynth must not be a submodule" in e for e in check(r))
         os.remove(os.path.join(r, ".gitmodules"))
+        for ok_name in ("build-fluidsynth.sh", "render-fluidsynth.sh"):  # the FluidSynth scripts are allowed oracle files
+            _w(os.path.join(r, ORACLE_DIR, ok_name), "#!/bin/sh\n")
+            assert not check(r), ok_name
+        os.makedirs(os.path.join(r, ORACLE_DIR, ORACLE_WORK, "fluidsynth", "src"), exist_ok=True)
+        _w(os.path.join(r, ORACLE_DIR, ORACLE_WORK, "fluidsynth", "src", "fluid_synth.c"), "x")
+        assert not check(r)  # sources in the ignored build directory are fine
         _w(os.path.join(r, "CMakeLists.txt"), "add_subdirectory(tools/oracle)\n")
         assert any("tools/oracle referenced" in e for e in check(r))
     def run_tree(files, notice="## X 1\n", version="1"):  # nested exemptions and version drift

@@ -66,7 +66,7 @@ Behaviour (SFZ subset of Story 1.13; sfizz 1.2.3 is the reference, the null test
   `stop_voice` return `kPoolExhausted`.
 - Story 5.2 added keyswitches, CC crossfades and the basic per-voice filters (below, "Keyswitches, CC crossfades and filters").
 - Out of scope (later stories): streaming/heads (1.16/1.17), parallel render (1.18), effects, other CC modulation (`*_oncc`),
-  `amp_veltrack`/`pitch_veltrack`, `rt_decay`, SF2.
+  `amp_veltrack`/`pitch_veltrack`, `rt_decay`. SoundFont 2 (Story 5.3) needs no engine feature: the importer maps presets onto the same regions (see `formatlib/README.md`); the compensations it makes for engine conventions (-3.0103 dB for the pan law, decay/release x 0.7817 for the nine-time-constant envelope) are listed there, and the render comparison against FluidSynth is `tools/offline-render/tests/sf2_suite/README.md`.
 
 Known differences from sfizz that the null tests work around (not engine features):
 

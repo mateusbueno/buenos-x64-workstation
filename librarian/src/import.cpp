@@ -15,6 +15,7 @@
 #include <memory>
 
 #include "velora/format/bundle.hpp"
+#include "velora/format/sf2_import.hpp"
 #include "velora/format/sfz_import.hpp"
 #include "velora/format/wav_source.hpp"
 #include "velora/host/library_resolver.hpp"
@@ -201,13 +202,48 @@ int reconcile_staging(const std::string& root) {
   return ec ? -1 : removed;
 }
 
-ImportResult import_sfz(const ImportOptions& opt) {
-  ImportResult res;
-  auto fail = [&](Status s, std::string why) -> ImportResult& {
-    res.status = s;
-    res.reasons.push_back(std::move(why));
-    return res;
-  };
+namespace {
+
+// The data root, the library and staging directories and the exclusive lock (protocol step 2).
+struct RootLock {
+  Fd lock;
+  std::string lib_root, staging_root;
+};
+
+ImportResult& fail_res(ImportResult& res, Status s, std::string why) {
+  res.status = s;
+  res.reasons.push_back(std::move(why));
+  return res;
+}
+
+// false: `res` holds the failure.
+bool lock_root(const ImportOptions& opt, ImportResult& res, RootLock& rl) {
+  auto fail = [&](Status s, std::string why) { fail_res(res, s, std::move(why)); return false; };
+  rl.lib_root = (fs::path(opt.root) / host::kLibDirName).string();
+  rl.staging_root = rl.lib_root + "/" + kStagingDirName;
+  if (!mkdir_synced(rl.lib_root, opt.root) || !mkdir_synced(rl.staging_root, rl.lib_root) || !is_dir(rl.staging_root))
+    return fail(Status::kIo, err_text("cannot create " + rl.staging_root));
+  rl.lock.fd = ::open((rl.staging_root + "/" + kLockFileName).c_str(), O_RDWR | O_CREAT, 0644);
+  if (!rl.lock.ok()) return fail(Status::kIo, err_text("cannot open lock file"));
+  if (::flock(rl.lock.fd, LOCK_EX | LOCK_NB) != 0)
+    return fail(errno == EWOULDBLOCK ? Status::kBusy : Status::kIo, err_text("cannot lock " + rl.staging_root));
+  if (opt.fault.pretend_cross_device || !same_device(rl.staging_root, rl.lib_root))
+    return fail(Status::kCrossDevice,
+                "the staging directory " + rl.staging_root + " is not on the destination filesystem");
+  const int rc = reconcile_staging(opt.root);
+  if (rc < 0) return fail(Status::kIo, "cannot clean up leftovers in " + rl.staging_root);
+  if (rc > 0) res.reconciled = static_cast<std::size_t>(rc);
+  return true;
+}
+
+// Protocol steps 4-8 for a bundle whose content is complete in `writer`: stage, verify (reopen,
+// verify_all, then `verify_content` against the source), fsync, rename, flip `current`.
+ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, RootLock& rl, fmt::BundleWriter& writer,
+                                const std::function<std::string(const fmt::BundleReader&)>& verify_content) {
+  auto fail = [&](Status s, std::string why) -> ImportResult& { return fail_res(res, s, std::move(why)); };
+  std::error_code ec;
+  const std::string& lib_root = rl.lib_root;
+  const std::string& staging_root = rl.staging_root;
 #define VELORA_HOOK(stage)                                                         \
   do {                                                                             \
     if (opt.fault.on_stage && opt.fault.on_stage(stage) == HookAction::kAbort) {   \
@@ -215,148 +251,6 @@ ImportResult import_sfz(const ImportOptions& opt) {
       return res;                                                                  \
     }                                                                              \
   } while (0)
-
-  if (opt.sfz_path.empty() || opt.root.empty())
-    return fail(Status::kInvalidArgument, "an SFZ file and a data root are required");
-  if (!opt.category.empty()) {
-    for (unsigned char c : opt.category)
-      if (c < 0x20 || c == 0x7f || c == '/') return fail(Status::kInvalidArgument, "invalid category");
-    if (opt.category.size() > 128) return fail(Status::kInvalidArgument, "category too long");
-  }
-
-  {
-    struct stat st;
-    if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
-      return fail(Status::kInvalidArgument, "the data root " + opt.root + " is not an existing directory");
-  }
-
-  // 1. Parse (no audio, no filesystem writes).
-  fmt::SfzParseResult parsed = fmt::parse_sfz_file(opt.sfz_path);
-  res.source_region_count = parsed.source_region_count;
-  for (const auto& a : parsed.allowlisted) res.allowlisted.push_back({a.opcode, a.file, a.line});
-  for (const auto& w : parsed.warnings) res.warnings.push_back({"ignored_opcode", w.opcode, w.file, w.line, w.message});
-  if (!parsed.ok()) {
-    res.status = Status::kSkipped;
-    bool damaged = false;
-    for (const auto& i : parsed.issues) {
-      res.reasons.push_back(i.to_string());
-      if (fmt::is_unsupported_feature(i.kind)) {
-        res.offenders.push_back({i.opcode, i.file, i.line, i.message});
-      } else {
-        damaged = true;
-        if (res.failing_path.empty()) res.failing_path = i.path;
-      }
-    }
-    // A file with any damage is damaged: the list of unsupported constructs may be incomplete.
-    res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
-    return res;
-  }
-  if (parsed.regions.empty()) {
-    res.status = Status::kSkipped;
-    res.reason_code = ReasonCode::kDamaged;
-    res.failing_path = opt.sfz_path;
-    res.reasons.push_back(opt.sfz_path + ": no regions in SFZ file");
-    return res;
-  }
-
-  std::error_code ec;
-  const fs::path sfz_abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
-  if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
-  const fs::path base = opt.base_dir.empty() ? sfz_abs.parent_path()
-                                              : fs::weakly_canonical(fs::absolute(opt.base_dir, ec), ec);
-  const fs::path rel = sfz_abs.lexically_relative(base);
-  if (rel.empty() || *rel.begin() == "..")
-    return fail(Status::kInvalidArgument, "the SFZ file is not inside the base directory");
-
-  // 2. Directories and the exclusive lock.
-  const std::string lib_root = (fs::path(opt.root) / host::kLibDirName).string();
-  const std::string staging_root = lib_root + "/" + kStagingDirName;
-  if (!mkdir_synced(lib_root, opt.root) || !mkdir_synced(staging_root, lib_root) || !is_dir(staging_root))
-    return fail(Status::kIo, err_text("cannot create " + staging_root));
-  Fd lock(::open((staging_root + "/" + kLockFileName).c_str(), O_RDWR | O_CREAT, 0644));
-  if (!lock.ok()) return fail(Status::kIo, err_text("cannot open lock file"));
-  if (::flock(lock.fd, LOCK_EX | LOCK_NB) != 0)
-    return fail(errno == EWOULDBLOCK ? Status::kBusy : Status::kIo, err_text("cannot lock " + staging_root));
-  if (opt.fault.pretend_cross_device || !same_device(staging_root, lib_root))
-    return fail(Status::kCrossDevice,
-                "the staging directory " + staging_root + " is not on the destination filesystem");
-  const int rc = reconcile_staging(opt.root);
-  if (rc < 0) return fail(Status::kIo, "cannot clean up leftovers in " + staging_root);
-  if (rc > 0) res.reconciled = static_cast<std::size_t>(rc);
-
-  // 3. Build the bundle: load each sample once, encode, drop it again.
-  fmt::BundleWriter writer;
-  if (writer.set_source_id(sfz_abs.generic_string()) != fmt::Error::kNone)
-    return fail(Status::kInvalidArgument, "empty source id");
-  auto inst = writer.add_instrument(sfz_abs.stem().string(), rel.generic_string());
-  if (!inst) return fail(Status::kInvalidArgument, std::string("instrument key: ") + fmt::to_string(inst.error()));
-  std::vector<AudioProblem> audio_problems;
-  Status infra_status = Status::kIo;
-  std::string infra_problem;  // add_sample failed for a reason that is not about the WAV
-  std::vector<std::uint64_t> frames(parsed.samples.size(), 0);
-  for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
-    const auto& s = parsed.samples[i];
-    auto w = fmt::load_wav_file(s.path, kStrictWav);
-    if (!w) {
-      audio_problems.push_back(audio_problem(s.path, w.error(), s));
-      continue;
-    }
-    frames[i] = w.value().frame_count;
-    if (fmt::Error e = writer.add_sample(inst.value(), w.value().as_input(s.name)); e != fmt::Error::kNone)
-    {
-      ReasonCode rc;
-      const Status st = status_for_add_sample_error(e, &rc);
-      if (st == Status::kSkipped) {
-        audio_problems.push_back(audio_problem(s.path, e, parsed.samples[i]));
-      } else if (infra_problem.empty()) {
-        infra_status = st;
-        infra_problem = s.path + ": cannot add sample: " + fmt::to_string(e);
-      }
-    }
-  }
-  if (!infra_problem.empty()) return fail(infra_status, infra_problem);
-  if (!audio_problems.empty()) {
-    res.status = Status::kSkipped;
-    bool damaged = false;
-    for (const auto& p : audio_problems) {
-      res.reasons.push_back(p.text);
-      if (p.code == ReasonCode::kUnsupportedFeatures) {
-        res.offenders.push_back({"sample", p.ref_file, p.ref_line, p.text});
-      } else {
-        damaged = true;
-        if (res.failing_path.empty()) res.failing_path = p.path;
-      }
-    }
-    res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
-    return res;
-  }
-  std::vector<std::string> region_problems;
-  std::vector<fmt::Region> regions = parsed.regions;  // with loop defaults resolved
-  std::size_t first_bad_region = 0;
-  for (std::size_t i = 0; i < regions.size(); ++i) {
-    auto& r = regions[i];
-    const std::string where = parsed.region_sources[i].file + ":" + std::to_string(parsed.region_sources[i].line) + ": ";
-    std::string why;
-    auto note = [&](std::string text) {
-      if (region_problems.empty()) first_bad_region = i;
-      region_problems.push_back(std::move(text));
-    };
-    if (!fmt::resolve_loop_points(r, parsed.loops[i], frames[r.sample], &why))
-      note(where + why + " (sample '" + parsed.samples[r.sample].name + "')");
-    else if (fmt::validate_region(r, frames[r.sample]) != fmt::Error::kNone ||
-             writer.add_region(inst.value(), r) != fmt::Error::kNone)
-      note(where + "region values do not fit sample '" + parsed.samples[r.sample].name +
-                                "' (offset or loop points beyond its length)");
-  }
-  if (!region_problems.empty()) {
-    res.status = Status::kSkipped;
-    res.reason_code = ReasonCode::kDamaged;
-    res.failing_path = parsed.region_sources[first_bad_region].file;
-    res.reasons = std::move(region_problems);
-    return res;
-  }
-  res.sample_count = parsed.samples.size();
-  res.region_count = regions.size();
 
   // 4. Stage.
   const std::string stage_dir = staging_root + "/" +
@@ -406,15 +300,7 @@ ImportResult import_sfz(const ImportOptions& opt) {
     const fmt::BundleReader& rd = r.value();
     if (fmt::Error e = rd.verify_all(); e != fmt::Error::kNone)
       return std::string("staged bundle failed verification: ") + fmt::to_string(e);
-    if (rd.instruments().size() != 1 || rd.samples().size() != parsed.samples.size())
-      return "staged bundle has the wrong instrument/sample count";
-    if (rd.instruments()[0].regions != regions)
-      return "staged region table differs from the parsed region table";
-    for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
-      auto w = fmt::load_wav_file(parsed.samples[i].path, kStrictWav);  // fresh decode of the source
-      if (!w || !sample_matches(rd, i, w.value()))
-        return "sample '" + parsed.samples[i].name + "' is not bit-identical to its source";
-    }
+    if (std::string why = verify_content(rd); !why.empty()) return why;
     res.library_id = fmt::uuid_to_string(rd.library_id());
     res.bundle_id = fmt::to_hex(rd.bundle_id());
     return {};
@@ -494,6 +380,287 @@ ImportResult import_sfz(const ImportOptions& opt) {
   res.status = Status::kOk;
   return res;
 #undef VELORA_HOOK
+}
+
+}  // namespace
+
+ImportResult import_sfz(const ImportOptions& opt) {
+  ImportResult res;
+  auto fail = [&](Status s, std::string why) -> ImportResult& {
+    res.status = s;
+    res.reasons.push_back(std::move(why));
+    return res;
+  };
+
+  if (opt.sfz_path.empty() || opt.root.empty())
+    return fail(Status::kInvalidArgument, "an SFZ file and a data root are required");
+  if (!opt.category.empty()) {
+    for (unsigned char c : opt.category)
+      if (c < 0x20 || c == 0x7f || c == '/') return fail(Status::kInvalidArgument, "invalid category");
+    if (opt.category.size() > 128) return fail(Status::kInvalidArgument, "category too long");
+  }
+
+  {
+    struct stat st;
+    if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+      return fail(Status::kInvalidArgument, "the data root " + opt.root + " is not an existing directory");
+  }
+
+  // 1. Parse (no audio, no filesystem writes).
+  fmt::SfzParseResult parsed = fmt::parse_sfz_file(opt.sfz_path);
+  res.source_region_count = parsed.source_region_count;
+  for (const auto& a : parsed.allowlisted) res.allowlisted.push_back({a.opcode, a.file, a.line});
+  for (const auto& w : parsed.warnings) res.warnings.push_back({"ignored_opcode", w.opcode, w.file, w.line, w.message, {}});
+  if (!parsed.ok()) {
+    res.status = Status::kSkipped;
+    bool damaged = false;
+    for (const auto& i : parsed.issues) {
+      res.reasons.push_back(i.to_string());
+      if (fmt::is_unsupported_feature(i.kind)) {
+        res.offenders.push_back({i.opcode, i.file, i.line, i.message});
+      } else {
+        damaged = true;
+        if (res.failing_path.empty()) res.failing_path = i.path;
+      }
+    }
+    // A file with any damage is damaged: the list of unsupported constructs may be incomplete.
+    res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
+    return res;
+  }
+  if (parsed.regions.empty()) {
+    res.status = Status::kSkipped;
+    res.reason_code = ReasonCode::kDamaged;
+    res.failing_path = opt.sfz_path;
+    res.reasons.push_back(opt.sfz_path + ": no regions in SFZ file");
+    return res;
+  }
+
+  std::error_code ec;
+  const fs::path sfz_abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
+  if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
+  const fs::path base = opt.base_dir.empty() ? sfz_abs.parent_path()
+                                              : fs::weakly_canonical(fs::absolute(opt.base_dir, ec), ec);
+  const fs::path rel = sfz_abs.lexically_relative(base);
+  if (rel.empty() || *rel.begin() == "..")
+    return fail(Status::kInvalidArgument, "the SFZ file is not inside the base directory");
+
+  // 2. Directories and the exclusive lock.
+  RootLock rl;
+  if (!lock_root(opt, res, rl)) return res;
+
+  // 3. Build the bundle: load each sample once, encode, drop it again.
+  fmt::BundleWriter writer;
+  if (writer.set_source_id(sfz_abs.generic_string()) != fmt::Error::kNone)
+    return fail(Status::kInvalidArgument, "empty source id");
+  auto inst = writer.add_instrument(sfz_abs.stem().string(), rel.generic_string());
+  if (!inst) return fail(Status::kInvalidArgument, std::string("instrument key: ") + fmt::to_string(inst.error()));
+  std::vector<AudioProblem> audio_problems;
+  Status infra_status = Status::kIo;
+  std::string infra_problem;  // add_sample failed for a reason that is not about the WAV
+  std::vector<std::uint64_t> frames(parsed.samples.size(), 0);
+  for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
+    const auto& s = parsed.samples[i];
+    auto w = fmt::load_wav_file(s.path, kStrictWav);
+    if (!w) {
+      audio_problems.push_back(audio_problem(s.path, w.error(), s));
+      continue;
+    }
+    frames[i] = w.value().frame_count;
+    if (fmt::Error e = writer.add_sample(inst.value(), w.value().as_input(s.name)); e != fmt::Error::kNone)
+    {
+      ReasonCode rc;
+      const Status st = status_for_add_sample_error(e, &rc);
+      if (st == Status::kSkipped) {
+        audio_problems.push_back(audio_problem(s.path, e, parsed.samples[i]));
+      } else if (infra_problem.empty()) {
+        infra_status = st;
+        infra_problem = s.path + ": cannot add sample: " + fmt::to_string(e);
+      }
+    }
+  }
+  if (!infra_problem.empty()) return fail(infra_status, infra_problem);
+  if (!audio_problems.empty()) {
+    res.status = Status::kSkipped;
+    bool damaged = false;
+    for (const auto& p : audio_problems) {
+      res.reasons.push_back(p.text);
+      if (p.code == ReasonCode::kUnsupportedFeatures) {
+        res.offenders.push_back({"sample", p.ref_file, p.ref_line, p.text});
+      } else {
+        damaged = true;
+        if (res.failing_path.empty()) res.failing_path = p.path;
+      }
+    }
+    res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
+    return res;
+  }
+  std::vector<std::string> region_problems;
+  std::vector<fmt::Region> regions = parsed.regions;  // with loop defaults resolved
+  std::size_t first_bad_region = 0;
+  for (std::size_t i = 0; i < regions.size(); ++i) {
+    auto& r = regions[i];
+    const std::string where = parsed.region_sources[i].file + ":" + std::to_string(parsed.region_sources[i].line) + ": ";
+    std::string why;
+    auto note = [&](std::string text) {
+      if (region_problems.empty()) first_bad_region = i;
+      region_problems.push_back(std::move(text));
+    };
+    if (!fmt::resolve_loop_points(r, parsed.loops[i], frames[r.sample], &why))
+      note(where + why + " (sample '" + parsed.samples[r.sample].name + "')");
+    else if (fmt::validate_region(r, frames[r.sample]) != fmt::Error::kNone ||
+             writer.add_region(inst.value(), r) != fmt::Error::kNone)
+      note(where + "region values do not fit sample '" + parsed.samples[r.sample].name +
+                                "' (offset or loop points beyond its length)");
+  }
+  if (!region_problems.empty()) {
+    res.status = Status::kSkipped;
+    res.reason_code = ReasonCode::kDamaged;
+    res.failing_path = parsed.region_sources[first_bad_region].file;
+    res.reasons = std::move(region_problems);
+    return res;
+  }
+  res.sample_count = parsed.samples.size();
+  res.region_count = regions.size();
+
+  // 4-8. Stage, verify, publish, flip.
+  auto verify_content = [&](const fmt::BundleReader& rd) -> std::string {
+    if (rd.instruments().size() != 1 || rd.samples().size() != parsed.samples.size())
+      return "staged bundle has the wrong instrument/sample count";
+    if (rd.instruments()[0].regions != regions)
+      return "staged region table differs from the parsed region table";
+    for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
+      auto w = fmt::load_wav_file(parsed.samples[i].path, kStrictWav);  // fresh decode of the source
+      if (!w || !sample_matches(rd, i, w.value()))
+        return "sample '" + parsed.samples[i].name + "' is not bit-identical to its source";
+    }
+    return {};
+  };
+  return stage_and_publish(opt, res, rl, writer, verify_content);
+}
+
+
+bool is_sf2_path(const std::string& path) {
+  std::string ext = fs::path(path).extension().string();
+  for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return ext == ".sf2";
+}
+
+ImportResult import_file(const ImportOptions& opt) { return is_sf2_path(opt.sfz_path) ? import_sf2(opt) : import_sfz(opt); }
+
+ImportResult import_sf2(const ImportOptions& opt) {
+  ImportResult res;
+  res.sf2 = true;
+  auto fail = [&](Status s, std::string why) -> ImportResult& { return fail_res(res, s, std::move(why)); };
+  if (opt.sfz_path.empty() || opt.root.empty())
+    return fail(Status::kInvalidArgument, "an SF2 file and a data root are required");
+  if (!opt.category.empty()) {
+    for (unsigned char c : opt.category)
+      if (c < 0x20 || c == 0x7f || c == '/') return fail(Status::kInvalidArgument, "invalid category");
+    if (opt.category.size() > 128) return fail(Status::kInvalidArgument, "category too long");
+  }
+  {
+    struct stat st;
+    if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+      return fail(Status::kInvalidArgument, "the data root " + opt.root + " is not an existing directory");
+  }
+
+  // 1. Parse (no filesystem writes). Damaged beats unsupported; nothing of a skipped file is written.
+  fmt::Sf2ParseResult parsed = fmt::parse_sf2_file(opt.sfz_path);
+  auto skip = [&](ReasonCode rc, std::string why) -> ImportResult& {
+    res.status = Status::kSkipped;
+    res.reason_code = rc;
+    if (rc == ReasonCode::kDamaged) res.failing_path = opt.sfz_path;
+    res.reasons.push_back(opt.sfz_path + ": " + std::move(why));
+    return res;
+  };
+  if (!parsed.ok()) {
+    res.status = Status::kSkipped;
+    const bool damaged = parsed.damaged();
+    for (const auto& i : parsed.issues) {
+      res.reasons.push_back(opt.sfz_path + ": " + i.message);
+      if (i.kind == fmt::Sf2IssueKind::kUnsupported) res.offenders.push_back({i.item, opt.sfz_path, 0, i.message});
+    }
+    if (damaged) res.offenders.clear();
+    res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
+    if (damaged) res.failing_path = opt.sfz_path;
+    return res;
+  }
+  for (const auto& w : parsed.warnings)
+    res.warnings.push_back({w.code, w.item, opt.sfz_path, 0, w.message, w.preset});
+  res.preset_count = parsed.presets.size();
+  res.ignored_generators = parsed.stats.ignored_generators;
+  res.ignored_modulators = parsed.stats.ignored_modulators;
+  res.source_region_count = parsed.stats.zones;
+
+  std::error_code ec;
+  const fs::path abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
+  if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
+
+  // 2. Directories and the exclusive lock.
+  RootLock rl;
+  if (!lock_root(opt, res, rl)) return res;
+
+  // 3. Build the bundle: one instrument per preset; each sample read once, encoded, dropped again.
+  fmt::BundleWriter writer;
+  if (writer.set_source_id(abs.generic_string()) != fmt::Error::kNone)
+    return fail(Status::kInvalidArgument, "empty source id");
+  std::vector<std::int32_t> pcm;
+  std::size_t samples = 0, regions = 0;
+  for (const auto& p : parsed.presets) {
+    auto inst = writer.add_instrument(p.name, p.key);
+    if (!inst) return fail(Status::kInvalidArgument, "instrument key " + p.key + ": " + fmt::to_string(inst.error()));
+    for (const auto& s : p.samples) {
+      if (fmt::Error e = parsed.samples->read(s, pcm); e != fmt::Error::kNone)
+        return skip(ReasonCode::kDamaged, "preset " + p.key + ": sample '" + s.name + "': cannot read its data (" + fmt::to_string(e) + ")");
+      fmt::SampleInput in;
+      in.name = s.name;
+      in.format = s.format;
+      in.frame_count = s.frames;
+      in.data = pcm;
+      if (fmt::Error e = writer.add_sample(inst.value(), in); e != fmt::Error::kNone) {
+        ReasonCode rc;
+        const Status st = status_for_add_sample_error(e, &rc);
+        if (st == Status::kSkipped) return skip(rc, "preset " + p.key + ": sample '" + s.name + "': " + fmt::to_string(e));
+        return fail(st, "preset " + p.key + ": cannot add sample '" + s.name + "': " + fmt::to_string(e));
+      }
+      ++samples;
+    }
+    for (const auto& r : p.regions) {
+      if (writer.add_region(inst.value(), r) != fmt::Error::kNone)
+        return skip(ReasonCode::kDamaged, "preset " + p.key + ": a region does not fit the instrument model");
+      ++regions;
+    }
+  }
+  if (regions == 0) return skip(ReasonCode::kDamaged, "no regions in SF2 file");
+  res.sample_count = samples;
+  res.region_count = regions;
+
+  // 4-8. Stage, verify against a fresh parse of the source, publish, flip.
+  auto verify_content = [&](const fmt::BundleReader& rd) -> std::string {
+    fmt::Sf2ParseResult fresh = fmt::parse_sf2_file(opt.sfz_path);
+    if (!fresh.ok() || fresh.presets.size() != parsed.presets.size()) return "the SF2 file changed while it was imported";
+    if (rd.instruments().size() != fresh.presets.size()) return "staged bundle has the wrong instrument count";
+    std::vector<std::int32_t> want, got;
+    for (std::size_t i = 0; i < fresh.presets.size(); ++i) {
+      const auto& fp = fresh.presets[i];
+      const auto& ins = rd.instruments()[i];
+      if (ins.key != fp.key || ins.name != fp.name) return "staged instrument " + fp.key + " has the wrong key or name";
+      if (ins.regions != fp.regions || fp.regions != parsed.presets[i].regions)
+        return "staged region table of " + fp.key + " differs from the parsed zones";
+      if (ins.sample_count != fp.samples.size()) return "staged instrument " + fp.key + " has the wrong sample count";
+      for (std::size_t k = 0; k < fp.samples.size(); ++k) {
+        const auto& si = rd.samples()[ins.first_sample + k];
+        if (!(si.format == fp.samples[k].format) || si.frame_count != fp.samples[k].frames)
+          return "sample '" + fp.samples[k].name + "' of " + fp.key + " has the wrong format or length";
+        if (fresh.samples->read(fp.samples[k], want) != fmt::Error::kNone) return "cannot re-read sample '" + fp.samples[k].name + "'";
+        got.assign(want.size(), 0);
+        if (rd.read_frames(ins.first_sample + k, 0, want.size(), got) != fmt::Error::kNone || got != want)
+          return "sample '" + fp.samples[k].name + "' of " + fp.key + " is not bit-identical to its source";
+      }
+    }
+    return {};
+  };
+  return stage_and_publish(opt, res, rl, writer, verify_content);
 }
 
 }  // namespace velora::librarian

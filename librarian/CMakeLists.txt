@@ -37,3 +37,11 @@ add_executable(librarian_demo_acceptance tests/demo_acceptance.cpp)
 target_link_libraries(librarian_demo_acceptance PRIVATE velora_librarian)
 add_test(NAME librarian_demo_acceptance COMMAND librarian_demo_acceptance)
 set_tests_properties(librarian_demo_acceptance PROPERTIES SKIP_RETURN_CODE 77)
+
+# Story 5.3: SF2 import (fixtures from the test-only writer formatlib/tests/sf2_builder.hpp), batch, report, CLI.
+add_executable(librarian_sf2_test tests/sf2_import_test.cpp)
+target_link_libraries(librarian_sf2_test PRIVATE velora_librarian)
+target_include_directories(librarian_sf2_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+target_compile_definitions(librarian_sf2_test PRIVATE LIBRARIAN_EXE="$<TARGET_FILE:librarian>")
+add_dependencies(librarian_sf2_test librarian)
+add_test(NAME librarian_sf2_test COMMAND librarian_sf2_test)

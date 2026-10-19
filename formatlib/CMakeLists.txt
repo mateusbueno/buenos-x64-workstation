@@ -58,7 +58,8 @@ add_library(velora_format STATIC
   src/instrument_model.cpp
   src/writer.cpp
   src/reader.cpp
-  src/wav_source.cpp)
+  src/wav_source.cpp
+  src/sf2_import.cpp)
 add_library(velora::format ALIAS velora_format)
 target_include_directories(velora_format PUBLIC include PRIVATE src)
 # Dependency rule: formatlib links only libFLAC; it never uses engine/core or engine/host.
@@ -86,3 +87,10 @@ add_executable(format_sfz_test tests/sfz_test.cpp)
 target_link_libraries(format_sfz_test PRIVATE velora_sfz)
 target_compile_definitions(format_sfz_test PRIVATE FORMATLIB_README="${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 add_test(NAME format_sfz_test COMMAND format_sfz_test)
+
+# Story 5.3: SoundFont 2 reader and mapping, fixtures from the test-only SF2 writer (tests/sf2_builder.hpp).
+add_executable(format_sf2_test tests/sf2_test.cpp)
+target_link_libraries(format_sf2_test PRIVATE velora_format)
+target_compile_options(format_sf2_test PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+add_test(NAME format_sf2_test COMMAND format_sf2_test)

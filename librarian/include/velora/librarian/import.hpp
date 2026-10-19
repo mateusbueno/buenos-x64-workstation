@@ -14,6 +14,13 @@
 // A crash before step 5 leaves only staging garbage (removed by the next run); between 5 and 6
 // it leaves a complete but unreferenced bundle directory; `current` always names a complete,
 // verified bundle (the previous or the new one).
+//
+// SoundFont 2 (Story 5.3): `import_sf2` runs the same protocol for one .sf2 file = one library with
+// one instrument per preset (instrument_key "bank:preset", see formatlib/sf2_import.hpp). The
+// library_id is the UUIDv5 of the canonical absolute path, exactly as for SFZ. Step 3 reads the
+// SF2 sample words instead of WAV files, and the verification compares every sample, region
+// table and key against a fresh parse of the source file. `import_file` picks the importer by
+// extension (.sf2, case-insensitive, else SFZ).
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -50,7 +57,7 @@ struct FaultInjection {
 };
 
 struct ImportOptions {
-  std::string sfz_path;
+  std::string sfz_path;   // the source file: an .sfz, or an .sf2 for import_sf2/import_file
   std::string root;       // existing data root directory: bundles go to <root>/lib/...
   std::string base_dir;   // instrument_key is the sfz path relative to this; default: sfz's directory
   std::string category;   // optional, stored as <bundle_dir>/category inside the atomic publish (Epic 5 owns the UX)
@@ -93,11 +100,16 @@ struct AllowListedUse {
 };
 
 // A warning in the import report. Closed set of codes: `ignored_opcode` = a sound-affecting
-// opcode was accepted but has no effect (fil_type/resonance without cutoff).
+// opcode was accepted but has no effect (fil_type/resonance without cutoff); `ignored_sf2_feature`
+// (Story 5.3) = an SF2 generator or modulator outside the instrument model was ignored (`ignored_zone` = a zone the
+// model cannot hold was dropped, `ignored_empty_preset` = a preset without a sounding region was not imported): `preset` is
+// the "bank:preset" id, `opcode` carries the generator name or the modulator description, `line`
+// is 0. Warnings never skip a file.
 struct ImportWarning {
   std::string code, opcode, file;
   std::size_t line = 0;
   std::string message;
+  std::string preset;  // ignored_sf2_feature only
 };
 
 // How a failure of BundleWriter::add_sample is reported: kUnsupportedFormat is a skipped file with
@@ -122,10 +134,17 @@ struct ImportResult {
   std::size_t region_count = 0;
   std::size_t source_region_count = 0;  // <region> headers in the SFZ sources
   std::size_t reconciled = 0;           // leftovers removed at startup
+  // Story 5.3 (SF2 only; `sf2` is false for SFZ): instruments = presets, source_region_count = zones
+  // that became regions, and the file-level counters of ignored_sf2_feature warnings.
+  bool sf2 = false;
+  std::size_t preset_count = 0, ignored_generators = 0, ignored_modulators = 0;
   bool ok() const { return status == Status::kOk; }
 };
 
 ImportResult import_sfz(const ImportOptions& opt);
+ImportResult import_sf2(const ImportOptions& opt);   // Story 5.3
+ImportResult import_file(const ImportOptions& opt);  // by extension: .sf2 -> import_sf2, else import_sfz
+bool is_sf2_path(const std::string& path);           // extension .sf2, case-insensitive
 
 // Removes leftovers of crashed imports: everything under <root>/lib/.staging/ except the lock.
 // Called by import_sfz under the lock; exposed for tests and a future service start-up.

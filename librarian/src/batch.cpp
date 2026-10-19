@@ -68,10 +68,10 @@ std::string esc(const std::string& s) {
   return o + "\"";
 }
 
-bool is_sfz(const fs::path& p) {
+bool is_importable(const fs::path& p) {
   std::string e = p.extension().string();
   for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  return e == ".sfz";
+  return e == ".sfz" || e == ".sf2";
 }
 
 
@@ -91,7 +91,7 @@ void walk(const fs::path& dir, std::vector<std::string>& found, std::vector<std:
     const fs::file_status st = it->symlink_status(e2);
     if (e2) continue;
     if (fs::is_directory(st)) walk(it->path(), found, errors);
-    else if (fs::is_regular_file(it->status(e2)) && is_sfz(it->path())) found.push_back(it->path().string());
+    else if (fs::is_regular_file(it->status(e2)) && is_importable(it->path())) found.push_back(it->path().string());
   }
   if (ec) errors.push_back(dir.string() + ": " + ec.message());
 }
@@ -144,7 +144,7 @@ BatchResult import_batch(const BatchOptions& opt) {
     f.result.status = Status::kSkipped;
     f.result.reason_code = ReasonCode::kDamaged;
     f.result.failing_path = d;
-    f.result.reasons.push_back(d + ": no .sfz files found");
+    f.result.reasons.push_back(d + ": no .sfz or .sf2 files found");
     br.files.push_back(std::move(f));
   }
   for (const auto& path : files) {
@@ -156,7 +156,7 @@ BatchResult import_batch(const BatchOptions& opt) {
     o.fault = opt.fault;
     FileReport f;
     f.sfz_path = path;
-    f.result = import_sfz(o);  // a skipped or failed file never stops the batch
+    f.result = import_file(o);  // a skipped or failed file never stops the batch
     br.files.push_back(std::move(f));
   }
   for (const auto& f : br.files) {
@@ -198,8 +198,9 @@ std::string report_file_line(const FileReport& f) {
   for (std::size_t i = 0; i < r.warnings.size(); ++i) {
     const ImportWarning& x = r.warnings[i];
     if (i) o += ",";
-    o += "{\"code\":" + esc(x.code) + ",\"opcode\":" + esc(x.opcode) + ",\"file\":" + esc(x.file) +
-         ",\"line\":" + std::to_string(x.line) + ",\"message\":" + esc(x.message) + "}";
+    o += "{\"code\":" + esc(x.code) + (!x.preset.empty() ? ",\"preset\":" + esc(x.preset) : std::string()) +
+         ",\"opcode\":" + esc(x.opcode) + ",\"file\":" + esc(x.file) + ",\"line\":" + std::to_string(x.line) +
+         ",\"message\":" + esc(x.message) + "}";
   }
   o += "],\"warning_count\":" + std::to_string(r.warnings.size()) + ",\"messages\":[";
   for (std::size_t i = 0; i < r.reasons.size(); ++i) {
@@ -209,6 +210,9 @@ std::string report_file_line(const FileReport& f) {
   o += "],\"library_id\":" + esc(r.library_id) + ",\"bundle_id\":" + esc(r.bundle_id);
   o += ",\"samples\":" + std::to_string(r.sample_count) + ",\"regions\":" + std::to_string(r.region_count);
   o += ",\"detail\":" + esc(r.status == Status::kOk || r.status == Status::kSkipped ? "" : to_string(r.status));
+  if (r.sf2)
+    o += ",\"format\":\"sf2\",\"presets\":" + std::to_string(r.preset_count) + ",\"ignored_generators\":" +
+         std::to_string(r.ignored_generators) + ",\"ignored_modulators\":" + std::to_string(r.ignored_modulators);
   return o + "}";
 }
 

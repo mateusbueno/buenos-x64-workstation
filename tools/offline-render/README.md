@@ -106,11 +106,20 @@ one. Tolerances,
 measured residuals and every deviation are in `tests/sample_suite/README.md`. Regenerating the goldens needs the oracle:
 `tests/sample_suite/regenerate_goldens.sh` (see `tools/oracle/README.md`).
 
+## SF2 against FluidSynth (Story 5.3)
+
+`tests/sf2_suite/` null-tests the engine's render of imported SoundFont 2 presets against committed **FluidSynth 2.6.1** renders (`sf2_null_<case>`, nine cases: key
+and velocity splits, volume envelope, loops, stereo and pan, filters, percussion bank 128, a single-instrument file in 16 and 24 bit; residuals -32 .. -44 dB, the
+documented no-resonance filter gap -9 dB), so `ctest` needs no FluidSynth. The SF2 fixtures and the MIDI are generated in code (`formatlib/tests/sf2_builder.hpp`,
+`sf2_suite/sf2_fixtures.hpp`); `sf2_suite_test --emit DIR` writes them for the oracle (`tools/oracle/render-fluidsynth.sh`, `regenerate_goldens.sh`).
+Tolerances, measured residuals, FluidSynth's departures from the SoundFont specification (compensated in the oracle's copy of the file) and its remaining artefacts are
+in `tests/sf2_suite/README.md`. `velora-offline-render --engine sample --instrument 0:0` plays preset `bank:preset` of an SF2 bundle exactly as it plays an SFZ one.
+
 ## Oracle rule
 
-A reference oracle (sfizz's full engine) may only be used offline to produce reference renders for null tests. It is never linked
+A reference oracle (sfizz's full engine for SFZ, FluidSynth for SF2) may only be used offline to produce reference renders for null tests. It is never linked
 into any shipped target and no oracle source is in this repository: `tools/oracle/` fetches sfizz 1.2.3 into an ignored build
-directory and builds its `sfizz_render` CLI there. `tools/ci/check_third_party_notices.py` enforces this.
+directory and builds its `sfizz_render` (or `fluidsynth`) CLI there. `tools/ci/check_third_party_notices.py` enforces this.
 
 ## Organ rotary speaker golden (Story 2.6)
 

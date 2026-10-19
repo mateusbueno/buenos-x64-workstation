@@ -1,6 +1,7 @@
-// librarian import <file.sfz | dir>... --root <data root> [--base DIR] [--category NAME] [--report FILE|-]
+// librarian import <file.sfz | file.sf2 | dir>... --root <data root> [--base DIR] [--category NAME] [--report FILE|-]
 //
-// One SFZ is one library. Several files and/or directories (searched recursively for *.sfz) are
+// One SFZ or one SF2 is one library (an SF2's presets are its instruments). Several files and/or directories
+// (searched recursively for *.sfz and *.sf2) are
 // a batch: every file is imported on its own, a skipped or failed file never stops the others.
 // Exit codes: 0 every file imported (or already up to date), 1 at least one file not imported
 // (reasons on stderr), 2 usage. `--report FILE` writes the JSON Lines import report
@@ -24,7 +25,7 @@ using namespace velora::librarian;
 int main(int argc, char** argv) {
   auto usage = [&]() {
     std::fprintf(stderr,
-                 "usage: %s import <file.sfz|dir>... --root DIR [--base DIR] [--category NAME] [--report FILE|-]\n",
+                 "usage: %s import <file.sfz|file.sf2|dir>... --root DIR [--base DIR] [--category NAME] [--report FILE|-]\n",
                  argv[0]);
     return 2;
   };

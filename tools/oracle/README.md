@@ -1,11 +1,15 @@
 # tools/oracle
 
-Role: the sfizz reference renderer used **only by test tooling** as the oracle of the sample-engine null tests (Story 1.15).
+Role: the reference renderers used **only by test tooling** as the oracles of the sample-engine null tests: sfizz for SFZ (Story 1.15) and
+FluidSynth for SF2 (Story 5.3).
 
-It is never linked into a shipped target, no sfizz source is vendored here (this directory holds scripts and this file; the sources live
+They are never linked into a shipped target, no oracle source is vendored here (this directory holds scripts and this file; the sources live
 in the git-ignored `.work/`), and `tools/ci/check_third_party_notices.py` fails if oracle sources are committed, `.gitignore` loses the
-`/tools/oracle/.work/` rule, sfizz becomes a submodule, or a shipped CMake file references `tools/oracle` or `sfizz`. Only the vendored
-BSD-2 SFZ parser (`formatlib/third_party`, see `THIRD_PARTY_NOTICES.md`) ships. License review: `_bmad-output/business/11-12-sfizz-license-check.md`.
+`/tools/oracle/.work/` rule, sfizz or FluidSynth becomes a submodule, a shipped CMake file references `tools/oracle` or `sfizz`, or any
+shipped CMake file mentions FluidSynth. Only the vendored BSD-2 SFZ parser (`formatlib/third_party`, see `THIRD_PARTY_NOTICES.md`) ships;
+the SF2 reader is clean-room code written from the public SoundFont 2.04 specification. License review of sfizz:
+`_bmad-output/business/11-12-sfizz-license-check.md`. FluidSynth is LGPL-2.1: that is why it is only ever *run as a separate process* on
+fixtures, built into `.work/` on the machine that regenerates goldens, and never distributed, linked, vendored or copied from.
 
 ## Scripts
 
@@ -22,6 +26,21 @@ BSD-2 SFZ parser (`formatlib/third_party`, see `THIRD_PARTY_NOTICES.md`) ships. 
   a voice that never releases (see the quirks in `engine/core/README.md`) would otherwise fill the disk.
 - Goldens of the suite: `tools/offline-render/tests/sample_suite/regenerate_goldens.sh`. A regenerated golden that differs from the
   committed one means the oracle, the suite or the platform changed -- review before committing.
+
+- `build-fluidsynth.sh` -- clones https://github.com/FluidSynth/fluidsynth into `tools/oracle/.work/fluidsynth` (override with
+  `VELORA_ORACLE_DIR`), checks out **FluidSynth 2.6.1 = tag `v2.6.1` = commit `71e85b2ca6bf48641ba7e2261d8f2640ae473773`**, verifies the commit and
+  builds the `fluidsynth` CLI (Release, static library, only libsndfile for file output; no audio or MIDI driver, network, readline, JACK, ...). Prints
+  the path of the binary (`.work/fluidsynth-build/src/fluidsynth`); a second run just prints it. Needs network, git, cmake, a C++17 toolchain and
+  libsndfile (`brew install libsndfile`, `apt-get install libsndfile1-dev`). Exit code 77 = a prerequisite is genuinely missing (git, cmake, network,
+  libsndfile), any other non-zero code a real failure. A from-scratch build took about two minutes on an Apple M-series Mac.
+- `render-fluidsynth.sh <file.sf2> <file.mid> <out.wav>` -- `fluidsynth -ni -F out.wav -r 48000 -g 0.8409 -R 0 -C 0 -o synth.midi-bank-select=mma`:
+  fast file rendering at 48 kHz into FluidSynth's own 16-bit stereo WAV (untouched; interpolation is FluidSynth's default, 4th order), reverb and chorus
+  off (their sends would add a wet signal the engine does not have), bank select in MMA mode (bank = CC0 x 128 + CC32, so the percussion bank 128 is
+  selectable on any channel). Uses `VELORA_FLUIDSYNTH` if set, else builds the oracle; exits 77 when it is unavailable. If the oracle cannot be built,
+  stop: goldens are never written by hand or taken from another renderer.
+- Goldens of the SF2 suite: `tools/offline-render/tests/sf2_suite/regenerate_goldens.sh <build dir>` (needs the oracle). Its README
+  (`tools/offline-render/tests/sf2_suite/README.md`) lists, with the FluidSynth source lines, every place where the oracle departs from the SoundFont
+  specification and how the suite compensates (the `-g 0.8409` above is one of them).
 
 ## What the oracle's output needs before a null test
 

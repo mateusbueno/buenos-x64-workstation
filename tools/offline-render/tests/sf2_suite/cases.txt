@@ -1,0 +1,14 @@
+# SF2 render comparison against FluidSynth (Story 5.3). One line per case:
+#   name            tolerance_db  max_offset_frames
+# The name selects the case in sf2_suite_test (fixtures are generated in code) and golden/<name>.wav + golden/<name>.case.
+# Tolerances and the measured residuals are recorded and explained in README.md; a tolerance is never loosened silently.
+sf2_keys       -36  1
+sf2_envelope   -37  1
+sf2_loops      -40  1
+sf2_stereo     -38  1
+sf2_filter     -28  1
+sf2_filter_q0  -7   1
+sf2_calibration -40 1
+sf2_kit        -38  1
+sf2_single     -38  1
+sf2_single24   -38  1
