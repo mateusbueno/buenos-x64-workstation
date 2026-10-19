@@ -103,6 +103,7 @@ void BlockRenderer::adopt_generation() noexcept {
   applied_valid_ = true;
   applied_program_generation_ = next->program_generation;
   held_ = next;
+  last_.store_adopted_revision(next->revision);  // after every slot of this generation was applied (Story 4.9)
   mixer_.adopt(*next, &last_);  // part outputs, master level and the insert chains (the generation is held: safe to read)
 }
 
@@ -192,6 +193,10 @@ void BlockRenderer::reap_generation_refs() noexcept {
 }
 
 void BlockRenderer::apply(const Ump& ump) noexcept {
+  if (is_fence_event(ump)) {  // Story 4.9: everything the control thread sent before the fence has been applied; one store acknowledges it
+    last_.store_fence_ack(ump.word1);
+    return;
+  }
   if (ump.group() == 0 && ump.is_assignable_controller()) {
     ParamEvent pe;
     if (decode_param_event(ump, pe)) apply_param(pe);

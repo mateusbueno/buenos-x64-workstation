@@ -46,7 +46,8 @@ add_library(velora_control STATIC
   src/scene_controller.cpp
   src/live_set_switcher.cpp
   src/setlist_store.cpp
-  src/setlist_controller.cpp)
+  src/setlist_controller.cpp
+  src/edit_session.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -126,6 +127,19 @@ add_custom_target(setlist_corpus_regen
   COMMENT "Regenerating the setlist compatibility corpus"
   VERBATIM)
 
+# Edits in memory and Write scopes (Story 4.9): the control->RT fence, dirty flags and change summary, edits kept across scene and Live Set changes, Write
+# scopes, Save as new and its name rules, storage full, no file write while playing (a generated hour on a fake clock), hostile cases.
+add_executable(edit_session_tests tests/edit_session_test.cpp)
+target_link_libraries(edit_session_tests PRIVATE velora_control)
+add_test(NAME edit_session_tests COMMAND edit_session_tests)
+set_tests_properties(edit_session_tests PROPERTIES TIMEOUT 300)
+
+# The control->RT fence beside a rendering RT thread without the sanitizer (macOS runs the logic); the RTSan build of it is below.
+add_executable(edit_rt_traffic_test tests/rtsan_edit_test.cpp)
+target_link_libraries(edit_rt_traffic_test PRIVATE velora_control)
+add_test(NAME edit_rt_traffic_test COMMAND edit_rt_traffic_test)
+set_tests_properties(edit_rt_traffic_test PROPERTIES TIMEOUT 300)
+
 # Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
 #   cmake --build build --target live_set_corpus_regen
 add_executable(live_set_corpus_gen tests/live_set_corpus_gen.cpp)
@@ -184,6 +198,13 @@ if(VELORA_RTSAN AND VELORA_HAVE_RTSAN)
   target_link_options(rtsan_scene_test PRIVATE -fsanitize=realtime)
   add_test(NAME rtsan_scene_test COMMAND rtsan_scene_test)
   set_tests_properties(rtsan_scene_test PROPERTIES TIMEOUT 300)
+
+  add_executable(rtsan_edit_test tests/rtsan_edit_test.cpp)
+  target_link_libraries(rtsan_edit_test PRIVATE velora_control)
+  target_compile_options(rtsan_edit_test PRIVATE -fsanitize=realtime -g)
+  target_link_options(rtsan_edit_test PRIVATE -fsanitize=realtime)
+  add_test(NAME rtsan_edit_test COMMAND rtsan_edit_test)
+  set_tests_properties(rtsan_edit_test PROPERTIES TIMEOUT 300)
 
   add_executable(rtsan_switch_test tests/rtsan_switch_test.cpp)
   target_link_libraries(rtsan_switch_test PRIVATE velora_control)

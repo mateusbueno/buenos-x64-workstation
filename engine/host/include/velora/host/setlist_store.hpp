@@ -74,6 +74,7 @@ enum class Status : std::uint8_t {
   kBadId,                 // a malformed id
   kRandomFailed,          // no randomness for a new id (fails closed)
   kLiveSetInUse,          // delete_live_set: the caller refused (reserved for the controller)
+  kNoSpace,               // Story 4.9: the storage is full; nothing was written
   kCount
 };
 const char* to_string(Status s);
@@ -142,6 +143,7 @@ struct StoreOptions {
   liveset::RandomSource* rng = nullptr;             // nullptr = the operating system's (OsRandom); tests inject SeededRandom
   std::function<liveset::HookAction(liveset::Stage)> on_stage;  // fault injection, as the Live Set store
   bool inject_dir_sync_failure = false;             // test only
+  int inject_write_errno = 0;                       // test only: the write of the temp file fails with this errno (ENOSPC = storage full)
 };
 
 class SetlistStore {
@@ -196,9 +198,14 @@ class SetlistStore {
   Status delete_live_set(liveset::LiveSetStore& live, const std::string& id, std::size_t* removed_from = nullptr, const std::string& file_path = {});
 
   const StoreOptions& options() const { return opt_; }
+  // Story 4.9: how many times this store ATTEMPTED to write a setlist file (commands that reached the writer, successful or not). Zero during a performance. Any thread.
+  std::uint64_t mutations() const noexcept { return mutations_.load(std::memory_order_relaxed); }
+  void set_inject_write_errno(int e) { opt_.inject_write_errno = e; }
+  void set_inject_dir_sync_failure(bool b) { opt_.inject_dir_sync_failure = b; }
 
  private:
   explicit SetlistStore(StoreOptions opt) : opt_(std::move(opt)) {}
+  std::atomic<std::uint64_t> mutations_{0};
   bool owner() const { return std::this_thread::get_id() == owner_.load(); }
   Status commit(slp::SetlistLibrary&& work);
   std::string mint_id(const std::function<bool(const std::string&)>& taken);

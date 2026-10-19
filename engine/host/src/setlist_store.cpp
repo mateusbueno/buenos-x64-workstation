@@ -54,6 +54,7 @@ Status from_live(liveset::Status s) {
     case liveset::Status::kCommittedNotDurable: return Status::kCommittedNotDurable;
     case liveset::Status::kNotFound: return Status::kNotFound;
     case liveset::Status::kBadId: return Status::kBadId;
+    case liveset::Status::kNoSpace: return Status::kNoSpace;
     default: return Status::kIo;
   }
 }
@@ -84,6 +85,7 @@ const char* to_string(Status s) {
     case Status::kBadId: return "bad_id";
     case Status::kRandomFailed: return "random_failed";
     case Status::kLiveSetInUse: return "live_set_in_use";
+    case Status::kNoSpace: return "no_space";
     case Status::kCount: break;
   }
   return "?";
@@ -282,7 +284,8 @@ Status SetlistStore::commit(slp::SetlistLibrary&& work) {
   if (!validate(work).ok()) return Status::kInvalid;  // a command bug, never a user error: nothing is written
   std::string bytes;
   if (const Status s = serialize(work, bytes); s != Status::kOk) return s;
-  const Status ws = from_live(liveset::atomic_replace_file(opt_.dir, kLibraryFile, kLibraryTmpFile, bytes, opt_.on_stage, opt_.inject_dir_sync_failure));
+  mutations_.fetch_add(1, std::memory_order_relaxed);
+  const Status ws = from_live(liveset::atomic_replace_file(opt_.dir, kLibraryFile, kLibraryTmpFile, bytes, opt_.on_stage, opt_.inject_dir_sync_failure, opt_.inject_write_errno));
   if (applied(ws)) {
     lib_ = std::move(work);
     ++revision_;
@@ -478,7 +481,8 @@ Status SetlistStore::set_default_assign(const std::array<std::uint32_t, kAssignS
   if (!validate(work).ok()) return Status::kInvalid;
   std::string bytes;
   if (const Status s = serialize(work, bytes); s != Status::kOk) return s;
-  const Status ws = from_live(liveset::atomic_replace_file(opt_.dir, kAssignFile, kAssignTmpFile, bytes, opt_.on_stage, opt_.inject_dir_sync_failure));
+  mutations_.fetch_add(1, std::memory_order_relaxed);
+  const Status ws = from_live(liveset::atomic_replace_file(opt_.dir, kAssignFile, kAssignTmpFile, bytes, opt_.on_stage, opt_.inject_dir_sync_failure, opt_.inject_write_errno));
   if (applied(ws)) {
     assign_msg_ = std::move(work);
     assign_ = assign;

@@ -63,6 +63,33 @@ inline void fill_inserts(core::PartCfg& pc, const google::protobuf::RepeatedPtrF
   }
 }
 
+// The values of one Live Set part as fields of a generation: zone, octave, transpose, keyboard flag, volume, output, insert chain (configuration only,
+// no instances), send levels and the engine / envelope / EQ sound parameters. Not the engine type, the timbre or the part state (those need the
+// resolver). Shared by the loader, which builds a generation with it, and by the edit session, which rebuilds the scenes' base values from the
+// edited state without loading anything.
+inline void fill_part_values(core::Snapshot& snap, const lsp::Part& lp, std::uint32_t pi) {
+  core::PartCfg& pc = snap.parts[pi];
+  pc.low_key = static_cast<std::uint8_t>(lp.low_key());
+  pc.high_key = static_cast<std::uint8_t>(lp.high_key());
+  pc.octave = static_cast<std::int8_t>(lp.octave());
+  pc.transpose = static_cast<std::int8_t>(lp.transpose());
+  pc.keyboard_on = lp.keyboard_on() ? 1 : 0;
+  pc.volume = sane_volume(lp.volume());
+  pc.output = lp.output() == ws::v1::PART_OUTPUT_AUX ? static_cast<std::uint8_t>(p::kPartOutputAux) : static_cast<std::uint8_t>(p::kPartOutputMain);
+  fill_inserts(pc, lp.inserts());
+  snap.perf_init[p::perf_slot(*p::find(p::kSendReverbLevel), pi)] = sane(*p::find(p::kSendReverbLevel), lp.send_reverb());
+  snap.perf_init[p::perf_slot(*p::find(p::kSendDelayLevel), pi)] = sane(*p::find(p::kSendDelayLevel), lp.send_delay());
+  apply_entries(snap, lp.engine().params(), pi, false);
+  apply_entries(snap, lp.envelope(), pi, false);
+  apply_entries(snap, lp.eq(), pi, false);
+}
+
+// The Live Set's master list and tempo (the loader does these after the parts).
+inline void fill_master_values(core::Snapshot& snap, const lsp::LiveSet& ls) {
+  apply_entries(snap, ls.master(), 0, true);
+  snap.perf_init[p::perf_slot(*p::find(p::kTempoBpm), 0)] = sane(*p::find(p::kTempoBpm), ls.tempo());
+}
+
 inline bool same_inserts(const core::PartCfg& a, const core::PartCfg& b) {
   if (a.insert_count != b.insert_count) return false;
   for (std::uint32_t i = 0; i < a.insert_count; ++i) {

@@ -31,6 +31,7 @@
 //
 // Threading: control thread only (the ControlServer's thread in engine-host; the test thread otherwise).
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -97,6 +98,8 @@ class SetlistController final : public SetlistHandler {
   StepOutcome step(bool forward);
 
   const std::string& loaded_setlist_id() const { return loaded_; }
+  // Story 4.9: called (control thread) with the id of every Live Set a DeleteLiveSet command removed, so the edit session can drop its unsaved document.
+  void set_on_live_set_deleted(std::function<void(const std::string&)> f) { on_deleted_ = std::move(f); }
   int last_setlist_position() const;                      // -1 = none
   bool end_of_setlist() const;
   bool start_of_setlist() const;
@@ -134,6 +137,7 @@ class SetlistController final : public SetlistHandler {
   mutable std::uint64_t seq_ = 0;
   std::uint64_t reported_seq_ = 0;           // seq_ at the last tick()
   std::uint64_t not_durable_ = 0;
+  std::function<void(const std::string&)> on_deleted_;
 };
 
 }  // namespace velora::host

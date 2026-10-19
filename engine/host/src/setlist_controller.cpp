@@ -51,6 +51,7 @@ bool fail_status(HandlerFailure& e, sl::Status s, const std::string& id = {}, co
                                                                                         : sl::kMaxTagsPerSetlist);
       return fail(e, ws::v1::ERROR_CODE_LIMIT_REACHED, "limit reached", d);
     case sl::Status::kLiveSetInUse: return fail(e, ws::v1::ERROR_CODE_LIVE_SET_IN_USE, "the Live Set sounds or is loading", d);
+    case sl::Status::kNoSpace: return fail(e, ws::v1::ERROR_CODE_STORAGE_FULL, "the storage is full; nothing changed", d);
     default:
       d["reason"] = sl::to_string(s);
       return fail(e, ws::v1::ERROR_CODE_STORAGE_FAILED, "the change could not be stored; nothing changed", d);
@@ -444,11 +445,13 @@ bool SetlistController::run(const ClientMessage& msg, ws::v1::ServerMessage& rep
         ok = applied_ok(s, id);
         port_.remove_from_catalog(id);
         reanchor();
+        if (on_deleted_) on_deleted_(id);
       } else if (s == sl::Status::kNotFound && (from > 0 || listed)) {
         // The file was already gone: the command still cleans the references (a "missing" entry) and the catalog.
         ok = applied_ok(sl::Status::kOk);
         port_.remove_from_catalog(id);
         reanchor();
+        if (on_deleted_) on_deleted_(id);
       } else if (from > 0) {
         // Partial: the setlists no longer list it, but the file could not be removed. The Live Set stays in the catalog (its file exists); the
         // change is published and reported as a storage failure with the partial result.

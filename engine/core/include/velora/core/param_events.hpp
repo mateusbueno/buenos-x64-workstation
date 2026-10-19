@@ -59,6 +59,20 @@ inline bool decode_param_event(const Ump& ump, ParamEvent& out) noexcept {
   return true;
 }
 
+// Control->RT fence event (Story 4.9). Same wire shape as a parameter event but on channel 15 (parts are 0..7, so it can never be one) with the
+// reserved id 0x3FFF; word1 carries the sequence number. RT acknowledges it in LastValueTable::store_fence_ack().
+constexpr std::uint32_t kFenceChannel = 0xF;
+constexpr std::uint32_t kFenceParamId = 0x3FFF;
+constexpr Ump make_fence_event(std::uint32_t seq) noexcept {
+  return Ump{(Ump::kMessageTypeChannelVoice2 << 28) | (Ump::kStatusAssignableController << 20) | (kFenceChannel << 16) |
+                 (((kFenceParamId >> 7) & 0x7Fu) << 8) | (kFenceParamId & 0x7Fu),
+             seq};
+}
+constexpr bool is_fence_event(const Ump& ump) noexcept {
+  return ump.group() == 0 && ump.is_assignable_controller() && ump.channel() == kFenceChannel && ((ump.word0 >> 8) & 0x7Fu) == ((kFenceParamId >> 7) & 0x7Fu) &&
+         (ump.word0 & 0x7Fu) == (kFenceParamId & 0x7Fu);
+}
+
 // MIDI CC (MIDI 2.0 control change: channel = part, 32-bit value) -> parameter event. False when the
 // controller is not mapped or the channel is not a part.
 inline bool cc_to_param_event(const Ump& cc, Ump& out) noexcept {

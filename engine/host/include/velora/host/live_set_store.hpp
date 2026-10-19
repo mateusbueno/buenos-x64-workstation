@@ -58,6 +58,7 @@ enum class Status : std::uint8_t {
   kWriterBusy,          // another store holds the directory's writer lock
   kFaultInjected,       // a test fault hook aborted the write (simulated crash)
   kCommittedNotDurable, // write: the new file is in place (rename done) but fsync of the directory failed
+  kNoSpace,             // Story 4.9: the storage is full (ENOSPC / EDQUOT); nothing was written, the old file is intact and no temp file is left
   kCount
 };
 
@@ -207,8 +208,9 @@ enum class HookAction : std::uint8_t { kContinue, kAbort };
 // map): temp file `<dir>/<tmp_name>` (created exclusively, never following a symlink), fsync (F_FULLFSYNC on macOS), rename over
 // `<dir>/<name>`, fsync of the directory. `on_stage` is the fault-injection hook (kAbort leaves the temp file, kFaultInjected).
 // kCommittedNotDurable: renamed, but the directory fsync failed (or `inject_dir_sync_failure`). Control thread only (the caller checks ownership).
+// `inject_write_errno` (test only, 0 = off) makes the write of the temp file fail with that errno (ENOSPC gives kNoSpace); the temp file is removed.
 Status atomic_replace_file(const std::string& dir, const std::string& name, const std::string& tmp_name, const std::string& bytes,
-                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure);
+                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure, int inject_write_errno = 0);
 // Reads a regular file (no symlink) of at most `max_bytes` into `out`. kNotFound when absent, kTooLarge above the cap, kIo otherwise.
 Status read_regular_file(const std::string& path, std::size_t max_bytes, std::string& out);
 
@@ -221,6 +223,7 @@ struct StoreOptions {
   std::function<HookAction(Stage)> on_stage;
   bool inject_dir_sync_failure = false;  // test only: makes the directory fsync after the rename report failure
   bool inject_remove_failure = false;    // test only: remove() fails with kIo before touching the file
+  int inject_write_errno = 0;            // test only: the temp-file write of every write() fails with this errno (ENOSPC = storage full)
 };
 
 class LiveSetStore {
@@ -252,10 +255,18 @@ class LiveSetStore {
 
   std::string path_for(const std::string& id) const;
   const StoreOptions& options() const { return opt_; }
+  // Story 4.9: how many times this store ATTEMPTED to touch a Live Set file: every write() that passed validation and went to the writer, whether it
+  // then succeeded, hit a full disk or was aborted, plus every remove() that went to the disk (attempts, not commits: a failed ENOSPC write counts).
+  // Playing, scene and Live Set changes, edits and stepping must leave it at zero: only an explicit Write (or Create / Delete Live Set) changes it. Any thread.
+  std::uint64_t mutations() const noexcept { return mutations_.load(std::memory_order_relaxed); }
+  // Test hook: makes later writes fail like a full disk (errno ENOSPC) or stop failing (0). Control thread.
+  void set_inject_write_errno(int e) { opt_.inject_write_errno = e; }
+  void set_inject_dir_sync_failure(bool b) { opt_.inject_dir_sync_failure = b; }
 
  private:
   explicit LiveSetStore(StoreOptions opt) : opt_(std::move(opt)) {}
   StoreOptions opt_;
+  std::atomic<std::uint64_t> mutations_{0};
   int lock_fd_ = -1;
   std::atomic<std::thread::id> owner_;
 };

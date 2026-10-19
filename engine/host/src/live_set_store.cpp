@@ -302,6 +302,8 @@ bool write_all(int fd, const char* p, std::size_t n) {
   return true;
 }
 
+bool no_space_errno(int e) { return e == ENOSPC || e == EDQUOT; }
+
 constexpr const char* kExt = ".liveset";
 constexpr const char* kTmpExt = ".liveset.tmp";
 
@@ -326,6 +328,7 @@ const char* to_string(Status s) {
     case Status::kWriterBusy: return "writer_busy";
     case Status::kFaultInjected: return "fault_injected";
     case Status::kCommittedNotDurable: return "committed_not_durable";
+    case Status::kNoSpace: return "no_space";
     case Status::kCount: break;
   }
   return "?";
@@ -575,32 +578,41 @@ Status LiveSetStore::write(const lsp::LiveSet& ls, ValidationReport* report) {
   std::string bytes;
   if (const Status s = serialize(*src, bytes); s != Status::kOk) return s;
 
-  return atomic_replace_file(opt_.dir, ls.id() + kExt, ls.id() + kTmpExt, bytes, opt_.on_stage, opt_.inject_dir_sync_failure);
+  mutations_.fetch_add(1, std::memory_order_relaxed);
+  return atomic_replace_file(opt_.dir, ls.id() + kExt, ls.id() + kTmpExt, bytes, opt_.on_stage, opt_.inject_dir_sync_failure, opt_.inject_write_errno);
 }
 
 Status atomic_replace_file(const std::string& dir, const std::string& name, const std::string& tmp_name, const std::string& bytes,
-                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure) {
+                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure, int inject_write_errno) {
   const std::string final_path = dir + "/" + name;
   const std::string tmp = dir + "/" + tmp_name;
   ::unlink(tmp.c_str());  // a stale temp of ours (we hold the writer lock)
   const auto hook = [&](Stage st) { return on_stage && on_stage(st) == HookAction::kAbort; };
   {
     Fd f(::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644));
-    if (!f.ok()) return Status::kIo;
-    if (!write_all(f.fd, bytes.data(), bytes.size())) {
+    if (!f.ok()) return no_space_errno(errno) ? Status::kNoSpace : Status::kIo;
+    if (inject_write_errno != 0) {  // test hook: the disk fills up while the temp file is written
+      errno = inject_write_errno;
       ::unlink(tmp.c_str());
-      return Status::kIo;
+      return no_space_errno(errno) ? Status::kNoSpace : Status::kIo;
+    }
+    if (!write_all(f.fd, bytes.data(), bytes.size())) {
+      const int e = errno;
+      ::unlink(tmp.c_str());
+      return no_space_errno(e) ? Status::kNoSpace : Status::kIo;
     }
     if (hook(Stage::kTempWritten)) return Status::kFaultInjected;
     if (!full_sync(f.fd)) {
+      const int e = errno;
       ::unlink(tmp.c_str());
-      return Status::kIo;
+      return no_space_errno(e) ? Status::kNoSpace : Status::kIo;
     }
   }
   if (hook(Stage::kFsynced)) return Status::kFaultInjected;
   if (::rename(tmp.c_str(), final_path.c_str()) != 0) {
+    const int e = errno;
     ::unlink(tmp.c_str());
-    return Status::kIo;
+    return no_space_errno(e) ? Status::kNoSpace : Status::kIo;
   }
   if (hook(Stage::kRenamed)) return Status::kFaultInjected;
   if (inject_dir_sync_failure || !sync_dir(dir)) return Status::kCommittedNotDurable;
@@ -641,6 +653,7 @@ Status LiveSetStore::remove(const std::string& id, const std::string& path) {
     target = path;
   }
   if (opt_.inject_remove_failure) return Status::kIo;
+  mutations_.fetch_add(1, std::memory_order_relaxed);
   if (::unlink(target.c_str()) != 0) return errno == ENOENT ? Status::kNotFound : Status::kIo;
   return sync_dir(opt_.dir) ? Status::kOk : Status::kCommittedNotDurable;
 }

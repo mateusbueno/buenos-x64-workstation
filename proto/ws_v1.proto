@@ -55,6 +55,10 @@ enum ErrorCode {
   ERROR_CODE_INVALID_ORDER = 31;       // a reorder that is not a permutation of the current ids, or an index past the end
   ERROR_CODE_LIVE_SET_NOT_IN_SETLIST = 32;  // RemoveLiveSetFromSetlist of a Live Set the setlist does not hold
   ERROR_CODE_STORAGE_FAILED = 33;      // the file could not be written (details: reason); nothing changed, EXCEPT details partial=references_removed_file_kept (DeleteLiveSet: the setlists were cleaned, the file could not be removed)
+  // Story 4.9: edits and Write. A refused command changes nothing.
+  ERROR_CODE_NAME_IN_USE = 34;         // WriteLiveSet SAVE_AS_NEW: the name is already used in the loaded setlist (details: name, suggested_name = a free name, e.g. "Perfect 2")
+  ERROR_CODE_WRITE_SCOPE_UNAVAILABLE = 35;  // WriteLiveSet SCENE: details reason = timbre_change ("Timbre changes are saved with the Live Set") | no_scene | no_scenes | scene_not_in_saved
+  ERROR_CODE_STORAGE_FULL = 36;        // WriteLiveSet: the storage is full (ENOSPC); nothing partial is written and the edits stay in memory, still flagged unsaved
 }
 
 message Error {
@@ -114,6 +118,37 @@ message State {
   string live_set_id = 9;                // Story 4.5: id of the Live Set that sounds (the one last published by the engine), "" when none
   string live_set_name = 10;
   SetlistStatus setlists = 11;           // Story 4.6: the loaded setlist and the stepping position; additive
+  EditStatus edits = 12;                 // Story 4.9: unsaved edits (dirty flag per Live Set, change summary of the current one); additive
+}
+
+// Story 4.9: edits live in memory until a Write command. `dirty_live_set_ids` lists the Live Sets with unsaved edits (the current one included;
+// at most 128 ids, `dirty_count` is the true number); `current_dirty` and the summary are those of the Live Set that sounds. A change item has a
+// STABLE `key` (never reworded; clients localise from it), the `part` (0-based) / `param_id` / `scene` (0-based) it is about when they apply, and a
+// pre-rendered English `text` for convenience ("Part 2 volume"; part and scene numbers in the text are 1-based). The summary lists at most 32
+// items; `change_count` is the true number. Keys: tempo, part.timbre, part.engine, part.zone, part.octave, part.transpose, part.keyboard,
+// part.volume, part.output, part.inserts, part.send_reverb, part.send_delay, part.arp, part.param, parts.list, master.param, assign.slot, scenes.list,
+// scene.name, scene.part.<field> (same fields as part.*), scene.master.param.
+message ChangeItem {
+  string key = 1;
+  optional uint32 part = 2;
+  optional uint32 param_id = 3;
+  optional int32 scene = 4;
+  string text = 5;
+  optional uint32 slot = 6;              // assign.slot: the 0-based ASSIGN slot (K1 = 0); part is not used for it
+}
+message EditStatus {
+  bool available = 1;                    // the engine runs the edit session (a Live Set directory exists)
+  repeated string dirty_live_set_ids = 2;
+  uint32 dirty_count = 3;
+  bool current_dirty = 4;
+  repeated ChangeItem change_summary = 5;
+  uint32 change_count = 6;
+  string change_summary_text = 7;        // "Part 2 volume, Reverb send" (English, the first items; for logs and simple clients)
+  bool has_timbre_edit = 8;              // the current Live Set has a pending timbre / engine assignment change
+  bool scene_write_available = 9;        // WriteLiveSet SCENE would be accepted
+  string scene_write_blocked_reason = 10;  // "" | timbre_change | no_scene | no_scenes
+  uint64 edit_seq = 11;                  // increases with every change of the edits (also changes that do not move the revision)
+  uint32 writes_done = 12;               // Write commands that wrote a file since the engine started
 }
 
 // Story 4.6: the setlist side of the State. `current_live_set_id` is the Live Set that sounds (as State.live_set_id). `last_setlist_position` is the index
@@ -318,6 +353,52 @@ message SetlistsReply {
   repeated SetlistEntry entries = 5;
 }
 
+// --- Story 4.9: edits, Write and the part commands that give them something to edit -----------------------------------------------------
+// WriteLiveSet writes the CURRENT Live Set only (never another one). The control thread raises a fence to RT, waits for the acknowledgement, reads the
+// last-value table, then writes per scope: SCENE = the current scene's stored parameters (refused with WRITE_SCOPE_UNAVAILABLE when no scene is current,
+// there are no scenes, or a timbre / engine change is pending), WHOLE_LIVE_SET = everything (base, every scene, master, ASSIGN), SAVE_AS_NEW = a new
+// Live Set (new UUIDv4, `new_name` or a suggestion) added after the current one in the loaded setlist; the current Live Set keeps its unsaved edits.
+// Errors: NO_LIVE_SET, BUSY (details reason = load_in_progress | reload_in_progress | fence_timeout | fence_queue_full | generation_not_applied), NAME_IN_USE, INVALID_NAME, WRITE_SCOPE_UNAVAILABLE (reason = timbre_change | no_scene | no_scenes | scene_not_in_saved),
+// STORAGE_FULL, STORAGE_FAILED, INVALID_COMMAND. A success moves the revision by one and replies WriteReply.
+enum WriteScope {
+  WRITE_SCOPE_UNSPECIFIED = 0;
+  WRITE_SCOPE_SCENE = 1;
+  WRITE_SCOPE_WHOLE_LIVE_SET = 2;
+  WRITE_SCOPE_SAVE_AS_NEW = 3;
+}
+message WriteLiveSet {
+  WriteScope scope = 1;
+  optional string new_name = 2;          // SAVE_AS_NEW only; absent = a suggested free name
+}
+message WriteReply {
+  WriteScope scope = 1;
+  string live_set_id = 2;                // the Live Set that sounds (the one the Write was about)
+  string written_live_set_id = 3;        // the file written: the same id, or the new Live Set's id for SAVE_AS_NEW
+  string written_name = 4;
+  int32 scene = 5;                       // SCENE: the scene written; otherwise -1
+  repeated ChangeItem written = 6;       // what was written (at most 32 items)
+  uint32 written_count = 7;
+  bool nothing_to_write = 8;             // nothing was dirty for this scope: no file was touched
+  bool current_dirty = 9;                // the current Live Set still has unsaved edits after the command
+  uint32 remaining_changes = 10;
+  bool not_durable = 11;                 // the file is in place but the directory sync failed
+  string setlist_id = 12;                // SAVE_AS_NEW: the setlist the new Live Set was added to ("" = none loaded)
+  int32 setlist_index = 13;              // its index there, -1 when none
+}
+// Assigns a part's timbre (library_id + instrument_key, both empty = no timbre) and optionally its engine type. An in-memory edit: the Live Set is
+// rebuilt from its edited state in the background by the same seamless path as a Live Set switch (the sound keeps playing; State.loading shows it;
+// the current scene is recalled again when it is done). Persisted by WHOLE_LIVE_SET / SAVE_AS_NEW only.
+message SetPartTimbre {
+  uint32 part = 1;
+  string library_id = 2;
+  string instrument_key = 3;
+  optional uint32 engine_type_id = 4;
+}
+message SetPartVolume {                  // structural; the part fader (0..1) as the generation's field (not a live value)
+  uint32 part = 1;
+  float volume = 2;
+}
+
 message GetState {}
 message GetPerformanceValues {}
 message Subscribe {                      // after this, every new revision is pushed as a State message
@@ -360,6 +441,9 @@ message ClientMessage {
     NextLiveSet next_live_set = 40;
     PreviousLiveSet previous_live_set = 41;
     GetSetlists get_setlists = 42;
+    SetPartTimbre set_part_timbre = 43;   // Story 4.9
+    WriteLiveSet write_live_set = 44;
+    SetPartVolume set_part_volume = 45;
   }
 }
 
@@ -383,5 +467,6 @@ message ServerMessage {
     LoadSetlistReply load_setlist_reply = 19;
     StepReply step_reply = 20;
     SetlistsReply setlists_reply = 21;
+    WriteReply write_reply = 22;          // Story 4.9
   }
 }

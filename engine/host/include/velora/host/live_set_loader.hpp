@@ -41,6 +41,7 @@
 #include "velora/core/snapshot.hpp"
 #include "velora/core/voice_arbiter.hpp"
 #include "velora/host/control_plane.hpp"
+#include "velora/host/edit_port.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/scene_controller.hpp"
 #include "velora/host/live_set_store.hpp"
@@ -179,6 +180,8 @@ class LiveSetLoader {
   const std::string& loaded_name() const { return loaded_name_; }
 
   const LiveSetLoaderOptions& options() const { return options_; }
+  // Story 4.9: the edit session hears about every published generation (and about to-be-published switches). Control thread; null = none.
+  void set_edit_port(LiveSetEditPort* port) { edits_ = port; }
 
  private:
   LiveSetLoadResult commit_quiesced(StagedLiveSet& staged, SceneController::LoadScope& scope);
@@ -188,6 +191,7 @@ class LiveSetLoader {
   HeadProvider& heads_;
   const core::SampleEngine* sample_;
   LiveSetLoaderOptions options_;
+  LiveSetEditPort* edits_ = nullptr;
   std::string loaded_id_, loaded_name_;
 };
 

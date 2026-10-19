@@ -28,6 +28,7 @@
 #include "velora/core/sample_engine.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
+#include "velora/host/edit_session.hpp"
 #include "velora/host/dev_config.hpp"
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
@@ -170,7 +171,8 @@ int main(int argc, char** argv) {
   std::unique_ptr<host::LiveSetSwitcherPort> switch_port;  // Story 4.6: what the setlist controller uses of the switcher
   std::unique_ptr<host::liveset::LiveSetStore> live_store;  // Story 4.6: sole writer of the Live Set files (create / delete Live Set commands)
   std::unique_ptr<host::setlist::SetlistStore> setlist_store;  // Story 4.6: sole writer of setlists, tags and the default ASSIGN map
-  std::unique_ptr<host::SetlistController> setlists;           // Story 4.6: ws.v1 setlist commands and LIVE SET stepping; destroyed first
+  std::unique_ptr<host::SetlistController> setlists;           // Story 4.6: ws.v1 setlist commands and LIVE SET stepping; destroyed after the edit session
+  std::unique_ptr<host::EditSession> edits;                    // Story 4.9: edits in memory, the dirty flags and Write; destroyed first
   std::atomic<bool> audio_running{false};  // set once the audio stream starts; the loader refuses to run while it is true
   if (!live_set_path.empty() || bootstrap) {
     if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ)) {
@@ -238,6 +240,24 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "engine-host: warning: setlists %s: leftovers could not all be removed: %s\n", sso.dir.c_str(), host::setlist::to_string(rc));
       switch_port = std::make_unique<host::LiveSetSwitcherPort>(*switcher);
       setlists = std::make_unique<host::SetlistController>(plane, *setlist_store, *live_store, *switch_port);
+      // Story 4.9: edits stay in memory until a Write command. The fence a Write raises is acknowledged by the render thread; without audio (--no-audio,
+      // dev/test only) nobody renders, so the wait itself renders one block per pass.
+      host::EditSessionOptions eo;
+      host::LiveSetSwitcher* swp = switcher.get();
+      eo.load_in_progress = [swp] { return swp->loading(); };
+      eo.reload_current = [swp] { return swp->reload_current(); };
+      eo.active_job_token = [swp] { return swp->active_token(); };
+      if (no_audio) {
+        host::RenderDriver* drv = &driver;
+        eo.fence_idle = [drv] {
+          float l[core::kBlockFrames], r[core::kBlockFrames];
+          drv->render_block(l, r, host::macos::now_ns());
+        };
+        eo.pump = eo.fence_idle;  // a rebuilt generation is applied by the next block; nobody else renders without audio
+      }
+      edits = std::make_unique<host::EditSession>(plane, *scenes, *live_store, setlist_store.get(), setlists.get(), switch_port.get(), eo);
+      edits->attach(*loader);
+      edits->attach(*switcher);
       std::printf("data dir %s: %d setlist(s), %d tag(s)\n", data_dir.c_str(), setlist_store->library().setlists_size(), setlist_store->library().tags_size());
     }
   } else {
@@ -292,11 +312,14 @@ int main(int argc, char** argv) {
   if (switcher) {
     host::LiveSetSwitcher* sw = switcher.get();
     host::SetlistController* sc = setlists.get();
-    // The control tick: loading status at least once per second, commit of a finished load, and the setlist position following jumps.
-    control.set_tick([sw, sc] {
+    host::EditSession* ed = edits.get();
+    // The control tick: loading status at least once per second, commit of a finished load, the setlist position following jumps, and the edit session
+    // (live values captured into the edits, the dirty flags).
+    control.set_tick([sw, sc, ed] {
       const bool a = sw->tick();
       const bool b = sc ? sc->tick() : false;
-      return a || b;
+      const bool c = ed ? ed->tick() : false;
+      return a || b || c;
     });
   }
   if (setlists) {
@@ -366,6 +389,7 @@ int main(int argc, char** argv) {
   line_in.stop();
   midi.close();
   control.stop();
+  edits.reset();     // before the setlist controller, the scene controller and the plane it registered with
   setlists.reset();  // before the switcher and the plane it registered with
   switch_port.reset();
   switcher.reset();  // cancels a load in progress and joins its worker

@@ -53,6 +53,7 @@
 #include <vector>
 
 #include "velora/host/control_plane.hpp"
+#include "velora/host/edit_port.hpp"
 #include "velora/host/live_set_loader.hpp"
 
 namespace velora::host {
@@ -120,6 +121,11 @@ class LiveSetSwitcher final : public SwitchHandler {
 
   // Control thread. See the header comment for the rules; returns at once.
   SwitchOutcome jump_to(const std::string& id);
+  // Story 4.9: rebuilds the Live Set that sounds from its in-memory edited state (the edit session's overlay) by the same background load and seamless
+  // swap as a jump; the one case where the target is the Live Set that already sounds. kAccepted, or kUnknownLiveSet when nothing sounds.
+  SwitchOutcome reload_current();
+  // Story 4.9: with a port, a jump to a Live Set that has unsaved edits builds its generation from the edited state, not from the file. Control thread.
+  void set_edit_port(LiveSetEditPort* port) { edits_ = port; }
   // Cancels the load in progress (informational LOAD_CANCELLED, state IDLE); the current Live Set is untouched.
   SwitchOutcome cancel_load();
   // Control thread, periodically (the server poll loop, or once per block offline). Returns true when the status or the generation changed.
@@ -127,6 +133,8 @@ class LiveSetSwitcher final : public SwitchHandler {
 
   const SwitchStatus& status() const { return status_; }
   bool loading() const { return active_; }
+  // Story 4.9: the id of the load job in progress (SwitchOutcome::token of the call that started it), 0 when none.
+  std::uint64_t active_token() const { return active_ ? active_job_.token : 0; }
   // Loads the staged result of a finished job and the generation it published, observable by tests.
   std::uint64_t switches_published() const { return published_; }
 
@@ -143,6 +151,7 @@ class LiveSetSwitcher final : public SwitchHandler {
   struct Job {
     std::uint64_t token = 0;
     CatalogEntry target;
+    std::shared_ptr<const ::velora::liveset::v1::LiveSet> overlay;  // Story 4.9: the edited state to build from instead of the file
     std::shared_ptr<std::atomic<bool>> cancel;
     std::shared_ptr<Progress> progress;
   };
@@ -162,8 +171,11 @@ class LiveSetSwitcher final : public SwitchHandler {
   bool try_commit();
   void refresh_progress(double now_s);
 
+  SwitchOutcome jump_impl(const std::string& id, bool reload);
+
   LiveSetLoader& loader_;
   ControlPlane& plane_;
+  LiveSetEditPort* edits_ = nullptr;
   SwitcherOptions opt_;
   std::vector<CatalogEntry> catalog_;
   SwitchStatus status_;

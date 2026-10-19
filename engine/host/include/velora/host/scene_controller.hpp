@@ -31,6 +31,7 @@
 // Threading: control thread only, like the plane it drives. Hostile cases: a missing scene, no Live Set loaded, a load in progress, a full
 // snapshot ledger (kBusy) and an FX cost above the budget all return a typed result and change nothing.
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include "live_set.pb.h"
@@ -64,6 +65,17 @@ class SceneController final : public SceneHandler {
   std::int32_t current_scene() const noexcept;
   bool load_in_progress() const noexcept { return loading_; }
 
+  // ---- edits in memory (Story 4.9) -----------------------------------------------------------------------------------------------
+  // The current generation was built from the Live Set this controller holds (a recall would work on it).
+  bool owns_current() const noexcept;
+  // The Live Set scenes are recalled from: the loaded one, or its in-memory edited state after set_source().
+  const ::velora::liveset::v1::LiveSet& source() const noexcept { return live_set_; }
+  // Replaces the scenes and the base values a recall works from with the Live Set's edited state (same id, same parts and scenes; the published
+  // generation, its banks and chains are untouched). The base values are rebuilt from the message (values only; no head is loaded). Control thread.
+  void set_source(const ::velora::liveset::v1::LiveSet& edited);
+  // Runs on the control thread at the start of every recall (the edit session captures the live values there, before the recall resets them).
+  void set_before_recall(std::function<void()> f) { before_recall_ = std::move(f); }
+
   // ---- LiveSetLoader side ---------------------------------------------------------------------------------------------------------
   // RAII scope of one load attempt: while it lives, recalls answer kLoadInProgress. token() goes into the snapshot the loader builds
   // (Snapshot::scene_source); the loader calls commit() after a successful publication, which makes the loaded Live Set the scene source.
@@ -93,6 +105,7 @@ class SceneController final : public SceneHandler {
   std::uint64_t next_token_ = 0;
   ::velora::liveset::v1::LiveSet live_set_;
   core::Snapshot base_;
+  std::function<void()> before_recall_;
 };
 
 }  // namespace velora::host

@@ -159,11 +159,28 @@ void LiveSetSwitcher::cancel_active(bool count_as_cancelled) {
   if (count_as_cancelled) ++status_.cancelled_loads;
 }
 
-SwitchOutcome LiveSetSwitcher::jump_to(const std::string& id) {
+SwitchOutcome LiveSetSwitcher::jump_to(const std::string& id) { return jump_impl(id, false); }
+
+SwitchOutcome LiveSetSwitcher::reload_current() {
+  if (loader_.loaded_id().empty()) {
+    SwitchOutcome o;
+    o.result = SwitchOutcome::Result::kUnknownLiveSet;
+    return o;
+  }
+  return jump_impl(loader_.loaded_id(), true);
+}
+
+SwitchOutcome LiveSetSwitcher::jump_impl(const std::string& id, bool reload) {
   SwitchOutcome o;
   const CatalogEntry* target = nullptr;
   for (const CatalogEntry& e : catalog_)
     if (e.id == id) target = &e;
+  CatalogEntry synthetic;
+  if (!target && reload) {  // the Live Set that sounds need not be in the catalog (started from a file); the overlay is all a reload needs
+    synthetic.id = id;
+    synthetic.name = loader_.loaded_name();
+    target = &synthetic;
+  }
   if (!target) {
     o.result = SwitchOutcome::Result::kUnknownLiveSet;
     o.target_id = id;
@@ -175,7 +192,7 @@ SwitchOutcome LiveSetSwitcher::jump_to(const std::string& id) {
   }
   o.target_id = target->id;
   o.target_name = target->name;
-  if (id == loader_.loaded_id()) {  // already sounding: a no-op; a load that is running is the player changing their mind
+  if (id == loader_.loaded_id() && !reload) {  // already sounding: a no-op; a load that is running is the player changing their mind
     o.result = SwitchOutcome::Result::kAlreadyLoaded;
     if (active_) {
       cancel_active(true);
@@ -194,12 +211,20 @@ SwitchOutcome LiveSetSwitcher::jump_to(const std::string& id) {
     return o;
   }
   const CatalogEntry entry = *target;  // cancel_active() does not touch the catalog, but keep a copy anyway
+  std::shared_ptr<const ::velora::liveset::v1::LiveSet> overlay;
+  if (edits_)  // a Live Set with unsaved edits is rebuilt from them; the copy is taken here, on the control thread, before the worker starts
+    if (const ::velora::liveset::v1::LiveSet* ov = edits_->overlay_for(entry.id)) overlay = std::make_shared<const ::velora::liveset::v1::LiveSet>(*ov);
+  if (reload && !overlay) {  // nothing to rebuild from
+    o.result = SwitchOutcome::Result::kUnknownLiveSet;
+    return o;
+  }
   o.superseded_previous = active_;
   cancel_active(true);
 
   Job job;
   job.token = ++next_token_;
   job.target = entry;
+  job.overlay = std::move(overlay);
   job.cancel = std::make_shared<std::atomic<bool>>(false);
   job.progress = std::make_shared<Progress>();
   active_job_ = job;
@@ -219,6 +244,7 @@ SwitchOutcome LiveSetSwitcher::jump_to(const std::string& id) {
     done_ = std::move(r);
   }
   o.result = SwitchOutcome::Result::kAccepted;
+  o.token = active_job_.token;
   return o;
 }
 
@@ -246,7 +272,9 @@ std::unique_ptr<LiveSetSwitcher::JobResult> LiveSetSwitcher::run_job(const Job& 
   liveset::ReadOptions ro;
   ro.part_count = loader_.options().part_count;
   liveset::LoadResult lr;
-  const liveset::Status st = liveset::read_file(job.target.path, ro, lr);
+  liveset::Status st = liveset::Status::kOk;
+  if (job.overlay) lr.live_set = *job.overlay;  // the edited state (validated by stage() like any Live Set)
+  else st = liveset::read_file(job.target.path, ro, lr);
   if (cancelled()) {
     jr->result.status = LiveSetLoadStatus::kCancelled;
     return jr;

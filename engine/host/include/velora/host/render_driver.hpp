@@ -45,6 +45,7 @@ class RenderDriver final : public ports::BlockSink {
     StampedUmp held{};
     bool has_held = false;
     bool counted = false;
+    bool fence_waited = false;  // a fence event was held back one block (see drain)
   };
   void drain(Lane& lane, std::uint64_t block_start_ns) noexcept VELORA_NONBLOCKING;
 

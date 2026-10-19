@@ -314,6 +314,18 @@ bool ControlPlane::commit(const core::Snapshot& work, ControlFail& f) {
   return true;
 }
 
+bool ControlPlane::raise_fence(std::uint32_t& seq) {
+  const std::uint32_t next = fence_seq_ + 1;
+  if (!rt_events_.push(StampedUmp{core::make_fence_event(next), clock_()})) return false;
+  fence_seq_ = next;
+  seq = next;
+  return true;
+}
+
+bool ControlPlane::push_performance_value(const core::params::ParamDef& d, std::uint32_t part, double value) {
+  return rt_events_.push(StampedUmp{core::make_param_event(d, part, value), clock_()});
+}
+
 ControlPlane::PublishStatus ControlPlane::can_publish(const core::Snapshot& work) {
   const std::uint64_t cost = core::fx_cost_units(work);
   if (cost > fx_budget() && (!current_ || cost > fx_cost_.load(std::memory_order_acquire))) return PublishStatus::kFxBudgetExceeded;
@@ -377,6 +389,7 @@ void ControlPlane::fill_state(ws::v1::State* out) const {
   if (current_) fill_from(*current_, out);
   if (switch_handler_) switch_handler_->fill_status(out);
   if (setlist_handler_) setlist_handler_->fill_status(out);
+  if (edit_handler_) edit_handler_->fill_status(out);
 }
 
 void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
@@ -423,7 +436,24 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;
   const bool switch_cmd = msg.body_case() == B::kJumpToLiveSet || msg.body_case() == B::kCancelLoad;
   const bool setlist_cmd = msg.body_case() >= B::kCreateSetlist && msg.body_case() <= B::kGetSetlists;
-  if (setlist_cmd) {
+  const bool edit_cmd = msg.body_case() == B::kSetPartTimbre || msg.body_case() == B::kWriteLiveSet;
+  if (edit_cmd) {
+    // Edits and Write (Story 4.9): the EditSession owns the work and answers with typed errors.
+    if (!edit_handler_) {
+      fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "edits are not available: the engine was started without a Live Set directory");
+    } else {
+      HandlerFailure hf;
+      bool bump = false, push = false;
+      ok = edit_handler_->run(msg, reply, hf, bump, push);
+      if (!ok) {
+        f.code = hf.code;
+        f.message = hf.message;
+        f.details = hf.details;
+      }
+      if (bump) bump_revision();
+      changed = push || bump;
+    }
+  } else if (setlist_cmd) {
     // Setlists, tags, Live Set creation and stepping (Story 4.6): the SetlistController owns the work and answers with typed errors.
     if (!setlist_handler_) {
       fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "setlists are not available: the engine was started without a data directory");
@@ -510,7 +540,16 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   } else {
     core::Snapshot work = *current_;
     bool structural = false;
-    switch (msg.body_case()) {
+    std::string blocked;
+    const bool structural_msg = msg.body_case() == B::kSetInsertChain || msg.body_case() == B::kSetSendLevels || msg.body_case() == B::kSetPartOutput ||
+                                msg.body_case() == B::kSetMasterParams || msg.body_case() == B::kSetPartVolume;
+    const bool was_blocked = structural_msg && edit_handler_ && edit_handler_->structural_blocked(blocked);
+    if (was_blocked) {  // refused like any other command: the shared tail below builds the error reply and counts the rejection
+      f.details["reason"] = blocked;
+      fail(f, ws::v1::ERROR_CODE_BUSY, "the Live Set is being rebuilt from its edited state; try again in a moment");
+    }
+    if (msg.body_case() == B::kGetState && edit_handler_) edit_handler_->refresh();
+    if (!was_blocked) switch (msg.body_case()) {
       case B::kSetInsertChain:
         ok = apply_insert_chain(work, msg.set_insert_chain().part(), msg.set_insert_chain().slots(), f);
         structural = true;
@@ -534,6 +573,19 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
         }
         structural = true;
         break;
+      case B::kSetPartVolume: {
+        const auto& m = msg.set_part_volume();
+        ok = check_part(m.part(), f);
+        if (ok && (!std::isfinite(m.volume()) || m.volume() < 0.0f || m.volume() > 1.0f)) {
+          f.details["part"] = std::to_string(m.part());
+          f.details["min"] = "0";
+          f.details["max"] = "1";
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "part volume outside 0..1");
+        }
+        if (ok) work.parts[m.part()].volume = m.volume();
+        structural = true;
+        break;
+      }
       case B::kSetTimbreRef:
         ok = check_part(msg.set_timbre_ref().part(), f);
         if (ok) work.parts[msg.set_timbre_ref().part()].timbre_ref = msg.set_timbre_ref().timbre_ref();
@@ -598,6 +650,9 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kPreviousLiveSet:
       case B::kGetSetlists:
         break;  // handled before the snapshot is copied
+      case B::kSetPartTimbre:
+      case B::kWriteLiveSet:
+        break;  // handled before the snapshot is copied
       case B::kHello:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "handshake already done on this connection");
         break;
@@ -608,6 +663,7 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
     if (ok && structural) {
       ok = commit(work, f);
       changed = ok;
+      if (ok && edit_handler_ && structural_msg) edit_handler_->on_structural(msg);  // Story 4.9: record the edit against the Live Set
     }
   }
   if (!ok) {

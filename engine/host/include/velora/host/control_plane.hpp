@@ -65,6 +65,7 @@ struct SwitchOutcome {
   std::string target_id, target_name;
   bool superseded_previous = false;  // a load in progress was cancelled to start this one
   bool cancelled = false;            // CancelLoad: a load was in progress and is cancelled
+  std::uint64_t token = 0;           // kAccepted: the id of the load job that was started (LiveSetSwitcher::active_token())
 };
 class SwitchHandler {
  public:
@@ -90,6 +91,22 @@ class SetlistHandler {
   // may still be set when a visible flag changed, e.g. end_of_setlist). `push_state`: subscribers get a State push.
   virtual bool run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& reply, HandlerFailure& err, bool& bump_revision, bool& push_state) = 0;
   // Fills State.setlists.
+  virtual void fill_status(ws::v1::State* out) const = 0;
+};
+
+// Edits and Write (Story 4.9): the plane routes SetPartTimbre and WriteLiveSet to this seam (the EditSession implements it), tells it about every structural
+// command that was published (so the edit is recorded against the Live Set), and asks it to add the edit status to every State. Control thread only.
+class EditHandler {
+ public:
+  virtual ~EditHandler() = default;
+  virtual bool run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& reply, HandlerFailure& err, bool& bump_revision, bool& push_state) = 0;
+  // A structural command (SetInsertChain, SetSendLevels, SetPartOutput, SetMasterParams, SetPartVolume) was published: record the edit.
+  virtual void on_structural(const ws::v1::ClientMessage& msg) = 0;
+  // True while a structural command must be refused (a Live Set is being rebuilt from its edited state): the plane answers BUSY, details reason.
+  virtual bool structural_blocked(std::string& reason) const = 0;
+  // Brings the edit state up to date with the live values before a State is built (GetState).
+  virtual void refresh() = 0;
+  // Fills State.edits.
   virtual void fill_status(ws::v1::State* out) const = 0;
 };
 
@@ -130,6 +147,20 @@ class ControlPlane {
   void set_switch_handler(SwitchHandler* h) noexcept { switch_handler_ = h; }
   // Setlist commands (Story 4.6): the SetlistController registers itself here (and unregisters in its destructor). Control thread only.
   void set_setlist_handler(SetlistHandler* h) noexcept { setlist_handler_ = h; }
+  // Edits and Write (Story 4.9): the EditSession registers itself here (and unregisters in its destructor). Control thread only.
+  void set_edit_handler(EditHandler* h) noexcept { edit_handler_ = h; }
+
+  // Control->RT fence (Story 4.9, AR12). raise_fence() queues a fence event behind every parameter event sent so far on the control lane and returns its
+  // sequence number (false: the lane is full, nothing was queued). RT acknowledges it after applying everything sent before it
+  // (LastValueTable::store_fence_ack); fence_acked(seq) says whether that happened. Control thread only.
+  bool raise_fence(std::uint32_t& seq);
+  bool fence_acked(std::uint32_t seq) const noexcept { return static_cast<std::int32_t>(live_.load_fence_ack() - seq) >= 0; }
+  // True when RT has applied every initial value of the newest published generation (LastValueTable::load_adopted_revision).
+  bool rt_adopted_current() const noexcept { return current_ && live_.load_adopted_revision() == current_->revision; }
+  // Sends one performance value down the control lane like SetPerformanceParam does (validated by the caller). False when the lane is full.
+  bool push_performance_value(const core::params::ParamDef& d, std::uint32_t part, double value);
+  // The live (RT-owned) value of a performance slot, lock-free.
+  float live_value(std::size_t slot) const noexcept { return live_.load(slot); }
   // The published state changed without a new generation (a setlist, a tag, the loaded setlist): moves the revision so subscribers and
   // replies see a new one. Control thread only.
   void bump_revision() noexcept { revision_.fetch_add(1, std::memory_order_acq_rel); }
@@ -179,6 +210,8 @@ class ControlPlane {
   SceneHandler* scene_handler_ = nullptr;
   SwitchHandler* switch_handler_ = nullptr;
   SetlistHandler* setlist_handler_ = nullptr;
+  EditHandler* edit_handler_ = nullptr;
+  std::uint32_t fence_seq_ = 0;
   std::uint64_t program_generation_ = 0;
   std::uint64_t reservation_epoch_ = 0;
   std::vector<core::Snapshot*> generations_;  // everything not yet freed, oldest first

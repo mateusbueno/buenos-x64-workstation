@@ -101,6 +101,23 @@ void SceneController::LoadScope::commit(const lsp::LiveSet& ls, const core::Snap
   c_->loaded_ = true;
 }
 
+bool SceneController::owns_current() const noexcept {
+  const core::Snapshot* cur = plane_.current_snapshot();
+  return cur && loaded_ && cur->live_set && cur->scene_source == source_;
+}
+
+void SceneController::set_source(const lsp::LiveSet& edited) {
+  if (!loaded_) return;
+  live_set_ = edited;
+  core::Snapshot b = core::Snapshot::defaults();  // values only: apply_scene reads the covered fields, the performance values and the master
+  b.live_set = true;
+  for (int i = 0; i < live_set_.parts_size() && i < static_cast<int>(p::kPartCount); ++i) fill_part_values(b, live_set_.parts(i), static_cast<std::uint32_t>(i));
+  fill_master_values(b, live_set_);
+  b.scene_count = base_.scene_count;
+  b.scene_source = base_.scene_source;
+  base_ = b;
+}
+
 std::int32_t SceneController::current_scene() const noexcept {
   const core::Snapshot* cur = plane_.current_snapshot();
   return cur && loaded_ && cur->live_set && cur->scene_source == source_ ? cur->scene_index : -1;
@@ -150,6 +167,7 @@ SceneOutcome SceneController::do_recall(std::uint32_t index) {
   const core::Snapshot* cur = plane_.current_snapshot();
   if (!loaded_ || !cur || !cur->live_set || cur->scene_source != source_) return finish(SceneResult::kNoLiveSet, false);
   if (index >= static_cast<std::uint32_t>(live_set_.scenes_size())) return finish(SceneResult::kNoSuchScene, false);
+  if (before_recall_) before_recall_();  // Story 4.9: the edit session captures the live values; it may replace the source (set_source)
 
   core::Snapshot work = *cur;  // shares every sample_bank and chain with the published generation
   apply_scene(live_set_.scenes(static_cast<int>(index)), base_, work);

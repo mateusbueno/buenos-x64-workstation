@@ -167,19 +167,7 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
     PartLoadReport& rep = res.parts[pi];
     const std::uint32_t et = lp.engine().engine_type_id();
     pc.engine_type = et;
-    pc.low_key = static_cast<std::uint8_t>(lp.low_key());
-    pc.high_key = static_cast<std::uint8_t>(lp.high_key());
-    pc.octave = static_cast<std::int8_t>(lp.octave());
-    pc.transpose = static_cast<std::int8_t>(lp.transpose());
-    pc.keyboard_on = lp.keyboard_on() ? 1 : 0;
-    pc.volume = sane_volume(lp.volume());
-    pc.output = lp.output() == ws::v1::PART_OUTPUT_AUX ? static_cast<std::uint8_t>(p::kPartOutputAux) : static_cast<std::uint8_t>(p::kPartOutputMain);
-    fill_inserts(pc, lp.inserts());
-    snap.perf_init[p::perf_slot(*p::find(p::kSendReverbLevel), pi)] = sane(*p::find(p::kSendReverbLevel), lp.send_reverb());
-    snap.perf_init[p::perf_slot(*p::find(p::kSendDelayLevel), pi)] = sane(*p::find(p::kSendDelayLevel), lp.send_delay());
-    apply_entries(snap, lp.engine().params(), pi, false);
-    apply_entries(snap, lp.envelope(), pi, false);
-    apply_entries(snap, lp.eq(), pi, false);
+    detail::fill_part_values(snap, lp, pi);
 
     if (!available(et)) {
       rep.state = pc.state = core::PartState::kEngineNotAvailable;  // FM / VA / unknown: silent, never another engine
@@ -298,8 +286,7 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   }
 
   // 3. The Live Set's master settings and tempo.
-  apply_entries(snap, ls.master(), 0, true);
-  snap.perf_init[p::perf_slot(*p::find(p::kTempoBpm), 0)] = sane(*p::find(p::kTempoBpm), ls.tempo());
+  detail::fill_master_values(snap, ls);
   core::build_chains(snap);
   snap.scene_count = static_cast<std::uint32_t>(ls.scenes_size());
   snap.scene_index = -1;  // a freshly loaded Live Set has no scene recalled
@@ -378,6 +365,7 @@ LiveSetLoadResult LiveSetLoader::commit_quiesced(StagedLiveSet& staged, SceneCon
     return f;
   }
   std::string detail;
+  if (edits_) edits_->before_switch();  // every check passed: the edits of the Live Set that is left are captured right before the publish resets the live values
   const ControlPlane::PublishStatus ps = plane_.publish_snapshot(snap, detail);
   if (ps != ControlPlane::PublishStatus::kOk) {  // not expected after can_publish(): put the reservation back
     if (had_reservation) (void)renderer_.arbiter().reserve(previous);
@@ -387,6 +375,7 @@ LiveSetLoadResult LiveSetLoader::commit_quiesced(StagedLiveSet& staged, SceneCon
   scope.commit(staged.live_set, snap);
   loaded_id_ = staged.live_set.id();
   loaded_name_ = staged.live_set.name();
+  if (edits_) edits_->on_published(staged.live_set, snap);
   LiveSetLoadResult res = std::move(staged.result);
   res.status = LiveSetLoadStatus::kOk;
   res.revision = plane_.revision();
@@ -411,11 +400,13 @@ LiveSetLoadResult LiveSetLoader::commit_seamless(StagedLiveSet& staged) {
   const ControlPlane::PublishStatus can = plane_.can_publish(snap);
   if (can != ControlPlane::PublishStatus::kOk) return publish_failure(can, {}, staged.result.parts);
   std::string detail;
+  if (edits_) edits_->before_switch();  // every check passed: a refused switch has no side effect
   const ControlPlane::PublishStatus ps = plane_.publish_snapshot(snap, detail);
   if (ps != ControlPlane::PublishStatus::kOk) return publish_failure(ps, detail, staged.result.parts);
   scope.commit(staged.live_set, snap);
   loaded_id_ = staged.live_set.id();
   loaded_name_ = staged.live_set.name();
+  if (edits_) edits_->on_published(staged.live_set, snap);
   LiveSetLoadResult res = staged.result;
   res.status = LiveSetLoadStatus::kOk;
   res.revision = plane_.revision();

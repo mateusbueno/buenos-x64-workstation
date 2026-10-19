@@ -139,9 +139,23 @@ class LastValueTable {
     return std::bit_cast<float>(gr_[slot].load(std::memory_order_acquire));
   }
 
+  // Story 4.9, control->RT fence (AR12). The control thread raises a fence by sending a fence event (make_fence_event(seq), param_events.hpp)
+  // down the control lane, behind every parameter event it sent before. RT applies the events in order, so when it applies the fence it has
+  // applied everything sent earlier, and it acknowledges with ONE release store of the sequence number here. The control thread waits for
+  // the acknowledgement (bounded, on its own thread) and only then reads the table, so a Write never sees a value that was still in flight.
+  void store_fence_ack(std::uint32_t seq) noexcept VELORA_NONBLOCKING { fence_ack_.store(seq, std::memory_order_release); }
+  std::uint32_t load_fence_ack() const noexcept { return fence_ack_.load(std::memory_order_acquire); }
+  // The revision of the newest generation whose initial values RT has FULLY applied to this table (stored after the last slot of the
+  // adoption, once per generation change). Until it equals the published revision a value that differs from the generation's initial
+  // value may be a recall or a switch RT has not applied yet, not a change the player made.
+  void store_adopted_revision(std::uint64_t rev) noexcept VELORA_NONBLOCKING { adopted_revision_.store(rev, std::memory_order_release); }
+  std::uint64_t load_adopted_revision() const noexcept { return adopted_revision_.load(std::memory_order_acquire); }
+
  private:
   std::array<std::atomic<std::uint32_t>, params::kPerfSlotCount> v_;
   std::array<std::atomic<std::uint32_t>, kGainReductionSlots> gr_;
+  std::atomic<std::uint32_t> fence_ack_{0};
+  std::atomic<std::uint64_t> adopted_revision_{0};
 };
 
 // Publication point between the control thread and the RT side.
