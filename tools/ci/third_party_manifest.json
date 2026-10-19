@@ -31,7 +31,7 @@
     },
     {
       "name": "protobuf",
-      "version": "system package (3.21+ / Homebrew)",
+      "version": "3.21+",
       "license": "BSD-3-Clause",
       "notice_marker": "## 5. Protocol Buffers",
       "build_dependency": true

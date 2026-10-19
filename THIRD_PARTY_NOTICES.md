@@ -301,7 +301,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Note: `simde/hedley.h` and `simde/debug-trap.h` are dedicated to the public domain under CC0-1.0.
 
-## 5. Protocol Buffers (protobuf, libprotobuf + protoc) — BSD-3-Clause
+## 5. Protocol Buffers 3.21+ (protobuf, libprotobuf + protoc) — BSD-3-Clause
 
 Build and link dependency of `engine/host` (the `ws.v1` control protocol, Story 2.1), installed from the system package
 (Homebrew `protobuf`; Debian/Ubuntu `protobuf-compiler` + `libprotobuf-dev`); not vendored in this repository. `engine/core`
