@@ -22,7 +22,7 @@
 // last-value table by sync_live_values() on every control tick, before a scene recall, before a Live Set switch publishes and after the control->RT fence
 // of a Write. The table is only compared once RT has applied the newest generation's initial values (LastValueTable::load_adopted_revision), so a recall or
 // switch that RT has not applied yet is never mistaken for an edit. SetTimbreRef (the opaque dev-configuration id) is not part of the Live Set and is not
-// tracked. ASSIGN edits (Story 4.10) use apply_external_edit(): the hook is here, the commands are not.
+// tracked. ASSIGN edits (Story 4.10: SetAssignSlot / ClearAssignSlot) land in the working copy and in a new generation (do_assign); the global default is a settings edit written at once.
 //
 // TIMBRE EDITS. SetPartTimbre changes the part's (library_id, instrument_key) and optionally its engine type in the working copy and rebuilds the Live
 // Set from it by the seamless path of a Live Set switch (resolution, residency, reservation and head budget are the loader's; the old generation keeps
@@ -174,6 +174,7 @@ class EditSession final : public EditHandler, public LiveSetEditPort {
   double now() const;
 
   bool do_set_timbre(const ws::v1::SetPartTimbre& m, HandlerFailure& err, bool& bump);
+  bool do_assign(ws::v1::AssignTarget target, std::uint32_t slot, std::uint32_t param_id, bool clear, HandlerFailure& err, bool& bump);
   bool do_write(const ws::v1::WriteLiveSet& m, ws::v1::ServerMessage& reply, HandlerFailure& err, bool& bump);
   bool fence_and_wait(HandlerFailure& err);
   bool busy_reason(std::string& reason) const;

@@ -72,6 +72,11 @@ add_executable(routing_tests tests/routing_test.cpp)
 target_link_libraries(routing_tests PRIVATE velora_core)
 add_test(NAME routing_tests COMMAND routing_tests)
 
+# ASSIGN-mode encoder routing (Story 4.10): apply_relative_step, the reserved control events, routing per parameter type, mode gating, refusals.
+add_executable(assign_tests tests/assign_test.cpp)
+target_link_libraries(assign_tests PRIVATE velora_core)
+add_test(NAME assign_tests COMMAND assign_tests)
+
 add_executable(part_router_tests tests/part_router_test.cpp)
 target_link_libraries(part_router_tests PRIVATE velora_core)
 add_test(NAME part_router_tests COMMAND part_router_tests)
@@ -120,6 +125,12 @@ add_executable(part_router_traffic_test tests/rtsan_part_router_test.cpp)
 target_link_libraries(part_router_traffic_test PRIVATE velora_core)
 add_test(NAME part_router_traffic_test COMMAND part_router_traffic_test)
 set_tests_properties(part_router_traffic_test PROPERTIES TIMEOUT 300)
+
+# Encoder storms in ASSIGN mode beside dense traffic and generation changes (Story 4.10) without the sanitizer, so macOS runs its logic too; the RTSan build is below.
+add_executable(assign_traffic_test tests/rtsan_assign_test.cpp)
+target_link_libraries(assign_traffic_test PRIVATE velora_core)
+add_test(NAME assign_traffic_test COMMAND assign_traffic_test)
+set_tests_properties(assign_traffic_test PROPERTIES TIMEOUT 300)
 
 # The cost benchmarks assert the declared cost units, which only means something on optimised code: they link a bench-private copy of the core sources built
 # with -O3 -DNDEBUG (and are compiled -O2 themselves), so the assertions run in every configuration, the default unoptimised builds included.
@@ -205,6 +216,12 @@ if(VELORA_RTSAN)
     target_link_options(rtsan_part_router_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_part_router_test COMMAND rtsan_part_router_test)
     set_tests_properties(rtsan_part_router_test PROPERTIES TIMEOUT 300)
+    add_executable(rtsan_assign_test tests/rtsan_assign_test.cpp)
+    target_link_libraries(rtsan_assign_test PRIVATE velora_core)
+    target_compile_options(rtsan_assign_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_assign_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_assign_test COMMAND rtsan_assign_test)
+    set_tests_properties(rtsan_assign_test PROPERTIES TIMEOUT 300)
     add_test(NAME rtsan_safe_test COMMAND rtsan_safe_test)
     # The deliberately RT-unsafe test must be aborted by RTSan: expected failure.
     add_test(NAME rtsan_unsafe_test COMMAND rtsan_unsafe_test)

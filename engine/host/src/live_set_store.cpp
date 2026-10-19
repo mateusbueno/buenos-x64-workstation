@@ -1,4 +1,5 @@
 // Live Set persistence, Story 4.2. Control thread only; see velora/host/live_set_store.hpp.
+#include "velora/core/assign_events.hpp"
 #include "velora/host/live_set_store.hpp"
 
 #include <dirent.h>
@@ -254,6 +255,7 @@ struct Validator {
         const params::ParamDef* d = params::find(id);
         if (!d) warn(IssueCode::kUnknownParam, -1, -1, static_cast<int>(id));
         else if (d->cls != params::Class::kPerformance) err(IssueCode::kBadAssignParam, -1, -1, k);
+        else if (!core::is_assignable(*d)) warn(IssueCode::kUnknownParam, -1, -1, static_cast<int>(id));  // a file from before the flag: still loads, the slot stays in the file and out of the generation
       }
     }
   }

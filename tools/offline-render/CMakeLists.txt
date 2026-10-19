@@ -350,6 +350,7 @@ add_custom_target(live-set-fixtures
   COMMAND python3 ${_ls}/make_midi.py ${_ls}/layer_split.mid
   COMMAND python3 ${_ls}/make_scenes_midi.py ${_ls}/scenes.mid
   COMMAND python3 ${_ls}/make_switch_midi.py ${_ls}/switch.mid
+  COMMAND python3 ${_ls}/make_assign_midi.py ${_ls}/assign/assign.mid
   DEPENDS live-set-fixture-gen)
 add_custom_target(update-live-set-golden
   COMMAND velora-offline-render ${_ls_args} --out ${_ls}/layer_split.wav)
@@ -838,3 +839,63 @@ foreach(_bad "--master-eq;0:0:1000" "--master-eq;16:0:1000:0" "--master-eq;0:0:1
            COMMAND velora-offline-render ${_render_args} ${_opt} ${_val} --out ${_out}/never.wav)
   set_tests_properties(fx_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid ${_opt}" WILL_FAIL FALSE)
 endforeach()
+
+# ASSIGN encoders (Story 4.10): assign/assign.liveset (an organ with the ASSIGN map K1 = drawbar 4', K2 = reverb send, K3 empty) played by assign/assign.mid -- a held
+# chord, a melody note and a bass note -- with --assign-mode and encoder turns while they sound: K1 -3 at 1.0 s, K2 +64 at 1.5 s, K1 +6 at 2.0 s, K3 (empty) +10 at
+# 2.5 s, K2 -32 at 3.0 s, K1 -127 at 3.5 s, K2 +127 at 4.0 s, K1 +127 at 4.5 s. Render twice (byte-equal), null-test against the committed golden at -100 dB, and
+# require a render that is not in ASSIGN mode, one without the turns and one with a different step to fail it. Regenerate the fixtures with live-set-fixtures, the
+# golden with update-assign-golden.
+set(_as_args --live-set ${_ls}/assign/assign.liveset --library-root ${_ls}/root --midi ${_ls}/assign/assign.mid --tail-seconds 1.5)
+set(_as_turns --encoder-at 1.0:1:-3 --encoder-at 1.5:2:64 --encoder-at 2.0:1:6 --encoder-at 2.5:3:10 --encoder-at 3.0:2:-32 --encoder-at 3.5:1:-127
+              --encoder-at 4.0:2:127 --encoder-at 4.5:1:127)
+set(_as_good --assign-mode ${_as_turns})
+add_test(NAME assign_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/assign_a.wav ${_out}/assign_b.wav ${_out}/assign_unsorted.wav ${_out}/assign_part_mode.wav ${_out}/assign_none.wav ${_out}/assign_wrong_step.wav)
+set_tests_properties(assign_clean PROPERTIES FIXTURES_SETUP assign_clean)
+add_test(NAME assign_render_a COMMAND velora-offline-render ${_as_args} ${_as_good} --out ${_out}/assign_a.wav)
+add_test(NAME assign_render_b COMMAND velora-offline-render ${_as_args} ${_as_good} --out ${_out}/assign_b.wav)
+set_tests_properties(assign_render_a PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_a
+                     PASS_REGULAR_EXPRESSION "7 encoder step\\(s\\) applied, 1 on empty slots, 0 outside ASSIGN mode, 0 refused")
+set_tests_properties(assign_render_b PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_b)
+add_test(NAME assign_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/assign_a.wav ${_out}/assign_b.wav)
+set_tests_properties(assign_bit_identical PROPERTIES FIXTURES_REQUIRED "assign_a;assign_b")
+add_test(NAME assign_null_golden COMMAND velora-null-test --case ${_ls}/assign/assign.case --candidate ${_out}/assign_a.wav)
+set_tests_properties(assign_null_golden PROPERTIES FIXTURES_REQUIRED assign_a PASS_REGULAR_EXPRESSION "overall: PASS")
+# The order of --encoder-at on the command line does not matter (turns are applied in time order).
+add_test(NAME assign_render_unsorted
+         COMMAND velora-offline-render ${_as_args} --encoder-at 4.5:1:127 --encoder-at 1.0:1:-3 --encoder-at 3.0:2:-32 --assign-mode --encoder-at 2.5:3:10 --encoder-at 1.5:2:64
+                 --encoder-at 4.0:2:127 --encoder-at 3.5:1:-127 --encoder-at 2.0:1:6 --out ${_out}/assign_unsorted.wav)
+set_tests_properties(assign_render_unsorted PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_unsorted)
+add_test(NAME assign_unsorted_is_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/assign_a.wav ${_out}/assign_unsorted.wav)
+set_tests_properties(assign_unsorted_is_identical PROPERTIES FIXTURES_REQUIRED "assign_a;assign_unsorted")
+# Not in ASSIGN mode: PART is the default and the turns do nothing (counted); the render fails the golden.
+add_test(NAME assign_part_mode COMMAND velora-offline-render ${_as_args} ${_as_turns} --out ${_out}/assign_part_mode.wav)
+set_tests_properties(assign_part_mode PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_part_mode
+                     PASS_REGULAR_EXPRESSION "0 encoder step\\(s\\) applied, 0 on empty slots, 8 outside ASSIGN mode")
+add_test(NAME assign_part_mode_fails COMMAND velora-null-test --case ${_ls}/assign/assign.case --candidate ${_out}/assign_part_mode.wav)
+set_tests_properties(assign_part_mode_fails PROPERTIES FIXTURES_REQUIRED assign_part_mode PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+add_test(NAME assign_no_turns COMMAND velora-offline-render ${_as_args} --assign-mode --out ${_out}/assign_none.wav)
+set_tests_properties(assign_no_turns PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_none)
+add_test(NAME assign_no_turns_fails COMMAND velora-null-test --case ${_ls}/assign/assign.case --candidate ${_out}/assign_none.wav)
+set_tests_properties(assign_no_turns_fails PROPERTIES FIXTURES_REQUIRED assign_none PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+add_test(NAME assign_wrong_step
+         COMMAND velora-offline-render ${_as_args} --assign-mode --encoder-at 1.0:1:-4 --encoder-at 1.5:2:64 --encoder-at 2.0:1:6 --encoder-at 2.5:3:10 --encoder-at 3.0:2:-32
+                 --encoder-at 3.5:1:-127 --encoder-at 4.0:2:127 --encoder-at 4.5:1:127 --out ${_out}/assign_wrong_step.wav)
+set_tests_properties(assign_wrong_step PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_wrong_step)
+add_test(NAME assign_wrong_step_fails COMMAND velora-null-test --case ${_ls}/assign/assign.case --candidate ${_out}/assign_wrong_step.wav)
+set_tests_properties(assign_wrong_step_fails PROPERTIES FIXTURES_REQUIRED assign_wrong_step PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# Option and input errors of --encoder-at / --assign-mode.
+foreach(_bad "nope" "1" "1:1" "x:1:1" "1:0:1" "1:9:1" "1:x:1" "1:1:x" "1:1:0.5" "1:1:40000" "1:1:-40000" "-1:1:1" "4000:1:1" "1:1:" "1:1.5:1" "nan:1:1")
+  string(MAKE_C_IDENTIFIER "encoder_at_${_bad}" _id)
+  add_test(NAME assign_rejects_${_id}
+           COMMAND velora-offline-render ${_as_args} --encoder-at ${_bad} --out ${_out}/never.wav)
+  set_tests_properties(assign_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid --encoder-at")
+endforeach()
+add_test(NAME assign_rejects_without_live_set
+         COMMAND velora-offline-render ${_render_args} --encoder-at 1.0:1:1 --out ${_out}/never.wav)
+set_tests_properties(assign_rejects_without_live_set PROPERTIES PASS_REGULAR_EXPRESSION "--encoder-at and --assign-mode need --live-set")
+add_test(NAME assign_mode_rejects_without_live_set
+         COMMAND velora-offline-render ${_render_args} --assign-mode --out ${_out}/never.wav)
+set_tests_properties(assign_mode_rejects_without_live_set PROPERTIES PASS_REGULAR_EXPRESSION "--encoder-at and --assign-mode need --live-set")
+add_custom_target(update-assign-golden
+  COMMAND velora-offline-render ${_as_args} ${_as_good} --out ${_ls}/assign/assign.wav)

@@ -3,6 +3,7 @@
 //   OUT_DIR/layer_split.liveset, wrong_split.liveset, wrong_octave.liveset                                       (the Live Set and two wrong variants)
 //   OUT_DIR/scenes.liveset                                                                                       (Story 4.4: the same libraries, an organ part and three scenes)
 //   OUT_DIR/switch/switch_a.liveset, switch_b.liveset                                                            (Story 4.5: two Live Sets to switch between, the same libraries)
+//   OUT_DIR/assign/assign.liveset                                                                                (Story 4.10: an organ with an ASSIGN map: K1 drawbar 4', K2 reverb send)
 // Everything is integer arithmetic (no libm), so the files are identical on every platform. Regenerate only on purpose:
 //   cmake --build build --target live-set-fixtures   (then review the diff, then re-render the golden: update-live-set-golden)
 #include <sys/stat.h>
@@ -291,6 +292,36 @@ int main(int argc, char** argv) {
       std::ofstream f(out + "/switch/" + fl.first, std::ios::binary | std::ios::trunc);
       f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
+  }
+
+  // Story 4.10: assign/assign.liveset. An organ (part 0) with a registration, a reverb on the master and an ASSIGN map: K1 = drawbar_4 (id 103), K2 = send_reverb_level
+  // (id 400), K3 empty. The golden turns K1 and K2 (and the empty K3) during a held chord.
+  {
+    if (!mkdir_p(out + "/assign")) return 1;
+    lsp::LiveSet s = ls::make_default_live_set("d3c8b1a4-7e25-4a90-b6f1-0c2e5a9d4b17", "Assign show", 8);
+    s.set_tempo(120.0f);
+    lsp::Part* organ = s.mutable_parts(0);
+    organ->mutable_engine()->set_engine_type_id(2);
+    organ->set_volume(0.6f);
+    auto add_param = [](google::protobuf::RepeatedPtrField<lsp::ParamEntry>* l, std::uint32_t id, float v) {
+      lsp::ParamEntry* e = l->Add();
+      e->set_param_id(id);
+      e->set_value(v);
+    };
+    add_param(organ->mutable_engine()->mutable_params(), 100, 6);  // drawbar_16
+    add_param(organ->mutable_engine()->mutable_params(), 101, 3);  // drawbar_5_1_3
+    add_param(organ->mutable_engine()->mutable_params(), 102, 8);  // drawbar_8
+    add_param(organ->mutable_engine()->mutable_params(), 103, 5);  // drawbar_4
+    s.set_assign(0, 103);
+    s.set_assign(1, 400);
+    if (!ls::validate(s, 8).ok()) {
+      std::fprintf(stderr, "the assign fixture Live Set is not valid\n");
+      return 1;
+    }
+    std::string bytes;
+    if (ls::serialize(s, bytes) != ls::Status::kOk) return 1;
+    std::ofstream f(out + "/assign/assign.liveset", std::ios::binary | std::ios::trunc);
+    f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   return 0;
 }

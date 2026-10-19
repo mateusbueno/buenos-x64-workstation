@@ -6,6 +6,7 @@
 #include "live_set_detail.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -669,6 +670,12 @@ void fill_item(const ChangeItem& i, ws::v1::ChangeItem* o) {
 }  // namespace
 
 void EditSession::fill_status(ws::v1::State* out) const {
+  if (setlists_) {  // Story 4.10: the global default ASSIGN map
+    ws::v1::EncoderStatus* enc = out->mutable_encoders();
+    enc->set_assign_default_available(true);
+    enc->clear_assign_default();
+    for (std::uint32_t v : setlists_->default_assign()) enc->add_assign_default(v);
+  }
   ws::v1::EditStatus* e = out->mutable_edits();
   e->set_available(true);
   std::uint32_t dirty = 0;
@@ -713,6 +720,10 @@ bool EditSession::run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& r
   switch (msg.body_case()) {
     case B::kSetPartTimbre: ok = do_set_timbre(msg.set_part_timbre(), err, bump); break;
     case B::kWriteLiveSet: ok = do_write(msg.write_live_set(), reply, err, bump); break;
+    case B::kSetAssignSlot:
+      ok = do_assign(msg.set_assign_slot().target(), msg.set_assign_slot().slot(), msg.set_assign_slot().param_id(), /*clear=*/false, err, bump);
+      break;
+    case B::kClearAssignSlot: ok = do_assign(msg.clear_assign_slot().target(), msg.clear_assign_slot().slot(), 0, /*clear=*/true, err, bump); break;
     default: ok = fail(err, ws::v1::ERROR_CODE_INVALID_COMMAND, "not an edit command"); break;
   }
   push = edit_seq_ != seq_before;
@@ -767,6 +778,64 @@ bool EditSession::do_set_timbre(const ws::v1::SetPartTimbre& m, HandlerFailure& 
   }
   bump = true;
   return true;
+}
+
+// SetAssignSlot / ClearAssignSlot (Story 4.10). CURRENT_LIVE_SET: an in-memory edit of the sounding Live Set's map (dirty, change key assign.slot) that
+// takes effect at once (a new generation that is a copy of the current one with the map changed; scenes never change it) and is persisted by Write.
+// GLOBAL_DEFAULT: a settings edit, written to assign_default.pb at once through the setlist store's atomic writer (no Write needed); existing Live Sets
+// are not touched. Duplicates (the same parameter in several slots) are allowed: ids may repeat on purpose and the least surprising behaviour is to do what
+// the player set. All validation happens before anything changes.
+bool EditSession::do_assign(ws::v1::AssignTarget target, std::uint32_t slot, std::uint32_t param_id, bool clear, HandlerFailure& err, bool& bump) {
+  if (target != ws::v1::ASSIGN_TARGET_CURRENT_LIVE_SET && target != ws::v1::ASSIGN_TARGET_GLOBAL_DEFAULT)
+    return fail(err, ws::v1::ERROR_CODE_INVALID_COMMAND, "an ASSIGN command needs a target: CURRENT_LIVE_SET or GLOBAL_DEFAULT");
+  if (slot < 1 || slot > core::kAssignSlotCount)
+    return fail(err, ws::v1::ERROR_CODE_INVALID_SLOT, "the ASSIGN slot must be 1..8 (K1..K8)", {{"slot", std::to_string(slot)}, {"max_slot", std::to_string(core::kAssignSlotCount)}});
+  std::uint32_t id = 0;
+  if (!clear) {
+    const p::ParamDef* pd = p::find(param_id);  // looked up whole: 0x10000 + N never aliases parameter N
+    if (!pd) return fail(err, ws::v1::ERROR_CODE_UNKNOWN_PARAM, "unknown parameter id", {{"param_id", std::to_string(param_id)}});
+    if (pd->cls != p::Class::kPerformance)
+      return fail(err, ws::v1::ERROR_CODE_NOT_ASSIGNABLE, "a structural parameter has no live value an encoder could drive", {{"param_id", std::to_string(param_id)}, {"reason", "structural"}});
+    if (!core::is_assignable(*pd))
+      return fail(err, ws::v1::ERROR_CODE_NOT_ASSIGNABLE, "the registry marks this parameter as not assignable", {{"param_id", std::to_string(param_id)}, {"reason", "not_assignable"}});
+    id = pd->id;
+  }
+  const std::size_t k = slot - 1;
+
+  if (target == ws::v1::ASSIGN_TARGET_GLOBAL_DEFAULT) {
+    if (!setlists_) return fail(err, ws::v1::ERROR_CODE_INVALID_COMMAND, "the global default ASSIGN map needs a data directory");
+    std::array<std::uint32_t, setlist::kAssignSlots> map = setlists_->default_assign();
+    if (map[k] == id) return true;  // already so: nothing to write
+    map[k] = id;
+    const setlist::Status st = setlists_->set_default_assign(map);
+    if (setlist::applied(st)) {
+      bump = true;  // the default is part of the published state
+      ++edit_seq_;  // pushes a State (the default is in State.encoders)
+      return true;
+    }
+    if (st == setlist::Status::kNoSpace) return fail(err, ws::v1::ERROR_CODE_STORAGE_FULL, "the storage is full; the global default is unchanged");
+    return fail(err, ws::v1::ERROR_CODE_STORAGE_FAILED, "the global default ASSIGN map could not be stored; nothing changed", {{"reason", setlist::to_string(st)}});
+  }
+
+  Doc* d = current_doc();
+  const core::Snapshot* cur = plane_.current_snapshot();
+  if (!d || !scenes_.owns_current() || !cur || !cur->live_set) return fail(err, ws::v1::ERROR_CODE_NO_LIVE_SET, "no Live Set is loaded");
+  std::string why;
+  if (busy_reason(why)) return fail(err, ws::v1::ERROR_CODE_BUSY, "a Live Set load is in progress", {{"reason", why}});
+  if (k < static_cast<std::size_t>(d->working.assign_size()) ? d->working.assign(static_cast<int>(k)) == id && cur->assign[k] == id : id == 0 && cur->assign[k] == 0)
+    return true;  // already so: nothing is touched
+  if (plane_.can_publish(*cur) != ControlPlane::PublishStatus::kOk)
+    return fail(err, ws::v1::ERROR_CODE_BUSY, "too many snapshot generations are still referenced by sounding voices", {{"reason", "ledger_full"}});
+  // Publish FIRST: a refusal then leaves the working copy, the dirty state and the edit sequence exactly as they were (there is nothing to roll back).
+  core::Snapshot work = *cur;
+  work.assign[k] = static_cast<std::uint16_t>(id);
+  std::string detail;
+  if (plane_.publish_snapshot(work, detail) != ControlPlane::PublishStatus::kOk)
+    return fail(err, ws::v1::ERROR_CODE_BUSY, "the ASSIGN map could not be published; nothing changed", {{"reason", "publish_refused"}, {"detail", detail}});
+  while (d->working.assign_size() < static_cast<int>(core::kAssignSlotCount)) d->working.add_assign(0);
+  d->working.set_assign(static_cast<int>(k), id);
+  touch(*d);
+  return true;  // publishing moved the revision; the dirty flag changed the edit status
 }
 
 bool EditSession::fence_and_wait(HandlerFailure& err) {

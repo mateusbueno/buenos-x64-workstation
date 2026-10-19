@@ -1,4 +1,5 @@
 // Setlist persistence and commands, Story 4.6. Control thread only; see velora/host/setlist_store.hpp.
+#include "velora/core/assign_events.hpp"
 #include "velora/host/setlist_store.hpp"
 
 #include <dirent.h>
@@ -135,8 +136,9 @@ ValidationReport validate(const slp::AssignDefault& a) {
   for (int k = 0; k < a.assign_size(); ++k) {
     const std::uint32_t id = a.assign(k);
     if (id == 0) continue;
-    const params::ParamDef* d = id <= 0xFFFFu ? params::find(static_cast<std::uint16_t>(id)) : nullptr;
+    const params::ParamDef* d = params::find(id);  // looked up whole: nothing is narrowed to 16 bits
     if (!d || d->cls != params::Class::kPerformance) r.errors.push_back({IssueCode::kBadAssignParam, -1, k});
+    else if (!core::is_assignable(*d)) r.warnings.push_back({IssueCode::kBadAssignParam, -1, k});  // a legacy slot: kept in the file, reported, never blocks an edit of another slot
   }
   return r;
 }

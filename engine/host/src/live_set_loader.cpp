@@ -290,6 +290,12 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   core::build_chains(snap);
   snap.scene_count = static_cast<std::uint32_t>(ls.scenes_size());
   snap.scene_index = -1;  // a freshly loaded Live Set has no scene recalled
+  // The Live Set's ASSIGN map (Story 4.10) travels with the generation: RT routes encoder steps in ASSIGN mode from it. An id the registry does not
+  // know as an assignable performance parameter (a file from a newer writer) stays out of the generation (the file keeps it).
+  for (int k = 0; k < ls.assign_size() && k < static_cast<int>(core::kAssignSlotCount); ++k) {
+    const core::params::ParamDef* ad = core::find_assignable(ls.assign(k));  // the one assignability rule; the id is looked up whole
+    if (ad) snap.assign[static_cast<std::size_t>(k)] = static_cast<std::uint16_t>(ad->id);
+  }
 
   // 4. The reservation of the whole Live Set: FX first, the organ + rotary next, then the floors.
   core::VoiceArbiter::LiveSetConfig& cfg = staged->reservation;

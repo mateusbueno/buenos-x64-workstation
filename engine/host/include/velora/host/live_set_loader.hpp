@@ -13,8 +13,8 @@
 // What a generation carries (core::Snapshot with live_set = true), per part: zone (low/high key), octave, transpose, keyboard on/off,
 // volume, output (Main/Aux), insert chain (instances built here, off the RT thread), send levels, engine type, the sound parameters of
 // EngineData / envelope / eq (registry performance ids -> the generation's initial values), the load state and the sample engine's
-// prepared bank (core::SampleBank). The Live Set's master list and tempo become the generation's master / tempo values. Scenes and the
-// ASSIGN map are NOT part of the generation (scenes are recalled by SceneController, Story 4.4; ASSIGN is Story 4.10).
+// prepared bank (core::SampleBank). The Live Set's master list and tempo become the generation's master / tempo values. The Live Set's
+// ASSIGN map is part of the generation (Snapshot::assign, Story 4.10); scenes are not (they are recalled by SceneController, Story 4.4).
 //
 // Threading: load() / load_file() are control thread only (they allocate and read files). The voice arbiter's reservation is applied with
 // VoiceArbiter::reserve(), which by contract runs while the audio callback is not rendering: load a Live Set at start-up, or between renders

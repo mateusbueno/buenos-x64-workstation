@@ -106,6 +106,7 @@ struct Issue {
 };
 struct ValidationReport {
   std::vector<Issue> errors;
+  std::vector<Issue> warnings;  // Story 4.10: a default ASSIGN slot naming a parameter that is known but no longer assignable (kBadAssignParam, index = slot); not an error
   bool ok() const { return errors.empty(); }
 };
 
@@ -184,7 +185,8 @@ class SetlistStore {
   // Removes a Live Set id from every setlist (one write; no write when it is in none: kOk and `removed_from` = 0).
   Status remove_live_set_everywhere(const std::string& live_set_id, std::size_t& removed_from);
 
-  // The global default ASSIGN map: validated (8 slots, 0 or a performance param), written, adopted. Story 4.10 puts a command on it.
+  // The global default ASSIGN map: validated (8 slots, 0 or an assignable performance param), written, adopted. Story 4.10's SetAssignSlot /
+  // ClearAssignSlot (target GLOBAL_DEFAULT) call it: a settings edit, written at once and atomically (no Write), existing Live Sets are not touched.
   Status set_default_assign(const std::array<std::uint32_t, kAssignSlots>& assign);
 
   // Creates a Live Set in `live`: id = fresh UUIDv4 (unique among the files of `live`), the tier's number of empty Sample parts, ONE scene

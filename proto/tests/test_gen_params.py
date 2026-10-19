@@ -226,6 +226,34 @@ class GeneratorTests(unittest.TestCase):
                             os.path.join(PROTO, "ws_v1.proto")], capture_output=True, text=True)
         self.assertEqual(c.returncode, 0, c.stderr)
 
+    def test_assignable_flag_is_emitted(self):
+        _, paths = run(GOOD)
+        core = read(paths["core"])
+        self.assertIn("bool assignable;", core)
+        # drawbar_16 (performance, default assignable) true; line_in_level opts out; a structural parameter is never assignable
+        self.assertRegex(core, r"\{100, Class::kPerformance[^\n]*, true\},  // drawbar_16")
+        self.assertRegex(core, r"\{800, Class::kPerformance[^\n]*, false\},  // line_in_level")
+        self.assertRegex(core, r"Class::kStructural[^\n]*, false\},  // insert_type")
+
+    def test_assignable_on_a_structural_parameter_is_refused(self):
+        def f(d):
+            for q in d["params"]:
+                if q["class"] == "structural":
+                    q["assignable"] = True
+                    break
+        self.fails(mutate(f), "only a performance parameter can be assignable")
+
+    def test_assignable_must_be_a_bool(self):
+        def f(d):
+            d["params"][0]["assignable"] = "no"
+        self.fails(mutate(f), "assignable must be true or false")
+
+    def test_reserved_event_ids_are_refused(self):
+        for rid in (0x3FE0, 0x3FF0, 0x3FFF):
+            def f(d, rid=rid):
+                d["params"][0]["id"] = rid
+            self.fails(mutate(f), "reserved for control events")
+
     def test_unreadable_file(self):
         r = subprocess.run([sys.executable, "-I", GEN, "--defs", "/nonexistent/params.json"],
                            capture_output=True, text=True)

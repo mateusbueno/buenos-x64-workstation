@@ -1,0 +1,9 @@
+# Null-test case for the ASSIGN golden (Story 4.10): assign.liveset (an organ, ASSIGN map K1 = drawbar 4', K2 = reverb send, K3 empty) played by assign.mid with
+# --assign-mode and the encoder turns of CMakeLists.txt (a drawbar and the reverb send moving during a held chord; K3 is empty and does nothing).
+# -100 dB residual: far below the audible effect of the encoders, loose enough for libm/FMA differences between macOS and Linux builds.
+# check_excess: a tail in one file only fails as well.
+reference=assign.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
+check_excess=1

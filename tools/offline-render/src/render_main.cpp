@@ -10,8 +10,9 @@
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
-//                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N] [--seed N] [--tail-seconds S]]
-//                         (Live Set mode, Story 4.3: --midi, --out; no other engine option; --switch-at is Story 4.5)
+//                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N]
+//                         [--assign-mode] [--encoder-at SECONDS:ENC:DELTA]... [--seed N] [--tail-seconds S]]
+//                         (Live Set mode, Story 4.3: --midi, --out; no other engine option; --switch-at is Story 4.5; --assign-mode / --encoder-at Story 4.10)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,6 +49,7 @@ static int usage() {
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n"
                "       Live Set: --live-set FILE --library-root DIR --midi in.mid --out out.wav [--scene-at SECONDS:INDEX]... [--seed N] [--tail-seconds S]\n"
                "                 [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N]   (seamless switch to another Live Set; the background load is simulated as N blocks)\n"
+               "                 [--assign-mode] [--encoder-at SECONDS:ENC:DELTA]...   (ASSIGN encoder mode from the start; encoder ENC 1..8 = K1..K8 turned by DELTA relative steps, -32768..32767)\n"
                "                 (every note on any channel is fanned out to the Live Set's parts by zone; no other engine option)\n");
   return 2;
 }
@@ -64,6 +66,8 @@ int main(int argc, char** argv) {
   bool seed_given = false;
   std::vector<SceneRecallAt> scene_recalls;
   std::vector<SwitchAt> switches;
+  std::vector<EncoderAt> encoder_turns;
+  bool assign_mode = false;
   std::uint64_t switch_load_blocks = 0;
   bool switch_load_blocks_given = false;
   WavData line_in_wav, aux_wav;
@@ -366,6 +370,27 @@ int main(int argc, char** argv) {
       sw.frame = static_cast<std::uint64_t>(std::llround(secs * 48000.0));
       sw.live_set_path = sv.substr(colon + 1);
       switches.push_back(std::move(sw));
+    } else if (a == "--encoder-at" && val(v)) {
+      // SECONDS:ENC:DELTA -- Live Set mode: encoder ENC (1..8 = K1..K8) turned by DELTA relative steps at that time (repeatable). In ASSIGN mode it changes the
+      // parameter mapped to that slot of the Live Set's ASSIGN map.
+      const std::string sv = v;
+      const std::size_t c1 = sv.find(':');
+      const std::size_t c2 = c1 == std::string::npos ? std::string::npos : sv.find(':', c1 + 1);
+      double secs = 0;
+      std::uint64_t enc = 0;
+      std::int64_t delta = 0;
+      if (c1 == std::string::npos || c2 == std::string::npos || !parse_double(sv.substr(0, c1), 0.0, 3600.0, secs) ||
+          !parse_uint(sv.substr(c1 + 1, c2 - c1 - 1), 8, enc) || enc < 1 || !parse_int(sv.substr(c2 + 1), -32768, 32767, delta)) {
+        std::fprintf(stderr, "error: invalid --encoder-at '%s' (SECONDS:ENC:DELTA with SECONDS 0..3600, ENC a whole number 1..8 and DELTA a whole number -32768..32767)\n", sv.c_str());
+        return 2;
+      }
+      EncoderAt ea;
+      ea.frame = static_cast<std::uint64_t>(std::llround(secs * 48000.0));
+      ea.encoder = static_cast<std::uint32_t>(enc);
+      ea.delta = static_cast<std::int32_t>(delta);
+      encoder_turns.push_back(ea);
+    } else if (a == "--assign-mode") {
+      assign_mode = true;
     } else if (a == "--switch-load-blocks" && val(v)) {
       if (!parse_uint(v, 1000000, switch_load_blocks)) {
         std::fprintf(stderr, "error: invalid --switch-load-blocks '%s' (a whole number of 64-frame blocks, 0..1000000)\n", v);
@@ -409,6 +434,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: --switch-at and --switch-load-blocks need --live-set\n");
     return 2;
   }
+  if ((!encoder_turns.empty() || assign_mode) && live_set_path.empty()) {
+    std::fprintf(stderr, "error: --encoder-at and --assign-mode need --live-set\n");
+    return 2;
+  }
   if (switch_load_blocks_given && switches.empty()) {
     std::fprintf(stderr, "error: --switch-load-blocks needs --switch-at\n");
     return 2;
@@ -436,6 +465,8 @@ int main(int argc, char** argv) {
     lo.scene_recalls = scene_recalls;
     lo.switches = switches;
     lo.switch_load_blocks = static_cast<std::uint32_t>(switch_load_blocks);
+    lo.encoders = encoder_turns;
+    lo.assign_mode = assign_mode;
     WavData lwav;
     LiveSetRenderReport lrep;
     std::string lerr;
@@ -455,6 +486,10 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(lrep.unzoned_keys));
     if (!scene_recalls.empty()) std::printf("live set: %llu scene recall(s)\n", static_cast<unsigned long long>(lrep.scenes_recalled));
     if (!switches.empty()) std::printf("live set: %llu live set switch(es)\n", static_cast<unsigned long long>(lrep.switches_published));
+    if (!encoder_turns.empty())
+      std::printf("live set: %llu encoder step(s) applied, %llu on empty slots, %llu outside ASSIGN mode, %llu refused\n", static_cast<unsigned long long>(lrep.encoder_steps_applied),
+                  static_cast<unsigned long long>(lrep.encoder_steps_empty), static_cast<unsigned long long>(lrep.encoder_steps_unrouted),
+                  static_cast<unsigned long long>(lrep.encoder_steps_rejected));
     std::printf("rendered %zu events -> %s (%llu frames, 48000 Hz, 2 ch, float32)\n", lsmf.events.size(), out.c_str(),
                 static_cast<unsigned long long>(lwav.frames()));
     return 0;

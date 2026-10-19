@@ -40,7 +40,7 @@ message SetlistLibrary {
   repeated Setlist setlists = 3;       // the order IS the position of the setlist in the list (reordering rewrites it)
 }
 
-// The global default ASSIGN map: exactly 8 slots (K1..K8), 0 = empty, else a registry *performance* param_id. A new Live Set copies it;
+// The global default ASSIGN map: exactly 8 slots (K1..K8), 0 = empty, else an assignable registry *performance* param_id (Story 4.10). A new Live Set copies it;
 // changing it never alters existing Live Sets. Editing it is Story 4.10.
 message AssignDefault {
   uint32 format_version = 1;

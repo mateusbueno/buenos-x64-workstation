@@ -1,11 +1,13 @@
 #include "velora/host/control_plane.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
 #include <string>
 
+#include "velora/core/assign_events.hpp"
 #include "velora/core/param_events.hpp"
 
 namespace velora::host {
@@ -385,8 +387,28 @@ bool ControlPlane::load_initial(const ws::v1::State& config, std::string& err) {
   return true;
 }
 
+// Story 4.10: the encoder mode / selected part as commanded and as RT applied them, the ASSIGN map of the Live Set that sounds, the counters.
+void ControlPlane::fill_encoders(ws::v1::State* out) const {
+  ws::v1::EncoderStatus* e = out->mutable_encoders();
+  e->set_mode(enc_mode_req_);
+  e->set_selected_part(sel_part_req_);
+  const core::EncoderState& rt = live_.encoder();
+  e->set_rt_mode(static_cast<ws::v1::EncoderMode>(std::min(static_cast<int>(rt.mode()), 2) + 1));  // clamped: the enum cast never leaves PART..ASSIGN
+  e->set_rt_selected_part(rt.selected_part());
+  const core::EncoderState::Counters c = rt.counters();
+  e->set_steps_applied(c.steps_applied);
+  e->set_steps_empty_slot(c.steps_empty_slot);
+  e->set_steps_unrouted(c.steps_unrouted);
+  e->set_steps_rejected(c.steps_rejected);
+  e->set_events_rejected(c.events_rejected);
+  e->set_steps_no_part(c.steps_no_part);
+  if (current_ && current_->live_set)
+    for (std::size_t k = 0; k < core::kAssignSlotCount; ++k) e->add_assign(current_->assign[k]);
+}
+
 void ControlPlane::fill_state(ws::v1::State* out) const {
   if (current_) fill_from(*current_, out);
+  fill_encoders(out);
   if (switch_handler_) switch_handler_->fill_status(out);
   if (setlist_handler_) setlist_handler_->fill_status(out);
   if (edit_handler_) edit_handler_->fill_status(out);
@@ -436,7 +458,8 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;
   const bool switch_cmd = msg.body_case() == B::kJumpToLiveSet || msg.body_case() == B::kCancelLoad;
   const bool setlist_cmd = msg.body_case() >= B::kCreateSetlist && msg.body_case() <= B::kGetSetlists;
-  const bool edit_cmd = msg.body_case() == B::kSetPartTimbre || msg.body_case() == B::kWriteLiveSet;
+  const bool edit_cmd = msg.body_case() == B::kSetPartTimbre || msg.body_case() == B::kWriteLiveSet || msg.body_case() == B::kSetAssignSlot ||
+                        msg.body_case() == B::kClearAssignSlot;
   if (edit_cmd) {
     // Edits and Write (Story 4.9): the EditSession owns the work and answers with typed errors.
     if (!edit_handler_) {
@@ -652,7 +675,47 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
         break;  // handled before the snapshot is copied
       case B::kSetPartTimbre:
       case B::kWriteLiveSet:
+      case B::kSetAssignSlot:
+      case B::kClearAssignSlot:
         break;  // handled before the snapshot is copied
+      case B::kSetEncoderMode: {  // Story 4.10: a UMP on the control lane, in order with the encoder steps; the plane remembers what it commanded
+        const ws::v1::EncoderMode m = msg.set_encoder_mode().mode();
+        if (m < ws::v1::ENCODER_MODE_PART || m > ws::v1::ENCODER_MODE_ASSIGN) {
+          f.details["mode"] = std::to_string(static_cast<int>(m));
+          fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "SetEncoderMode needs PART, ALL or ASSIGN");
+          break;
+        }
+        if (!rt_events_.push(StampedUmp{core::make_encoder_mode_event(static_cast<core::EncoderMode>(static_cast<int>(m) - 1)), clock_()})) {
+          fail(f, ws::v1::ERROR_CODE_BUSY, "the real-time event queue is full");
+          break;
+        }
+        ok = true;
+        if (m != enc_mode_req_) {
+          enc_mode_req_ = m;
+          bump_revision();
+          changed = true;
+        } else if (static_cast<int>(live_.encoder().mode()) + 1 != static_cast<int>(m)) {
+          changed = true;  // a repeated command while RT still shows another mode: publish the State again
+        }
+        break;
+      }
+      case B::kSelectPart: {
+        const std::uint32_t part = msg.select_part().part();
+        if (!check_part(part, f)) break;
+        if (!rt_events_.push(StampedUmp{core::make_select_part_event(part), clock_()})) {
+          fail(f, ws::v1::ERROR_CODE_BUSY, "the real-time event queue is full");
+          break;
+        }
+        ok = true;
+        if (part != sel_part_req_) {
+          sel_part_req_ = part;
+          bump_revision();
+          changed = true;
+        } else if (live_.encoder().selected_part() != part) {
+          changed = true;
+        }
+        break;
+      }
       case B::kHello:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "handshake already done on this connection");
         break;

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <memory>
 
+#include "velora/core/assign_events.hpp"
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/param_events.hpp"
@@ -97,6 +98,15 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
     if (e.contact) continue;  // contact_k events are an organ keybed feature: not zone-routed (see part_router.hpp)
     if (!e.cc || control(e, u)) last = std::max(last, e.frame);
   }
+  std::vector<EncoderAt> encoders = opt.encoders;
+  std::stable_sort(encoders.begin(), encoders.end(), [](const EncoderAt& a, const EncoderAt& b) { return a.frame < b.frame; });
+  for (const EncoderAt& e : encoders) {
+    if (e.encoder < 1 || e.encoder > kEncoderCount || e.delta < -32768 || e.delta > 32767) {
+      error = "invalid encoder event (encoder 1..8, delta -32768..32767)";
+      return false;
+    }
+    last = std::max(last, e.frame);
+  }
   const std::uint64_t tail = static_cast<std::uint64_t>(std::llround(opt.tail_seconds * kSampleRate));
   const std::uint64_t total = last + tail;
   if (total > static_cast<std::uint64_t>(kSampleRate) * 3600) {
@@ -116,7 +126,7 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
               (scenes.scene_count() == 1 ? "" : "s") + ")";
       return false;
     }
-  std::size_t next_recall = 0, next_switch = 0;
+  std::size_t next_recall = 0, next_switch = 0, next_encoder = 0;
   std::uint64_t recalled = 0;
   float l[kBlockFrames], r[kBlockFrames];
   std::size_t next = 0;
@@ -150,6 +160,16 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
       }
     }
     const std::uint64_t end = (b + 1) * kBlockFrames;
+    if (b == 0 && opt.assign_mode) br->submit({make_encoder_mode_event(EncoderMode::kAssign), 0});  // before anything else in the render
+    // Encoder turns: EncoderStep UMPs at their exact frames (the panel's path), before the keyboard events that share the block.
+    while (next_encoder < encoders.size() && encoders[next_encoder].frame < end) {
+      const EncoderAt& e = encoders[next_encoder++];
+      const std::uint32_t off = static_cast<std::uint32_t>(e.frame - b * kBlockFrames);
+      if (!br->submit({make_encoder_step_event(e.encoder - 1, e.delta), off})) {
+        error = "event queue overflow (too many events in one block)";
+        return false;
+      }
+    }
     while (next < events.size() && events[next].frame < end) {
       const NoteEvent& e = events[next++];
       if (e.contact) continue;
@@ -197,6 +217,11 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
     report->unzoned_keys = br->router().unzoned_keys();
     report->scenes_recalled = recalled;
     report->generations_published = recalled + report->switches_published;
+    const EncoderState::Counters c = br->encoder_state().counters();
+    report->encoder_steps_applied = c.steps_applied;
+    report->encoder_steps_empty = c.steps_empty_slot;
+    report->encoder_steps_unrouted = c.steps_unrouted;
+    report->encoder_steps_rejected = c.steps_rejected;
   }
   return true;
 }

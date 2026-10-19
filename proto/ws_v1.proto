@@ -59,6 +59,8 @@ enum ErrorCode {
   ERROR_CODE_NAME_IN_USE = 34;         // WriteLiveSet SAVE_AS_NEW: the name is already used in the loaded setlist (details: name, suggested_name = a free name, e.g. "Perfect 2")
   ERROR_CODE_WRITE_SCOPE_UNAVAILABLE = 35;  // WriteLiveSet SCENE: details reason = timbre_change ("Timbre changes are saved with the Live Set") | no_scene | no_scenes | scene_not_in_saved
   ERROR_CODE_STORAGE_FULL = 36;        // WriteLiveSet: the storage is full (ENOSPC); nothing partial is written and the edits stay in memory, still flagged unsaved
+  // Story 4.10: ASSIGN maps and encoders. A refused command changes nothing.
+  ERROR_CODE_NOT_ASSIGNABLE = 37;      // SetAssignSlot: the parameter exists but cannot be driven by an encoder (structural, or marked non-assignable in the registry; details: param_id)
 }
 
 message Error {
@@ -119,6 +121,32 @@ message State {
   string live_set_name = 10;
   SetlistStatus setlists = 11;           // Story 4.6: the loaded setlist and the stepping position; additive
   EditStatus edits = 12;                 // Story 4.9: unsaved edits (dirty flag per Live Set, change summary of the current one); additive
+  EncoderStatus encoders = 13;           // Story 4.10: the encoder mode, the selected part, the ASSIGN maps; additive
+}
+
+// Story 4.10: ASSIGN and the encoders. `mode` / `selected_part` are what the last SetEncoderMode / SelectPart commanded; `rt_mode` / `rt_selected_part` are
+// what the real-time plane has applied (the same, one block later). `assign` is the ASSIGN map of the Live Set that sounds (K1..K8 = param ids, 0 = empty;
+// empty list when no Live Set sounds); `assign_default` is the global default map (present when the engine has a data directory).
+enum EncoderMode {
+  ENCODER_MODE_UNSPECIFIED = 0;
+  ENCODER_MODE_PART = 1;
+  ENCODER_MODE_ALL = 2;
+  ENCODER_MODE_ASSIGN = 3;
+}
+message EncoderStatus {
+  EncoderMode mode = 1;
+  uint32 selected_part = 2;
+  EncoderMode rt_mode = 3;
+  uint32 rt_selected_part = 4;
+  repeated uint32 assign = 5;
+  bool assign_default_available = 6;
+  repeated uint32 assign_default = 7;
+  uint64 steps_applied = 8;              // ASSIGN steps applied to a live value
+  uint64 steps_empty_slot = 9;           // ASSIGN steps on an empty slot (nothing happened)
+  uint64 steps_unrouted = 10;            // steps seen in PART / ALL mode (no function yet: Story 4.13)
+  uint64 steps_rejected = 11;
+  uint64 events_rejected = 12;           // mode / select-part events with a bad value
+  uint64 steps_no_part = 13;             // part-scope steps whose target part has no engine: the live value moved, not counted as applied
 }
 
 // Story 4.9: edits live in memory until a Write command. `dirty_live_set_ids` lists the Live Sets with unsaved edits (the current one included;
@@ -399,6 +427,36 @@ message SetPartVolume {                  // structural; the part fader (0..1) as
   float volume = 2;
 }
 
+// --- Story 4.10: ASSIGN maps and encoder mode -----------------------------------------------------------------------------------------
+// SetAssignSlot / ClearAssignSlot edit one slot K1..K8 (`slot` is 1-based, 1..8; 0 is INVALID_SLOT) of the map of the CURRENT Live Set (an
+// in-memory edit like any other: the Live Set becomes dirty with change key `assign.slot`, the map applies at once, and Write persists it) or of the GLOBAL
+// DEFAULT (a settings edit: written to assign_default.pb immediately and atomically, no Write needed, existing Live Sets are not changed, a Live Set created later
+// copies it). SetAssignSlot needs a registry performance parameter that is assignable; the same parameter in several slots is allowed. Clearing makes the slot
+// empty (turning that encoder does nothing). Errors: INVALID_SLOT (details slot, max_slot), INVALID_COMMAND (no/unknown target; the target needs a data
+// directory), UNKNOWN_PARAM, NOT_ASSIGNABLE, NO_LIVE_SET (CURRENT_LIVE_SET with no Live Set loaded), BUSY (a Live Set load or rebuild is in progress), STORAGE_FAILED / STORAGE_FULL.
+enum AssignTarget {
+  ASSIGN_TARGET_UNSPECIFIED = 0;
+  ASSIGN_TARGET_CURRENT_LIVE_SET = 1;
+  ASSIGN_TARGET_GLOBAL_DEFAULT = 2;
+}
+message SetAssignSlot {
+  AssignTarget target = 1;
+  uint32 slot = 2;                       // 1..8 (K1..K8)
+  uint32 param_id = 3;
+}
+message ClearAssignSlot {
+  AssignTarget target = 1;
+  uint32 slot = 2;
+}
+// SetEncoderMode: the engine's encoder mode flag PART / ALL / ASSIGN (a UMP on the control lane; State.encoders shows it). Story 4.13 gives PART and ALL their
+// functions; today only ASSIGN routes. SelectPart: the part that part-scope ASSIGN parameters land on (default 0; INVALID_PART above the last part).
+message SetEncoderMode {
+  EncoderMode mode = 1;
+}
+message SelectPart {
+  uint32 part = 1;
+}
+
 message GetState {}
 message GetPerformanceValues {}
 message Subscribe {                      // after this, every new revision is pushed as a State message
@@ -444,6 +502,10 @@ message ClientMessage {
     SetPartTimbre set_part_timbre = 43;   // Story 4.9
     WriteLiveSet write_live_set = 44;
     SetPartVolume set_part_volume = 45;
+    SetAssignSlot set_assign_slot = 46;   // Story 4.10
+    ClearAssignSlot clear_assign_slot = 47;
+    SetEncoderMode set_encoder_mode = 48;
+    SelectPart select_part = 49;
   }
 }
 

@@ -140,6 +140,13 @@ target_link_libraries(edit_rt_traffic_test PRIVATE velora_control)
 add_test(NAME edit_rt_traffic_test COMMAND edit_rt_traffic_test)
 set_tests_properties(edit_rt_traffic_test PROPERTIES TIMEOUT 300)
 
+# ASSIGN maps with a global default (Story 4.10): SetAssignSlot / ClearAssignSlot on the current Live Set (dirty, Write, power cycle) and on the default
+# (written at once, existing Live Sets untouched), SetEncoderMode / SelectPart, encoder routing end to end, validation, concurrent clients.
+add_executable(assign_map_tests tests/assign_map_test.cpp)
+target_link_libraries(assign_map_tests PRIVATE velora_control)
+add_test(NAME assign_map_tests COMMAND assign_map_tests)
+set_tests_properties(assign_map_tests PROPERTIES TIMEOUT 300)
+
 # Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
 #   cmake --build build --target live_set_corpus_regen
 add_executable(live_set_corpus_gen tests/live_set_corpus_gen.cpp)

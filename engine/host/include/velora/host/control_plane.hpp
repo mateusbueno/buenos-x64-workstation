@@ -178,6 +178,9 @@ class ControlPlane {
   std::size_t reclaim();
 
   void fill_state(ws::v1::State* out) const;               // current structural state
+  // Story 4.10: the encoder mode / selected part as last commanded (SetEncoderMode, SelectPart; RT applies them one block later, State.encoders shows both).
+  ws::v1::EncoderMode commanded_encoder_mode() const noexcept { return enc_mode_req_; }
+  std::uint32_t commanded_selected_part() const noexcept { return sel_part_req_; }
   void fill_live_values(ws::v1::PerformanceValues* out) const;  // RT-owned values, read lock-free
 
   std::uint64_t revision() const noexcept { return revision_.load(std::memory_order_acquire); }
@@ -199,6 +202,9 @@ class ControlPlane {
 
  private:
   bool commit(const core::Snapshot& work, ControlFail& fail);
+  void fill_encoders(ws::v1::State* out) const;
+  ws::v1::EncoderMode enc_mode_req_ = ws::v1::ENCODER_MODE_PART;
+  std::uint32_t sel_part_req_ = 0;
   PublishStatus fault_ = PublishStatus::kOk;
   bool fault_set_ = false;
 

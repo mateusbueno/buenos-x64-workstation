@@ -69,7 +69,7 @@
     {"id": 546, "name": "delay_pingpong", "class": "structural", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 0},
     {"id": 600, "name": "part_output", "class": "structural", "type": "enum", "scope": "part", "unit": "enum", "enum": "part_output", "default": "main"},
     {"id": 700, "name": "timbre_ref", "class": "structural", "type": "uint", "scope": "part", "unit": "id", "min": 0, "max": 4294967295, "default": 0},
-    {"id": 800, "name": "line_in_level", "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 0},
+    {"id": 800, "name": "line_in_level", "assignable": false, "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 0},
     {"id": 801, "name": "send_reverb_master", "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 1},
     {"id": 802, "name": "tempo_bpm", "class": "performance", "type": "float", "scope": "master", "unit": "bpm", "min": 20, "max": 300, "default": 120}
   ]

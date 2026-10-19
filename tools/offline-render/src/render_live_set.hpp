@@ -33,6 +33,15 @@ struct SwitchAt {
   std::string live_set_path;
 };
 
+// An encoder turn at a time (Story 4.10, `--encoder-at SECONDS:ENC:DELTA`): encoder ENC (1..8 = K1..K8) turned by DELTA relative steps at that frame -- an
+// EncoderStep UMP (engine/core assign_events.hpp) submitted at its exact frame, as the panel will deliver it. It changes the parameter mapped to that slot of
+// the Live Set's ASSIGN map when the encoder mode is ASSIGN (`--assign-mode`); in any other mode it does nothing.
+struct EncoderAt {
+  std::uint64_t frame = 0;
+  std::uint32_t encoder = 1;  // 1..8
+  std::int32_t delta = 0;
+};
+
 struct LiveSetRenderOptions {
   std::string live_set_path;
   std::string library_root;
@@ -43,6 +52,8 @@ struct LiveSetRenderOptions {
   std::vector<SceneRecallAt> scene_recalls;  // sorted by frame (stable) by render_live_set()
   std::vector<SwitchAt> switches;            // sorted by frame (stable) by render_live_set()
   std::uint32_t switch_load_blocks = 0;      // simulated load time of every switch, in 64-frame blocks
+  std::vector<EncoderAt> encoders;           // sorted by frame (stable) by render_live_set()
+  bool assign_mode = false;                  // the encoder mode flag is ASSIGN from the first frame (else PART, the default: encoder turns do nothing)
 };
 
 struct LiveSetRenderReport {
@@ -53,6 +64,10 @@ struct LiveSetRenderReport {
   std::uint64_t scenes_recalled = 0;
   std::uint64_t generations_published = 0;  // by the recalls and the switches
   std::uint64_t switches_published = 0;     // Live Set switches that completed
+  std::uint64_t encoder_steps_applied = 0;  // Story 4.10: encoder turns that changed a live value
+  std::uint64_t encoder_steps_empty = 0;    // ... that hit an empty ASSIGN slot
+  std::uint64_t encoder_steps_unrouted = 0; // ... seen outside ASSIGN mode
+  std::uint64_t encoder_steps_rejected = 0; // ... the map could not honour
 };
 
 // False with `error` set when the Live Set does not load (nothing is rendered) or the input is unusable.

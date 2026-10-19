@@ -124,6 +124,12 @@ class BlockRenderer {
   // the block, so a change takes effect at the next block) keeps this one API. Any thread.
   float tempo_bpm() const noexcept;
 
+  // --- ASSIGN encoders (Story 4.10) ---------------------------------------------------------------------------------
+  // The encoder mode flag, the selected part and the counters of the encoder steps (assign_events.hpp): set by the reserved control events
+  // (make_encoder_mode_event, make_select_part_event) and read from any thread. In ASSIGN mode an EncoderStep event changes the parameter mapped to
+  // its slot in the current generation's ASSIGN map (Snapshot::assign); PART and ALL do nothing yet (counted).
+  const EncoderState& encoder_state() const noexcept { return last_.encoder(); }
+
   // --- Live Set routing (Story 4.3) ----------------------------------------------------------------------------
   // In a generation built from a Live Set (Snapshot::live_set) the keyboard's note on / note off / sustain are fanned out to the parts
   // by zone (PartRouter, see part_router.hpp for the keyboard-channel convention and the note-off rules) and each part is mapped to the
@@ -155,6 +161,8 @@ class BlockRenderer {
   void forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept VELORA_NONBLOCKING;
   void sync_part_params(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
   void apply_param(const ParamEvent& ev) noexcept VELORA_NONBLOCKING;
+  void apply_reserved_event(std::uint32_t id, const Ump& ump) noexcept VELORA_NONBLOCKING;
+  void apply_encoder_step(std::uint32_t encoder, std::int32_t delta) noexcept VELORA_NONBLOCKING;
   void bind_generation(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING;
   void reap_generation_refs() noexcept VELORA_NONBLOCKING;
 

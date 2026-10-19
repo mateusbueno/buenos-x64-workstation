@@ -24,6 +24,7 @@ CLASSES = ("structural", "performance")
 TYPES = ("int", "uint", "float", "bool", "enum")
 SCOPES = ("part", "master", "insert")
 MAX_ID = 16383  # 14 bits: the UMP assignable controller carries the id as bank (7 bits) + index (7 bits)
+RESERVED_EVENT_FIRST = 0x3FE0  # ids 0x3FE0..0x3FFF are reserved for the control/encoder UMP events on channel 15 (engine/core assign_events.hpp)
 REQUIRED = ("id", "name", "class", "type", "scope", "unit", "default")
 
 
@@ -122,6 +123,9 @@ def load_and_validate(path):
         if not isinstance(pid, int) or isinstance(pid, bool) or not 1 <= pid <= MAX_ID:
             err(f"{label}: id must be an integer 1..{MAX_ID}")
             continue
+        if pid >= RESERVED_EVENT_FIRST:
+            err(f"{label}: ids {RESERVED_EVENT_FIRST}..{MAX_ID} are reserved for control events (fence, encoder steps)")
+            continue
         if not isinstance(name, str) or not NAME_RE.match(name):
             err(f"{label}: bad name")
             continue
@@ -153,6 +157,14 @@ def load_and_validate(path):
         by_const[const] = name
 
         q = dict(p)
+        # Story 4.10: may an ASSIGN encoder drive it? Performance parameters default to yes; a structural parameter never (it has no live value).
+        asg = p.get("assignable")
+        if asg is not None and not isinstance(asg, bool):
+            err(f"{label}: assignable must be true or false")
+            asg = None
+        if asg and p.get("class") in CLASSES and p.get("class") != "performance":
+            err(f"{label}: only a performance parameter can be assignable")
+        q["assignable"] = bool(p.get("class") == "performance" and asg is not False)
         t = p["type"]
         if t == "enum":
             en = p.get("enum")
@@ -274,7 +286,8 @@ def emit_core(r):
          "struct ParamDef {\n  std::uint16_t id;\n  Class cls;\n  Type type;\n  Scope scope;\n"
          "  double min, max, def;\n  std::int16_t cc;           // MIDI CC number mapped to this parameter, -1 none\n"
          "  std::int16_t perf_index;   // performance: dense index (part scope or master scope), else -1\n"
-         "  std::int16_t master_index; // structural master scope: dense index, else -1\n};\n\n",
+         "  std::int16_t master_index; // structural master scope: dense index, else -1\n"
+         "  bool assignable;           // Story 4.10: an ASSIGN encoder may drive it (performance parameters only; params.json 'assignable': false opts out)\n};\n\n",
          f"inline constexpr std::size_t kParamCount = {len(P)};\n",
          f"inline constexpr std::size_t kPerfPartParams = {r['perf_part']};\n",
          f"inline constexpr std::size_t kPerfMasterParams = {r['perf_master']};\n",
@@ -282,10 +295,10 @@ def emit_core(r):
          f"inline constexpr std::size_t kMasterParams = {r['master']};\n\n",
          "inline constexpr std::array<ParamDef, kParamCount> kParams{{\n"]
     for p in P:
-        o.append("    {%d, Class::k%s, Type::k%s, Scope::k%s, %s, %s, %s, %d, %d, %d},  // %s\n" % (
+        o.append("    {%d, Class::k%s, Type::k%s, Scope::k%s, %s, %s, %s, %d, %d, %d, %s},  // %s\n" % (
             p["id"], camel(p["class"]), camel(p["type"]), camel(p["scope"]),
             fnum(p["min"]), fnum(p["max"]), fnum(p["default"]), p.get("cc", -1),
-            p["perf_index"], p["master_index"], p["name"]))
+            p["perf_index"], p["master_index"], "true" if p["assignable"] else "false", p["name"]))
     o.append("}};\n\n")
     for p in P:
         o.append(f"inline constexpr std::uint16_t k{camel(p['name'])} = {p['id']};\n")

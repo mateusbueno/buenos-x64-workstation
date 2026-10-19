@@ -135,6 +135,6 @@ message LiveSet {
   float tempo = 4;                      // bpm 20..300
   repeated Part parts = 5;              // exactly the tier's part count (8 on v1, 16 on Pro)
   repeated Scene scenes = 6;            // 0..8
-  repeated uint32 assign = 7;           // exactly 8 slots K1..K8; 0 = empty, else a performance param_id
+  repeated uint32 assign = 7;           // exactly 8 slots K1..K8; 0 = empty, else an assignable performance param_id (Story 4.10)
   repeated ParamEntry master = 8;       // master-scope registry ids (reverb, delay, EQ, ...); not tempo_bpm
 }

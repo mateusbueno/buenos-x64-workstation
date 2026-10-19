@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "velora/core/assign_events.hpp"
 #include "velora/core/fx.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/rt.hpp"
@@ -97,6 +98,11 @@ struct Snapshot {
   std::uint64_t reservation_epoch = 0;
   VoiceArbiter::PreparedReservation reservation{};
 
+  // The Live Set's ASSIGN map (Story 4.10): K1..K8 -> a registry performance parameter id, 0 = empty. Set by the loader from the Live Set, edited by
+  // the control thread's ASSIGN commands (a new generation that is a copy of the current one with this array changed), carried unchanged by every
+  // other generation (a scene recall does not change it). RT reads it from the generation it holds when an encoder step arrives in ASSIGN mode.
+  std::array<std::uint16_t, kAssignSlotCount> assign{};
+
   // Every field at its registry default.
   static Snapshot defaults() noexcept;
 };
@@ -145,6 +151,9 @@ class LastValueTable {
   // the acknowledgement (bounded, on its own thread) and only then reads the table, so a Write never sees a value that was still in flight.
   void store_fence_ack(std::uint32_t seq) noexcept VELORA_NONBLOCKING { fence_ack_.store(seq, std::memory_order_release); }
   std::uint32_t load_fence_ack() const noexcept { return fence_ack_.load(std::memory_order_acquire); }
+  // Story 4.10: the encoder mode flag, the selected part and the encoder counters (assign_events.hpp). RT writes, anyone reads.
+  EncoderState& encoder_rt() noexcept { return encoder_; }
+  const EncoderState& encoder() const noexcept { return encoder_; }
   // The revision of the newest generation whose initial values RT has FULLY applied to this table (stored after the last slot of the
   // adoption, once per generation change). Until it equals the published revision a value that differs from the generation's initial
   // value may be a recall or a switch RT has not applied yet, not a change the player made.
@@ -156,6 +165,7 @@ class LastValueTable {
   std::array<std::atomic<std::uint32_t>, kGainReductionSlots> gr_;
   std::atomic<std::uint32_t> fence_ack_{0};
   std::atomic<std::uint64_t> adopted_revision_{0};
+  EncoderState encoder_;
 };
 
 // Publication point between the control thread and the RT side.

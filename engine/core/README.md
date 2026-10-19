@@ -166,6 +166,33 @@ protobuf dependency; the wire format lives in `engine/host`.
 - Tests: `params_tests` (registry, UMP round trip for every performance parameter, initial values only on generation change, held note
   across a swap); `rtsan_control_test` in `engine/host` covers RT safety (10,000 changes + 100 swaps).
 
+## ASSIGN-mode encoders (Story 4.10)
+
+`assign_events.hpp` defines how the 8 panel encoders enter the engine and what they do in ASSIGN mode (FR101 partial, FR102, FR103). The panel MCU delivers **relative signed steps per encoder** (Story 3.10 produces them); the engine takes them as one timestamped UMP each.
+
+**Reserved control events (the one place).** MIDI 2.0 assignable controller (type 4, status 0x3), group 0, **channel 15** -- parts are 0..7, so a channel-15 event can never be a part's parameter -- with a reserved 14-bit id in bank/index like a parameter event. The registry cannot use these ids (`proto/gen_params.py` refuses ids from `0x3FE0`). Only ids from `0x3FE0` on are control events; any other id of that range is refused and counted in `param_events_rejected()`, and a lower id on channel 15 falls through to the parameter decoder, which refuses it (channel 15 is no part; a master-scope parameter needs channel 0), so it is counted in `param_events_rejected()` the same way.
+
+| id | event | word1 |
+|---|---|---|
+| `0x3FFF` | control->RT fence (Story 4.9) | sequence number |
+| `0x3FF0..0x3FF7` | `EncoderStep` for encoder 0..7 (K1..K8) | signed delta, int32 two's complement, within int16 (`make_encoder_step_event` clamps; a wire value outside int16 is refused and counted) |
+| `0x3FF8` | `SetEncoderMode` | 0 PART, 1 ALL, 2 ASSIGN |
+| `0x3FF9` | `SelectPart` | part 0..7 |
+
+**State on the RT plane** (`EncoderState`, inside `LastValueTable::encoder()`; RT writes, anyone reads with relaxed atomics, published in ws.v1 `State.encoders`): the mode flag (default PART), the selected part (default 0) and counters (`steps_applied`, `steps_empty_slot`, `steps_unrouted`, `steps_rejected`, `events_rejected`, `steps_no_part`). `BlockRenderer::encoder_state()` reads it.
+
+**Routing (`BlockRenderer::apply_encoder_step`).** Only in ASSIGN mode: slot n of the **held generation's** ASSIGN map (`Snapshot::assign`, `std::array<uint16_t, 8>`, 0 = empty; set by the loader from the Live Set, changed by a control-thread edit as a new copy of the generation, carried unchanged by scene recalls and every other copy; a Live Set switch brings the new Live Set's map) names a registry performance parameter. The step is applied to that parameter's **live value** in the RT last-value table (**no pickup**) with `apply_relative_step`, and then follows the same path as a CC: last-value store + the engine of the part (`forward_part_param`), so engine smoothing and ramps apply and the change is visible to the edit session (the live value differs from the saved one: a dirty `part.param` item). Part-scope parameters land on the **selected part** (`SelectPart`; 4.13 / 4.22 will drive it), master-scope ones on part 0. An empty slot does nothing (counted). A mapped parameter whose engine or part does not exist (e.g. a part-scope parameter on a part with no organ) still updates the live value; the engine ignores it. A slot naming an unknown, structural or non-assignable parameter (a map from another registry) is refused and counted, nothing changes. **PART and ALL do nothing yet** (Story 4.13): the steps are counted in `steps_unrouted`. Events apply in frame order with the other control events; a mode event followed by steps in the same frame takes effect for them.
+
+**`apply_relative_step(ParamDef, current, delta)`** (pure, `noexcept`, double arithmetic and one rounding to float; the single rule): float: `current + delta * (max - min) / 128` (128 steps sweep the range), clamped to `[min, max]`; int / uint / enum: `round(current) + delta` (+-1 per step, clamped, **no wrap**); bool: positive delta -> on, negative -> off; delta 0 -> the current value (clamped; a non-finite current counts as the registry default). Large steps (+-127 and up to the int16 range), storms, saturation at both ends and rapid direction changes are deterministic (`assign_tests`: exhaustive over every performance parameter, two runs agree bit for bit).
+
+**No engine behind the part.** A part-scope step whose target part has no engine (silent or unloaded part) still moves the live value but is counted in `steps_no_part`, not `steps_applied`.
+
+**One rule.** `is_assignable(ParamDef)` / `find_assignable(id)` (assign_events.hpp) are shared by the loader, the file validators, the commands and the RT routing: performance class, `assignable`, a last-value slot, part or master scope, and for whole-step types a range a float holds exactly (<= 2^24). The id is looked up whole (never narrowed to 16 bits), and integer/enum steps are computed in int64.
+
+**Registry.** `ParamDef::assignable` (generated; `params.json` `"assignable"`): true by default for performance parameters, false for structural ones; `line_in_level` opts out (device input). See `engine/host/README.md` for which commands edit the maps.
+
+Tests: `assign_tests` (the flag, every step rule incl. an exhaustive sweep, event shapes, routing for int / float / enum / bool / master scope, no pickup, empty slot, mode gating, selected part, the map following the generation and a scene-like generation, refusals and malformed events, timing inside a block, a 4,000-step storm run twice), `assign_traffic_test` / `rtsan_assign_test` (10,000 blocks of organ traffic with the pedal, 1..6 encoder steps per block incl. saturating and malformed ones, mode / part events and fences, and a new generation with another ASSIGN map every 3 blocks, run twice and compared; the latter under RealtimeSanitizer, Docker/Linux clang only).
+
 ## Tonewheel organ (Story 2.2)
 
 `OrganEngine` (type id Organ=2, "tonewheel organ"): shared 91-wheel generator per part in the new `Engine::begin_block` phase-2 hook,

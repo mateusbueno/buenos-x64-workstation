@@ -49,3 +49,11 @@ target_link_libraries(engine_host_edit_smoke PRIVATE velora_control)
 add_dependencies(engine_host_edit_smoke engine-host)
 add_test(NAME engine_host_edit_smoke COMMAND engine_host_edit_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/switch ${_ehs_dir}/root)
 set_tests_properties(engine_host_edit_smoke PROPERTIES TIMEOUT 120)
+
+# engine-host ASSIGN smoke test (Story 4.10): SetAssignSlot on the current Live Set (dirty, Write, restart) and on the global default (written at once), typed
+# refusals, SetEncoderMode / SelectPart reaching the real-time plane. Runs engine-host --no-audio.
+add_executable(engine_host_assign_smoke engine_host_assign_smoke.cpp)
+target_link_libraries(engine_host_assign_smoke PRIVATE velora_control)
+add_dependencies(engine_host_assign_smoke engine-host)
+add_test(NAME engine_host_assign_smoke COMMAND engine_host_assign_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/switch ${_ehs_dir}/root)
+set_tests_properties(engine_host_assign_smoke PROPERTIES TIMEOUT 120)
