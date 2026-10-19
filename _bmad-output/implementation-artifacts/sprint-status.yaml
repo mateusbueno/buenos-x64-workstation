@@ -108,9 +108,9 @@ development_status:
   3-20-24-hour-thermal-run-in-the-closed-chassis: backlog
   epic-3-retrospective: optional
 
-  epic-4: backlog
+  epic-4: in-progress
   4-1-tier-profile-read-at-boot: backlog
-  4-2-versioned-live-set-format-with-parts-scenes-and-assign-map: backlog
+  4-2-versioned-live-set-format-with-parts-scenes-and-assign-map: done
   4-3-live-set-load-with-8-parts-zones-layers-and-splits: backlog
   4-4-scene-recall-as-a-parameter-only-snapshot-swap: backlog
   4-5-seamless-live-set-switching-with-background-load: backlog

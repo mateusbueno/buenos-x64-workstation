@@ -45,6 +45,62 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
   that fails to decode is left empty and counted (`failed_samples()`), so the engine skips and counts its regions instead of playing
   garbage; an unknown `instrument_key` is `kInstrumentNotFound` and nothing else is substituted. Test: `sample_bundle_loader_test`.
 
+## Live Set format and store (Story 4.2, in `velora_control`)
+
+The persisted Live Set is the protobuf `velora.liveset.v1.LiveSet` (`proto/live_set.proto`; the file format, distinct from the
+`ws.v1` wire protocol, reusing its `InsertSlot` and `PartOutput`). `velora/host/live_set_store.hpp` is the control-thread side
+(control/I-O threads only, never audio; protobuf stays out of `engine/core`).
+
+- **Schema.** `format_version` (current N = 1), `id` (UUIDv4, canonical lowercase), `name` (1..64 bytes), `tempo` (the range of registry `tempo_bpm`, 20..300 bpm; read from the generated registry),
+  exactly the tier's part count of `Part`s (8 v1, 16 Pro), 0..8 `Scene`s, `assign` (exactly 8 slots, 0 = empty, else a
+  *performance* `param_id`) and `master` (master-scope registry params). A `Part` holds `timbre` `(library_id, instrument_key)`
+  or unset, `low_key`/`high_key` 0..127 (low <= high), `octave` -4..4, `transpose` -12..12 semitones, `keyboard_on`, `volume` 0..1,
+  `output` Main/Aux, `inserts` (<= 5 `ws.v1.InsertSlot`), `send_reverb`/`send_delay` (registry 400/401 ranges), `engine`
+  (`engine_type_id` + `(param_id, value)` list: no per-engine message, so FM/VA fit), `envelope` and `eq` (lists of registry
+  part-scope params) and `arp` (`ArpSettings`: enabled, pattern, rate, gate, octave_range, hold, swing; all optional, unset in v1,
+  names from Epic 7 stories 7.2-7.4; using them needs no version bump or migration).
+- **Scene semantics.** A scene is a full parameter snapshot *excluding the timbre assignment*, stored sparsely: each `ScenePart`
+  field is `optional` (presence flag) and the `engine_params`/`envelope`/`eq`/`master` lists override by `param_id`; an `InsertChain`
+  wrapper replaces the whole chain; `arp` merges field-wise. Anything absent takes the base Live Set's value. A scene never holds the
+  timbre, the engine type, the tempo (Live-Set-scoped, Story 7.4) or the ASSIGN map (Live-Set-scoped, Story 4.10).
+- **Determinism.** No map fields; serialisation uses protobuf's deterministic mode (fields in number order, unknown fields last)
+  (`serialize()`; golden `tests/golden/live_set_fixed.bin`). read -> write is byte-for-byte identical only for files in canonical
+  form, i.e. written by this schema's writer. A rewrite canonicalises: field order (a file from another producer with unknown
+  fields interleaved gets them moved after the known ones, still preserved), default-valued proto3 fields are dropped, a present
+  but empty `timbre` becomes unset, and an N-1 file is written as N.
+- **Reading.** `parse`/`read_file` (file <= 1 MiB, regular file, no symlink) return a closed `Status` (`kParseError`, `kTooLarge`,
+  `kUnsupportedVersion`, `kInvalid`, ...) and a `ValidationReport` (typed `IssueCode`s; no exceptions across the API). Version
+  policy: N and N-1 load (N-1 goes through the `migrate` stub, which today only moves `format_version`), everything else
+  (including 0/unset) is `kUnsupportedVersion`. Tests exercise N-1 by giving the reader `current_version = 2`.
+- **Forward compatibility.** Unknown fields are kept in the parsed message and written back. An unknown `param_id` (or insert type)
+  is preserved and listed in `report.unknown_params`, never rejected. Out-of-range values, wrong scope (a master id in a part list,
+  tempo in `master`), duplicate ids, non-integral enum/int values, NaN/inf, wrong part count, > 8 scenes, an ASSIGN of another
+  length or naming a known structural parameter are errors (`kInvalid`, nothing written). Class rules: the part lists (`engine`, `envelope`, `eq`, scene overrides) take
+  *performance* part-scope params only (the structural `part_output`/`timbre_ref` have their own field / are the timbre assignment:
+  `kWrongClass`); the master lists take master-scope params except `tempo_bpm` (own field; `kWrongScope`) and `line_in_level`
+  (device input; `kWrongClass`). Strings (names, `instrument_key`) must be valid UTF-8; `instrument_key` must not be absolute,
+  contain a backslash or a `..` segment. A scene's `low_key`/`high_key` override is checked as the effective pair against the base
+  part. Enum values above this build's range (`PartOutput`, `ArpPattern`, `ArpRate`) and insert slots of an unknown type (their
+  params are not range-checked) are preserved with a warning (`kUnknownEnumValue`, `kUnknownInsertType`), never rejected.
+- **IDs.** `mint_uuid_v4(RandomSource&)` (`OsRandom` = `/dev/urandom`, `SeededRandom` for tests; no RTC). Fails closed: a failing source yields no id (`mint_uuid_v4` returns "").
+  `adopt_with_collision_check(ls, existing_ids, rng)` gives a colliding (or malformed) id a fresh UUIDv4 and keeps the content; at most 16 draws, then `kFailed` with the Live Set untouched.
+- **Resolution report.** `resolve_parts(ls, availability)` returns per-part `kOk` / `kEngineNotAvailable` (reserved engine with
+  none compiled, e.g. FM/VA, or an unknown type: silent, never substituted) / `kTimbreEmpty` (a Sample part with no timbre)
+  without loading anything; `availability_of(EngineRegistry)` snapshots the bound engine ids (it does not keep the registry).
+- **Store.** `LiveSetStore::open` takes an exclusive `flock` on `<dir>/.writer.lock` (a second store, even in the same process, gets
+  `kWriterBusy`) and records the calling thread as *the* control thread; `write` (the single writer entry point) and `reconcile`
+  from any other thread return `kNotControlThread` (handover is explicit: `rebind_control_thread()` from the new thread; thread ids may be reused after a thread exits, so keep one long-lived control thread); `read` is allowed anywhere and refuses (`kInvalid`) a file whose embedded id differs from its filename. `write` validates, then: temp file
+  `<id>.liveset.tmp` in the same directory, fsync (F_FULLFSYNC on macOS), rename over `<id>.liveset`, fsync the directory. The
+  directory must be on the journaled partition. `kCommittedNotDurable` means the rename happened (new file in place) but the directory fsync failed. A crash leaves the old file or the new one; leftovers `*.liveset.tmp` are removed by
+  `reconcile` (which returns `kIo` if a leftover could not be removed). `StoreOptions::on_stage` is the fault-injection hook (tests `_exit` in a forked child at each stage).
+- **Corpus.** `tests/corpus/live_sets/*.liveset` (minimal, full 8-part with 8 scenes and ASSIGN, FM/VA parts, missing library,
+  Pro 16-part, unknown fields from a newer schema) were written by this release; `live_set_tests` opens every file on every build,
+  checks it is byte-stable under read -> write and equals what the fixtures produce today (drift fails the test). Regenerate with
+  `cmake --build build --target live_set_corpus_regen` (also rewrites the golden file) only when a change is intended.
+- Tests: `live_set_tests` (round trip, golden bytes, every validation rule, scene semantics, version policy, unknown-field
+  preservation, reserved engines, UUIDs and collisions, atomic write with crash injection, single writer, hostile input incl. a
+  deterministic mutation/garbage fuzz, corpus). protobuf logs one stderr line per invalid-UTF-8 string the fuzz feeds it.
+
 ## Control plane (Story 2.1, `velora_control`)
 
 The only place protobuf is used next to the engine. A **control thread** is the sole writer of structural settings; clients (ui,

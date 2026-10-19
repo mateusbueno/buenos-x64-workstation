@@ -1,0 +1,140 @@
+// LiveSet: the persisted form of one Live Set (Story 4.2). One file per Live Set, written only by the engine
+// control thread (engine/host LiveSetStore), read by any version N or N-1 reader.
+//
+// Package velora.liveset.v1 (the file format, distinct from the ws.v1 wire protocol; ws.v1 shapes are reused where
+// the same thing is stored: InsertSlot, PartOutput). Conventions: PascalCase messages, snake_case fields. Rules:
+//   * The schema only grows by addition; field numbers are never reused or renumbered. New fields are optional or
+//     have a default that means "as before", so adding them needs neither a format_version bump nor a migration
+//     (the Epic 7 arpeggiator fields below are defined now, left unset).
+//   * format_version is bumped only for a change old readers cannot survive. Readers accept N and N-1, refuse every
+//     other value with a typed error, and keep the fields they do not know (protobuf unknown fields) on re-write.
+//   * Parameters are keyed by registry param_id (proto/params.json), never by a per-engine message, so FM and VA
+//     parts fit unchanged. A param_id this build does not know is preserved and flagged, not rejected.
+//   * Serialisation is deterministic (no map fields; fields in number order; unknown fields last), so
+//     read -> write of an unchanged file is byte-for-byte identical.
+//
+// Scene semantics: a scene is a full parameter snapshot of everything except the timbre assignment, stored sparsely.
+// A field absent from a scene (no presence flag set / id not listed) takes the value in the base Live Set. A scene
+// never carries the timbre reference or the engine type (they are the timbre assignment: a scene never loads heads),
+// the tempo (Live-Set-scoped, Story 7.4) or the ASSIGN map (Live-Set-scoped, Story 4.10).
+syntax = "proto3";
+
+package velora.liveset.v1;
+
+import "ws_v1.proto";         // InsertSlot
+import "ws_v1_params.proto";  // PartOutput (generated from proto/params.json)
+
+enum FormatVersion {
+  FORMAT_VERSION_UNSPECIFIED = 0;  // a missing/zero format_version is never valid
+  FORMAT_VERSION_1 = 1;
+}
+
+// One parameter value keyed by registry id. Value in the registry unit/range (enums and bools as integral floats).
+message ParamEntry {
+  uint32 param_id = 1;
+  float value = 2;
+}
+
+// Reference to an instrument inside an installed library. Both fields empty <=> no timbre (the message is unset).
+message TimbreRef {
+  string library_id = 1;      // canonical lowercase UUID string
+  string instrument_key = 2;  // path-like key inside the library bundle, 1..1024 bytes
+}
+
+// Engine data of a part: engine type (core EngineTypeId: Sample=1, Organ=2, FM=3, VA=4) plus sound parameters.
+// No engine-specific message: FM/VA parts round-trip here without a compiled engine.
+message EngineData {
+  uint32 engine_type_id = 1;
+  repeated ParamEntry params = 2;  // part-scope registry ids
+}
+
+// ---- Arpeggiator (Epic 7, Stories 7.2-7.4): defined now, unset in every v1 file, no migration when used. ----
+enum ArpPattern {
+  ARP_PATTERN_UNSPECIFIED = 0;
+  ARP_PATTERN_UP = 1;
+  ARP_PATTERN_DOWN = 2;
+  ARP_PATTERN_UP_DOWN = 3;
+  ARP_PATTERN_RANDOM = 4;
+  ARP_PATTERN_AS_PLAYED = 5;
+}
+
+enum ArpRate {
+  ARP_RATE_UNSPECIFIED = 0;
+  ARP_RATE_QUARTER = 1;            // 1/4
+  ARP_RATE_EIGHTH = 2;             // 1/8
+  ARP_RATE_SIXTEENTH = 3;          // 1/16
+  ARP_RATE_THIRTY_SECOND = 4;      // 1/32
+  ARP_RATE_QUARTER_TRIPLET = 5;
+  ARP_RATE_EIGHTH_TRIPLET = 6;
+  ARP_RATE_SIXTEENTH_TRIPLET = 7;
+  ARP_RATE_THIRTY_SECOND_TRIPLET = 8;
+}
+
+message ArpSettings {
+  optional bool enabled = 1;          // Arp On/Off
+  optional ArpPattern pattern = 2;    // Mode
+  optional ArpRate rate = 3;
+  optional float gate = 4;            // percent of the step, 1..200 when set
+  optional uint32 octave_range = 5;   // 1..4 when set
+  optional bool hold = 6;             // Latch
+  optional float swing = 7;           // percent, 50 = straight .. 75 when set
+}
+
+// An ordered insert chain as one value (so a scene can override it as a whole or not at all).
+message InsertChain {
+  repeated ws.v1.InsertSlot slots = 1;  // up to 5
+}
+
+// ---- Base Live Set ----------------------------------------------------------------------------------------------
+message Part {
+  TimbreRef timbre = 1;                 // unset = empty
+  uint32 low_key = 2;                   // 0..127
+  uint32 high_key = 3;                  // 0..127, >= low_key
+  sint32 octave = 4;                    // -4..4
+  sint32 transpose = 5;                 // -12..12 semitones
+  bool keyboard_on = 6;
+  float volume = 7;                     // 0..1 (fader position, linear)
+  ws.v1.PartOutput output = 8;          // Main / Aux
+  repeated ws.v1.InsertSlot inserts = 9;  // ordered chain, up to 5
+  float send_reverb = 10;               // 0..1 (registry 400)
+  float send_delay = 11;                // 0..1 (registry 401)
+  EngineData engine = 12;
+  repeated ParamEntry envelope = 13;    // part-scope registry ids
+  repeated ParamEntry eq = 14;          // part-scope registry ids
+  optional ArpSettings arp = 15;        // Epic 7; unset in v1
+}
+
+// One part's overrides in a scene. Every field is optional: absent = the base Live Set's value.
+message ScenePart {
+  optional uint32 low_key = 1;
+  optional uint32 high_key = 2;
+  optional sint32 octave = 3;
+  optional sint32 transpose = 4;
+  optional bool keyboard_on = 5;
+  optional float volume = 6;
+  optional ws.v1.PartOutput output = 7;
+  optional InsertChain inserts = 8;     // present = replaces the whole chain
+  optional float send_reverb = 9;
+  optional float send_delay = 10;
+  repeated ParamEntry engine_params = 11;  // listed ids override the base value, others keep it
+  repeated ParamEntry envelope = 12;       // same rule
+  repeated ParamEntry eq = 13;             // same rule
+  optional ArpSettings arp = 14;           // field-wise: an unset field keeps the base value
+}
+
+message Scene {
+  string name = 1;                      // 1..64 bytes
+  repeated ScenePart parts = 2;         // index = part; fewer entries than parts = the rest are all-base
+  repeated ParamEntry master = 3;       // master-scope registry ids (not tempo_bpm), same override rule
+}
+
+message LiveSet {
+  uint32 format_version = 1;            // FormatVersion
+  string id = 2;                        // UUIDv4, canonical lowercase
+  string name = 3;                      // 1..64 bytes UTF-8
+  float tempo = 4;                      // bpm 20..300
+  repeated Part parts = 5;              // exactly the tier's part count (8 on v1, 16 on Pro)
+  repeated Scene scenes = 6;            // 0..8
+  repeated uint32 assign = 7;           // exactly 8 slots K1..K8; 0 = empty, else a performance param_id
+  repeated ParamEntry master = 8;       // master-scope registry ids (reverb, delay, EQ, ...); not tempo_bpm
+}

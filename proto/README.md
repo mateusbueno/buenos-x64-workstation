@@ -21,6 +21,8 @@ Role: the single owner of parameter ids and of the `ws.v1` wire schema (Story 2.
 - `ws_v1.proto` -- the `ws.v1` schema (package `ws.v1`, `PascalCase` messages, `snake_case` fields; it only grows by addition,
   numbers are never reused). Framing: 4-byte big-endian length + protobuf, largest frame 65536 bytes. First message on every
   connection is `Hello` (version + features); errors are `{code, message, details}` with `code` from the closed `ErrorCode` enum.
+- `live_set.proto` -- the persisted Live Set (Story 4.2; package `velora.liveset.v1`, same naming conventions, imports `ws_v1.proto`
+  for `InsertSlot`/`PartOutput`). Versioned by `format_version`; grows only by addition; see `engine/host/README.md` for the semantics.
 - `tests/test_gen_params.py` -- ctest `params_generator_tests`: runs the generator on bad definitions and checks determinism.
 
 ## Parameter classes

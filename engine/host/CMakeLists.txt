@@ -25,14 +25,14 @@ velora_params_output(host VELORA_PARAMS_HOST_HPP)
 velora_params_output(proto VELORA_PARAMS_PROTO)
 
 set(VELORA_PB_DIR "${VELORA_GENERATED_DIR}/pb")
-set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc")
-set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h")
+set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc" "${VELORA_PB_DIR}/live_set.pb.cc")
+set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h" "${VELORA_PB_DIR}/live_set.pb.h")
 add_custom_command(
   OUTPUT ${VELORA_PB_SOURCES} ${VELORA_PB_HEADERS}
   COMMAND ${CMAKE_COMMAND} -E make_directory "${VELORA_PB_DIR}"
   COMMAND $<TARGET_FILE:protobuf::protoc> -I "${CMAKE_SOURCE_DIR}/proto" -I "${VELORA_GENERATED_DIR}/proto"
-          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${VELORA_PARAMS_PROTO}"
-  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${VELORA_PARAMS_PROTO}"
+          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${VELORA_PARAMS_PROTO}"
+  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${VELORA_PARAMS_PROTO}"
   COMMENT "Generating ws.v1 protobuf code"
   VERBATIM)
 
@@ -40,7 +40,8 @@ add_library(velora_control STATIC
   ${VELORA_PB_SOURCES} ${VELORA_PB_HEADERS} ${VELORA_PARAMS_HOST_HPP}
   src/control_plane.cpp
   src/control_server.cpp
-  src/dev_config.cpp)
+  src/dev_config.cpp
+  src/live_set_store.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -54,6 +55,26 @@ target_link_libraries(control_tests PRIVATE velora_control)
 target_compile_definitions(control_tests PRIVATE VELORA_DEV_CONFIG="${VELORA_DEV_CONFIG}")
 add_test(NAME control_tests COMMAND control_tests)
 set_tests_properties(control_tests PROPERTIES TIMEOUT 120)
+
+# --- Live Set format and store (Story 4.2) ------------------------------------------------------------------
+set(VELORA_LIVESET_CORPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus/live_sets")
+set(VELORA_LIVESET_GOLDEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+add_executable(live_set_tests tests/live_set_test.cpp)
+target_link_libraries(live_set_tests PRIVATE velora_control)
+target_compile_definitions(live_set_tests PRIVATE
+  VELORA_LIVESET_CORPUS_DIR="${VELORA_LIVESET_CORPUS_DIR}" VELORA_LIVESET_GOLDEN_DIR="${VELORA_LIVESET_GOLDEN_DIR}")
+add_test(NAME live_set_tests COMMAND live_set_tests)
+set_tests_properties(live_set_tests PROPERTIES TIMEOUT 120)
+
+# Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
+#   cmake --build build --target live_set_corpus_regen
+add_executable(live_set_corpus_gen tests/live_set_corpus_gen.cpp)
+target_link_libraries(live_set_corpus_gen PRIVATE velora_control)
+add_custom_target(live_set_corpus_regen
+  COMMAND live_set_corpus_gen "${VELORA_LIVESET_CORPUS_DIR}" "${VELORA_LIVESET_GOLDEN_DIR}"
+  DEPENDS live_set_corpus_gen
+  COMMENT "Regenerating the Live Set compatibility corpus"
+  VERBATIM)
 
 # The same 10,000-change / 100-swap RT traffic without the sanitizer, so macOS also runs its logic
 # (the RTSan build of it, rtsan_control_test, is below and runs where RealtimeSanitizer exists).
