@@ -1,0 +1,25 @@
+; SSD streaming load profile, Story 11.11 (epics.md:6418).
+; io_uring + O_DIRECT (AR20, epics.md:353), 64 KiB random reads (epics.md:806).
+; 256 voices: numjobs=256 is the voice count (epics.md:6418). Rate per voice is NOT
+; defined in the repo (TODO); default below is unthrottled-per-job. Override with
+; --rate-per-voice in run_ssd_qual.py once defined.
+; Env: FIO_FILE (file/device on the filled SSD), FIO_RUNTIME (seconds, >= 12 h = 43200 per epics.md:6418),
+;      FIO_LOGPREFIX.
+[global]
+ioengine=io_uring
+direct=1
+rw=randread
+bs=64k
+iodepth=1
+numjobs=256
+group_reporting=1
+time_based=1
+runtime=${FIO_RUNTIME}
+filename=${FIO_FILE}
+clat_percentiles=1
+percentile_list=50:90:99:99.9:99.99:100
+lat_percentiles=1
+write_lat_log=${FIO_LOGPREFIX}
+log_avg_msec=1000
+
+[stream_reads]

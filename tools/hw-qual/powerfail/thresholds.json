@@ -1,0 +1,8 @@
+{
+  "holdup_ms_min": {"value": 150, "unit": "ms", "source": "_bmad-output/planning-artifacts/epics.md:6369 (Story 11.9); epics.md:262 (NFR18); epic-3-context.md:36"},
+  "power_fail_lead_ms_min": {"value": 100, "unit": "ms", "source": "_bmad-output/planning-artifacts/epics.md:6369; epics.md:262"},
+  "cuts_required": {"value": 20, "source": "_bmad-output/planning-artifacts/epics.md:6367 (Story 3.18 uses 50: epics.md:2466; performance-targets.md:12 uses 100 random cuts during update/import)"},
+  "load": {"value": "3 A76 cores busy, NVMe writing", "source": "_bmad-output/planning-artifacts/epics.md:6367"},
+  "loss_to_power_fail_ms_max": {"value": null, "source": "TODO: not defined in repo"},
+  "output_fade_ms_max": {"value": 20, "unit": "ms", "source": "_bmad-output/planning-artifacts/epics.md:2461 (Story 3.18, engine fade, informational for scope check)"}
+}

@@ -1,0 +1,20 @@
+{
+  "_comment": "Values copied ONLY from the repo; each has a 'source' with file:line. null = not defined in the repo (TODO, do not invent). Paths relative to repo root.",
+  "min_test_hours":        {"value": 12,   "unit": "h",   "source": "_bmad-output/planning-artifacts/epics.md:6418"},
+  "min_fill_percent":      {"value": 90,   "unit": "%",   "source": "_bmad-output/planning-artifacts/epics.md:6418"},
+  "voices":                {"value": 256,  "unit": "stereo voices", "source": "_bmad-output/planning-artifacts/epics.md:6418; _bmad-output/specs/spec-arm64-stage-workstation/performance-targets.md:5"},
+  "io_pattern":            {"value": "io_uring + O_DIRECT random reads", "source": "_bmad-output/planning-artifacts/epics.md:6418; epics.md:353 (AR20)"},
+  "fio_block_size_kib":    {"value": 64,   "unit": "KiB", "source": "_bmad-output/planning-artifacts/epics.md:806 (Story 1.x load script: O_DIRECT random 64 KiB reads)"},
+  "fio_min_read_MBps":     {"value": 400,  "unit": "MB/s", "source": "_bmad-output/planning-artifacts/epics.md:806 (>=400 MB/s load); performance-targets.md:17 (~400 MB/s worst case at 32f/96k)"},
+  "head_budget_gb_range":  {"value": [4, 6], "unit": "GB", "source": "_bmad-output/planning-artifacts/epics.md:6420; performance-targets.md:8; v1 configured 5 GB per epics.md:1221"},
+  "min_candidate_ssds":    {"value": 3,    "source": "_bmad-output/planning-artifacts/epics.md:6417"},
+  "ssd_form_factor":       {"value": "M.2 2280 PCIe Gen3 x4, 1 TB", "source": "_bmad-output/planning-artifacts/epics.md:6417"},
+  "p99_us_max":            {"value": null, "source": "TODO: no numeric limit in repo; Story 11.11 defines the limit via head sizing (p99.99 + margin)"},
+  "p99_9_us_max":          {"value": null, "source": "TODO: not defined in repo"},
+  "p99_99_us_max":         {"value": null, "source": "TODO: not defined in repo; epics.md:6420 / NFR4 epics.md:245 say heads must cover p99.99 + margin, margin is 'configured' (epics.md:1216) with no value"},
+  "max_us_max":            {"value": null, "source": "TODO: not defined in repo"},
+  "head_margin":           {"value": null, "source": "TODO: 'configured margin' epics.md:1216, no value in repo"},
+  "min_rated_tbw":         {"value": null, "source": "TODO: Story 11.11 AC (epics.md:6424) requires reporting TBW and writes/year of a heavy user; no number in repo"},
+  "heavy_user_writes_per_year_tb": {"value": null, "source": "TODO: epics.md:6424, no number in repo"},
+  "drive_temp_limit_c":    {"value": null, "source": "TODO: no NVMe temperature limit in repo; condition is closed-chassis thermal (epics.md:6418), 40 C ambient (epics.md:6375)"}
+}

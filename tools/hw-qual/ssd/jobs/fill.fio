@@ -1,0 +1,11 @@
+; Fill the SSD to >=90% (epics.md:6418) before the read test. Set FIO_FILE to a file/dir
+; on the filesystem (or the raw device ONLY on a scratch drive: DESTROYS DATA).
+; FIO_SIZE e.g. 90% of device. Writes also count toward endurance logging.
+[fill]
+ioengine=io_uring
+direct=1
+rw=write
+bs=1m
+iodepth=16
+filename=${FIO_FILE}
+size=${FIO_SIZE}

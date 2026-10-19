@@ -1,0 +1,98 @@
+{
+  "_README": "DRAFT FOR FOUNDER. Copy this file, fill every null (rates are PERCENT numbers: 10 means 10 %). Nothing here is a real rate or price; all values are for the founder and the tax advisor to supply. Model is arithmetic, not tax advice. Run: python3 margin_model.py --inputs <copy>.json",
+  "fx_brl_per_usd": null,
+  "units": null,
+  "import_logistics": {
+    "international_freight_insurance_brl": null,
+    "customs_brokerage_brl": null
+  },
+  "credits": {
+    "ipi_credit_pct": null,
+    "icms_credit_pct": null,
+    "pis_cofins_credit_pct": null
+  },
+  "other_unit_costs_brl": {
+    "assembly": null,
+    "packaging": null,
+    "outbound_freight": null
+  },
+  "revenue_taxes_pct": [
+    { "name": "TODO (e.g. one entry per tax the advisor names for the chosen regime)", "rate_pct": null }
+  ],
+  "warranty_reserve_pct_of_revenue": null,
+  "channel": {
+    "pix_boleto_fee_pct": null,
+    "pix_boleto_fee_fixed_brl": null,
+    "card_mdr_pct": null,
+    "card_anticipation_pct": null,
+    "card_fee_fixed_brl": null,
+    "dealer_margin_pct": null,
+    "dealer_channel_fee_pct": null
+  },
+  "tiers": {
+    "v1": {
+      "price_points_brl": null,
+      "bom_lines": [
+        {
+          "name": "SoM (RK3588 industrial, 16 GB)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        },
+        {
+          "name": "Keybed (Fatar 73SW)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        },
+        {
+          "name": "Display (7 in MIPI DSI + touch)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        },
+        {
+          "name": "NVMe SSD (up to 1 TB)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        },
+        {
+          "name": "TODO: audio codec / DACs / ADCs",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        },
+        {
+          "name": "TODO: PSU (Inmetro-compliant, off the shelf)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        },
+        {
+          "name": "TODO: panel boards, faders, enclosure, connectors, MCU, other (add one line each)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        }
+      ]
+    },
+    "pro": {
+      "price_points_brl": null,
+      "bom_lines": [
+        {
+          "name": "SoM (RK3588 industrial, 32 GB)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        },
+        {
+          "name": "TODO: motorized faders and other Pro additions; repeat ALL v1 lines that carry over (this list is the full Pro BOM)",
+          "origin": null, "cost_usd": null, "cost_brl": null,
+          "ii_rate_pct": null, "ex_tarifario_applies": null, "ii_rate_pct_ex_tarifario": null,
+          "ipi_rate_pct": null, "pis_import_rate_pct": null, "cofins_import_rate_pct": null, "icms_import_rate_pct": null
+        }
+      ]
+    }
+  }
+}
