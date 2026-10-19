@@ -1,0 +1,10 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.04
+<group> lokey=60 hikey=60 pitch_keycenter=60
+<region> sample=a.wav lorand=0 hirand=0.5
+<region> sample=a.wav lorand=0.5 hirand=1
+<group> lokey=64 hikey=64 pitch_keycenter=64
+<region> sample=b.wav lorand=0 hirand=0.3
+<region> sample=b.wav lorand=0.3 hirand=0.7
+<region> sample=b.wav lorand=0.7 hirand=1

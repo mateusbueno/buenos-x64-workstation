@@ -4,7 +4,8 @@ add_library(velora_host STATIC
   src/midi_ingest.cpp
   src/render_driver.cpp
   src/posix_fs.cpp
-  src/library_resolver.cpp)
+  src/library_resolver.cpp
+  src/sample_bundle_loader.cpp)
 add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
 target_link_libraries(velora_host PUBLIC velora_core velora_ports velora_format)
@@ -16,6 +17,10 @@ add_test(NAME host_tests COMMAND host_tests)
 add_executable(host_unit_tests tests/host_unit_test.cpp)
 target_link_libraries(host_unit_tests PRIVATE velora_host)
 add_test(NAME host_unit_tests COMMAND host_unit_tests)
+
+add_executable(sample_bundle_loader_test tests/sample_bundle_loader_test.cpp)
+target_link_libraries(sample_bundle_loader_test PRIVATE velora_host)
+add_test(NAME sample_bundle_loader_test COMMAND sample_bundle_loader_test)
 
 add_executable(library_resolver_test tests/library_resolver_test.cpp)
 target_link_libraries(library_resolver_test PRIVATE velora_libgen)

@@ -301,3 +301,10 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Note: `simde/hedley.h` and `simde/debug-trap.h` are dedicated to the public domain under CC0-1.0.
+
+## Not shipped: test oracle
+
+The sfizz renderer (`sfizz_render`, sfizz 1.2.3, commit 4e70dc0b) used by the null tests (Story 1.15) is neither vendored in this
+repository nor linked into, or shipped with, any product binary or image. `tools/oracle/build-sfizz-render.sh` fetches it into the
+git-ignored `tools/oracle/.work/` on a developer machine only, to render reference audio; `tools/ci/check_third_party_notices.py`
+fails the build if oracle sources are committed or referenced from a shipped build file.

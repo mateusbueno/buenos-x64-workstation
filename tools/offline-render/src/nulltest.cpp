@@ -142,8 +142,29 @@ NullResult null_test(const WavData& ref, const WavData& cand, const NullParams& 
   }
   r.worst_window_db = to_db(std::max(worst, 0.0), mean_ref_window);
 
+  // Energy outside the overlap: reference signal the candidate lacks plus candidate signal the
+  // reference lacks.
+  {
+    double outside = 0.0;
+    const std::size_t chn = ref.channels;
+    for (std::uint64_t i = 0; i < ref.frames(); ++i) {
+      if (i >= lo && i < hi) continue;
+      for (std::size_t j = 0; j < chn; ++j) outside += static_cast<double>(ref.samples[i * chn + j]) * ref.samples[i * chn + j];
+    }
+    const std::int64_t clo = static_cast<std::int64_t>(lo) + best_k, chi = static_cast<std::int64_t>(hi) + best_k;
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(cand.frames()); ++i) {
+      if (i >= clo && i < chi) continue;
+      for (std::size_t j = 0; j < chn; ++j) {
+        const double x = cand.samples[static_cast<std::size_t>(i) * chn + j];
+        outside += x * x;
+      }
+    }
+    r.excess_db = to_db(outside, ref_total);
+  }
+
   r.pass = r.residual_db <= p.tolerance_db;
   if (!r.pass) r.message = "residual above tolerance";
+  else if (p.check_excess && r.excess_db > p.tolerance_db) { r.pass = false; r.message = "signal outside the compared overlap above tolerance"; }
   else if (!length_ok) { r.pass = false; r.message = "length difference above maximum"; }
   return r;
 }
@@ -160,11 +181,13 @@ std::string format_report(const std::string& name, const NullResult& r, const Nu
                 "  residual: %.2f dB (tolerance %.2f dB)\n"
                 "  alignment offset: %lld frames (max %u)\n"
                 "  worst %.0f ms window: %.2f dB at %.1f ms\n"
-                "  compared frames: %llu (length difference %lld frames)\n",
+                "  compared frames: %llu (length difference %lld frames)\n"
+                "  outside-overlap energy: %.2f dB%s\n",
                 r.residual_db, p.tolerance_db, static_cast<long long>(r.offset_frames), p.max_offset_frames,
                 1000.0 * p.window_frames / rate, r.worst_window_db,
                 1000.0 * static_cast<double>(r.worst_window_start) / rate,
-                static_cast<unsigned long long>(r.overlap_frames), static_cast<long long>(r.length_diff_frames));
+                static_cast<unsigned long long>(r.overlap_frames), static_cast<long long>(r.length_diff_frames),
+                r.excess_db, p.check_excess ? "" : " (not enforced)");
   s += buf;
   s += std::string("  result: ") + (r.pass ? "PASS" : "FAIL") +
        (r.message.empty() ? "" : " (" + r.message + ")") + "\n";

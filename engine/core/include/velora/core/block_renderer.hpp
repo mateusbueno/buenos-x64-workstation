@@ -39,6 +39,12 @@ class BlockRenderer {
     channel_engine_[channel & 0xF] = engine_type_id;
   }
 
+  // Setup-time: bind another compiled-in engine (e.g. the SampleEngine) next to the always-bound test
+  // tone, then route channels to it with set_channel_engine(). False when the registry is full or the
+  // type is already bound. The engine must outlive the renderer and be configured before audio runs;
+  // every bound engine is rendered each block (idle engines add nothing).
+  bool bind_engine(Engine& engine) noexcept { return registry_.bind(engine); }
+
   // Render one block. left/right each hold kBlockFrames floats and are overwritten.
   void process_block(float* left, float* right) noexcept VELORA_NONBLOCKING;
 

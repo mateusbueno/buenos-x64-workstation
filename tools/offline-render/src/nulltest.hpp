@@ -14,6 +14,9 @@ struct NullParams {
   std::uint32_t max_offset_frames = 0;
   std::uint32_t window_frames = 4800;  // 100 ms at 48 kHz
   std::uint64_t max_length_diff_frames = UINT64_MAX;  // |candidate - reference| length; default unlimited
+  // Also bound the signal outside the compared overlap (a tail present in only one file, or a file
+  // that stops early): its energy relative to the reference must stay below the tolerance.
+  bool check_excess = false;
 };
 
 struct NullResult {
@@ -27,6 +30,7 @@ struct NullResult {
   std::uint64_t worst_window_start = 0;
   std::uint64_t overlap_frames = 0;
   std::int64_t length_diff_frames = 0;  // candidate frames - reference frames
+  double excess_db = kFloorDb;          // energy outside the overlap (both files) vs. reference energy
 };
 
 // Tries every integer offset in [-max_offset, +max_offset] (no search beyond) and keeps the one with

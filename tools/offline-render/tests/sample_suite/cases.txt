@@ -1,0 +1,16 @@
+# Sample-engine null-test suite. One line per case; read by CMake (ctest) and regenerate_goldens.sh.
+#   name             engine interpolation   sfizz quality   tolerance_db
+# The name selects sfz/<name>.sfz, midi/<name>.mid and golden/<name>.wav + golden/<name>.case.
+# Quality 2 is sfizz's default (Hermite), 1 is linear. Tolerances and the measured residuals are
+# recorded and explained in README.md; a tolerance is never loosened silently.
+velocity_layers   hermite  2  -60
+round_robin       hermite  2  -60
+random_layers     hermite  2  -60
+pitch_far         hermite  2  -60
+pitch_far_linear  linear   1  -60
+volume_pan        hermite  2  -60
+offset            hermite  2  -60
+envelope          hermite  2  -60
+loops             hermite  2  -60
+release_trigger   hermite  2  -60
+poly_layers       hermite  2  -60

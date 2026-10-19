@@ -1,0 +1,4 @@
+<control>
+default_path=samples/
+<region> sample=a.wav lokey=48 hikey=84 pitch_keycenter=60
+<region> sample=st.wav lokey=48 hikey=84 pitch_keycenter=60 volume=-9 pan=30

@@ -35,6 +35,12 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
   - Tests: `library_resolver_test` (every matrix row, op-count equality across 10 / 1,000 (1 GiB sparse each) / 3,000 (20,000 opt-in)
     libraries, no-readdir and only-requested-paths assertions). Default scale is 10 / 1,000 / 3,000 libraries; set `VELORA_SCALE_TEST=1` to add the 20,000-library case (~30 s to generate). Timings it prints are "host, not representative".
 
+- `sample_bundle_loader` -- Story 1.15. Decodes every sample of one bundle instrument into RAM as planar float (integer PCM
+  `value / 2^(bits-1)`, float32 bit for bit; no resampling or requantization) and exposes it with the region table through the
+  `engine/ports` sample-source port (`BundleInstrument`) for the `SampleEngine`. Control thread only (allocates, decodes). A sample
+  that fails to decode is left empty and counted (`failed_samples()`), so the engine skips and counts its regions instead of playing
+  garbage; an unknown `instrument_key` is `kInstrumentNotFound` and nothing else is substituted. Test: `sample_bundle_loader_test`.
+
 ## macOS only (`macos/`, built only when `APPLE`)
 
 - `CoreAudioOutput`: HAL output AudioUnit at 48 kHz stereo float; requests a 64-frame device buffer and reports
