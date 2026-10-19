@@ -237,3 +237,7 @@ Epic 11 deadlines are against the GTM timeline (Milestone 1 month 6, first units
 3. ±5%/95% claim in the design assumes random sampling (section 4).
 4. Conditional-required Q29 is not a native Google Forms feature (section 2).
 5. Minors in Q1 band "Até 17" (section 3).
+
+## Founder decision on consent (2026-10-19)
+
+Contact data (e-mail, WhatsApp) and the prize draw move to a **separate form** linked from the end of the questionnaire; the questionnaire itself collects no personal data and stays anonymous. A random code shown after submission may be re-entered in the contact form only if the founder wants to correlate (otherwise no link key). The contact form carries its own consent text covering e-mail AND WhatsApp and every purpose (pre-sale notice, prize draw). This resolves open points 1, 2 and 4 of section 7; legal text and draw rules still need counsel (LGPD, promotions).

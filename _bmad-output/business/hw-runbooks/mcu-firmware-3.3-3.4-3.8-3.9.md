@@ -166,3 +166,8 @@ Exit per story (for the founder to judge): all rows of that story's AC mapping P
 | 32-33 | 3.9-AC2 | | | | | | | | |
 | 34 | 3.9-AC3 | | | | | | | | |
 | 35 | 3.9-AC4 | | | | | | on:off ratio: | | |
+
+## Founder decisions (2026-10-19)
+
+- **Resolution (3.8-AC2):** use 12 bits, the MCU-ID-MAP contract; it satisfies the story's >=10 bits. Update the story wording to match when convenient.
+- **Pedal polarity (3.8-AC4):** reported in `HELLO` (hardware property, rarely changes), not in `CONTROL`. Step 28 should expect polarity in `HELLO` only; the protocol spec needs a field for it.
