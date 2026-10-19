@@ -13,6 +13,11 @@ struct NoteEvent {
   std::uint8_t channel = 0;
   std::uint8_t note = 0;
   std::uint16_t velocity16 = 0;  // 0 for note-off with no release velocity
+  // Control change (Story 2.3): `cc` true means this is a controller event (`note` = controller number,
+  // `velocity16` unused, `value` = 7-bit value); `on` is false. The renderer routes mapped controllers
+  // (registry `cc`) to performance parameters and drops the rest.
+  bool cc = false;
+  std::uint8_t value = 0;
 };
 
 struct SmfResult {
@@ -23,7 +28,7 @@ struct SmfResult {
   std::vector<NoteEvent> events;  // time ordered (tick, then track, then file order)
 };
 
-// Parses a Standard MIDI File (format 0/1, PPQ division). Only note on/off and tempo meta events
+// Parses a Standard MIDI File (format 0/1, PPQ division). Only note on/off, control change and tempo meta events
 // are kept. Frames use integer arithmetic only: frames = floor(sum(dticks*tempo_us) * 48000 /
 // (ppq * 1e6)), so results are exact and identical on every platform.
 SmfResult parse_smf(const std::uint8_t* data, std::size_t size, std::uint32_t sample_rate = 48000);

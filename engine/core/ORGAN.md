@@ -1,4 +1,4 @@
-# Tonewheel organ engine (Story 2.2)
+# Tonewheel organ engine (Stories 2.2, 2.3)
 
 `OrganEngine` (`organ_engine.hpp`, `tonewheel_tables.hpp`, type id Organ=2, engine name "tonewheel organ") is a clean-room
 tonewheel organ: one shared wheel generator per part and one voice per key, 73 keys x 9 drawbars sounding at once, never
@@ -57,9 +57,67 @@ greps the organ sources, the tables, this file and `proto/params.json` for them.
   the event frame. Drawbar gains (`Part::cur`/`left`) are advanced in the render phase and are per-part state: if parts are
   ever split across workers, one part must stay on one worker.
 - **Voice gate.** A 1 ms attack and a 2 ms release gate (`kAttackFrames`, `kReleaseFrames`) only prevent clicks; this is not
-  a key-click or percussion model (Stories 2.3-2.5).
+  a key-click or percussion model (see Percussion and Key click below).
 - **Level.** One drawbar at step 8 has amplitude `kVoiceScale` = 0.06; the part mix is linear below `kKnee` = 0.8 and bounded
   by 1.0 above (`tanh` shoulder), so a full chord at full registration stays within +-1.
+
+## Percussion (Story 2.3)
+
+Registry ids 110..113 (`percussion_on`, `percussion_harmonic` second|third, `percussion_decay` fast|slow, `percussion_volume`
+soft|normal), part scope, performance class, arriving through `set_part_param` like the drawbars. CC 80 is `percussion_on`;
+CC 84/85/86 (added in this story, the enums had no controller) are harmonic/decay/volume (value below 64 = first entry).
+
+Public facts used (musical and service-documentation level, no organ source read):
+
+1. Percussion is a short decaying tone at the 2nd or 3rd harmonic of the key pitch, i.e. the 4' (octave above) or 2 2/3'
+   (twelfth above) footage. The tone comes from the same wheels as those drawbars (`kPercSecondDrawbar` = 3, `kPercThirdDrawbar` = 4,
+   foldback included).
+2. It is single-triggered: the percussion envelope fires when a key closes while no other key of the part is held, so playing
+   legato does not retrigger it; releasing every key re-arms it. Here the envelope belongs to the voice that fired it (the
+   triggering key); other keys of the part carry no percussion tone. A key that is still releasing (key up) does not count as held;
+   a key held by the pedal in the arbiter does (the arbiter defers the note off, so the engine still sees it held; tested at block-loop level: pedal down, key, key up, second key gives the second key no percussion). Parts trigger independently.
+3. Percussion on cancels the 1' drawbar (the 1' tone and the percussion share the highest busbar), and the NORMAL volume setting
+   lowers the drawbar tones so the louder percussion keeps its place; SOFT leaves the drawbars alone and the percussion is lower.
+4. Decay: FAST is a short pluck, SLOW lingers for about a second. Public descriptions give audible durations of roughly a quarter
+   second and roughly a second; they do not give an exact curve.
+
+Design values (an exponential envelope `exp(-t / tau)`; chosen to match those audible durations, to be refined against recordings in
+Story 2.13; each is a named constant in `organ_engine.hpp`):
+
+| constant | value | meaning |
+|---|---|---|
+| `kPercTauFastSeconds` | 0.06 s | tau of FAST; -40 dB after 0.28 s |
+| `kPercTauSlowSeconds` | 0.20 s | tau of SLOW; -40 dB after 0.92 s |
+| `kPercNormalGain` | 1.6 | peak amplitude of the percussion tone, in units of one step-8 drawbar |
+| `kPercSoftGain` | 0.8 | SOFT = NORMAL - 6 dB |
+| `kPercDrawbarGain` | 0.70794578 | every drawbar x -3 dB while percussion is on at NORMAL volume |
+| `kPercRampFrames` | 240 | 5 ms linear ramp of the 1' cancel and of the drawbar lowering |
+
+Behaviour details. The harmonic, decay and volume are latched into the voice at the press (a change mid-decay applies to the next
+trigger); `percussion_on` is read at the press, and its two part-level effects (1' cancel factor, drawbar factor) are
+`Ramp` values advanced in the part loop of `render_chunk` exactly like the drawbar gains (per-part state, same one-worker rule).
+Turning percussion off lets decaying tones finish and brings the 1' and the drawbar level back over 5 ms. The decaying envelope is
+flushed to 0 below 1e-6 (no denormals). Disabling a part (`set_enabled_parts`) deactivates its voices and with them their percussion envelopes and bursts; re-enabling starts clean, and the part's ramps simply freeze while it is disabled. Voices carry the percussion state, so a held key with finished percussion stays a plain
+organ voice.
+
+## Key click (Story 2.3)
+
+Registry id 116 `key_click` (0..1, default 0.5, CC 82, part scope). Level 0 is off: exact silence added, no cost.
+
+Public facts: a key click is the short broadband transient from the key contacts closing and opening, audible on the real
+instrument at the start and end of every note, different from key to key and from press to press because the contacts bounce
+differently. Model: one burst per contact event (the voice's onset and its release), each a first-difference of white noise
+(a broadband, high-frequency-weighted click) under a fast exponential decay of 0.3..0.7 ms time constant, hard-ended after
+`kClickFrames` = 192 (4 ms). Peak scale is `kClickGain` = 2.0 x level x per-key factor x per-press jitter, in step-8 drawbar units
+(so level 1 is a clearly audible tick next to a single drawbar; the default 0.5 is subtle); the release burst is `kClickReleaseRatio`
+= 0.6 of the onset burst. The click is added to the part mix next to the tone and is not shaped by the 1/2 ms declick gate; a
+releasing voice stays alive until its release burst is out, then ends. The onset and release bursts are separate, additive and have their own noise streams: a release within 4 ms of the onset lets the onset burst finish (no discontinuity). When the voice pool is full the reclaim prefers a releasing voice with no click pending. `voice_info().level` includes the percussion tone and any pending burst.
+
+Reproducible variation: noise comes from SplitMix64 (fixed-width integer arithmetic, identical on every platform). Per key: amplitude
+factor 0.75..1.25 and decay time constant derived from a hash of the note number and the fixed `kClickSeed`. Per press: a stream
+seeded from `kClickSeed`, the part's own press counter (so one part's clicks do not depend on other parts' activity), the note and the part, and a +-10 % level jitter. The same event sequence
+therefore renders identically every run, while repeated notes differ. The level is read at the contact event (onset: at the press;
+release: at the key-up), so a changed `key_click` applies to the next event.
 
 ## Voices are never stolen; reservation
 
@@ -75,13 +133,17 @@ ahead of every engine floor. With that reservation, a pool full of sample voices
 Placeholders until measured on the dev board: voice 2, generator 48 per part, rotary 24 per part (reserved for Story 2.6).
 `organ_bench` prints host figures labelled "host, not representative".
 
-## Not in this story
+## Not in Stories 2.2 and 2.3
 
-Percussion, key click, vibrato/chorus scanner, leakage, multi-contact onset, rotary, effects, UI, Live Set loading.
+Vibrato/chorus scanner, leakage, multi-contact onset, rotary, effects, UI, Live Set loading.
 
 ## Tests
 
 `organ_tests` (tables, generator accuracy, per-drawbar harmonics by single-bin DFT, foldback, drawbar curve and clamping,
 no-zipper, shared phase, 73-key chord (no drops, bounded, deterministic), parameter routing, arbiter protection, forbidden
-strings), `rtsan_organ_test` (10,000 blocks, Linux CI only), `organ_bench`, and `velora-offline-render --engine organ
---drawbars 888000000`.
+strings), `rtsan_organ_test` (10,000 blocks including percussion and key click controllers, Linux CI only), `organ_bench`, and `velora-offline-render --engine organ
+--drawbars 888000000`. Story 2.3: `organ_percussion_tests` (single trigger incl. legato, re-arm, releasing key and parts; measured
+decay constants; harmonic selection by spectrum; normal vs soft level and drawbar lowering; 1' cancelled and its smooth ramp; key click at
+onset and release, broadband, scaled by level, per key, per press, level 0 exact silence; determinism; the CC path through the block loop)
+and the golden `tools/offline-render/tests/organ_percussion/` (MIDI, null-test case, golden WAV; see the offline-render README).
+Because key click defaults to 0.5, tests that look at the bare tones of Story 2.2 set it to 0 first.

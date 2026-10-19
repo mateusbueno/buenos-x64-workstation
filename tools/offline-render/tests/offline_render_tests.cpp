@@ -247,6 +247,99 @@ static void test_cli_malformed_no_output() {
 }
 #endif
 
+// Story 2.3: control changes are parsed, mapped ones reach the organ's parameters, unmapped ones are dropped.
+static void test_smf_controllers_and_organ_options() {
+  Bytes f = header(0, 1, 480), b;
+  vlq(b, 0); b.insert(b.end(), {0xB0, 80, 127});    // percussion on (part 0)
+  vlq(b, 0); b.insert(b.end(), {0xB0, 7, 100});     // channel volume: not mapped
+  vlq(b, 0); b.insert(b.end(), {0x90, 60, 100});
+  vlq(b, 480); b.insert(b.end(), {0x80, 60, 0});
+  vlq(b, 4800); b.insert(b.end(), {0xB0, 64, 127}); // pedal at the very end: neither maps nor extends the render
+  track(f, b);
+  SmfResult s = parse_smf(f);
+  CHECK(s.ok && s.events.size() == 5);
+  CHECK(s.events[0].cc && s.events[0].note == 80 && s.events[0].value == 127 && !s.events[0].on);
+  CHECK(!s.events[2].cc && s.events[2].on);
+  RenderOptions o; o.engine = EngineKind::kOrgan; o.tail_seconds = 0.0; o.drawbars = "000000000"; o.key_click = 0.0f;
+  WavData a, c;
+  std::string err;
+  CHECK(render_events(s.events, o, a, err));
+  CHECK(a.frames() <= 24000 + 64 + 64);  // the unmapped trailing controller did not lengthen the render
+  // Percussion from the file (CC 80, third, soft default) is audible with every drawbar off; with the controller
+  // removed and the option off there is nothing.
+  double e = 0;
+  for (float x : a.samples) e += static_cast<double>(x) * x;
+  CHECK(e > 1e-4);
+  std::vector<NoteEvent> notes;
+  for (const NoteEvent& ev : s.events) if (!ev.cc) notes.push_back(ev);
+  CHECK(render_events(notes, o, c, err));
+  double ec = 0;  // only the 5 ms ramp down from the default 8' drawbar remains
+  for (float x : c.samples) ec += static_cast<double>(x) * x;
+  CHECK(ec < 0.1 * e);
+  // The renderer option does what the controller does.
+  RenderOptions p = o; p.percussion_on = true;
+  WavData d;
+  CHECK(render_events(notes, p, d, err));
+  CHECK(d.samples == a.samples);
+  // The option also bounds: second/fast/normal differs from third/fast/soft.
+  p.percussion_harmonic = 0; p.percussion_volume = 1;
+  WavData g;
+  CHECK(render_events(notes, p, g, err));
+  CHECK(g.samples != d.samples);
+}
+
+static void test_controllers_other_engines_and_limits() {
+  // Non-organ renders ignore controllers entirely: same samples and length with or without them.
+  Bytes f = header(0, 1, 480), b;
+  vlq(b, 0); b.insert(b.end(), {0xB0, 80, 127});
+  vlq(b, 0); b.insert(b.end(), {0xB0, 72, 20});
+  vlq(b, 0); b.insert(b.end(), {0x90, 60, 100});
+  vlq(b, 480); b.insert(b.end(), {0x80, 60, 0});
+  vlq(b, 9600); b.insert(b.end(), {0xB0, 80, 0});
+  track(f, b);
+  SmfResult with = parse_smf(f);
+  CHECK(with.ok);
+  std::vector<NoteEvent> notes;
+  for (const NoteEvent& e : with.events) if (!e.cc) notes.push_back(e);
+  RenderOptions o; o.tail_seconds = 0.1;
+  WavData x, y;
+  std::string err;
+  CHECK(render_events(with.events, o, x, err) && render_events(notes, o, y, err));
+  CHECK(x.samples == y.samples);
+  // Controllers on channels that are not organ parts are ignored by the organ render too.
+  Bytes g = header(0, 1, 480), c;
+  vlq(c, 0); c.insert(c.end(), {0x90, 60, 100});
+  vlq(c, 480); c.insert(c.end(), {0x80, 60, 0});
+  vlq(c, 9600); c.insert(c.end(), {0xB9, 80, 127});
+  track(g, c);
+  SmfResult hi = parse_smf(g);
+  RenderOptions org; org.engine = EngineKind::kOrgan; org.tail_seconds = 0.1;
+  WavData h, k;
+  std::vector<NoteEvent> hn;
+  for (const NoteEvent& e : hi.events) if (!e.cc) hn.push_back(e);
+  CHECK(hi.ok && render_events(hi.events, org, h, err) && render_events(hn, org, k, err));
+  CHECK(h.samples == k.samples);
+  // Too many events for the first block together with the frame-0 organ setup: a clear error, not silently dropped ones.
+  Bytes m = header(0, 1, 480), d;
+  for (int i = 0; i < 300; ++i) { vlq(d, 0); d.insert(d.end(), {0xB0, static_cast<std::uint8_t>(70 + i % 9), static_cast<std::uint8_t>(i % 9)}); }
+  vlq(d, 0); d.insert(d.end(), {0x90, 60, 100});
+  track(m, d);
+  SmfResult many = parse_smf(m);
+  WavData z;
+  CHECK(many.ok && !render_events(many.events, org, z, err) && err.find("overflow") != std::string::npos);
+  // The setup alone (8 parts x 14 events) plus a normal first block renders fine.
+  CHECK(note_smf().ok && render_events(note_smf().events, org, z, err));
+  // Bad controller data: a data byte with the high bit set, or a truncated message, is an error like for notes.
+  Bytes bad = header(0, 1, 480), e1;
+  vlq(e1, 0); e1.insert(e1.end(), {0xB0, 80, 0x80});
+  track(bad, e1);
+  CHECK(!parse_smf(bad).ok);
+  Bytes cut = header(0, 1, 480), e2;
+  vlq(e2, 0); e2.insert(e2.end(), {0xB0, 80});
+  track(cut, e2, false);
+  CHECK(!parse_smf(cut).ok);
+}
+
 static void test_smf_more() {
   // meta event cancels running status: following bare data bytes are invalid
   Bytes f = header(0, 1, 480), b;
@@ -398,6 +491,8 @@ int main() {
   test_pcm16_and_sfizz_decode();
   test_null_check_excess();
   test_smf_more();
+  test_smf_controllers_and_organ_options();
+  test_controllers_other_engines_and_limits();
   test_null_robustness();
   test_null_length_limit();
   test_render_frame_count();

@@ -37,6 +37,9 @@ void set_drawbars(OrganEngine& e, const char* nine, std::uint32_t part = 0) {
   for (int d = 0; d < 9; ++d) e.set_part_param(part, params::kDrawbar16 + d, static_cast<float>(nine[d] - '0'));
 }
 
+// Key click is on by default (registry default 0.5): tests that look at the tones alone switch it off.
+void no_click(OrganEngine& e, std::uint32_t part = 0) { e.set_part_param(part, params::kKeyClick, 0.0f); }
+
 // Finish any drawbar ramp so tests start from steady state (a standalone engine, no keys down).
 void settle(OrganEngine& e) {
   std::vector<float> l(64, 0.0f), r(64, 0.0f);
@@ -184,6 +187,7 @@ void test_drawbar_curve() {
   CHECK(e.drawbar_gain(0, 0) == 0.0f);
   // Silent at 0: a held key with all drawbars at 0 renders exact zeros.
   set_drawbars(e, "000000000");
+  no_click(e);
   settle(e);
   e.start_voice(0, 60, 0xFFFF);
   const auto x = render_mono(e, 1024);
@@ -248,6 +252,8 @@ void test_shared_phase() {
   OrganEngine a, b;
   set_drawbars(a, "000800000");
   set_drawbars(b, "008000000");
+  no_click(a);
+  no_click(b);
   settle(a);
   settle(b);
   CHECK(tw::drawbar_wheel(36, 3) == tw::drawbar_wheel(48, 2));

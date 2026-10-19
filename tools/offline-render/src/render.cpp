@@ -24,7 +24,19 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     return false;
   }
   const std::uint64_t tail = static_cast<std::uint64_t>(std::llround(opt.tail_seconds * kSampleRate));
-  const std::uint64_t last = events.empty() ? 0 : events.back().frame;
+  // Controllers that map to no parameter are dropped (they neither play nor extend the render).
+  // Controllers are an organ-engine feature (its parts are channels 0..7); other renders ignore them entirely.
+  const bool organ_render = opt.engine == EngineKind::kOrgan;
+  auto control = [organ_render](const NoteEvent& e, Ump& out) {
+    if (!organ_render || e.channel >= OrganEngine::kPartCount) return false;
+    return cc_to_param_event(
+        make_control_change(0, e.channel, e.note, static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127)), out);
+  };
+  std::uint64_t last = 0;
+  for (const NoteEvent& e : events) {
+    Ump u;
+    if (!e.cc || control(e, u)) last = std::max(last, e.frame);
+  }
   const std::uint64_t total = last + tail;
   if (total > static_cast<std::uint64_t>(kSampleRate) * 3600) {
     error = "render would exceed one hour";
@@ -62,6 +74,9 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   }
 
   std::unique_ptr<OrganEngine> organ;
+  // Frame-0 setup per organ part: 9 drawbars + 5 percussion/key click parameters. All of it must fit the block loop's
+  // pending-event buffer together with the events of the first block (checked after the first block, see below).
+  static_assert(OrganEngine::kPartCount * 14 <= BlockRenderer::kPendingCapacity, "organ setup events must fit the pending buffer");
   if (opt.engine == EngineKind::kOrgan) {
     if (opt.drawbars.size() != 9 ||
         std::any_of(opt.drawbars.begin(), opt.drawbars.end(), [](char c) { return c < '0' || c > '8'; })) {
@@ -78,6 +93,17 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       for (std::uint32_t d = 0; d < 9; ++d)
         if (!br->submit({make_param_event(*params::find(params::kDrawbar16 + d), ch, opt.drawbars[d] - '0'), 0})) {
           error = "event queue full while setting the drawbars (try a render with fewer simultaneous events)";
+          return false;
+        }
+      const struct { std::uint32_t id; double value; } perc[] = {
+          {params::kPercussionOn, opt.percussion_on ? 1.0 : 0.0},
+          {params::kPercussionHarmonic, static_cast<double>(opt.percussion_harmonic)},
+          {params::kPercussionDecay, static_cast<double>(opt.percussion_decay)},
+          {params::kPercussionVolume, static_cast<double>(opt.percussion_volume)},
+          {params::kKeyClick, static_cast<double>(opt.key_click)}};
+      for (const auto& pv : perc)
+        if (!br->submit({make_param_event(*params::find(pv.id), ch, pv.value), 0})) {
+          error = "event queue full while setting percussion and key click";
           return false;
         }
     }
@@ -97,6 +123,14 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     while (next < events.size() && events[next].frame < end) {
       const NoteEvent& e = events[next++];
       const std::uint32_t off = static_cast<std::uint32_t>(e.frame - b * kBlockFrames);
+      if (e.cc) {
+        Ump pu;
+        if (control(e, pu) && !br->submit({pu, off})) {
+          error = "event queue overflow (too many events in one block)";
+          return false;
+        }
+        continue;
+      }
       const Ump u = e.on ? make_note_on(0, e.channel, e.note, e.velocity16)
                          : make_note_off(0, e.channel, e.note, e.velocity16);
       if (!br->submit({u, off})) {
@@ -106,6 +140,10 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     }
     for (std::uint32_t i = 0; i < kBlockFrames; ++i) { l[i] = 0.0f; r[i] = 0.0f; }
     br->process_block(l, r);
+    if (br->status_count(EngineStatus::kEventOverflow) != 0) {
+      error = "event buffer overflow (too many events in one block, including the organ setup events)";
+      return false;
+    }
     float* dst = &out.samples[static_cast<std::size_t>(b * kBlockFrames * 2)];
     for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
       dst[2 * i] = l[i];

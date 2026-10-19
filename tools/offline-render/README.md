@@ -32,6 +32,23 @@ Dependency rule: may depend on `engine/core`, `engine/ports`, `engine/host` (the
   channels 0..7 (one organ part per MIDI channel; notes on channels 8..15 are refused as engine-not-available and stay silent). `--drawbars` is nine digits 0..8 for 16', 5 1/3',
   8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1' (default `008000000`), applied to every part at frame 0.
 
+- `--percussion second|third,fast|slow,soft|normal` (any subset, each category once, unnamed ones keep the registry default
+  third, fast, soft) or `--percussion off`, and `--key-click 0..1` (default 0.5) (Story 2.3) set the organ's percussion and key click on every
+  part at frame 0; both are errors without `--engine organ`. The MIDI file can change them too: control changes are now parsed and
+  those mapped by the registry (`proto/params.json` `cc`: drawbars 70-78, percussion 80, key click 82, percussion harmonic/decay/volume
+  84/85/86, ...) become performance parameter events on the channel's part; unmapped controllers (volume, pedal, ...) are dropped and do
+  not extend the render.
+
+## Organ percussion golden (Story 2.3)
+
+`tests/organ_percussion/` holds `organ_percussion.mid` (made by `make_midi.py`: staccato and legato playing, all eight
+harmonic/decay/volume combinations through CC 80/84/85/86, then key click through CC 82 with a repeated key), `organ_percussion.wav`
+(about 4.85 s, 1.9 MB) and `organ_percussion.case` (null test, -100 dB). ctest renders twice (`organ_perc_bit_identical`),
+null-tests the fresh render against the golden (`organ_perc_null_golden`; a null test rather than a byte compare because libm may differ
+in the last bit between macOS and Linux) and requires a different key click level and a different registration to fail it. The render
+command is `velora-offline-render --midi organ_percussion.mid --engine organ --percussion off --key-click 0.4 --tail-seconds 0.3`.
+Regenerate after an intentional engine change with `cmake --build build --target update-organ-percussion-golden` and review.
+
 ## Golden render
 
 `tests/golden/` holds `golden.mid`, `golden.wav` and `golden.case`. ctest renders twice (byte-equality), null-tests a

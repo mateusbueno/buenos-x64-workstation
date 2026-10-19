@@ -29,6 +29,12 @@ void run_block(BlockRenderer& br, float* l, float* r, std::uint32_t i) noexcept 
     Ump ev;
     if (cc_to_param_event(make_control_change(0, part, 70 + i % 9, 0x10000000u * (i % 16)), ev)) br.submit({ev, 7});
   }
+  if (i % 6 == 0) {  // percussion on/off, harmonic, decay, volume and key click (Story 2.3): CC 80, 84, 85, 86, 82
+    static constexpr std::uint32_t kPercCc[5] = {80, 84, 85, 86, 82};
+    Ump ev;
+    const std::uint32_t k = (i / 6) % 5;
+    if (cc_to_param_event(make_control_change(0, part, kPercCc[k], ((i / 30) % 3) * 0x7FFFFFFFu), ev)) br.submit({ev, 21});
+  }
   if (i % 700 == 0) br.submit({make_control_change(0, 0, 64, 0xFFFFFFFFu), 2});  // pedal down
   if (i % 700 == 350) br.submit({make_control_change(0, 0, 64, 0u), 2});         // pedal up
   if (i % 500 == 0)

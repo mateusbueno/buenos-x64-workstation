@@ -1,5 +1,6 @@
 // velora-offline-render --midi in.mid --out out.wav [--engine test-tone|sample] [--voices N]
 //                       [--tail-seconds S] [--detune-cents C]
+//                       [--engine organ [--drawbars 888000000] [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]]
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +20,7 @@ static int usage() {
                "usage: velora-offline-render --midi in.mid --out out.wav [--engine test-tone|sample|organ]\n"
                "       [--voices N] [--tail-seconds S] [--detune-cents C (test only)]\n"
                "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
+               "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
   return 2;
 }
@@ -26,7 +28,8 @@ static int usage() {
 int main(int argc, char** argv) {
   std::string midi, out, engine = "test-tone", bundle_path, instrument_key, interp = "hermite";
   bool voices_given = false, sample_opts = false, drawbars_given = false;
-  std::string drawbars;
+  std::string drawbars, percussion;
+  bool percussion_given = false, key_click_given = false;
   RenderOptions opt;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -45,6 +48,12 @@ int main(int argc, char** argv) {
       opt.voices = static_cast<std::uint32_t>(n);
       voices_given = true;
     } else if (a == "--drawbars" && val(v)) { drawbars = v; drawbars_given = true;
+    } else if (a == "--percussion" && val(v)) { percussion = v; percussion_given = true;
+    } else if (a == "--key-click" && val(v)) {
+      double k = 0;
+      if (!parse_double(v, 0.0, 1.0, k)) { std::fprintf(stderr, "error: invalid --key-click (0..1)\n"); return 2; }
+      opt.key_click = static_cast<float>(k);
+      key_click_given = true;
     } else if (a == "--bundle" && val(v)) bundle_path = v;
     else if (a == "--instrument" && val(v)) instrument_key = v;
     else if (a == "--interpolation" && val(v)) { interp = v; sample_opts = true; }
@@ -80,7 +89,36 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: --drawbars needs --engine organ\n");
     return 2;
   }
+  if ((percussion_given || key_click_given) && engine != "organ") {
+    std::fprintf(stderr, "error: --percussion and --key-click need --engine organ\n");
+    return 2;
+  }
   if (engine == "organ") {
+    if (percussion_given && percussion != "off") {
+      // Comma separated words, each of harmonic (second|third), decay (fast|slow) and volume (soft|normal) at most once;
+      // what is not named keeps the registry default (third, fast, soft).
+      opt.percussion_on = true;  // (the list is parsed once, from the last --percussion given; defaults first)
+      opt.percussion_harmonic = 1; opt.percussion_decay = 0; opt.percussion_volume = 0;
+      bool seen[3] = {false, false, false}, good = !percussion.empty();
+      std::size_t pos = 0;
+      while (good && pos <= percussion.size()) {
+        std::size_t comma = percussion.find(',', pos);
+        if (comma == std::string::npos) comma = percussion.size();
+        const std::string w = percussion.substr(pos, comma - pos);
+        int cat = -1, val = 0;
+        if (w == "second") { cat = 0; val = 0; } else if (w == "third") { cat = 0; val = 1; }
+        else if (w == "fast") { cat = 1; val = 0; } else if (w == "slow") { cat = 1; val = 1; }
+        else if (w == "soft") { cat = 2; val = 0; } else if (w == "normal") { cat = 2; val = 1; }
+        if (cat < 0 || seen[cat]) { good = false; break; }
+        seen[cat] = true;
+        (cat == 0 ? opt.percussion_harmonic : cat == 1 ? opt.percussion_decay : opt.percussion_volume) = val;
+        pos = comma + 1;
+      }
+      if (!good) {
+        std::fprintf(stderr, "error: invalid --percussion (off, or a comma list of second|third, fast|slow, soft|normal)\n");
+        return 2;
+      }
+    }
     if (drawbars_given) {
       bool good = drawbars.size() == 9;
       for (char c : drawbars) good = good && c >= '0' && c <= '8';

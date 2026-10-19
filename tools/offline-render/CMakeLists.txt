@@ -106,9 +106,61 @@ add_test(NAME offline_render_organ_content
 set_tests_properties(offline_render_organ_content PROPERTIES FIXTURES_REQUIRED "organ_a;organ_other"
                      PASS_REGULAR_EXPRESSION "organ_wav_check: ok")
 
+# Organ percussion and key click (Story 2.3): a committed MIDI file exercises both harmonics, both decays, both volumes,
+# staccato and legato playing, and key click; the render is deterministic (run twice, byte-equal) and the fresh render
+# null-tests against the committed golden at a very tight tolerance (not byte equality: libm may differ between platforms).
+set(_perc ${CMAKE_CURRENT_SOURCE_DIR}/tests/organ_percussion)
+set(_perc_args --midi ${_perc}/organ_percussion.mid --engine organ --percussion off --key-click 0.4 --tail-seconds 0.3)
+add_test(NAME organ_perc_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/perc_a.wav ${_out}/perc_b.wav ${_out}/perc_wrong_click.wav ${_out}/perc_wrong_db.wav)
+set_tests_properties(organ_perc_clean PROPERTIES FIXTURES_SETUP perc_clean)
+add_test(NAME organ_perc_render_a COMMAND velora-offline-render ${_perc_args} --out ${_out}/perc_a.wav)
+add_test(NAME organ_perc_render_b COMMAND velora-offline-render ${_perc_args} --out ${_out}/perc_b.wav)
+set_tests_properties(organ_perc_render_a PROPERTIES FIXTURES_REQUIRED perc_clean FIXTURES_SETUP perc_a)
+set_tests_properties(organ_perc_render_b PROPERTIES FIXTURES_REQUIRED perc_clean FIXTURES_SETUP perc_b)
+add_test(NAME organ_perc_bit_identical
+         COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/perc_a.wav ${_out}/perc_b.wav)
+set_tests_properties(organ_perc_bit_identical PROPERTIES FIXTURES_REQUIRED "perc_a;perc_b")
+add_test(NAME organ_perc_null_golden
+         COMMAND velora-null-test --case ${_perc}/organ_percussion.case --candidate ${_out}/perc_a.wav)
+set_tests_properties(organ_perc_null_golden PROPERTIES FIXTURES_REQUIRED perc_a PASS_REGULAR_EXPRESSION "overall: PASS")
+# The golden is sensitive to what it covers: a different key click level or a different registration fails the null test.
+add_test(NAME organ_perc_wrong_click
+         COMMAND velora-offline-render --midi ${_perc}/organ_percussion.mid --engine organ --percussion off --key-click 0.8
+                 --tail-seconds 0.3 --out ${_out}/perc_wrong_click.wav)
+add_test(NAME organ_perc_wrong_drawbars
+         COMMAND velora-offline-render ${_perc_args} --drawbars 008000001 --out ${_out}/perc_wrong_db.wav)
+set_tests_properties(organ_perc_wrong_click PROPERTIES FIXTURES_REQUIRED perc_clean FIXTURES_SETUP perc_wc)
+set_tests_properties(organ_perc_wrong_drawbars PROPERTIES FIXTURES_REQUIRED perc_clean FIXTURES_SETUP perc_wd)
+add_test(NAME organ_perc_wrong_click_fails
+         COMMAND velora-null-test --case ${_perc}/organ_percussion.case --candidate ${_out}/perc_wrong_click.wav)
+add_test(NAME organ_perc_wrong_drawbars_fails
+         COMMAND velora-null-test --case ${_perc}/organ_percussion.case --candidate ${_out}/perc_wrong_db.wav)
+set_tests_properties(organ_perc_wrong_click_fails PROPERTIES FIXTURES_REQUIRED perc_wc
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+set_tests_properties(organ_perc_wrong_drawbars_fails PROPERTIES FIXTURES_REQUIRED perc_wd
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# Option parsing.
+add_test(NAME organ_perc_rejects_bad_percussion
+         COMMAND velora-offline-render ${_perc_args} --percussion third,third --out ${_out}/never.wav)
+set_tests_properties(organ_perc_rejects_bad_percussion PROPERTIES PASS_REGULAR_EXPRESSION "invalid --percussion")
+add_test(NAME organ_perc_rejects_off_in_list
+         COMMAND velora-offline-render ${_perc_args} --percussion off,third --out ${_out}/never.wav)
+set_tests_properties(organ_perc_rejects_off_in_list PROPERTIES PASS_REGULAR_EXPRESSION "invalid --percussion")
+add_test(NAME organ_perc_rejects_bad_key_click
+         COMMAND velora-offline-render ${_perc_args} --key-click 1.5 --out ${_out}/never.wav)
+set_tests_properties(organ_perc_rejects_bad_key_click PROPERTIES PASS_REGULAR_EXPRESSION "invalid --key-click")
+add_test(NAME organ_perc_options_need_organ
+         COMMAND velora-offline-render --midi ${_perc}/organ_percussion.mid --percussion third --out ${_out}/never.wav)
+set_tests_properties(organ_perc_options_need_organ PROPERTIES PASS_REGULAR_EXPRESSION "need --engine organ")
+
 # Regenerate the golden: cmake --build build --target update-golden (review the diff before commit).
 add_custom_target(update-golden
   COMMAND velora-offline-render ${_render_args} --out ${_golden}/golden.wav
+  DEPENDS velora-offline-render)
+# Same for the organ percussion golden: cmake --build build --target update-organ-percussion-golden
+add_custom_target(update-organ-percussion-golden
+  COMMAND velora-offline-render ${_perc_args} --out ${_perc}/organ_percussion.wav
   DEPENDS velora-offline-render)
 
 # --- sample engine against the sfizz oracle (Story 1.15) ----------------------------------------------

@@ -1,0 +1,7 @@
+# Null-test case for the organ percussion and key click golden render (Story 2.3).
+# -100 dB residual: far below any audible or behavioural difference (a changed key click level lands near -50 dB),
+# loose enough for libm/FMA differences between macOS and Linux builds.
+reference=organ_percussion.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
