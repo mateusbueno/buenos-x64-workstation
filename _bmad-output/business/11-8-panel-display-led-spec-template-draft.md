@@ -14,7 +14,7 @@ Source key (paths relative to repo root):
 |---|---|---|---|---|
 | 1.1 | Layout | Panel layout A: left lockup, MASTER, ROTARY STOP, S/F, wheels below; mixer zone 9 faders (1-8 + REV) + DRAWBARS/MIXER toggle, 8 part/scene buttons + PARTS/SCENES toggle; centre 7" display; navigation column LIVE SET ◀ ▶, SCENE ◀ ▶, VALUE encoder, EXIT · MENU · WRITE; right 8 encoders in two rows + PART/ALL/ASSIGN toggle | DESIGN:609 ; mockup `ux-designs/ux-buenos-x64-workstation-2026-10-18/mockups/panel-v2.html` (draws MASTER as an encoder; 2-LED knob toggle is superseded by 3-state) | Render package version/date handed over: ____ |
 | 1.2 | Legend language | English only; uppercase; rotary controls read ROTARY; no third-party trademarks | DESIGN:194-197, DESIGN:682 ; HWP:38 ; EPICS:282 (NFR29) | — |
-| 1.3 | Legend cap height | >= 2.5 mm ("final mm with the hardware partner") | DESIGN:197, DESIGN:706 ; HWI:56 ; EPICS:295 (NFR36) | Final cap height (mm): ____ |
+| 1.3 | Legend cap height | >= 2.5 mm ("final mm with the hardware partner") | DESIGN:197, DESIGN:706 ; HWI:58 ; EPICS:295 (NFR36) | Final cap height (mm): ____ |
 | 1.4 | Legend letter-spacing | 0.17em | DESIGN:194-196 | Typeface for legends (stand-in is Gill Sans, final face pending): ____ |
 | 1.5 | Legend colour | `panel-legend` #3b413d | DESIGN:53 | Ink product / Pantone / RAL ref: ____ |
 | 1.6 | Legend contrast | >= 5:1 against the darkest aluminium stop (DESIGN table lists 5.06:1 on alu-low) | DESIGN:706, DESIGN:562 | Measured on sample: ____ |
