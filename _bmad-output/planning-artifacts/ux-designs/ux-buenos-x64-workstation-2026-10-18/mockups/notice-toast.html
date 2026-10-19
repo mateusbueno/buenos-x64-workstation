@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Notice Toast</title>
+<style>
+  /* Sálvia tokens (DESIGN.md colors). Stage = dark set, Studio theme = light set.
+     dark:  bg #0b0d0c surface #151917 raised #202622 line #2b322e line-strong #5a6860 text #e7ebe8 muted #88938c accent #9fbaa8 on-accent #0b0d0c warn #cdb86c
+     light: bg #f2f4f2 surface #e3e8e4 raised #ffffff line #cbd4cd line-strong #728a77 text #131714 muted #5a635c accent #466853 on-accent #f2f4f2 warn #725f1e */
+  * { box-sizing:border-box; }
+  body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
+  .wrap { max-width:1120px; margin:auto; padding:28px 16px 60px; }
+  h1 { font-size:22px; font-weight:500; margin:0 0 6px; } h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:34px 0 6px; }
+  p { color:#555; max-width:880px; margin:0 0 12px; }
+  .frame { background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab); padding:12px; border-radius:12px; }
+  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; position:relative; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; background:var(--bg); color:var(--text); container-type:inline-size; }
+  .dark { --bg:#0b0d0c; --surface:#151917; --raised:#202622; --line:#2b322e; --line-strong:#5a6860; --text:#e7ebe8; --muted:#88938c; --accent:#9fbaa8; --on:#0b0d0c; --warn:#cdb86c; }
+  .light { --bg:#f2f4f2; --surface:#e3e8e4; --raised:#ffffff; --line:#cbd4cd; --line-strong:#728a77; --text:#131714; --muted:#5a635c; --accent:#466853; --on:#f2f4f2; --warn:#725f1e; }
+  .notes { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:10px; margin-top:12px; }
+  .notes div { background:#fff; border:1px solid #d6d4cf; border-radius:8px; padding:10px 12px; font-size:13px; color:#444; }
+  .notes ul { margin:4px 0 0; padding-left:18px; } .notes li { margin:3px 0; }
+  .cap { font-size:12px; color:#666; margin:6px 2px 0; }
+
+  .ui { position:absolute; inset:0; --px:calc(100cqw / 1024); display:grid; }
+  .ui.perf { grid-template-rows:calc(56*var(--px)) calc(118*var(--px)) calc(72*var(--px)) calc(298*var(--px)) calc(56*var(--px)); }
+  .ui.other { grid-template-rows:calc(56*var(--px)) 1fr calc(56*var(--px)); }
+  .bar { display:flex; align-items:center; justify-content:space-between; padding:0 calc(22*var(--px)); background:var(--surface); color:var(--muted); font-size:calc(15*var(--px)); line-height:1.2; letter-spacing:.25em; text-transform:uppercase; white-space:nowrap; min-width:0; }
+  .bar b { color:var(--text); font-weight:400; }
+  .bar .modes { display:flex; gap:calc(26*var(--px)); align-items:center; letter-spacing:.06em; font-size:calc(20*var(--px)); font-weight:700; }
+  .bar .modes .on { color:var(--accent); border-bottom:calc(2*var(--px)) solid var(--accent); padding-bottom:calc(2*var(--px)); }
+  .bar .modes .tempo { font-weight:400; font-size:calc(15*var(--px)); }
+  .hero { display:grid; grid-template-columns:1fr auto; align-items:center; padding:0 calc(22*var(--px)); border-bottom:1px solid var(--line); min-width:0; }
+  .hero small { display:block; color:var(--muted); font-size:calc(15*var(--px)); letter-spacing:.25em; }
+  .hero .ls { font-size:calc(53*var(--px)); line-height:1.2; }
+  .hero .next { text-align:right; font-size:calc(15*var(--px)); color:var(--muted); letter-spacing:.25em; }
+  .hero .next b { display:block; color:var(--text); font-size:calc(22*var(--px)); font-weight:400; letter-spacing:0; line-height:1.2; }
+  .hero .next i { font-style:normal; color:var(--accent); letter-spacing:.06em; font-size:calc(14*var(--px)); }
+  .scenes { display:grid; grid-template-columns:repeat(8,1fr); gap:calc(12*var(--px)); padding:0 calc(22*var(--px)); align-items:center; }
+  .scenes div { height:calc(72*var(--px)); border:1px solid var(--line); border-radius:calc(8*var(--px)); display:flex; flex-direction:column; justify-content:center; padding:0 calc(10*var(--px)); font-size:calc(16*var(--px)); line-height:1.2; background:var(--surface); white-space:nowrap; overflow:hidden; }
+  .scenes div small { color:var(--muted); font-size:calc(12*var(--px)); letter-spacing:.12em; text-transform:uppercase; }
+  .scenes .cur { background:var(--accent); color:var(--on); border-color:var(--accent); } .scenes .cur small { color:var(--on); }
+  .scenes .empty { background:transparent; color:var(--muted); border:calc(2*var(--px)) dashed var(--line-strong); }
+  .parts { display:grid; grid-template-columns:repeat(8,1fr); gap:calc(12*var(--px)); padding:calc(12*var(--px)) calc(22*var(--px)); min-height:0; }
+  .p { background:var(--surface); border-radius:calc(8*var(--px)); padding:calc(10*var(--px)); display:flex; flex-direction:column; border:calc(2*var(--px)) solid transparent; min-height:0; overflow:hidden; }
+  .p.sel { border:calc(3*var(--px)) solid var(--accent); background:var(--raised); padding:calc(9*var(--px)); }
+  .p .n { font-size:calc(12*var(--px)); color:var(--muted); letter-spacing:.12em; display:flex; justify-content:space-between; align-items:center; }
+  .p .n i { width:calc(10*var(--px)); height:calc(10*var(--px)); border-radius:50%; background:var(--accent); display:inline-block; }
+  .p.off .n i { background:transparent; border:calc(2*var(--px)) solid var(--line-strong); }
+  .p .t { font-size:calc(17*var(--px)); line-height:1.2; margin:calc(6*var(--px)) 0 calc(2*var(--px)); } .p .e { font-size:calc(12*var(--px)); color:var(--muted); letter-spacing:.12em; text-transform:uppercase; }
+  .vol { margin-top:auto; height:calc(90*var(--px)); position:relative; background:var(--line-strong); border-radius:calc(5*var(--px)); overflow:hidden; } .vol span { position:absolute; left:0; right:0; bottom:0; background:var(--accent); }
+  .status { display:flex; gap:calc(28*var(--px)); align-items:center; padding:0 calc(22*var(--px)); background:var(--surface); color:var(--muted); font-size:calc(14*var(--px)); line-height:1.2; letter-spacing:.06em; text-transform:uppercase; }
+  .status .ok { color:var(--accent); }
+  .hint { display:flex; gap:calc(30*var(--px)); align-items:center; padding:0 calc(22*var(--px)); background:var(--surface); color:var(--muted); font-size:calc(14*var(--px)); line-height:1.2; letter-spacing:.06em; white-space:nowrap; min-width:0; }
+  .hint b { color:var(--text); font-weight:400; border:1px solid var(--line-strong); border-radius:calc(5*var(--px)); padding:calc(4*var(--px)) calc(10*var(--px)); margin-right:calc(8*var(--px)); letter-spacing:.06em; }
+  .hint .r { margin-left:auto; letter-spacing:.02em; text-transform:none; overflow:hidden; text-overflow:ellipsis; }
+  .cnt { padding:calc(16*var(--px)) calc(22*var(--px)); min-height:0; overflow:hidden; position:relative; }
+  .search { display:flex; align-items:center; gap:calc(12*var(--px)); height:calc(56*var(--px)); background:var(--surface); border:calc(2*var(--px)) solid var(--line-strong); border-radius:calc(8*var(--px)); padding:0 calc(14*var(--px)); font-size:calc(20*var(--px)); margin-bottom:calc(12*var(--px)); }
+  .search i { font-style:normal; color:var(--muted); } .search .caret { width:2px; height:calc(26*var(--px)); background:var(--accent); }
+  .chips { display:flex; flex-wrap:nowrap; gap:calc(12*var(--px)); margin-bottom:calc(12*var(--px)); overflow:hidden; }
+  .chips span { font-size:calc(14*var(--px)); line-height:1.2; padding:calc(10*var(--px)) calc(16*var(--px)); border-radius:9999px; background:var(--surface); border:calc(2*var(--px)) solid var(--line-strong); white-space:nowrap; }
+  .chips .on { background:var(--accent); color:var(--on); border-color:var(--accent); }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:calc(12*var(--px)); }
+  .grid div { background:var(--surface); border-radius:calc(8*var(--px)); padding:calc(12*var(--px)) calc(16*var(--px)); font-size:calc(19*var(--px)); line-height:1.2; min-height:calc(72*var(--px)); border:calc(3*var(--px)) solid transparent; position:relative; }
+  .grid div small { display:block; color:var(--muted); font-size:calc(12*var(--px)); letter-spacing:.12em; text-transform:uppercase; margin-top:calc(4*var(--px)); }
+  .grid .sel { border-color:var(--accent); background:var(--raised); }
+  .grid em { font-style:normal; color:var(--accent); position:absolute; right:calc(14*var(--px)); top:calc(10*var(--px)); }
+
+  /* Notice Toast */
+  .toastlayer { position:absolute; left:0; right:0; bottom:calc(64*var(--px)); display:flex; justify-content:center; pointer-events:none; padding:0 calc(22*var(--px)); z-index:3; }
+  .toast { display:inline-flex; align-items:center; min-height:calc(56*var(--px)); max-width:calc(720*var(--px)); background:var(--raised); color:var(--text); border:calc(2*var(--px)) solid var(--line-strong); border-radius:9999px; font-size:calc(14*var(--px)); line-height:1.25; letter-spacing:.06em; padding:0 calc(8*var(--px)) 0 calc(26*var(--px)); gap:0; }
+  .toast .msg { padding:calc(8*var(--px)) 0; }
+  .toast .sep { margin:0 calc(12*var(--px)); color:var(--muted); }
+  .toast .act { color:var(--accent); display:inline-flex; align-items:center; min-height:calc(56*var(--px)); min-width:calc(56*var(--px)); padding:calc(8*var(--px)) calc(18*var(--px)) calc(8*var(--px)) calc(4*var(--px)); text-decoration:underline; text-underline-offset:calc(4*var(--px)); text-decoration-thickness:calc(1.5*var(--px)); }
+  .toast.noact { padding-right:calc(26*var(--px)); }
+  .toast .bright { display:inline-flex; align-items:center; gap:calc(16*var(--px)); }
+  .toast .pb { width:calc(240*var(--px)); height:calc(10*var(--px)); border-radius:9999px; background:var(--line); overflow:hidden; position:relative; flex:none; } .toast .pb span { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:9999px; }
+  .toast .pct { font-variant-numeric:tabular-nums; min-width:calc(44*var(--px)); text-align:right; }
+  .toast.pressed { border:calc(3*var(--px)) solid var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Notice Toast: avisos não modais</h1>
+<p>Cinco variantes (USB encontrado, atualização encontrada, overlay de brilho, “Updated to n” e aviso de rollback) nos temas Stage (escuro) e Studio (claro), sobre a Performance e sobre uma tela que não é Performance. Tokens: <code>components.notice-toast</code> (raised, borda line-strong, texto text, ação accent, raio full, tipo status). Textos do teclado em inglês.</p>
+<h2>USB drive found · Import? · Stage (escuro) · Performance</h2><div class="frame"><div class="scr dark"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">USB drive found</span><span class="sep">·</span><span class="act">Import?</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Status/Dicas; Live Set Hero e faixa de Cenas livres.</div>
+<h2>USB drive found · Import? · Studio (claro) · Library (superfície que não é Performance)</h2><div class="frame"><div class="scr light"><div class="ui other">
+  <div class="bar"><span>Library · Choose timbre for <b>Part 3</b></span><span>1,284 timbres · 412 GB</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>strings<span class="caret"></span></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Piano</span><span>E.Piano</span><span>Organ</span><span class="on">Strings</span><span>Brass</span><span>Choir &amp; Vocal</span><span>Synth Pad</span><span>World</span></div>
+    <div class="grid">
+      <div class="sel">Chamber Strings<small>Strings · Factory</small><em>★</em></div><div>Cinematic Strings<small>Strings · Factory</small></div><div>Solo Cello<small>Strings · Factory</small></div>
+      <div>Pizzicato Ensemble<small>Strings · Factory</small></div><div>Strings Legato Pro<small>Strings · Imported</small></div><div>Vintage String Machine<small>Strings · Factory</small></div>
+      <div>Violin Section<small>Strings · Imported</small></div><div>Strings Tremolo<small>Strings · Factory</small></div><div>Brazilian Viola<small>Strings · Imported</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>preview</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">USB drive found</span><span class="sep">·</span><span class="act">Import?</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Dicas, sobre a área de conteúdo.</div>
+<h2>Update 1.3 found · Open? · Studio (claro) · Performance</h2><div class="frame"><div class="scr light"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">Update 1.3 found</span><span class="sep">·</span><span class="act">Open?</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Status/Dicas; Live Set Hero e faixa de Cenas livres.</div>
+<h2>Update 1.3 found · Open? · Stage (escuro) · Library (superfície que não é Performance)</h2><div class="frame"><div class="scr dark"><div class="ui other">
+  <div class="bar"><span>Library · Choose timbre for <b>Part 3</b></span><span>1,284 timbres · 412 GB</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>strings<span class="caret"></span></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Piano</span><span>E.Piano</span><span>Organ</span><span class="on">Strings</span><span>Brass</span><span>Choir &amp; Vocal</span><span>Synth Pad</span><span>World</span></div>
+    <div class="grid">
+      <div class="sel">Chamber Strings<small>Strings · Factory</small><em>★</em></div><div>Cinematic Strings<small>Strings · Factory</small></div><div>Solo Cello<small>Strings · Factory</small></div>
+      <div>Pizzicato Ensemble<small>Strings · Factory</small></div><div>Strings Legato Pro<small>Strings · Imported</small></div><div>Vintage String Machine<small>Strings · Factory</small></div>
+      <div>Violin Section<small>Strings · Imported</small></div><div>Strings Tremolo<small>Strings · Factory</small></div><div>Brazilian Viola<small>Strings · Imported</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>preview</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">Update 1.3 found</span><span class="sep">·</span><span class="act">Open?</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Dicas, sobre a área de conteúdo.</div>
+<h2>Brightness overlay (label + Progress Bar) · Stage (escuro) · Performance</h2><div class="frame"><div class="scr dark"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast noact " role="status"><span class="bright"><span class="msg">Brightness</span><span class="pb"><span style="width:70%"></span></span><span class="pct">70%</span></span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Status/Dicas; Live Set Hero e faixa de Cenas livres.</div>
+<h2>Brightness overlay (label + Progress Bar) · Studio (claro) · Library (superfície que não é Performance)</h2><div class="frame"><div class="scr light"><div class="ui other">
+  <div class="bar"><span>Library · Choose timbre for <b>Part 3</b></span><span>1,284 timbres · 412 GB</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>strings<span class="caret"></span></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Piano</span><span>E.Piano</span><span>Organ</span><span class="on">Strings</span><span>Brass</span><span>Choir &amp; Vocal</span><span>Synth Pad</span><span>World</span></div>
+    <div class="grid">
+      <div class="sel">Chamber Strings<small>Strings · Factory</small><em>★</em></div><div>Cinematic Strings<small>Strings · Factory</small></div><div>Solo Cello<small>Strings · Factory</small></div>
+      <div>Pizzicato Ensemble<small>Strings · Factory</small></div><div>Strings Legato Pro<small>Strings · Imported</small></div><div>Vintage String Machine<small>Strings · Factory</small></div>
+      <div>Violin Section<small>Strings · Imported</small></div><div>Strings Tremolo<small>Strings · Factory</small></div><div>Brazilian Viola<small>Strings · Imported</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>preview</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
+  <div class="toastlayer"><div class="toast noact " role="status"><span class="bright"><span class="msg">Brightness</span><span class="pb"><span style="width:70%"></span></span><span class="pct">70%</span></span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Dicas, sobre a área de conteúdo.</div>
+<h2>Updated to 1.3 · Studio (claro) · Performance</h2><div class="frame"><div class="scr light"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast noact " role="status"><span class="msg">Updated to 1.3</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Status/Dicas; Live Set Hero e faixa de Cenas livres.</div>
+<h2>Updated to 1.3 · Stage (escuro) · Library (superfície que não é Performance)</h2><div class="frame"><div class="scr dark"><div class="ui other">
+  <div class="bar"><span>Library · Choose timbre for <b>Part 3</b></span><span>1,284 timbres · 412 GB</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>strings<span class="caret"></span></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Piano</span><span>E.Piano</span><span>Organ</span><span class="on">Strings</span><span>Brass</span><span>Choir &amp; Vocal</span><span>Synth Pad</span><span>World</span></div>
+    <div class="grid">
+      <div class="sel">Chamber Strings<small>Strings · Factory</small><em>★</em></div><div>Cinematic Strings<small>Strings · Factory</small></div><div>Solo Cello<small>Strings · Factory</small></div>
+      <div>Pizzicato Ensemble<small>Strings · Factory</small></div><div>Strings Legato Pro<small>Strings · Imported</small></div><div>Vintage String Machine<small>Strings · Factory</small></div>
+      <div>Violin Section<small>Strings · Imported</small></div><div>Strings Tremolo<small>Strings · Factory</small></div><div>Brazilian Viola<small>Strings · Imported</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>preview</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
+  <div class="toastlayer"><div class="toast noact " role="status"><span class="msg">Updated to 1.3</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Dicas, sobre a área de conteúdo.</div>
+<h2>Update did not finish. Still on 1.2 · Try again in Settings › System &amp; Update. · Stage (escuro) · Performance</h2><div class="frame"><div class="scr dark"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">Update did not finish. Still on 1.2</span><span class="sep">·</span><span class="act">Try again in Settings › System &amp; Update.</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Status/Dicas; Live Set Hero e faixa de Cenas livres.</div>
+<h2>Update did not finish. Still on 1.2 · Try again in Settings › System &amp; Update. · Studio (claro) · Library (superfície que não é Performance)</h2><div class="frame"><div class="scr light"><div class="ui other">
+  <div class="bar"><span>Library · Choose timbre for <b>Part 3</b></span><span>1,284 timbres · 412 GB</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>strings<span class="caret"></span></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Piano</span><span>E.Piano</span><span>Organ</span><span class="on">Strings</span><span>Brass</span><span>Choir &amp; Vocal</span><span>Synth Pad</span><span>World</span></div>
+    <div class="grid">
+      <div class="sel">Chamber Strings<small>Strings · Factory</small><em>★</em></div><div>Cinematic Strings<small>Strings · Factory</small></div><div>Solo Cello<small>Strings · Factory</small></div>
+      <div>Pizzicato Ensemble<small>Strings · Factory</small></div><div>Strings Legato Pro<small>Strings · Imported</small></div><div>Vintage String Machine<small>Strings · Factory</small></div>
+      <div>Violin Section<small>Strings · Imported</small></div><div>Strings Tremolo<small>Strings · Factory</small></div><div>Brazilian Viola<small>Strings · Imported</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>preview</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">Update did not finish. Still on 1.2</span><span class="sep">·</span><span class="act">Try again in Settings › System &amp; Update.</span></div></div>
+</div></div></div><div class="cap">Toast acima da Barra de Dicas, sobre a área de conteúdo.</div>
+<h2>Large text on Performance · Stage · status-large 18 px</h2><div class="frame"><div class="scr dark"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">USB drive found</span><span class="sep">·</span><span class="act">Import?</span></div></div>
+</div></div></div><div class="cap">Com Large text ligado o toast usa {typography.status-large} (18 px); a pílula cresce em largura, nunca invade Hero nem Cenas.</div>
+<h2>Regra de espera · ASSIGN Overlay aberto · Stage · Performance</h2><div class="frame"><div class="scr dark"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div style="position:absolute;left:calc(22*var(--px));right:calc(22*var(--px));top:calc(246*var(--px));height:calc(298*var(--px));background:var(--raised);border:calc(2*var(--px)) solid var(--accent);border-radius:calc(8*var(--px));padding:calc(16*var(--px));display:grid;grid-template-columns:repeat(4,1fr);gap:calc(12*var(--px));align-content:center;z-index:2"><div style="background:var(--surface);border:calc(2*var(--px)) solid var(--line);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K1</div><div style="font-size:calc(16*var(--px));line-height:1.2">Delay</div></div><div style="background:var(--surface);border:calc(2*var(--px)) solid var(--line);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K2</div><div style="font-size:calc(16*var(--px));line-height:1.2">Brightness</div></div><div style="background:var(--raised);border:calc(3*var(--px)) solid var(--accent);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K3</div><div style="font-size:calc(16*var(--px));line-height:1.2">Attack</div></div><div style="background:var(--surface);border:calc(2*var(--px)) solid var(--line);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K4</div><div style="font-size:calc(16*var(--px));line-height:1.2">Release</div></div><div style="background:var(--surface);border:calc(2*var(--px)) solid var(--line);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K5</div><div style="font-size:calc(16*var(--px));line-height:1.2">Low</div></div><div style="background:var(--surface);border:calc(2*var(--px)) solid var(--line);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K6</div><div style="font-size:calc(16*var(--px));line-height:1.2">Mid</div></div><div style="background:var(--surface);border:calc(2*var(--px)) solid var(--line);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K7</div><div style="font-size:calc(16*var(--px));line-height:1.2">Mid Freq</div></div><div style="background:var(--surface);border:calc(2*var(--px)) solid var(--line);border-radius:calc(8*var(--px));padding:calc(8*var(--px)) calc(10*var(--px))"><div style="font-size:calc(12*var(--px));letter-spacing:.12em;color:var(--muted)">K8</div><div style="font-size:calc(16*var(--px));line-height:1.2">High</div></div></div>
+</div></div></div><div class="cap">Um knob girado em ASSIGN abre o Overlay (3 s, reinicia a cada giro). Um Toast que chegou agora (ex.: USB inserido) fica na fila e NÃO aparece; surge quando o Overlay fecha, e só então começam os 8 s.</div>
+<h2>Pseudo-localização +40% · acentos maiúsculos · ÁÇÊÕÑ Ação</h2>
+<div class="frame"><div class="scr dark"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">ÚSB drívé fõúñd ñéçãõñ ÁÇÊÕÑ Ação</span><span class="sep">·</span><span class="act">Ímpõrt? ñéç</span></div></div>
+</div></div></div><div class="cap">Stage · Performance · “USB drive found · Import?” +40% mais ÁÇÊÕÑ Ação.</div>
+<div class="frame"><div class="scr light"><div class="ui other">
+  <div class="bar"><span>Library · Choose timbre for <b>Part 3</b></span><span>1,284 timbres · 412 GB</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>strings<span class="caret"></span></div>
+    <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Piano</span><span>E.Piano</span><span>Organ</span><span class="on">Strings</span><span>Brass</span><span>Choir &amp; Vocal</span><span>Synth Pad</span><span>World</span></div>
+    <div class="grid">
+      <div class="sel">Chamber Strings<small>Strings · Factory</small><em>★</em></div><div>Cinematic Strings<small>Strings · Factory</small></div><div>Solo Cello<small>Strings · Factory</small></div>
+      <div>Pizzicato Ensemble<small>Strings · Factory</small></div><div>Strings Legato Pro<small>Strings · Imported</small></div><div>Vintage String Machine<small>Strings · Factory</small></div>
+      <div>Violin Section<small>Strings · Imported</small></div><div>Strings Tremolo<small>Strings · Factory</small></div><div>Brazilian Viola<small>Strings · Imported</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>preview</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
+  <div class="toastlayer"><div class="toast " role="status"><span class="msg">Úpdáté díd ñõt fíñísh. Stíll õñ 1.2 ñéçãõñéçãõñéçã</span><span class="sep">·</span><span class="act">Try ágáíñ íñ Séttíñgs › Systém &amp; Úpdáté. ñéçãõñéçãõñéçãõñ</span></div></div>
+</div></div></div><div class="cap">Studio · Library · mensagem de rollback +40%: a largura máxima do Toast é 720 px, então quebra em duas linhas e a pílula cresce para cima e continua acima da Barra de Dicas.</div>
+<div class="frame"><div class="scr dark"><div class="ui perf">
+  <div class="bar"><span>Setlist · Wedding Ana &amp; Pedro · 3 / 12</span><span class="modes"><span>Mixer</span><span class="on">Parts</span><span>Knobs Part 1</span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● READY</i></div></div>
+  <div class="scenes"><div>1<small>Intro</small></div><div>2<small>Verse</small></div><div class="cur">3<small>Chorus</small></div><div>4<small>Bridge</small></div><div>5<small>Solo</small></div><div>6<small>Outro</small></div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts"><div class="p sel"><div class="n"><span>PART 1</span><i></i></div><div class="t">Grand Piano</div><div class="e">Piano</div><div class="vol"><span style="height:82%"></span></div></div><div class="p"><div class="n"><span>PART 2</span><i></i></div><div class="t">Rhodes Mk1</div><div class="e">E.Piano</div><div class="vol"><span style="height:70%"></span></div></div><div class="p"><div class="n"><span>PART 3</span><i></i></div><div class="t">Chamber Strings</div><div class="e">Strings</div><div class="vol"><span style="height:60%"></span></div></div><div class="p"><div class="n"><span>PART 4</span><i></i></div><div class="t">Hammond B3</div><div class="e">Organ</div><div class="vol"><span style="height:75%"></span></div></div><div class="p"><div class="n"><span>PART 5</span><i></i></div><div class="t">Upright Bass</div><div class="e">Bass</div><div class="vol"><span style="height:66%"></span></div></div><div class="p"><div class="n"><span>PART 6</span><i></i></div><div class="t">Warm Pad</div><div class="e">Synth Pad</div><div class="vol"><span style="height:48%"></span></div></div><div class="p off"><div class="n"><span>PART 7</span><i></i></div><div class="t">Solo Brass</div><div class="e">Brass</div><div class="vol" style="background:transparent;border:calc(2*var(--px)) solid var(--line-strong);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:calc(12*var(--px));letter-spacing:.12em">OFF</div></div><div class="p"><div class="n"><span>PART 8</span><i></i></div><div class="t">Choir Ah</div><div class="e">Choir</div><div class="vol"><span style="height:55%"></span></div></div></div>
+  <div class="status"><span>Voices 142 / 256</span><span class="ok">● Library ok</span></div>
+  <div class="toastlayer"><div class="toast noact " role="status"><span class="bright"><span class="msg">ÁÇÊÕÑ Ação · Bríghtñéss ñéçã</span><span class="pb"><span style="width:70%"></span></span><span class="pct">70 %</span></span></div></div>
+</div></div></div><div class="cap">Stage · Performance · overlay de brilho com rótulo +40% e ÁÇÊÕÑ Ação.</div>
+<h2>Estados do Toast (detalhe)</h2><div class="frame"><div class="scr dark" style="aspect-ratio:1024/260"><div class="ui" style="display:flex;flex-direction:column;gap:calc(18*var(--px));justify-content:center;align-items:flex-start;padding:0 calc(40*var(--px))">
+      <div style="display:flex;gap:calc(24*var(--px));align-items:center"><div class="toast" style="position:static"><span class="msg">USB drive found</span><span class="sep">·</span><span class="act">Import?</span></div><span style="font-size:calc(14*var(--px));color:var(--muted)">Repouso: borda line-strong 2 px, fundo raised.</span></div>
+      <div style="display:flex;gap:calc(24*var(--px));align-items:center"><div class="toast pressed" style="position:static"><span class="msg">USB drive found</span><span class="sep">·</span><span class="act">Import?</span></div><span style="font-size:calc(14*var(--px));color:var(--muted)">Tocado: borda accent 3 px (seleção), timer de 8 s pausado enquanto o dedo está na tela.</span></div>
+      <div style="display:flex;gap:calc(24*var(--px));align-items:center"><div class="toast noact" style="position:static"><span class="msg">Updated to 1.3</span></div><span style="font-size:calc(14*var(--px));color:var(--muted)">Informativo: sem ação, tocar apenas dispensa.</span></div>
+    </div></div></div>
+<div class="notes">
+<div><b>Posição e camadas (UX-DR10)</b><ul>
+<li>Pílula centralizada, base 8 px acima da Barra de Status (Performance) ou da Barra de Dicas (demais telas), altura mínima 56 px.</li>
+<li>Nunca cobre o Live Set Hero nem a faixa de Cenas; cresce para cima apenas dentro da área de Partes/conteúdo (máx. 2 linhas).</li>
+<li>O ASSIGN Overlay tem precedência: o Toast espera na fila até o Overlay fechar.</li></ul></div>
+<div><b>Toque</b><ul>
+<li>A pílula inteira é alvo (altura ≥ 56 px); a ação (“Import?”, “Open?”, “Try again…”) tem área ≥ 56 × 56 px e não encosta em outro alvo.</li>
+<li>Tocar na ação abre a superfície (Import, Settings › System &amp; Update); o Toast nunca abre nada sozinho e nunca toma o foco do VALUE.</li>
+<li>Tocar fora da ação dispensa. Ações com “?” são reforçadas por sublinhado (não só cor).</li></ul></div>
+<div><b>Tempo e dispensa</b><ul>
+<li>Auto-dispensa em 8 s, pausada enquanto tocado; ao soltar, retoma o tempo restante.</li>
+<li>EXIT dispensa o Toast (um Toast visível consome o primeiro EXIT).</li>
+<li>MENU › Import continua o caminho persistente após o Toast sumir. Movimento reduzido: aparece no lugar, sem animação.</li></ul></div>
+<div><b>Overlay de brilho</b><ul>
+<li>Segurar EXIT e girar VALUE mostra “Brightness” + Progress Bar + valor numérico; nunca sobre o Hero.</li>
+<li>O nível também está no texto (70%); a faixa é complemento, não a única informação.</li></ul></div>
+<div><b>Contraste</b><ul>
+<li>Texto/raised: 12,8 (Stage) · 18,1 (Studio). Ação accent/raised: 7,4 · 6,2. Borda line-strong/surface: 3,03 · 3,01 (≥ 3:1).</li>
+<li>Trilha da Progress Bar (line) sobre raised fica abaixo de 3:1; o nível é lido pelo preenchimento accent (7,4 · 6,2) e pelo número.</li></ul></div>
+<div><b>Pseudo-localização</b><ul>
+<li>+40% com maiúsculas acentuadas e ÁÇÊÕÑ Ação: line-height ≥ 1,2, sem corte; mensagem longa quebra em 2 linhas.</li></ul></div>
+</div>
+</div>
+</body>
+</html>

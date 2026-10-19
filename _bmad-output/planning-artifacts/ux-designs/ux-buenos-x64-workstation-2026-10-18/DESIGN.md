@@ -641,12 +641,12 @@ Visual specs; behavior lives in EXPERIENCE.md Component Patterns. Tokens in fron
 | **Progress Bar** | Thin pill track in line, accent fill; used for import, firmware update, transfer and boot. |
 | **Write Dialog** | Title "Write changes?", scope options (Scene · Whole Live Set · Save as new…; an unavailable scope in muted with a one-line reason), name field, muted "Changed: …" line, `EXIT · Cancel` and accent-filled `WRITE · Yes`. |
 | **Unsaved Indicator** | A `◆` in warn immediately after the Live Set name in the Live Set Hero (and after the name in Velora Studio's Live Set header); no text, no dialog. |
-| **Notice Toast** | Non-modal pill on raised with `line-strong` border: message in text (`USB drive found`), separator `·`, action in accent (`Import?`). Also hosts the brightness overlay (label + Progress Bar). Never covers the Live Set Hero or Scene strip. |
+| **Notice Toast** | Non-modal pill on raised with `line-strong` border: message in text (`USB drive found`), separator `·`, action in accent (`Import?`). Also hosts the brightness overlay (label + Progress Bar). Never covers the Live Set Hero or Scene strip. → [notice-toast.html](mockups/notice-toast.html) |
 | **Launcher Grid** | 7 tiles (list in EXPERIENCE.md IA), tile label in `{typography.tile-label}`, each ≥ `{spacing.touch-target-min}`; highlighted tile raised + accent border. |
 | **ASSIGN Overlay** | Card over the part area listing K1–K8 (meta caps) with the assigned parameter name under each in `{typography.tile-label}`; the turned knob's slot raised with accent border. |
 | **Segmented Control** | Inline options (e.g. Stage / Studio, Full / Safe / Off, On / Off) with `line-strong` outline; active segment accent-filled. Also the on/off control in Settings. |
 | **On-screen Keyboard** | Locale layout with accented letters reachable, keys ≥ `{spacing.touch-target-min}` on raised with `line-strong` edge, Done key accent-filled. |
-| **Category Picker** | Raised panel with the 17 categories as a grid of full localized labels; highlighted tile accent-bordered; "Apply to all" row in Import batches. |
+| **Category Picker** | Raised panel with the 17 categories as a grid of full localized labels; highlighted tile accent-bordered; "Apply to all" row in Import batches. → [category-picker.html](mockups/category-picker.html) |
 | **Action Sheet** | Raised card, `{rounded.lg}`, title in `{typography.modal-title}`, 2–4 actions as rows ≥ 56 px with their control (`WRITE · Replace timbre`, `EXIT · Cancel`); used for missing-library choices, pairing code, firmware install and `★ Add to Favorites` (long press on a Result Tile). |
 | **Boot Screen** | Centered symbol and VELORA on bg, thin Progress Bar, muted status (`RESTORING · PERFECT · SCENE 2`, `UPDATING TO 1.3`). |
 | **Studio Title Bar** | App name, connection status in ok (`● VELORA 73 · CONNECTED VIA USB · PAIRED`), buttons Import, Backup, Primary Button "Write to Velora". |

@@ -179,12 +179,12 @@ Behavioral. Visual specs in DESIGN.md Components (same names). Timings and press
 | Progress Bar | Import: "Importing n of m · name · converting & verifying (lossless)"; also firmware update, library transfer and boot. |
 | Write Dialog | Lists what changed; scope Scene / Whole Live Set / Save as new…; WRITE confirms, EXIT cancels. Scene scope is unavailable when the edits include a timbre change ("Timbre changes are saved with the Live Set"). Save as new suggests a free name ("Perfect 2") if the name exists. |
 | Unsaved Indicator | `◆` after the Live Set name while the Live Set has edits not yet written. Edits stay in memory across scene and Live Set changes until Write or power-off; Write writes the current Live Set only (open another Live Set to write it). No confirmation dialog ever interrupts performance. |
-| Notice Toast | Non-modal; never takes focus or opens a surface by itself. Touch acts on it; it dismisses after 8 s (paused while touched) or on EXIT; MENU › Import stays the persistent path. Also shows the brightness level during the quick path. |
+| Notice Toast | Non-modal; never takes focus or opens a surface by itself. Touch acts on it; it dismisses after 8 s (paused while touched) or on EXIT; MENU › Import stays the persistent path. Also shows the brightness level during the quick path. → [notice-toast.html](mockups/notice-toast.html) |
 | Launcher Grid | Opened by MENU; VALUE moves the highlight, WRITE or touch opens the tile; MENU or EXIT closes to the surface it was opened from. |
 | ASSIGN Overlay | In ASSIGN, turning any encoder shows K1–K8 with their assigned parameter names; purely informational, sound is never blocked. |
 | Segmented Control | VALUE changes the highlighted setting; touch selects directly. Used for every on/off and multi-choice setting. |
 | On-screen Keyboard | Opens for text entry (search, names); locale layout with accented letters; WRITE or Done confirms, EXIT closes it keeping the typed text. Playing keys still sounds. |
-| Category Picker | 17 categories with full localized labels; VALUE + WRITE or touch picks; in Import, "Apply one category to all" sets every row in a batch. |
+| Category Picker | 17 categories with full localized labels; VALUE + WRITE or touch picks; in Import, "Apply one category to all" sets every row in a batch. → [category-picker.html](mockups/category-picker.html) |
 | Action Sheet | A short choice raised by a player action (missing library: Replace timbre / Import; pairing code; install update; `★ Add to Favorites` on long press of a Result Tile); WRITE confirms the highlighted action, EXIT cancels. Never appears unprompted during performance. |
 | Boot Screen | Says what is being restored (Live Set · Scene); ends on Performance with that sound playable. |
 | Studio Title Bar | Shows connection state; Import, Backup, and "Write to Velora" (same scopes as the device Write Dialog). |
