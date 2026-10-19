@@ -54,7 +54,7 @@ development_status:
   1-16-instrument-heads-decoded-into-locked-ram-at-load: backlog
   1-17-streaming-from-nvme-ahead-of-the-playhead: backlog
   1-18-parallel-voice-render-on-the-three-isolated-cores: backlog
-  1-19-voice-pool-arbiter-with-the-sample-floor: backlog
+  1-19-voice-pool-arbiter-with-the-sample-floor: done
   1-20-timestamped-event-path-from-a-usb-midi-keyboard: backlog
   1-21-in-ram-diagnostics-counters-and-latency-histogram: backlog
   1-22-24-hour-soak-gate-on-the-dev-board: backlog

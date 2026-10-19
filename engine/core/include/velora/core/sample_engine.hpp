@@ -70,8 +70,8 @@ class SampleEngine final : public Engine {
   std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation); }
   std::uint32_t voice_capacity() const noexcept override { return capacity_; }
 
-  // Starts a voice per matching region. kPoolExhausted when at least one matching region found no
-  // free voice; kOk otherwise (also when no region matches: nothing to play is not an error).
+  // Starts a voice per matching region. Voice slots come from the pool arbiter when one is attached
+  // (it may steal); kPoolExhausted when at least one matching region found no slot; kOk otherwise (also when no region matches: nothing to play is not an error).
   EngineStatus start_voice(std::uint32_t channel, std::uint32_t note,
                            std::uint32_t velocity16) noexcept VELORA_NONBLOCKING override;
   // Releases the note's voices and fires its release-trigger regions. kVoiceNotFound when the note
@@ -81,6 +81,7 @@ class SampleEngine final : public Engine {
   void set_param(std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
   void render(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
   bool voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept VELORA_NONBLOCKING override;
+  bool begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept VELORA_NONBLOCKING override;
 
   std::uint32_t active_voices() const noexcept;
   SampleInterpolation interpolation() const noexcept { return cfg_.interpolation; }
@@ -129,6 +130,8 @@ class SampleEngine final : public Engine {
     bool key_up = false;           // a note off arrived but the voice keeps playing (one_shot)
     bool ended = false;            // sample data exhausted: fast release in progress
     bool stalled = false;          // oracle_block_frames emulation: the one-frame hold already happened
+    bool stolen = false;           // fading out under an arbiter steal ramp
+    std::uint32_t fade_left = 0, fade_total = 1;
     std::uint32_t channel = 0, note = 0, region = 0;
     std::uint8_t vel7 = 0;
     std::uint64_t start_time = 0;

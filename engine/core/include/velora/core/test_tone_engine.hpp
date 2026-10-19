@@ -29,12 +29,15 @@ class TestToneEngine final : public Engine {
   void set_param(std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
   void render(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
   bool voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept VELORA_NONBLOCKING override;
+  bool begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept VELORA_NONBLOCKING override;
 
   std::uint32_t active_voices() const noexcept;
 
  private:
   struct Voice {
     bool active = false;
+    bool stolen = false;              // fading out under a steal ramp
+    std::uint32_t fade_left = 0, fade_total = 1;
     VoiceState state = VoiceState::kHeld;
     std::uint32_t channel = 0;
     std::uint32_t note = 0;

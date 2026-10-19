@@ -17,10 +17,11 @@ std::uint32_t TestToneEngine::active_voices() const noexcept {
 
 EngineStatus TestToneEngine::start_voice(std::uint32_t channel, std::uint32_t note,
                                          std::uint32_t velocity16) noexcept {
-  for (std::uint32_t i = 0; i < capacity_; ++i) {
-    Voice& v = voices_[i];
-    if (v.active) continue;
+  const std::uint32_t slot = acquire_slot(channel, note);
+  if (slot != VoiceAllocator::kNoSlot && slot < capacity_) {
+    Voice& v = voices_[slot];
     const float vel = static_cast<float>(velocity16 == 0 ? 1 : velocity16) / 65535.0f;
+    v = Voice{};
     v.active = true;
     v.state = VoiceState::kHeld;
     v.channel = channel;
@@ -32,14 +33,14 @@ EngineStatus TestToneEngine::start_voice(std::uint32_t channel, std::uint32_t no
     v.amp = 0.25f * vel;
     return EngineStatus::kOk;
   }
-  return EngineStatus::kPoolExhausted;  // newest note-on dropped
+  return EngineStatus::kPoolExhausted;  // no free slot and no victim: newest note-on dropped
 }
 
 EngineStatus TestToneEngine::stop_voice(std::uint32_t channel, std::uint32_t note) noexcept {
   bool found = false;
   for (std::uint32_t i = 0; i < capacity_; ++i) {
     Voice& v = voices_[i];
-    if (v.active && v.state == VoiceState::kHeld && v.channel == channel && v.note == note) {
+    if (v.active && !v.stolen && v.state == VoiceState::kHeld && v.channel == channel && v.note == note) {
       v.state = VoiceState::kReleasing;
       found = true;
     }
@@ -60,6 +61,15 @@ void TestToneEngine::render(float* left, float* right, std::uint32_t frames) noe
     Voice& v = voices_[i];
     if (!v.active) continue;
     for (std::uint32_t f = 0; f < frames; ++f) {
+      float fade = 1.0f;
+      if (v.stolen) {  // steal ramp: gain fade_left/fade_total, strictly falling, 0 ends the voice
+        if (v.fade_left == 0) {
+          v.active = false;
+          break;
+        }
+        fade = static_cast<float>(v.fade_left) / static_cast<float>(v.fade_total);
+        --v.fade_left;
+      }
       if (v.state == VoiceState::kReleasing) {
         v.env -= kReleaseStep;
         if (v.env <= 0.0f) {
@@ -70,7 +80,7 @@ void TestToneEngine::render(float* left, float* right, std::uint32_t frames) noe
         v.env += kAttackStep;
         if (v.env > 1.0f) v.env = 1.0f;
       }
-      const float s = std::sin(6.28318530717958647692f * v.phase) * v.env * v.amp * gain_;
+      const float s = std::sin(6.28318530717958647692f * v.phase) * v.env * v.amp * gain_ * fade;
       left[f] += s;
       right[f] += s;
       v.phase += v.inc;
@@ -85,7 +95,18 @@ bool TestToneEngine::voice_info(std::uint32_t slot, VoiceInfo& out) const noexce
   const Voice& v = voices_[slot];
   out.start_time = v.start_time;
   out.level = v.env * v.amp * gain_;
-  out.state = v.state;
+  out.state = v.stolen ? VoiceState::kReleasing : v.state;
+  out.channel = v.channel;
+  out.note = v.note;
+  return true;
+}
+
+bool TestToneEngine::begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept {
+  if (slot >= capacity_ || !voices_[slot].active || voices_[slot].stolen) return false;
+  Voice& v = voices_[slot];
+  v.stolen = true;
+  v.fade_total = ramp_frames == 0 ? 1 : ramp_frames;
+  v.fade_left = v.fade_total;
   return true;
 }
 

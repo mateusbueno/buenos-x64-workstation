@@ -308,14 +308,9 @@ void SampleEngine::env_fast_release(Env& e) const noexcept {
 
 bool SampleEngine::start_region(std::uint32_t region, std::uint32_t channel, std::uint32_t note,
                                 std::uint8_t vel7, bool release_trigger) noexcept {
-  Voice* v = nullptr;
-  for (auto& c : voices_) {
-    if (!c.active) {
-      v = &c;
-      break;
-    }
-  }
-  if (!v) return false;
+  const std::uint32_t slot = acquire_slot(channel, note);
+  if (slot == VoiceAllocator::kNoSlot || slot >= capacity_) return false;
+  Voice* v = &voices_[slot];
   const RegionRt& r = regions_[region];
 
   // Pitch: key tracking (100 cents per key) from pitch_keycenter, tune, transpose; single precision.
@@ -347,7 +342,7 @@ bool SampleEngine::start_region(std::uint32_t region, std::uint32_t channel, std
 bool SampleEngine::playing_attack_voice(const RegionRt& r, std::uint32_t channel) const noexcept {
   // sfizz rule: a release region only fires while an attack voice of a compatible note is alive.
   for (const auto& v : voices_) {
-    if (v.active && !v.release_trigger && v.channel == channel && v.note >= r.d.key_lo && v.note <= r.d.key_hi &&
+    if (v.active && !v.stolen && !v.release_trigger && v.channel == channel && v.note >= r.d.key_lo && v.note <= r.d.key_hi &&
         v.vel7 >= r.d.vel_lo && v.vel7 <= r.d.vel_hi)
       return true;
   }
@@ -389,7 +384,7 @@ EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note)
   channel &= 15u;
   bool found = false;
   for (auto& v : voices_) {
-    if (!v.active || v.release_trigger || v.channel != channel || v.note != note || v.key_up) continue;
+    if (!v.active || v.stolen || v.release_trigger || v.channel != channel || v.note != note || v.key_up) continue;
     const RegionRt& r = regions_[v.region];
     if (v.env.s >= EnvState::kRelease) continue;  // already releasing
     found = true;
@@ -445,6 +440,15 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
 
   const std::uint64_t oracle_n = cfg_.oracle_block_frames;
   for (std::uint32_t f = 0; f < frames; ++f) {
+    float fade = 1.0f;
+    if (v.stolen) {  // steal ramp: gain fade_left/fade_total, strictly falling; 0 frees the voice
+      if (v.fade_left == 0) {
+        v.active = false;
+        return;
+      }
+      fade = static_cast<float>(v.fade_left) / static_cast<float>(v.fade_total);
+      --v.fade_left;
+    }
     if (oracle_n != 0 && !v.stalled) {
       const std::uint64_t abs = clock_ + f;
       if (abs % oracle_n == 0 && abs / oracle_n > v.start_time / oracle_n) {
@@ -515,8 +519,13 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       }
     }
 
-    left[f] += sl * env * gl;
-    right[f] += sr_ * env * gr;
+    if (v.stolen) {
+      left[f] += sl * env * gl * fade;
+      right[f] += sr_ * env * gr * fade;
+    } else {
+      left[f] += sl * env * gl;
+      right[f] += sr_ * env * gr;
+    }
     v.pos += static_cast<double>(v.ratio);
   }
 }
@@ -526,9 +535,20 @@ bool SampleEngine::voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept
   const Voice& v = voices_[slot];
   out.start_time = v.start_time;
   out.level = v.env.v * std::max(v.gain_l, v.gain_r) * gain_;
-  if (v.release_trigger || v.env.s >= EnvState::kRelease) out.state = VoiceState::kReleasing;
+  if (v.stolen || v.release_trigger || v.env.s >= EnvState::kRelease) out.state = VoiceState::kReleasing;
   else if (v.key_up) out.state = VoiceState::kSustained;
   else out.state = VoiceState::kHeld;
+  out.channel = v.channel;
+  out.note = v.note;
+  return true;
+}
+
+bool SampleEngine::begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept {
+  if (slot >= capacity_ || !voices_[slot].active || voices_[slot].stolen) return false;
+  Voice& v = voices_[slot];
+  v.stolen = true;
+  v.fade_total = ramp_frames == 0 ? 1 : ramp_frames;
+  v.fade_left = v.fade_total;
   return true;
 }
 
