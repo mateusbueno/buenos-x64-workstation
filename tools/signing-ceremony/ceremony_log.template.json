@@ -1,0 +1,72 @@
+{
+  "_comment": "Story 6.10 ceremony log template. DRAFT. Every value is null until filled during the ceremony. Do not add values before the event.",
+  "ceremony_id": null,
+  "runbook_version": null,
+  "date_utc": null,
+  "location": null,
+  "participants": [
+    {"role": "operator", "name": null, "id_checked_by": null, "signature_ref": null},
+    {"role": "witness_1", "name": null, "id_checked_by": null, "signature_ref": null},
+    {"role": "witness_2", "name": null, "id_checked_by": null, "signature_ref": null}
+  ],
+  "equipment": {
+    "laptop": {"make_model": null, "serial": null, "airgap_confirmed": null, "os_image_sha256": null},
+    "toolchain": {"pinned_manifest_sha256": null, "verified_by": null},
+    "tokens": [
+      {"label": "primary", "make_model": null, "serial": null, "firmware_version": null, "tamper_seal_id": null},
+      {"label": "backup", "make_model": null, "serial": null, "firmware_version": null, "tamper_seal_id": null}
+    ],
+    "removable_media": [
+      {"label": "public-out", "serial": null, "sha256_of_contents": null}
+    ]
+  },
+  "keys": [
+    {"role": "boot_signing", "algorithm": null, "key_id": null, "public_key_sha256": null, "generated_in_hsm": null, "exportable": null, "backed_up_to_backup_token": null},
+    {"role": "rauc_signing", "algorithm": null, "key_id": null, "public_key_sha256": null, "generated_in_hsm": null, "exportable": null, "backed_up_to_backup_token": null},
+    {"role": "content_manifest_signing", "algorithm": null, "key_id": null, "public_key_sha256": null, "generated_in_hsm": null, "exportable": null, "backed_up_to_backup_token": null},
+    {"role": "kek", "algorithm": null, "key_id": null, "public_key_sha256": null, "generated_in_hsm": null, "exportable": null, "backed_up_to_backup_token": null}
+  ],
+  "steps": [
+    {"id": "S01", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S02", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S03", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S04", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S05", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S06", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S07", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S08", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S09", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S10", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S11", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null},
+    {"id": "S12", "performed_at_utc": null, "result": null, "witness_initials": null, "notes": null}
+  ],
+  "signing_test": {
+    "artifact_sha256": null,
+    "moved_on_removable_media_only": null,
+    "pin_required_observed": null,
+    "signature_verified_against_published_public_key": null,
+    "token_used": null
+  },
+  "recovery_drill": {
+    "performed_at_utc": null,
+    "token_used": null,
+    "test_artifact_sha256": null,
+    "signature_verified": null,
+    "witness": null
+  },
+  "storage": {
+    "primary_token_location": null,
+    "backup_token_location": null,
+    "pin_custody_note": null
+  },
+  "public_outputs": {
+    "published_to": null,
+    "files_sha256": null
+  },
+  "log_signature": {
+    "log_file_sha256": null,
+    "signed_by": null,
+    "signature_method": null,
+    "signature_ref": null
+  }
+}
