@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(velora VERSION 0.1.0 LANGUAGES CXX)
+project(velora VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,7 @@ option(VELORA_RTSAN "Build RealtimeSanitizer tests (needs clang >= 20 with -fsan
 enable_testing()
 
 add_subdirectory(proto)
+add_subdirectory(mcu/common)
 add_subdirectory(engine/ports)
 add_subdirectory(engine/core)
 add_subdirectory(engine/host)

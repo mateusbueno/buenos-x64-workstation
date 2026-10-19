@@ -85,8 +85,8 @@ development_status:
   2-21-effects-surface-sends-master-and-outputs: backlog
   epic-2-retrospective: optional
 
-  epic-3: backlog
-  3-1-versioned-mcu-frame-protocol-library-and-control-led-id-maps: backlog
+  epic-3: in-progress
+  3-1-versioned-mcu-frame-protocol-library-and-control-led-id-maps: done
   3-2-prototype-board-bring-up: backlog
   3-3-keybed-mcu-firmware-with-raw-per-contact-timestamps: backlog
   3-4-mcu-dual-bank-bootloader-and-reflash-from-the-soc: backlog

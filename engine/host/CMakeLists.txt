@@ -6,10 +6,11 @@ add_library(velora_host STATIC
   src/render_driver.cpp
   src/posix_fs.cpp
   src/library_resolver.cpp
-  src/sample_bundle_loader.cpp)
+  src/sample_bundle_loader.cpp
+  src/mcu_frame.cpp)
 add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
-target_link_libraries(velora_host PUBLIC velora_core velora_ports velora_format)
+target_link_libraries(velora_host PUBLIC velora_core velora_ports velora_format velora_mcu_common)
 
 # --- control plane (Story 2.1): ws.v1 over a Unix domain socket, parameter registry, snapshots ------------
 # protobuf lives only here (engine/host), in proto/ and in tools; engine/core never sees it.
@@ -68,6 +69,10 @@ add_test(NAME host_tests COMMAND host_tests)
 add_executable(host_unit_tests tests/host_unit_test.cpp)
 target_link_libraries(host_unit_tests PRIVATE velora_host)
 add_test(NAME host_unit_tests COMMAND host_unit_tests)
+
+add_executable(mcu_wrapper_test tests/mcu_wrapper_test.cpp)
+target_link_libraries(mcu_wrapper_test PRIVATE velora_host)
+add_test(NAME mcu_wrapper_test COMMAND mcu_wrapper_test)
 
 add_executable(sample_bundle_loader_test tests/sample_bundle_loader_test.cpp)
 target_link_libraries(sample_bundle_loader_test PRIVATE velora_host)

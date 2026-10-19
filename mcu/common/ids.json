@@ -1,0 +1,640 @@
+{
+ "schema": 1,
+ "document_version": "1.0",
+ "protocol_version": 16,
+ "retired_ids": {
+  "controls": [],
+  "buttons": [],
+  "leds": []
+ },
+ "controls": [
+  {
+   "id": 1,
+   "name": "ENCODER_1",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 1"
+  },
+  {
+   "id": 2,
+   "name": "ENCODER_2",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 2"
+  },
+  {
+   "id": 3,
+   "name": "ENCODER_3",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 3"
+  },
+  {
+   "id": 4,
+   "name": "ENCODER_4",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 4"
+  },
+  {
+   "id": 5,
+   "name": "ENCODER_5",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 5"
+  },
+  {
+   "id": 6,
+   "name": "ENCODER_6",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 6"
+  },
+  {
+   "id": 7,
+   "name": "ENCODER_7",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 7"
+  },
+  {
+   "id": 8,
+   "name": "ENCODER_8",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "Encoder 8"
+  },
+  {
+   "id": 9,
+   "name": "VALUE_ENCODER",
+   "kind": "encoder",
+   "bits": 8,
+   "min": -127,
+   "max": 127,
+   "legend": "VALUE"
+  },
+  {
+   "id": 16,
+   "name": "FADER_1",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 1"
+  },
+  {
+   "id": 17,
+   "name": "FADER_2",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 2"
+  },
+  {
+   "id": 18,
+   "name": "FADER_3",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 3"
+  },
+  {
+   "id": 19,
+   "name": "FADER_4",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 4"
+  },
+  {
+   "id": 20,
+   "name": "FADER_5",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 5"
+  },
+  {
+   "id": 21,
+   "name": "FADER_6",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 6"
+  },
+  {
+   "id": 22,
+   "name": "FADER_7",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 7"
+  },
+  {
+   "id": 23,
+   "name": "FADER_8",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 8"
+  },
+  {
+   "id": 24,
+   "name": "FADER_9",
+   "kind": "fader",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Fader 9"
+  },
+  {
+   "id": 32,
+   "name": "WHEEL_PITCH",
+   "kind": "wheel",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Pitch wheel (centre 2048)"
+  },
+  {
+   "id": 33,
+   "name": "WHEEL_MOD",
+   "kind": "wheel",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Mod wheel"
+  },
+  {
+   "id": 40,
+   "name": "PEDAL_SUSTAIN",
+   "kind": "pedal",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Sustain pedal (continuous, half-pedal)"
+  },
+  {
+   "id": 41,
+   "name": "PEDAL_EXPRESSION",
+   "kind": "pedal",
+   "bits": 12,
+   "min": 0,
+   "max": 4095,
+   "legend": "Expression pedal"
+  },
+  {
+   "id": 42,
+   "name": "PEDAL_SWITCH",
+   "kind": "pedal_switch",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Pedal switch (0 open, 1 closed after polarity detect)"
+  }
+ ],
+ "buttons": [
+  {
+   "id": 1,
+   "name": "PART_SCENE_1",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 1",
+   "states": 1
+  },
+  {
+   "id": 2,
+   "name": "PART_SCENE_2",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 2",
+   "states": 1
+  },
+  {
+   "id": 3,
+   "name": "PART_SCENE_3",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 3",
+   "states": 1
+  },
+  {
+   "id": 4,
+   "name": "PART_SCENE_4",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 4",
+   "states": 1
+  },
+  {
+   "id": 5,
+   "name": "PART_SCENE_5",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 5",
+   "states": 1
+  },
+  {
+   "id": 6,
+   "name": "PART_SCENE_6",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 6",
+   "states": 1
+  },
+  {
+   "id": 7,
+   "name": "PART_SCENE_7",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 7",
+   "states": 1
+  },
+  {
+   "id": 8,
+   "name": "PART_SCENE_8",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "Part/scene button 8",
+   "states": 1
+  },
+  {
+   "id": 16,
+   "name": "LIVE_SET_PREV",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "LIVE SET ◀",
+   "states": 1
+  },
+  {
+   "id": 17,
+   "name": "LIVE_SET_NEXT",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "LIVE SET ▶",
+   "states": 1
+  },
+  {
+   "id": 18,
+   "name": "SCENE_PREV",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "SCENE ◀",
+   "states": 1
+  },
+  {
+   "id": 19,
+   "name": "SCENE_NEXT",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "SCENE ▶",
+   "states": 1
+  },
+  {
+   "id": 20,
+   "name": "EXIT",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "EXIT",
+   "states": 1
+  },
+  {
+   "id": 21,
+   "name": "MENU",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "MENU",
+   "states": 1
+  },
+  {
+   "id": 22,
+   "name": "WRITE",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "WRITE",
+   "states": 1
+  },
+  {
+   "id": 23,
+   "name": "VALUE_PUSH",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "VALUE push switch",
+   "states": 1
+  },
+  {
+   "id": 24,
+   "name": "ROTARY_STOP",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "ROTARY STOP",
+   "states": 1
+  },
+  {
+   "id": 25,
+   "name": "ROTARY_SF",
+   "kind": "button",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "ROTARY S/F",
+   "states": 1
+  },
+  {
+   "id": 32,
+   "name": "TOGGLE_DRAWBARS_MIXER",
+   "kind": "toggle",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "DRAWBARS/MIXER",
+   "states": 2
+  },
+  {
+   "id": 33,
+   "name": "TOGGLE_PARTS_SCENES",
+   "kind": "toggle",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "PARTS/SCENES",
+   "states": 2
+  },
+  {
+   "id": 34,
+   "name": "TOGGLE_PART_ALL_ASSIGN",
+   "kind": "toggle",
+   "bits": 1,
+   "min": 0,
+   "max": 1,
+   "legend": "PART/ALL/ASSIGN",
+   "states": 3
+  }
+ ],
+ "leds": [
+  {
+   "id": 1,
+   "name": "PART_SCENE_LED_1",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 1 LED"
+  },
+  {
+   "id": 2,
+   "name": "PART_SCENE_LED_2",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 2 LED"
+  },
+  {
+   "id": 3,
+   "name": "PART_SCENE_LED_3",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 3 LED"
+  },
+  {
+   "id": 4,
+   "name": "PART_SCENE_LED_4",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 4 LED"
+  },
+  {
+   "id": 5,
+   "name": "PART_SCENE_LED_5",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 5 LED"
+  },
+  {
+   "id": 6,
+   "name": "PART_SCENE_LED_6",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 6 LED"
+  },
+  {
+   "id": 7,
+   "name": "PART_SCENE_LED_7",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 7 LED"
+  },
+  {
+   "id": 8,
+   "name": "PART_SCENE_LED_8",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Part/scene button 8 LED"
+  },
+  {
+   "id": 16,
+   "name": "ENCODER_RING_1",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 1 LED ring"
+  },
+  {
+   "id": 17,
+   "name": "ENCODER_RING_2",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 2 LED ring"
+  },
+  {
+   "id": 18,
+   "name": "ENCODER_RING_3",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 3 LED ring"
+  },
+  {
+   "id": 19,
+   "name": "ENCODER_RING_4",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 4 LED ring"
+  },
+  {
+   "id": 20,
+   "name": "ENCODER_RING_5",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 5 LED ring"
+  },
+  {
+   "id": 21,
+   "name": "ENCODER_RING_6",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 6 LED ring"
+  },
+  {
+   "id": 22,
+   "name": "ENCODER_RING_7",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 7 LED ring"
+  },
+  {
+   "id": 23,
+   "name": "ENCODER_RING_8",
+   "kind": "ring",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "Encoder 8 LED ring"
+  },
+  {
+   "id": 32,
+   "name": "TOGGLE_LED_DRAWBARS",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "DRAWBARS/MIXER state 0 (DRAWBARS) LED"
+  },
+  {
+   "id": 33,
+   "name": "TOGGLE_LED_MIXER",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "DRAWBARS/MIXER state 1 (MIXER) LED"
+  },
+  {
+   "id": 34,
+   "name": "TOGGLE_LED_PARTS",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "PARTS/SCENES state 0 (PARTS) LED"
+  },
+  {
+   "id": 35,
+   "name": "TOGGLE_LED_SCENES",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "PARTS/SCENES state 1 (SCENES) LED"
+  },
+  {
+   "id": 36,
+   "name": "TOGGLE_LED_PART",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "PART/ALL/ASSIGN state 0 (PART) LED"
+  },
+  {
+   "id": 37,
+   "name": "TOGGLE_LED_ALL",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "PART/ALL/ASSIGN state 1 (ALL) LED"
+  },
+  {
+   "id": 38,
+   "name": "TOGGLE_LED_ASSIGN",
+   "kind": "led",
+   "bits": 8,
+   "min": 0,
+   "max": 255,
+   "legend": "PART/ALL/ASSIGN state 2 (ASSIGN) LED"
+  }
+ ]
+}

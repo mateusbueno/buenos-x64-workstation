@@ -17,6 +17,10 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
   drain queue -> map timestamp to frame -> `BlockRenderer::submit` -> `process_block`. No allocation, locks or blocking
   (`VELORA_NONBLOCKING`; `rtsan_host_render_test` checks it under RealtimeSanitizer where the compiler supports it).
 
+- `mcu_frame` -- Story 3.1. C++ wrapper (`velora/host/mcu_frame.hpp`) over the portable C library in `mcu/common`: typed messages
+  (`Message` variant), `make_frame`/`parse_message`/`encode`, `StreamDecoder` (any chunking, counters, events), and the
+  `FrameWriter`/`Loopback` helpers for Stories 3.2/3.5 and the Mac virtual panel. The generated `velora/host/mcu_ids.hpp` holds
+  the constexpr control/button/LED ID tables. Control/I-O thread only (it allocates); the C library underneath never does.
 - `library_resolver` (+ `fs_port`, `posix_fs`) -- Story 1.14. Resolves `(library_id, instrument_key)` to an opened bundle
   and its instrument entry from the index, never by scanning. Control/I-O thread only (allocates, does file I/O); not for
   the audio thread. Links `velora_format`; `engine/core` does not.
