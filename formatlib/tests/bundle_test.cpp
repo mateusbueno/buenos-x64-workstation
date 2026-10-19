@@ -682,6 +682,209 @@ Region sample_region(std::uint32_t sample) {
   return r;
 }
 
+// Story 5.1: format 2.1 extension table (keyswitches, CC crossfades, filters).
+Region ext_region(std::uint32_t sample) {
+  Region r = sample_region(sample);
+  r.sw = {24, 28, 26, -1, 37, -1, 26};
+  r.xf.in_count = 2; r.xf.in[0] = {1, 0, 64}; r.xf.in[1] = {11, 10, 20};
+  r.xf.out_count = 1; r.xf.out[0] = {74, 64, 127};
+  r.xf.curve = XfCurve::kGain;
+  r.filter = {FilterType::kHpf2p, 1200.5f, 3.5f};
+  return r;
+}
+
+void test_extensions() {
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
+  auto version_word = [](const Bytes& b) { return layout::get_u32(b.data() + 4); };
+  Region plain;
+  Region sw_only = plain; sw_only.sw.last = 36;
+  Region filt_only = plain; filt_only.filter = {FilterType::kBpf2p, 440.f, 0.f};
+  Region curve_only = plain; curve_only.xf.curve = XfCurve::kGain;
+  Region four = plain;
+  four.xf.in_count = four.xf.out_count = 4;
+  for (unsigned k = 0; k < 4; ++k) { four.xf.in[k] = {std::uint8_t(2 * k), 1, 2}; four.xf.out[k] = {std::uint8_t(100 + k), 0, 127}; }
+
+  {  // round trip: mixed plain and extended regions in two instruments
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    const std::vector<Region> a = {plain, ext_region(0), sample_region(0), sw_only, filt_only, curve_only, four};
+    for (const auto& r : a) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, ext_region(0)), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (1u << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_version() == 2 && r.value().format_minor() == 1);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == a);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && r.value().instruments()[1].regions[0] == ext_region(0));
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    // Deterministic.
+    CHECK(w.finalize().take() == b);
+  }
+  {  // a bundle without extension regions is minor 0 and has no extension bytes at all
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_region(i0, sample_region(0)), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == 2u);
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == 0);
+    // The manifest really ends with the 96-byte region record: no extension bytes follow it.
+    {
+      const std::size_t end = rd64(b, 8) + rd64(b, 16), rec = end - layout::kRegionRecordSize;
+      CHECK(layout::get_u32(b.data() + rec) == 0u);          // sample index 0
+      CHECK(b[rec + 4] == 36 && b[rec + 5] == 48 && b[rec + 6] == 40);  // key_lo, key_hi, key_center of sample_region
+      CHECK(rec > rd64(b, 8) && end == rd64(b, 24));         // manifest is followed directly by the index
+    }
+    // Same bundle written by a "minor 0 only" writer: identical bytes.
+    BundleWriter w0(WriterOptions{kFormatVersion, 0});
+    const std::size_t j0 = w0.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w0.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w0.add_region(j0, sample_region(0)), Error::kNone);
+    CHECK(w0.finalize().take() == b);
+  }
+  {  // writer policy
+    BundleWriter w(WriterOptions{kFormatVersion, 0});
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
+    CHECK_ERR(w.finalize().error(), Error::kInvalidArgument);  // minor 0 cannot carry it
+    BundleWriter w2(WriterOptions{kFormatVersion, kFormatMinor + 1});
+    CHECK_ERR(w2.finalize().error(), Error::kInvalidArgument);
+    BundleWriter w3(WriterOptions{1, 1});  // version 1 has no regions at all
+    const std::size_t k0 = w3.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w3.add_sample(k0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w3.add_region(k0, ext_region(0)), Error::kNone);
+    CHECK_ERR(w3.finalize().error(), Error::kInvalidArgument);
+    // Writer-side validation of the extension fields.
+    BundleWriter v;
+    const std::size_t i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad = [&](auto mutate) { Region x = ext_region(0); mutate(x); return v.add_region(i, x); };
+    CHECK_ERR(bad([](Region& x) { x.sw.last = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.sw.lokey = 40; x.sw.hikey = 30; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.xf.in_count = 5; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.xf.in[1].cc = 1; }), Error::kInvalidArgument);        // not ascending
+    CHECK_ERR(bad([](Region& x) { x.xf.in[0].lo = 70; }), Error::kInvalidArgument);       // lo > hi
+    CHECK_ERR(bad([](Region& x) { x.xf.in[2].cc = 3; }), Error::kInvalidArgument);        // unused entry not zero
+    CHECK_ERR(bad([](Region& x) { x.xf.out[0].cc = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.filter.cutoff_hz = 48001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.filter.resonance_db = 41.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.filter.cutoff_hz = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.filter.type = FilterType::kNone; }), Error::kInvalidArgument);  // values without a type
+    CHECK_ERR(bad([](Region& x) { x.filter.type = static_cast<FilterType>(6); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.xf.curve = static_cast<XfCurve>(2); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region&) {}), Error::kNone);
+  }
+  {  // reader version policy: minor N and N-1 accepted, newer rejected
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
+    const Bytes good = w.finalize().take();
+    CHECK(BundleReader::open_memory(good).ok());
+    { Bytes b = good; wr32(b, 4, 2u | (2u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 3u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 1u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 2u); CHECK(!BundleReader::open_memory(b).ok()); }  // word differs from the manifest's
+    // An Epic 1 reader (major 2, minor 0 only) would reject minor 1 outright; the word proves it
+    // is not mistaken for a minor 0 bundle.
+    CHECK(layout::get_u32(good.data() + 4) != 2u);
+  }
+  {  // a minor 1 bundle whose instruments all have n_ext == 0 is non-canonical
+    BundleWriter v;
+    const std::size_t i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(v.add_region(i, plain), Error::kNone);
+    Bytes b = v.finalize().take();  // minor 0
+    const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+    b.insert(b.begin() + mo + ms, 4, std::uint8_t(0));  // n_ext = 0
+    wr64(b, 16, ms + 4); wr64(b, 24, io + 4); wr64(b, 40, rd64(b, 40) + 4); wr64(b, 56, rd64(b, 56) + 4);
+    for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
+    wr32(b, 4, 2u | (1u << 16));
+    wr32(b, mo, 2u | (1u << 16));
+    rehash(b);
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+  }
+  {  // corruption: every violation of the canonical form is kCorruptManifest
+    BundleWriter v;
+    const std::size_t i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(v.add_region(i, plain), Error::kNone);
+    CHECK_ERR(v.add_region(i, ext_region(0)), Error::kNone);
+    const Bytes good = v.finalize().take();
+    const std::size_t end = rd64(good, 8) + rd64(good, 16);
+    const std::size_t rec = end - layout::kExtRecordSize;
+    CHECK(layout::kExtRecordSize == 56 && layout::get_u32(good.data() + rec - 4) == 1u);
+    auto expect_bad = [&](Bytes bad, const char* what) {
+      rehash(bad);
+      auto rb = BundleReader::open_memory(bad);
+      if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL ext corruption not rejected: %s\n", what); ++g_fail; }
+    };
+    { Bytes b = good; wr32(b, rec, 5); expect_bad(b, "region index out of range"); }
+    { Bytes b = good; b[rec + 4] |= 0x80; expect_bad(b, "reserved flag bit"); }
+    { Bytes b = good; b[rec + 4] &= ~0x04; expect_bad(b, "sw_last value while its flag is clear"); }
+    { Bytes b = good; b[rec + 5 + 3] = 99; expect_bad(b, "sw_down value while flag clear"); }
+    { Bytes b = good; b[rec + 12] = 5; expect_bad(b, "xfin count 5"); }
+    { Bytes b = good; b[rec + 14] = 2; expect_bad(b, "curve 2"); }
+    { Bytes b = good; b[rec + 15] = 9; expect_bad(b, "filter type 9"); }
+    { Bytes b = good; b[rec + 16 + 3] = 1; expect_bad(b, "non-zero padding"); }
+    { Bytes b = good; b[rec + 16] = 12; expect_bad(b, "xfin cc not ascending (12 then 11)"); }
+    { Bytes b = good; wr32(b, rec + 48, 0x7fc00000u); expect_bad(b, "NaN cutoff"); }
+    { Bytes b = good; wr32(b, rec - 4, 7); expect_bad(b, "n_ext larger than regions"); }
+    { Bytes b = good; wr32(b, rec - 4, 0xffffffffu); expect_bad(b, "huge n_ext"); }
+    { Bytes b = good; std::fill(b.begin() + rec + 4, b.begin() + rec + 56, std::uint8_t(0)); b[rec + 14] = 1; expect_bad(b, "record without any extension feature"); }
+    { Bytes b = good; std::fill(b.begin() + rec + 4, b.begin() + rec + 56, std::uint8_t(0)); b[rec + 14] = 1;
+      wr32(b, rec - 4, 1); expect_bad(b, "all-default record"); }
+    // Truncations always fail; any bit flip in the extension table is rejected or still valid.
+    for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+      CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+    for (std::size_t off = rec - 4; off < end; ++off)
+      for (int bit = 0; bit < 8; ++bit) {
+        Bytes bad = good;
+        bad[off] ^= std::uint8_t(1 << bit);
+        rehash(bad);
+        auto r3 = BundleReader::open_memory(bad);
+        if (!r3.ok() && r3.error() != Error::kCorruptManifest) {
+          std::printf("FAIL ext flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error()));
+          ++g_fail;
+        }
+      }
+  }
+  {  // two records in region order: indexes must ascend
+    BundleWriter v;
+    const std::size_t i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(v.add_region(i, ext_region(0)), Error::kNone);
+    CHECK_ERR(v.add_region(i, sw_only), Error::kNone);
+    const Bytes good = v.finalize().take();
+    const std::size_t end = rd64(good, 8) + rd64(good, 16), r1 = end - layout::kExtRecordSize;
+    CHECK(layout::get_u32(good.data() + r1) == 1u && layout::get_u32(good.data() + r1 - layout::kExtRecordSize) == 0u);
+    Bytes bad = good;
+    wr32(bad, r1, 0);  // duplicate index
+    rehash(bad);
+    CHECK_ERR(BundleReader::open_memory(bad).error(), Error::kCorruptManifest);
+  }
+  {  // golden: the extension record serialization is pinned (independent of libFLAC)
+    BundleWriter v;
+    const std::size_t i = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(i, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(v.add_region(i, ext_region(0)), Error::kNone);
+    const Bytes b = v.finalize().take();
+    const std::size_t end = rd64(b, 8) + rd64(b, 16);
+    std::string got;
+    static const char* hexd = "0123456789abcdef";
+    for (std::size_t k = end - layout::kExtRecordSize; k < end; ++k) { got += hexd[b[k] >> 4]; got += hexd[b[k] & 15]; }
+    CHECK(got == "0000000057181c1a0025001a02010004010040000b0a140000000000000000004a407f000000000000000000000000000010964400006040");
+    CHECK(layout::kExtRecordSize == 56);
+  }
+}
+
 void test_regions() {
   const PcmFormat f{2, 16, false, 48000};
   const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
@@ -861,6 +1064,7 @@ int main() {
   test_atomic_file_write();
   test_version();
   test_regions();
+  test_extensions();
   test_identity();
   test_file_io();
   if (g_fail == 0) std::printf("bundle_test OK\n");

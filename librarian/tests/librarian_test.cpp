@@ -243,13 +243,13 @@ void test_unsupported_opcode() {
   // Same source path, now with unsupported opcodes in two places (and one unsupported header).
   write_file(e.src / "Piano.sfz",
              "<group>\nlovel=1\n"
-             "<region> sample=samples/a.wav key=60 cutoff=500\n"
+             "<region> sample=samples/a.wav key=60 amp_veltrack=50\n"
              "<region> sample=samples/a.wav key=61 lfo01_freq=3\n"
              "<curve>\ncurve_index=1\n"
              "<region> sample=samples/b.wav key=62\n");
   const auto r = import_sfz(e.opts());
   CHECK(r.status == Status::kSkipped);
-  CHECK(mentions(r, "Piano.sfz:3: unsupported opcode 'cutoff'"));
+  CHECK(mentions(r, "Piano.sfz:3: unsupported opcode 'amp_veltrack'"));
   CHECK(mentions(r, "Piano.sfz:4: unsupported opcode 'lfo01_freq'"));
   CHECK(mentions(r, "Piano.sfz:5: unsupported header <curve>"));
   CHECK(r.reasons.size() == 3);
@@ -537,7 +537,7 @@ void test_cli() {
   for (const auto& n : list_names(k.lib())) if (n != ".staging") CHECK(!fs::exists(k.lib() / n / "current"));
   CHECK(std::system((kb + " >/dev/null").c_str()) == 0);
   // Unsupported opcode: non-zero exit and reason on stderr.
-  write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav cutoff=1\n");
+  write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav amp_veltrack=1\n");
   CHECK(std::system((base + " 2>/dev/null").c_str()) != 0);
 }
 

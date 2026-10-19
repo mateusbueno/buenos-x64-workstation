@@ -44,6 +44,29 @@ bool parse_stage(const std::string& name, Stage& out) {
   return false;
 }
 
+const char* to_string(ReasonCode r) {
+  switch (r) {
+    case ReasonCode::kNone: return "none";
+    case ReasonCode::kUnsupportedFeatures: return "unsupported_features";
+    case ReasonCode::kDamaged: return "damaged";
+  }
+  return "?";
+}
+
+Status status_for_add_sample_error(fmt::Error e, ReasonCode* reason) {
+  if (reason) *reason = ReasonCode::kNone;
+  switch (e) {
+    case fmt::Error::kInvalidArgument: return Status::kInvalidArgument;
+    case fmt::Error::kEncoderFailure: return Status::kIo;
+    case fmt::Error::kUnsupportedFormat:
+      if (reason) *reason = ReasonCode::kUnsupportedFeatures;
+      return Status::kSkipped;
+    default:
+      if (reason) *reason = ReasonCode::kDamaged;
+      return Status::kSkipped;
+  }
+}
+
 const char* to_string(Status s) {
   switch (s) {
     case Status::kOk: return "ok";
@@ -100,19 +123,48 @@ bool same_device(const std::string& a, const std::string& b) {
   return ::stat(a.c_str(), &sa) == 0 && ::stat(b.c_str(), &sb) == 0 && sa.st_dev == sb.st_dev;
 }
 
-std::string audio_reason(const std::string& path, fmt::Error e, const std::string& ref) {
+// A problem found while loading a sample.
+struct AudioProblem {
+  std::string text;      // "ref: path: why"
+  ReasonCode code = ReasonCode::kDamaged;
+  std::string path;
+  std::string ref_file;
+  std::size_t ref_line = 0;
+};
+
+bool has_wav_extension(const std::string& path) {
+  std::string ext = fs::path(path).extension().string();
+  for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return ext == ".wav";
+}
+
+// A sample format outside the supported set (or a non-WAV container such as .flac) is a feature
+// the importer does not have; a WAV that cannot be read or is truncated is damaged.
+AudioProblem audio_problem(const std::string& path, fmt::Error e, const fmt::SfzSample& s) {
+  AudioProblem p;
+  p.path = path;
+  p.ref_file = s.ref_file;
+  p.ref_line = s.ref_line;
   std::string why;
   switch (e) {
     case fmt::Error::kUnsupportedFormat:
       why = "unsupported audio format (need WAV: 16/24-bit PCM or 32-bit float, mono/stereo, "
             "44.1/48/88.2/96 kHz; the importer never resamples or requantizes)";
+      p.code = ReasonCode::kUnsupportedFeatures;
       break;
-    case fmt::Error::kBadMagic: why = "unsupported audio: not a WAV file"; break;
+    case fmt::Error::kBadMagic:
+      why = "unsupported audio: not a WAV file";
+      p.code = has_wav_extension(path) ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
+      break;
     case fmt::Error::kIo: why = "cannot read sample file"; break;
     default: why = std::string("damaged WAV file (") + fmt::to_string(e) + ")"; break;
   }
-  return ref + ": " + path + ": " + why;
+  p.text = s.ref_file + ":" + std::to_string(s.ref_line) + ": " + path + ": " + why;
+  return p;
 }
+
+// A WAV whose data chunk is cut off is damaged, not a shorter sample.
+constexpr fmt::WavOptions kStrictWav{true};
 
 std::atomic<std::uint64_t> g_counter{0};
 
@@ -181,13 +233,28 @@ ImportResult import_sfz(const ImportOptions& opt) {
   // 1. Parse (no audio, no filesystem writes).
   fmt::SfzParseResult parsed = fmt::parse_sfz_file(opt.sfz_path);
   res.source_region_count = parsed.source_region_count;
+  for (const auto& a : parsed.allowlisted) res.allowlisted.push_back({a.opcode, a.file, a.line});
+  for (const auto& w : parsed.warnings) res.warnings.push_back({"ignored_opcode", w.opcode, w.file, w.line, w.message});
   if (!parsed.ok()) {
     res.status = Status::kSkipped;
-    for (const auto& i : parsed.issues) res.reasons.push_back(i.to_string());
+    bool damaged = false;
+    for (const auto& i : parsed.issues) {
+      res.reasons.push_back(i.to_string());
+      if (fmt::is_unsupported_feature(i.kind)) {
+        res.offenders.push_back({i.opcode, i.file, i.line, i.message});
+      } else {
+        damaged = true;
+        if (res.failing_path.empty()) res.failing_path = i.path;
+      }
+    }
+    // A file with any damage is damaged: the list of unsupported constructs may be incomplete.
+    res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
     return res;
   }
   if (parsed.regions.empty()) {
     res.status = Status::kSkipped;
+    res.reason_code = ReasonCode::kDamaged;
+    res.failing_path = opt.sfz_path;
     res.reasons.push_back(opt.sfz_path + ": no regions in SFZ file");
     return res;
   }
@@ -223,40 +290,68 @@ ImportResult import_sfz(const ImportOptions& opt) {
     return fail(Status::kInvalidArgument, "empty source id");
   auto inst = writer.add_instrument(sfz_abs.stem().string(), rel.generic_string());
   if (!inst) return fail(Status::kInvalidArgument, std::string("instrument key: ") + fmt::to_string(inst.error()));
-  std::vector<std::string> audio_problems;
+  std::vector<AudioProblem> audio_problems;
+  Status infra_status = Status::kIo;
+  std::string infra_problem;  // add_sample failed for a reason that is not about the WAV
   std::vector<std::uint64_t> frames(parsed.samples.size(), 0);
   for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
     const auto& s = parsed.samples[i];
-    auto w = fmt::load_wav_file(s.path);
-    const std::string ref = s.ref_file + ":" + std::to_string(s.ref_line);
+    auto w = fmt::load_wav_file(s.path, kStrictWav);
     if (!w) {
-      audio_problems.push_back(audio_reason(s.path, w.error(), ref));
+      audio_problems.push_back(audio_problem(s.path, w.error(), s));
       continue;
     }
     frames[i] = w.value().frame_count;
     if (fmt::Error e = writer.add_sample(inst.value(), w.value().as_input(s.name)); e != fmt::Error::kNone)
-      audio_problems.push_back(audio_reason(s.path, e, ref));
+    {
+      ReasonCode rc;
+      const Status st = status_for_add_sample_error(e, &rc);
+      if (st == Status::kSkipped) {
+        audio_problems.push_back(audio_problem(s.path, e, parsed.samples[i]));
+      } else if (infra_problem.empty()) {
+        infra_status = st;
+        infra_problem = s.path + ": cannot add sample: " + fmt::to_string(e);
+      }
+    }
   }
+  if (!infra_problem.empty()) return fail(infra_status, infra_problem);
   if (!audio_problems.empty()) {
     res.status = Status::kSkipped;
-    res.reasons = std::move(audio_problems);
+    bool damaged = false;
+    for (const auto& p : audio_problems) {
+      res.reasons.push_back(p.text);
+      if (p.code == ReasonCode::kUnsupportedFeatures) {
+        res.offenders.push_back({"sample", p.ref_file, p.ref_line, p.text});
+      } else {
+        damaged = true;
+        if (res.failing_path.empty()) res.failing_path = p.path;
+      }
+    }
+    res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
     return res;
   }
   std::vector<std::string> region_problems;
   std::vector<fmt::Region> regions = parsed.regions;  // with loop defaults resolved
+  std::size_t first_bad_region = 0;
   for (std::size_t i = 0; i < regions.size(); ++i) {
     auto& r = regions[i];
     const std::string where = parsed.region_sources[i].file + ":" + std::to_string(parsed.region_sources[i].line) + ": ";
     std::string why;
+    auto note = [&](std::string text) {
+      if (region_problems.empty()) first_bad_region = i;
+      region_problems.push_back(std::move(text));
+    };
     if (!fmt::resolve_loop_points(r, parsed.loops[i], frames[r.sample], &why))
-      region_problems.push_back(where + why + " (sample '" + parsed.samples[r.sample].name + "')");
+      note(where + why + " (sample '" + parsed.samples[r.sample].name + "')");
     else if (fmt::validate_region(r, frames[r.sample]) != fmt::Error::kNone ||
              writer.add_region(inst.value(), r) != fmt::Error::kNone)
-      region_problems.push_back(where + "region values do not fit sample '" + parsed.samples[r.sample].name +
+      note(where + "region values do not fit sample '" + parsed.samples[r.sample].name +
                                 "' (offset or loop points beyond its length)");
   }
   if (!region_problems.empty()) {
     res.status = Status::kSkipped;
+    res.reason_code = ReasonCode::kDamaged;
+    res.failing_path = parsed.region_sources[first_bad_region].file;
     res.reasons = std::move(region_problems);
     return res;
   }
@@ -316,7 +411,7 @@ ImportResult import_sfz(const ImportOptions& opt) {
     if (rd.instruments()[0].regions != regions)
       return "staged region table differs from the parsed region table";
     for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
-      auto w = fmt::load_wav_file(parsed.samples[i].path);  // fresh decode of the source
+      auto w = fmt::load_wav_file(parsed.samples[i].path, kStrictWav);  // fresh decode of the source
       if (!w || !sample_matches(rd, i, w.value()))
         return "sample '" + parsed.samples[i].name + "' is not bit-identical to its source";
     }

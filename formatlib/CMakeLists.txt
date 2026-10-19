@@ -84,4 +84,5 @@ endforeach()
 
 add_executable(format_sfz_test tests/sfz_test.cpp)
 target_link_libraries(format_sfz_test PRIVATE velora_sfz)
+target_compile_definitions(format_sfz_test PRIVATE FORMATLIB_README="${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 add_test(NAME format_sfz_test COMMAND format_sfz_test)

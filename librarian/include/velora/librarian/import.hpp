@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "velora/format/error.hpp"
+
 namespace velora::librarian {
 
 // Points of the publish protocol at which a fault can be injected (tests / VELORA_LIBRARIAN_FAULT).
@@ -57,7 +59,7 @@ struct ImportOptions {
 
 enum class Status : std::uint8_t {
   kOk = 0,
-  kSkipped,        // SFZ unsupported/invalid or audio unsupported/missing: nothing published
+  kSkipped,        // SFZ unsupported/invalid or audio unsupported/missing: nothing published (see ReasonCode)
   kInvalidArgument,
   kVerifyFailed,   // staged bundle did not verify bit-exact: nothing published
   kIo,
@@ -67,8 +69,49 @@ enum class Status : std::uint8_t {
 };
 const char* to_string(Status s);
 
+// Why a file was skipped (closed set, Story 5.1). Anything that is not a skip (I/O errors, a busy
+// lock, verification failures, bad arguments) has reason `none` and is told by `status`.
+enum class ReasonCode : std::uint8_t {
+  kNone = 0,
+  kUnsupportedFeatures,  // the file uses something outside the supported subset (see `offenders`)
+  kDamaged,              // cannot be parsed, missing sample, unreadable or truncated WAV (see `failing_path`)
+};
+const char* to_string(ReasonCode r);  // "none", "unsupported_features", "damaged"
+
+// One unsupported construct: the opcode (or "<header>", or "sample" for an audio format outside
+// the supported set) with the file:line that uses it and a human readable message.
+struct Offender {
+  std::string opcode, file;
+  std::size_t line = 0;
+  std::string message;
+};
+
+// An allow-listed (non-sounding) opcode that was accepted and ignored.
+struct AllowListedUse {
+  std::string opcode, file;
+  std::size_t line = 0;
+};
+
+// A warning in the import report. Closed set of codes: `ignored_opcode` = a sound-affecting
+// opcode was accepted but has no effect (fil_type/resonance without cutoff).
+struct ImportWarning {
+  std::string code, opcode, file;
+  std::size_t line = 0;
+  std::string message;
+};
+
+// How a failure of BundleWriter::add_sample is reported: kUnsupportedFormat is a skipped file with
+// reason unsupported_features; kInvalidArgument is Status::kInvalidArgument and kEncoderFailure
+// Status::kIo (both "failed", never "damaged WAV"). Any other error is a skipped, damaged file.
+Status status_for_add_sample_error(velora::format::Error e, ReasonCode* reason);
+
 struct ImportResult {
   Status status = Status::kInvalidArgument;
+  ReasonCode reason_code = ReasonCode::kNone;  // set when status == kSkipped
+  std::vector<Offender> offenders;             // reason_code unsupported_features (may also be set for damaged files)
+  std::string failing_path;                    // reason_code damaged: the file that is missing, unreadable or malformed
+  std::vector<ImportWarning> warnings;         // e.g. ignored_opcode (logged, counted, never a reason to skip)
+  std::vector<AllowListedUse> allowlisted;     // accepted non-sounding opcodes (logged, never a reason to skip)
   std::vector<std::string> reasons;  // one line per problem ("file:line: ..."), or the failure text
   std::string library_id;            // canonical UUID string (empty before it is known)
   std::string bundle_id;             // 64 lowercase hex

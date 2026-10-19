@@ -107,6 +107,19 @@ int main() {
       auto t = parse_wav(b);
       CHECK(t.ok() && t.value().frame_count == 5); }
   }
+  {  // Story 5.1: strict mode reports a cut-off data chunk instead of clamping it
+    Bytes ok = make_wav(1, 1, 48000, 16, Bytes(8, 0));
+    WavOptions strict{true};
+    CHECK(parse_wav(ok, strict).ok() && parse_wav(ok, strict).value().frame_count == 4);
+    for (std::size_t n = 44; n < ok.size(); ++n) {
+      const std::span<const std::uint8_t> cut(ok.data(), n);
+      CHECK_ERR(parse_wav(cut, strict).error(), Error::kTruncated);
+      CHECK(parse_wav(cut).ok());  // default behaviour unchanged
+    }
+    Bytes stream = make_wav(1, 1, 48000, 16, Bytes(10, 1));
+    for (int i = 0; i < 4; ++i) stream[40 + i] = 0xFF;
+    CHECK(parse_wav(stream, strict).ok() && parse_wav(stream, strict).value().frame_count == 5);
+  }
   {  // files: real temp file and missing file
     const auto dir = std::filesystem::temp_directory_path();
     const std::string path = (dir / "velora_wav_test.wav").string();

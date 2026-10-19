@@ -131,8 +131,11 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
   std::uint8_t h[kHeaderSize];
   if (Error e = src->read_at(0, h, kHeaderSize); e != Error::kNone) return e;
   if (std::memcmp(h, kMagic, 4) != 0) return Error::kBadMagic;
-  const std::uint32_t version = get_u32(h + 4);
-  if (version < kMinReadableVersion || version > kFormatVersion) return Error::kUnsupportedVersion;
+  const std::uint32_t version_word = get_u32(h + 4);
+  const std::uint32_t version = version_word & 0xFFFFu, minor = version_word >> kMinorShift;
+  if (version < kMinReadableVersion || version > kFormatVersion || minor > kFormatMinor ||
+      (version < 2 && minor != 0))
+    return Error::kUnsupportedVersion;
   const std::uint64_t manifest_off = get_u64(h + 8), manifest_size = get_u64(h + 16),
                       index_off = get_u64(h + 24), index_size = get_u64(h + 32),
                       data_off = get_u64(h + 40), data_size = get_u64(h + 48),
@@ -161,10 +164,11 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
   BundleReader r;
   r.opt_ = opt;
   r.version_ = version;
+  r.minor_ = minor;
   r.bundle_id_ = manifest_hash;
 
   Cursor c(manifest.data(), manifest.size());
-  if (c.u32() != version) return Error::kCorruptManifest;
+  if (c.u32() != version_word) return Error::kCorruptManifest;
   c.bytes(r.library_id_.data(), 16);
   const std::uint32_t n_instr = c.u32(), n_samples = c.u32();
   const std::uint64_t n_blocks = c.u64();
@@ -177,6 +181,7 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
   r.samples_.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
+  std::uint64_t total_ext = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -237,11 +242,52 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
           return Error::kCorruptManifest;
         ins.regions.push_back(rg);
       }
+      if (minor >= 1) {
+        const std::uint32_t n_ext = c.u32();
+        if (!c.ok() || n_ext > n_regions || n_ext > c.remaining() / kExtRecordSize)
+          return Error::kCorruptManifest;
+        total_ext += n_ext;
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_ext; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          const std::uint8_t flags = c.u8();
+          std::uint8_t notes[7];
+          for (auto& n : notes) n = c.u8();
+          rg.xf.in_count = c.u8(); rg.xf.out_count = c.u8();
+          const std::uint8_t curve = c.u8(), ftype = c.u8();
+          std::uint8_t pad_bad = 0;
+          for (CcRange* set : {rg.xf.in, rg.xf.out})
+            for (unsigned e = 0; e < kMaxCcCrossfades; ++e) {
+              set[e].cc = c.u8(); set[e].lo = c.u8(); set[e].hi = c.u8();
+              pad_bad |= c.u8();
+            }
+          rg.filter.cutoff_hz = c.f32(); rg.filter.resonance_db = c.f32();
+          if (!c.ok() || (flags & 0x80) || pad_bad || curve > 1 || ftype > 5) return Error::kCorruptManifest;
+          std::int16_t* dst[7] = {&rg.sw.lokey, &rg.sw.hikey, &rg.sw.last, &rg.sw.down,
+                                  &rg.sw.up, &rg.sw.previous, &rg.sw.default_key};
+          for (int n = 0; n < 7; ++n) {
+            if (flags & (1u << n)) *dst[n] = notes[n];
+            else if (notes[n] != 0) return Error::kCorruptManifest;
+          }
+          rg.xf.curve = static_cast<XfCurve>(curve);
+          rg.filter.type = static_cast<FilterType>(ftype);
+          // Canonical: a record exists only for a region that really uses an extension feature.
+          if (!has_extension(rg) ||
+              validate_region(rg, r.samples_[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+      }
     }
     r.instruments_.push_back(std::move(ins));
   }
   if (!c.ok() || !c.done() || r.samples_.size() != n_samples || next_block != n_blocks)
     return Error::kCorruptManifest;
+  // Canonical: minor 1 exists only for bundles that carry at least one extension record (the same
+  // content must not have two encodings, hence two bundle ids).
+  if (minor >= 1 && total_ext == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index_.resize(n_blocks);

@@ -25,7 +25,16 @@ namespace velora::format {
 // Current on-disk format_version (N). Readers accept N and N-1; anything else is rejected.
 // Version 2 adds the per-instrument region table (instrument_model.hpp) to the manifest; a
 // version 1 bundle reads with empty region tables.
+// Minor versions (Story 5.1): the version word in the header and manifest is major | minor << 16.
+// Minor 1 appends, after each instrument's region table, an extension table for keyswitches, CC
+// crossfades and filters. The writer stamps minor 1 only for a bundle that has such a region, so a
+// bundle without them is byte-identical to the Epic 1 format 2 output. Readers accept the current
+// minor and the one before it (N and N-1); anything newer is kUnsupportedVersion. The extension
+// is NOT ignorable: a reader that does not know minor 1 (any Epic 1 reader) refuses a minor 1
+// bundle with kUnsupportedVersion rather than misreading it. Minor 1 requires at least one
+// extension record (kCorruptManifest otherwise), so every content has exactly one encoding.
 inline constexpr std::uint32_t kFormatVersion = 2;
+inline constexpr std::uint32_t kFormatMinor = 1;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -66,6 +75,9 @@ struct WriterOptions {
   // [kMinReadableVersion, kFormatVersion] produce a bundle the reader accepts (same layout);
   // kFormatVersion + 1 produces one the reader must reject; anything else fails finalize().
   std::uint32_t format_version = kFormatVersion;
+  // Test hook for the minor policy: 0 makes the writer refuse regions that need the extension
+  // table (kInvalidArgument at finalize); 1 (default) stamps minor 1 only when one is present.
+  std::uint32_t format_minor = kFormatMinor;
 };
 
 class BundleWriter {
@@ -89,7 +101,8 @@ class BundleWriter {
   // normalize_instrument_key); callers cannot supply a key directly. Returns the instrument index.
   Result<std::size_t> add_instrument(std::string_view name, std::string_view relative_path);
 
-  // Appends a region to the instrument's region table (format v2). The region's `sample` must
+  // Appends a region to the instrument's region table (format v2; regions with keyswitches, CC
+  // crossfades or a filter go to the format 2.1 extension table). The region's `sample` must
   // already have been added to this instrument (regions are validated against its length with
   // validate_region). kInvalidArgument otherwise.
   Error add_region(std::size_t instrument, const Region& region);
@@ -191,7 +204,8 @@ class BundleReader {
   BundleReader& operator=(BundleReader&&) noexcept;
   ~BundleReader();
 
-  std::uint32_t format_version() const { return version_; }
+  std::uint32_t format_version() const { return version_; }  // major
+  std::uint32_t format_minor() const { return minor_; }       // 0 = Epic 1 layout, 1 = with extensions
   const Digest256& bundle_id() const { return bundle_id_; }  // SHA-256 of the manifest bytes
   const Uuid& library_id() const { return library_id_; }
   std::span<const InstrumentInfo> instruments() const { return instruments_; }
@@ -230,6 +244,7 @@ class BundleReader {
   std::unique_ptr<ByteSource> src_;
   ReaderOptions opt_;
   std::uint32_t version_ = 0;
+  std::uint32_t minor_ = 0;
   Digest256 bundle_id_{};
   Uuid library_id_{};
   std::vector<InstrumentInfo> instruments_;

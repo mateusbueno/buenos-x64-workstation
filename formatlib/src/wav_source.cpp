@@ -12,7 +12,7 @@ namespace {
 std::uint32_t u16(const std::uint8_t* p) { return p[0] | (p[1] << 8); }
 }  // namespace
 
-Result<WavData> parse_wav(std::span<const std::uint8_t> b) {
+Result<WavData> parse_wav(std::span<const std::uint8_t> b, WavOptions opt) {
   if (b.size() < 12) return Error::kTruncated;
   if (std::memcmp(b.data(), "RIFF", 4) != 0 || std::memcmp(b.data() + 8, "WAVE", 4) != 0)
     return Error::kBadMagic;
@@ -38,7 +38,10 @@ Result<WavData> parse_wav(std::span<const std::uint8_t> b) {
       have_fmt = true;
     } else if (std::memcmp(ck, "data", 4) == 0) {
       if (!have_fmt) return Error::kCorruptHeader;
-      if (size > b.size() - body) size = b.size() - body;  // clamp (also 0xFFFFFFFF streams)
+      if (size > b.size() - body) {
+        if (opt.reject_truncated_data && size != 0xFFFFFFFFu) return Error::kTruncated;
+        size = b.size() - body;  // clamp (also 0xFFFFFFFF streams)
+      }
       WavData w;
       w.format.channels = static_cast<std::uint8_t>(chans > 255 ? 255 : chans);
       w.format.bits_per_sample = static_cast<std::uint8_t>(bits > 255 ? 255 : bits);
@@ -71,7 +74,7 @@ Result<WavData> parse_wav(std::span<const std::uint8_t> b) {
   return Error::kTruncated;  // no data chunk
 }
 
-Result<WavData> load_wav_file(const std::string& path) {
+Result<WavData> load_wav_file(const std::string& path, WavOptions opt) {
   std::FILE* f = std::fopen(path.c_str(), "rb");
   if (!f) return Error::kIo;
   std::vector<std::uint8_t> bytes;
@@ -81,7 +84,7 @@ Result<WavData> load_wav_file(const std::string& path) {
   const bool bad = std::ferror(f) != 0;
   std::fclose(f);
   if (bad) return Error::kIo;
-  return parse_wav(bytes);
+  return parse_wav(bytes, opt);
 }
 
 }  // namespace velora::format

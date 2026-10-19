@@ -19,6 +19,20 @@ inline constexpr std::size_t kMaxStringLen = 4096;
 // u32 seq_length, seq_position | f32 lorand, hirand | u64 loop_start, loop_end | 7 x f32 ampeg.
 inline constexpr std::size_t kRegionRecordSize = 4 + 8 + 4 + 12 + 8 + 8 + 8 + 16 + 28;
 
+// Format 2.1 (Story 5.1) extension record, one per region that uses keyswitches, CC crossfades or
+// a filter; the table follows each instrument's region table (u32 count, records ascending by
+// region index). The header/manifest version word is major | (minor << 16): minor 0 is exactly the
+// Epic 1 format 2 byte stream, minor 1 appends the extension tables.
+//   u32 region_index
+//   u8  sw_flags (bit i set = opcode i given: sw_lokey, sw_hikey, sw_last, sw_down, sw_up,
+//                 sw_previous, sw_default; bit 7 and unset bits' values must be zero)
+//   7 x u8 notes in that order (0 when the flag is clear)
+//   u8  xfin_count, xfout_count (<= 4), xf_curve (0 gain, 1 power), filter_type (0..5)
+//   4 x (u8 cc, u8 lo, u8 hi, u8 0) xfin, then 4 x (...) xfout; unused entries are zero
+//   f32 cutoff_hz, f32 resonance_db
+inline constexpr std::size_t kExtRecordSize = 4 + 1 + 7 + 4 + 16 + 16 + 8;
+inline constexpr unsigned kMinorShift = 16;
+
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }
 inline void put_u32(std::vector<std::uint8_t>& v, std::uint32_t x) {
   for (int i = 0; i < 4; ++i) v.push_back(static_cast<std::uint8_t>(x >> (8 * i)));

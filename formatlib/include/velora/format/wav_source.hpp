@@ -25,7 +25,15 @@ struct WavData {
 
 // Accepts WAVE_FORMAT_PCM, WAVE_FORMAT_IEEE_FLOAT and WAVE_FORMAT_EXTENSIBLE wrapping them.
 // Errors: kBadMagic (not RIFF/WAVE), kTruncated, kUnsupportedFormat, kCorruptHeader.
-Result<WavData> parse_wav(std::span<const std::uint8_t> bytes);
-Result<WavData> load_wav_file(const std::string& path);
+//
+// By default a data chunk that claims more bytes than the file holds is clamped to what is there
+// (streamed WAVs). With `reject_truncated_data` such a file is kTruncated, except for the
+// "unknown length" marker 0xFFFFFFFF: the importer (Story 5.1) sets it so a cut-off sample file is
+// reported as damaged instead of being imported shorter than its source.
+struct WavOptions {
+  bool reject_truncated_data = false;
+};
+Result<WavData> parse_wav(std::span<const std::uint8_t> bytes, WavOptions opt = {});
+Result<WavData> load_wav_file(const std::string& path, WavOptions opt = {});
 
 }  // namespace velora::format

@@ -29,6 +29,93 @@ const char* to_string(SfzIssueKind k) {
   return "?";
 }
 
+bool is_unsupported_feature(SfzIssueKind k) {
+  return k == SfzIssueKind::kUnsupportedOpcode || k == SfzIssueKind::kUnsupportedHeader ||
+         k == SfzIssueKind::kUnsupportedValue;
+}
+
+const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
+  using C = OpcodeClass;
+  static const std::vector<SfzOpcodeEntry> t = {
+      {"sample", C::kSupported, "required in every region"},
+      {"default_path", C::kSupported, "<control> only"},
+      {"lokey", C::kSupported, "note number or name"},
+      {"hikey", C::kSupported, ""},
+      {"key", C::kSupported, "lokey = hikey = pitch_keycenter"},
+      {"lovel", C::kSupported, ""},
+      {"hivel", C::kSupported, ""},
+      {"pitch_keycenter", C::kSupported, ""},
+      {"tune", C::kSupported, "cents"},
+      {"transpose", C::kSupported, "semitones"},
+      {"volume", C::kSupported, "dB"},
+      {"pan", C::kSupported, "-100..100"},
+      {"offset", C::kSupported, "frames"},
+      {"seq_length", C::kSupported, "round robin"},
+      {"seq_position", C::kSupported, "round robin"},
+      {"lorand", C::kSupported, ""},
+      {"hirand", C::kSupported, ""},
+      {"loop_mode", C::kSupported, "no_loop, one_shot, loop_continuous, loop_sustain"},
+      {"loop_start", C::kSupported, "frames"},
+      {"loop_end", C::kSupported, "frames, inclusive"},
+      {"ampeg_delay", C::kSupported, "s"},
+      {"ampeg_start", C::kSupported, "%"},
+      {"ampeg_attack", C::kSupported, "s"},
+      {"ampeg_hold", C::kSupported, "s"},
+      {"ampeg_decay", C::kSupported, "s"},
+      {"ampeg_sustain", C::kSupported, "%"},
+      {"ampeg_release", C::kSupported, "s"},
+      {"trigger", C::kSupported, "attack, release"},
+      {"sw_lokey", C::kSupported, "keyswitch range low (Story 5.1)"},
+      {"sw_hikey", C::kSupported, "keyswitch range high (Story 5.1)"},
+      {"sw_last", C::kSupported, "(Story 5.1)"},
+      {"sw_down", C::kSupported, "(Story 5.1)"},
+      {"sw_up", C::kSupported, "(Story 5.1)"},
+      {"sw_previous", C::kSupported, "(Story 5.1)"},
+      {"sw_default", C::kSupported, "(Story 5.1)"},
+      {"xfin_locc<N>", C::kSupported, "N = controller 0..127, up to 4 per region (Story 5.1)"},
+      {"xfin_hicc<N>", C::kSupported, "(Story 5.1)"},
+      {"xfout_locc<N>", C::kSupported, "(Story 5.1)"},
+      {"xfout_hicc<N>", C::kSupported, "(Story 5.1)"},
+      {"xf_cccurve", C::kSupported, "gain, power (Story 5.1)"},
+      {"fil_type", C::kSupported, "lpf_1p, lpf_2p, hpf_1p, hpf_2p, bpf_2p (Story 5.1)"},
+      {"cutoff", C::kSupported, "Hz; the filter exists only when cutoff is given (Story 5.1)"},
+      {"resonance", C::kSupported, "dB (Story 5.1)"},
+      {"label_cc<N>", C::kAllowListed, "controller name"},
+      {"label_key<N>", C::kAllowListed, "key name"},
+      {"global_label", C::kAllowListed, ""},
+      {"master_label", C::kAllowListed, ""},
+      {"group_label", C::kAllowListed, ""},
+      {"region_label", C::kAllowListed, ""},
+      {"sw_label", C::kAllowListed, "keyswitch name"},
+      {"image", C::kAllowListed, "instrument picture"},
+      {"hint_*", C::kAllowListed, "editor hints"},
+  };
+  return t;
+}
+
+bool opcode_matches(const std::string& pattern, const std::string& name) {
+  auto starts = [&](const std::string& prefix) {
+    return name.size() > prefix.size() && name.compare(0, prefix.size(), prefix) == 0;
+  };
+  if (pattern.size() > 3 && pattern.compare(pattern.size() - 3, 3, "<N>") == 0) {
+    const std::string prefix = pattern.substr(0, pattern.size() - 3);
+    if (!starts(prefix)) return false;
+    const std::size_t digits = name.size() - prefix.size();
+    if (digits < 1 || digits > 3) return false;
+    for (std::size_t i = prefix.size(); i < name.size(); ++i)
+      if (name[i] < '0' || name[i] > '9') return false;
+    return true;
+  }
+  if (!pattern.empty() && pattern.back() == '*') return starts(pattern.substr(0, pattern.size() - 1));
+  return name == pattern;
+}
+
+OpcodeClass classify_opcode(const std::string& name) {
+  for (const auto& e : sfz_opcode_table())
+    if (opcode_matches(e.pattern, name)) return e.cls;
+  return OpcodeClass::kUnsupported;
+}
+
 std::string SfzIssue::to_string() const {
   std::string s = file;
   if (line) s += ":" + std::to_string(line);
@@ -43,13 +130,32 @@ struct Op {
 };
 using Level = std::vector<Op>;
 
-const std::set<std::string>& supported_opcodes() {
-  static const std::set<std::string> s = {
-      "lokey", "hikey", "key", "lovel", "hivel", "pitch_keycenter", "tune", "transpose",
-      "volume", "pan", "offset", "seq_length", "seq_position", "lorand", "hirand", "loop_mode",
-      "loop_start", "loop_end", "ampeg_delay", "ampeg_start", "ampeg_attack", "ampeg_hold",
-      "ampeg_decay", "ampeg_sustain", "ampeg_release", "trigger", "sample"};
-  return s;
+// State gathered while applying a region's opcodes that does not fit in Region itself.
+struct XfPart {
+  std::uint8_t lo = 0, hi = 0;
+};
+struct Acc {
+  SfzLoopSpec ls;
+  bool cutoff_set = false, type_set = false;
+  FilterType type = FilterType::kLpf2p;
+  std::map<int, XfPart> in, out;  // by controller number, ascending
+  const Op* type_op = nullptr;  // fil_type / resonance as given (for ignored_opcode warnings)
+  const Op* res_op = nullptr;
+};
+
+// "xfin_locc64" -> in, lo, cc 64. Names are already classified as xf opcodes.
+bool xf_opcode(const std::string& name, bool& in, bool& lo, int& cc) {
+  static const char* const names[] = {"xfin_locc", "xfin_hicc", "xfout_locc", "xfout_hicc"};
+  for (int i = 0; i < 4; ++i) {
+    const std::string p = names[i];
+    if (name.size() > p.size() && name.compare(0, p.size(), p) == 0) {
+      cc = std::atoi(name.c_str() + p.size());
+      in = i < 2;
+      lo = i % 2 == 0;
+      return true;
+    }
+  }
+  return false;
 }
 
 std::string trim(std::string s) {
@@ -130,7 +236,7 @@ class Importer final : public sfz::ParserListener {
     } else if (header == "control") {
       cur_ = Cur::kControl;
     } else {
-      issue(SfzIssueKind::kUnsupportedHeader, loc, "unsupported header <" + header + ">");
+      issue(SfzIssueKind::kUnsupportedHeader, loc, "unsupported header <" + header + ">", "<" + header + ">");
       cur_ = Cur::kIgnored;
     }
   }
@@ -145,19 +251,28 @@ class Importer final : public sfz::ParserListener {
         return;
       case Cur::kIgnored:
         return;
+      default:
+        break;
+    }
+    if (classify_opcode(name) == OpcodeClass::kAllowListed) {
+      // Informational only: accepted, counted, never stored.
+      result.allowlisted.push_back({name, loc.file, loc.line});
+      return;
+    }
+    switch (cur_) {
       case Cur::kControl:
         if (name == "default_path") {
           const std::string dp = norm_slashes(value);
           if (check_path(dp, op)) default_path_ = dp;
         } else {
-          issue(SfzIssueKind::kUnsupportedOpcode, loc, "unsupported opcode '" + name + "' in <control>");
+          issue(SfzIssueKind::kUnsupportedOpcode, loc, "unsupported opcode '" + name + "' in <control>", name);
         }
         return;
       default:
         break;
     }
-    if (!supported_opcodes().count(name)) {
-      issue(SfzIssueKind::kUnsupportedOpcode, loc, "unsupported opcode '" + name + "'");
+    if (classify_opcode(name) != OpcodeClass::kSupported || name == "default_path") {
+      issue(SfzIssueKind::kUnsupportedOpcode, loc, "unsupported opcode '" + name + "'", name);
       return;
     }
     if (name == "sample") {
@@ -171,8 +286,8 @@ class Importer final : public sfz::ParserListener {
       if (!check_path(op.value, op)) return;
     } else {
       Region scratch;  // validate once, here, so each bad value is reported exactly once
-      SfzLoopSpec ls;
-      if (!apply(scratch, ls, op, true)) return;
+      Acc acc;
+      if (!apply(scratch, acc, op, true)) return;
     }
     Level& lv = cur_ == Cur::kGlobal ? global_ : cur_ == Cur::kMaster ? master_
               : cur_ == Cur::kGroup ? group_ : region_;
@@ -202,11 +317,15 @@ class Importer final : public sfz::ParserListener {
   }
 
   // Every issue goes through here: identical (file, line, message) triples are reported once.
-  void add(SfzIssueKind k, const std::string& file, std::size_t line, std::string msg) {
-    if (!seen_.insert(file + ":" + std::to_string(line) + ":" + msg).second) return;
-    result.issues.push_back({k, file, line, std::move(msg)});
+  bool add(SfzIssueKind k, const std::string& file, std::size_t line, std::string msg,
+           std::string opcode = {}) {
+    if (!seen_.insert(file + ":" + std::to_string(line) + ":" + msg).second) return false;
+    result.issues.push_back({k, file, line, std::move(msg), file, std::move(opcode)});
+    return true;
   }
-  void issue(SfzIssueKind k, const Loc& l, std::string msg) { add(k, l.file, l.line, std::move(msg)); }
+  void issue(SfzIssueKind k, const Loc& l, std::string msg, std::string opcode = {}) {
+    add(k, l.file, l.line, std::move(msg), std::move(opcode));
+  }
 
   // A path (sample or default_path) must stay inside the SFZ's directory.
   bool check_path(const std::string& p, const Op& op) {
@@ -229,7 +348,7 @@ class Importer final : public sfz::ParserListener {
   void unsupported_value(const Op& op) {
     if (!report_) return;
     add(SfzIssueKind::kUnsupportedValue, op.file, op.line,
-        "unsupported value '" + op.value + "' for opcode '" + op.name + "'");
+        "unsupported value '" + op.value + "' for opcode '" + op.name + "'", op.name);
   }
 
   bool as_int(const Op& op, std::int64_t lo, std::int64_t hi, std::int64_t& out) {
@@ -255,7 +374,8 @@ class Importer final : public sfz::ParserListener {
   }
 
   // Applies one opcode to `r`. Returns false for an invalid value (reported when `report`).
-  bool apply(Region& r, SfzLoopSpec& ls, const Op& op, bool report) {
+  bool apply(Region& r, Acc& acc, const Op& op, bool report) {
+    SfzLoopSpec& ls = acc.ls;
     report_ = report;
     std::int64_t n = 0;
     double d = 0;
@@ -292,6 +412,49 @@ class Importer final : public sfz::ParserListener {
       else if (v == "release") r.trigger = TriggerMode::kRelease;
       else { unsupported_value(op); return false; }
     }
+    else if (k == "sw_lokey") { if (!as_note(op, n)) return false; r.sw.lokey = std::int16_t(n); }
+    else if (k == "sw_hikey") { if (!as_note(op, n)) return false; r.sw.hikey = std::int16_t(n); }
+    else if (k == "sw_last") { if (!as_note(op, n)) return false; r.sw.last = std::int16_t(n); }
+    else if (k == "sw_down") { if (!as_note(op, n)) return false; r.sw.down = std::int16_t(n); }
+    else if (k == "sw_up") { if (!as_note(op, n)) return false; r.sw.up = std::int16_t(n); }
+    else if (k == "sw_previous") { if (!as_note(op, n)) return false; r.sw.previous = std::int16_t(n); }
+    else if (k == "sw_default") { if (!as_note(op, n)) return false; r.sw.default_key = std::int16_t(n); }
+    else if (k == "xf_cccurve") {
+      const std::string v = trim(op.value);
+      if (v == "gain") r.xf.curve = XfCurve::kGain;
+      else if (v == "power") r.xf.curve = XfCurve::kPower;
+      else { unsupported_value(op); return false; }
+    } else if (k == "fil_type") {
+      const std::string v = trim(op.value);
+      FilterType t;
+      if (v == "lpf_1p") t = FilterType::kLpf1p;
+      else if (v == "lpf_2p") t = FilterType::kLpf2p;
+      else if (v == "hpf_1p") t = FilterType::kHpf1p;
+      else if (v == "hpf_2p") t = FilterType::kHpf2p;
+      else if (v == "bpf_2p") t = FilterType::kBpf2p;
+      else { unsupported_value(op); return false; }
+      acc.type = t;
+      acc.type_set = true;
+      acc.type_op = &op;
+    }
+    else if (k == "cutoff") { if (!as_float(op, 0, 48000, d)) return false; r.filter.cutoff_hz = float(d); acc.cutoff_set = true; }
+    else if (k == "resonance") { if (!as_float(op, 0, 40, d)) return false; r.filter.resonance_db = float(d); acc.res_op = &op; }
+    else if (bool in = false, lo = false; xf_opcode(k, in, lo, cc_)) {
+      {
+        const std::size_t base = std::string(in ? "xfin_" : "xfout_").size() + 4;  // prefix + "locc"/"hicc"
+        if (k.size() > base + 1 && k[base] == '0') {
+          if (report_)
+            add(SfzIssueKind::kInvalidValue, op.file, op.line,
+                "opcode '" + k + "' has a non-canonical controller number (write '" + k.substr(0, base) +
+                    std::to_string(cc_) + "'; leading zeros would spell one controller two ways)");
+          return false;
+        }
+      }
+      if (cc_ > 127) { unsupported_value(op); return false; }
+      if (!as_int(op, 0, 127, n)) return false;
+      XfPart& part = (in ? acc.in : acc.out)[cc_];
+      (lo ? part.lo : part.hi) = std::uint8_t(n);
+    }
     else if (k == "ampeg_delay") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.delay = float(d); }
     else if (k == "ampeg_start") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.start = float(d); }
     else if (k == "ampeg_attack") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.attack = float(d); }
@@ -306,14 +469,51 @@ class Importer final : public sfz::ParserListener {
     if (cur_ != Cur::kRegion) return;
     cur_ = Cur::kNone;  // a region is flushed exactly once
     Region r;
-    SfzLoopSpec ls;
+    Acc acc;
     const Op* sample_op = nullptr;
     for (const Level* lv : {&global_, &master_, &group_, &region_})
       for (const Op& op : *lv) {
         if (op.name == "sample") sample_op = &op;
-        apply(r, ls, op, false);  // values were validated when read
+        apply(r, acc, op, false);  // values were validated when read
       }
+    const SfzLoopSpec ls = acc.ls;
     r.has_loop_points = ls.start_set || ls.end_set;
+    // Story 5.1: filter, keyswitch and crossfade state.
+    if (acc.cutoff_set) r.filter.type = acc.type_set ? acc.type : FilterType::kLpf2p;
+    else {
+      r.filter = Filter{};  // fil_type/resonance without cutoff: no filter (documented), but never silent
+      for (const Op* o : {acc.type_op, acc.res_op})
+        if (o && warned_.insert(o->file + ":" + std::to_string(o->line) + ":" + o->name).second)
+          result.warnings.push_back({o->name, o->file, o->line,
+                                     "opcode '" + o->name + "' has no effect without 'cutoff'; the region gets no filter"});
+    }
+    if (r.sw.lokey >= 0 && r.sw.hikey >= 0 && r.sw.lokey > r.sw.hikey) {
+      issue(SfzIssueKind::kInvalidValue, region_loc_, "sw_lokey > sw_hikey");
+      return;
+    }
+    for (int dir = 0; dir < 2; ++dir) {
+      const auto& m = dir == 0 ? acc.in : acc.out;
+      const char* nm = dir == 0 ? "xfin" : "xfout";
+      if (m.size() > kMaxCcCrossfades) {
+        issue(SfzIssueKind::kUnsupportedValue, region_loc_,
+              std::string("more than ") + std::to_string(kMaxCcCrossfades) + " " + nm +
+                  " controllers in one region",
+              std::string(nm) + "_locc<N>");
+        return;
+      }
+      CcRange* out = dir == 0 ? r.xf.in : r.xf.out;
+      std::uint8_t& count = dir == 0 ? r.xf.in_count : r.xf.out_count;
+      count = 0;
+      for (const auto& [cc, part] : m) {
+        if (part.lo > part.hi) {
+          issue(SfzIssueKind::kInvalidValue, region_loc_,
+                std::string(nm) + "_locc" + std::to_string(cc) + " > " + nm + "_hicc" + std::to_string(cc) +
+                    " (give both opcodes)");
+          return;
+        }
+        out[count++] = {std::uint8_t(cc), part.lo, part.hi};
+      }
+    }
     if (r.key_lo > r.key_hi || r.vel_lo > r.vel_hi || r.lorand > r.hirand ||
         r.seq_position > r.seq_length) {
       issue(SfzIssueKind::kInvalidValue, region_loc_, "region has an inverted or inconsistent range (key, velocity, rand or seq)");
@@ -341,7 +541,8 @@ class Importer final : public sfz::ParserListener {
     } else {
       std::error_code ec;
       if (!fs::is_regular_file(p, ec)) {
-        add(SfzIssueKind::kMissingSample, sample_op->file, sample_op->line, "sample file not found: " + p.string());
+        if (add(SfzIssueKind::kMissingSample, sample_op->file, sample_op->line, "sample file not found: " + p.string()))
+          result.issues.back().path = p.string();  // only the issue just added
         return;
       }
       SfzSample s;
@@ -368,8 +569,9 @@ class Importer final : public sfz::ParserListener {
   Loc region_loc_;
   std::string default_path_;
   std::map<std::string, std::size_t> samples_;
-  std::set<std::string> seen_;
+  std::set<std::string> seen_, warned_;
   bool report_ = false;
+  int cc_ = 0;
 };
 
 }  // namespace
@@ -400,7 +602,7 @@ SfzParseResult parse_sfz_file(const std::string& sfz_path) {
   std::error_code ec;
   fs::path abs = fs::absolute(sfz_path, ec);
   if (ec || !fs::is_regular_file(abs, ec)) {
-    none.issues.push_back({SfzIssueKind::kParse, sfz_path, 0, "cannot open SFZ file"});
+    none.issues.push_back({SfzIssueKind::kParse, sfz_path, 0, "cannot open SFZ file", sfz_path, {}});
     return none;
   }
   abs = abs.lexically_normal();
@@ -412,7 +614,7 @@ SfzParseResult parse_sfz_file(const std::string& sfz_path) {
     parser.parseFile(abs);
     for (const auto& f : parser.getIncludedFiles()) imp.result.included_files.push_back(f);
   } catch (const std::exception& e) {
-    imp.result.issues.push_back({SfzIssueKind::kParse, abs.string(), 0, std::string("parser failure: ") + e.what()});
+    imp.result.issues.push_back({SfzIssueKind::kParse, abs.string(), 0, std::string("parser failure: ") + e.what(), abs.string(), {}});
   }
   for (auto& i : imp.result.issues)
     if (i.kind == SfzIssueKind::kParse && i.message.find("Exceeded maximum include depth") != std::string::npos)

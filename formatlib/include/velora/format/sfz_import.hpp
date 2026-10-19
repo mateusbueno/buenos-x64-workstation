@@ -10,6 +10,12 @@
 //             seq_length seq_position, lorand hirand, loop_mode loop_start loop_end,
 //             ampeg_delay/start/attack/hold/decay/sustain/release, trigger (attack|release),
 //             sample, default_path (in <control>), #define, #include
+//   Story 5.1: sw_lokey sw_hikey sw_last sw_down sw_up sw_previous sw_default,
+//             xfin_locc<N> xfin_hicc<N> xfout_locc<N> xfout_hicc<N> (N = 0..127, at most 4 per
+//             direction and region) xf_cccurve (gain|power), fil_type (lpf_1p lpf_2p hpf_1p
+//             hpf_2p bpf_2p) cutoff resonance
+//   Allow-listed non-sounding opcodes (label_*, image, hint_*, ...) are accepted, not stored,
+//   and reported in SfzParseResult::allowlisted. The authoritative list is sfz_opcode_table().
 // Sample paths must stay inside the SFZ's directory ("..", absolute paths elsewhere and an
 // absolute sample combined with default_path are issues). Parser warnings are issues too.
 // Inheritance: global -> master -> group -> region; a later header of a level resets the levels
@@ -33,11 +39,36 @@ enum class SfzIssueKind : std::uint8_t {
 };
 const char* to_string(SfzIssueKind k);
 
+// kUnsupportedOpcode/Header/Value mean "the file uses something outside the subset" (reason code
+// unsupported_features in the import report); every other kind means the file is damaged (cannot
+// be parsed, bad value, missing sample), reason code damaged.
+bool is_unsupported_feature(SfzIssueKind k);
+
+// The one authoritative opcode list (README tables are checked against it by a test).
+// Names use a tiny pattern language: `<N>` = one to three digits, trailing `*` = any suffix.
+enum class OpcodeClass : std::uint8_t {
+  kSupported,    // mapped into the instrument model
+  kAllowListed,  // purely informational, accepted and counted, never changes the sound
+  kUnsupported,  // anything else (classify_opcode only; the table lists no such entries)
+};
+struct SfzOpcodeEntry {
+  const char* pattern;
+  OpcodeClass cls;
+  const char* note;
+};
+const std::vector<SfzOpcodeEntry>& sfz_opcode_table();
+// Classifies a concrete opcode name against the table.
+OpcodeClass classify_opcode(const std::string& name);
+// True when `name` matches `pattern` (exact, `<N>` suffix or `*` suffix).
+bool opcode_matches(const std::string& pattern, const std::string& name);
+
 struct SfzIssue {
   SfzIssueKind kind = SfzIssueKind::kParse;
   std::string file;      // as given to the parser (absolute or relative to the sfz directory)
   std::size_t line = 0;  // 1-based, 0 when unknown
   std::string message;
+  std::string path;      // failing path when a file is missing/unreadable (else the file above)
+  std::string opcode;    // offending opcode (or "<header>") for unsupported_* kinds, else empty
   std::string to_string() const;  // "file:line: message"
 };
 
@@ -65,12 +96,28 @@ struct SfzLoopSpec {
 bool resolve_loop_points(Region& r, const SfzLoopSpec& spec, std::uint64_t sample_frames,
                          std::string* why);
 
+// An allow-listed opcode that was accepted and ignored.
+struct SfzAllowListed {
+  std::string opcode, file;
+  std::size_t line = 0;
+};
+
+// A sound-affecting opcode that was accepted but has no effect (code `ignored_opcode` in the
+// import report), e.g. fil_type or resonance without cutoff.
+struct SfzWarning {
+  std::string opcode, file;
+  std::size_t line = 0;
+  std::string message;
+};
+
 struct SfzParseResult {
   std::vector<SfzSample> samples;          // unique, in first-use order; Region::sample indexes it
   std::vector<Region> regions;             // in source order (loops not yet resolved)
   std::vector<SfzLoopSpec> loops;          // parallel to regions
   std::vector<SfzSource> region_sources;   // <region> header location of each region
   std::vector<SfzIssue> issues;            // errors and unsupported constructs, in source order
+  std::vector<SfzWarning> warnings;        // ignored_opcode warnings, in source order
+  std::vector<SfzAllowListed> allowlisted; // accepted non-sounding opcodes, in source order
   std::vector<std::string> included_files; // every file the parser read (main file included)
   std::size_t source_region_count = 0;     // number of <region> headers seen
   bool ok() const { return issues.empty(); }

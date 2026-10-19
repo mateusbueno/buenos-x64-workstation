@@ -149,8 +149,8 @@ development_status:
   4-38-first-playable-unit-full-show-run-through: backlog
   epic-4-retrospective: optional
 
-  epic-5: backlog
-  5-1-full-sfz-v1-opcode-subset-in-the-importer: backlog
+  epic-5: in-progress
+  5-1-full-sfz-v1-opcode-subset-in-the-importer: done
   5-2-sample-engine-plays-keyswitches-cc-crossfades-and-basic-filt: backlog
   5-3-sf2-import-into-the-same-instrument-model: backlog
   5-4-reference-corpus-imports-and-plays-with-mapping-intact: backlog

@@ -32,6 +32,26 @@ void put_region(std::vector<std::uint8_t>& v, const Region& r) {
   put_f32(v, r.ampeg.hold); put_f32(v, r.ampeg.decay); put_f32(v, r.ampeg.sustain);
   put_f32(v, r.ampeg.release);
 }
+
+void put_ext(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  const Keyswitch& k = r.sw;
+  const std::int16_t notes[7] = {k.lokey, k.hikey, k.last, k.down, k.up, k.previous, k.default_key};
+  std::uint8_t flags = 0;
+  for (int i = 0; i < 7; ++i)
+    if (notes[i] >= 0) flags = static_cast<std::uint8_t>(flags | (1u << i));
+  put_u32(v, index);
+  put_u8(v, flags);
+  for (int i = 0; i < 7; ++i) put_u8(v, notes[i] >= 0 ? static_cast<std::uint8_t>(notes[i]) : 0);
+  put_u8(v, r.xf.in_count); put_u8(v, r.xf.out_count);
+  put_u8(v, static_cast<std::uint8_t>(r.xf.curve));
+  put_u8(v, static_cast<std::uint8_t>(r.filter.type));
+  for (const CcRange* set : {r.xf.in, r.xf.out})
+    for (unsigned i = 0; i < kMaxCcCrossfades; ++i) {
+      put_u8(v, set[i].cc); put_u8(v, set[i].lo); put_u8(v, set[i].hi); put_u8(v, 0);
+    }
+  put_f32(v, r.filter.cutoff_hz);
+  put_f32(v, r.filter.resonance_db);
+}
 }  // namespace
 
 BundleWriter::BundleWriter(WriterOptions opt) : opt_(opt) {}
@@ -134,6 +154,14 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
   if (opt_.format_version < 2)
     for (const auto& ins : instruments_)
       if (!ins.regions.empty()) return Error::kInvalidArgument;  // v1 has no region table
+  // Minor 1 only for bundles that need the extension table (everything else stays byte-identical
+  // to the Epic 1 output).
+  bool needs_ext = false;
+  for (const auto& ins : instruments_)
+    for (const auto& r : ins.regions) needs_ext = needs_ext || has_extension(r);
+  if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
+  if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
+  const std::uint32_t version_word = opt_.format_version | ((needs_ext ? 1u : 0u) << kMinorShift);
   Uuid library_id = library_id_;
   if (!has_library_id_ && has_source_id_) {
     std::vector<std::uint8_t> fp;
@@ -182,7 +210,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
     }
 
   std::vector<std::uint8_t> manifest;
-  put_u32(manifest, opt_.format_version);
+  put_u32(manifest, version_word);
   manifest.insert(manifest.end(), library_id.begin(), library_id.end());
   std::uint32_t total_samples = 0;
   for (const auto& ins : instruments_) total_samples += static_cast<std::uint32_t>(ins.samples.size());
@@ -212,6 +240,13 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
     if (opt_.format_version >= 2) {
       put_u32(manifest, static_cast<std::uint32_t>(ins.regions.size()));
       for (const auto& r : ins.regions) put_region(manifest, r);
+      if (needs_ext) {
+        std::uint32_t n_ext = 0;
+        for (const auto& r : ins.regions) n_ext += has_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_ext);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_extension(ins.regions[k])) put_ext(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+      }
     }
   }
 
@@ -234,7 +269,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
   std::vector<std::uint8_t> out;
   out.reserve(data_off + data.size());
   out.insert(out.end(), kMagic, kMagic + 4);
-  put_u32(out, opt_.format_version);
+  put_u32(out, version_word);
   put_u64(out, manifest_off);
   put_u64(out, manifest.size());
   put_u64(out, index_off);
