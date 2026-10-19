@@ -15,13 +15,17 @@
 #include <string_view>
 #include <vector>
 
+#include "velora/format/byte_source.hpp"
 #include "velora/format/error.hpp"
 #include "velora/format/hash.hpp"
+#include "velora/format/instrument_model.hpp"
 
 namespace velora::format {
 
 // Current on-disk format_version (N). Readers accept N and N-1; anything else is rejected.
-inline constexpr std::uint32_t kFormatVersion = 1;
+// Version 2 adds the per-instrument region table (instrument_model.hpp) to the manifest; a
+// version 1 bundle reads with empty region tables.
+inline constexpr std::uint32_t kFormatVersion = 2;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -74,9 +78,21 @@ class BundleWriter {
   // depends only on PCM, never on the libFLAC version.
   void set_library_id(const Uuid& id);
 
+  // Library identity from a stable source description (Story 1.13: the imported SFZ's canonical
+  // path) instead of the content fingerprint: library_id = UUIDv5 of SHA-256("velora.source.v1"
+  // || 0x00 || source_id). Re-importing changed content of the same source keeps the library_id
+  // and yields a new bundle_id. Ignored when set_library_id() was called.
+  // An empty source_id is kInvalidArgument (and leaves the writer unchanged).
+  Error set_source_id(std::string_view source_id);
+
   // Adds an instrument. Its instrument_key is minted here from `relative_path` (see
   // normalize_instrument_key); callers cannot supply a key directly. Returns the instrument index.
   Result<std::size_t> add_instrument(std::string_view name, std::string_view relative_path);
+
+  // Appends a region to the instrument's region table (format v2). The region's `sample` must
+  // already have been added to this instrument (regions are validated against its length with
+  // validate_region). kInvalidArgument otherwise.
+  Error add_region(std::size_t instrument, const Region& region);
 
   // Encodes immediately; `input.data` is not retained. Verifies the encoding by decoding.
   Error add_sample(std::size_t instrument, const SampleInput& input);
@@ -105,10 +121,13 @@ class BundleWriter {
   struct InstrumentRec {
     std::string name, key;
     std::vector<SampleRec> samples;
+    std::vector<Region> regions;
   };
   WriterOptions opt_;
   bool has_library_id_ = false;
   Uuid library_id_{};
+  bool has_source_id_ = false;
+  std::string source_id_;
   std::vector<InstrumentRec> instruments_;
   std::vector<BlockRec> blocks_;
   std::vector<std::uint8_t> block_data_;
@@ -129,6 +148,7 @@ struct InstrumentInfo {
   std::string key;
   std::size_t first_sample = 0;  // index into the bundle's flat sample list
   std::size_t sample_count = 0;
+  std::vector<Region> regions;   // empty for format v1 bundles
 };
 
 struct ReaderOptions {
@@ -156,13 +176,14 @@ class BlockDecoder {
   std::unique_ptr<Impl> impl_;
 };
 
-class ByteSource;  // internal
-
 class BundleReader {
  public:
   // Memory is borrowed and must outlive the reader.
   static Result<BundleReader> open_memory(std::span<const std::uint8_t> bytes,
                                           ReaderOptions opt = {});
+  // Reads header, manifest and index from a caller-supplied source (e.g. one that goes through a
+  // counting file-system port); blocks are read on demand through the same source.
+  static Result<BundleReader> open_source(std::unique_ptr<ByteSource> src, ReaderOptions opt = {});
   // Reads header, manifest and index; blocks are read on demand (pread).
   static Result<BundleReader> open_file(const std::string& path, ReaderOptions opt = {});
 

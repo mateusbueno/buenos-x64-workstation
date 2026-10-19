@@ -14,6 +14,10 @@ inline constexpr std::size_t kIndexEntrySize = 48;
 // Header: magic[4] version u32 | manifest_off, manifest_size, index_off, index_size, data_off,
 // data_size, total_size (u64 each, at 8..64) | manifest_sha256[32] @64 | index_sha256[32] @96.
 inline constexpr std::size_t kMaxStringLen = 4096;
+// Format v2 region record: u32 sample | 8 x u8 (key_lo, key_hi, key_center, vel_lo, vel_hi,
+// loop_mode, trigger, has_loop_points) | i32 transpose | f32 tune, volume, pan | u64 offset |
+// u32 seq_length, seq_position | f32 lorand, hirand | u64 loop_start, loop_end | 7 x f32 ampeg.
+inline constexpr std::size_t kRegionRecordSize = 4 + 8 + 4 + 12 + 8 + 8 + 8 + 16 + 28;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }
 inline void put_u32(std::vector<std::uint8_t>& v, std::uint32_t x) {

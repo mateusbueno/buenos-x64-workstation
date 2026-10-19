@@ -5,62 +5,29 @@
       "name": "sfizz",
       "version": "1.2.3",
       "license": "BSD-2-Clause",
-      "notice_marker": "## 1. sfizz 1.2.3"
+      "notice_marker": "## 1. sfizz 1.2.3",
+      "vendored_dir": "formatlib/third_party/sfizz"
     },
     {
       "name": "abseil-cpp",
       "version": "c2435f83",
       "license": "Apache-2.0",
-      "notice_marker": "## 2. Abseil C++"
+      "notice_marker": "## 2. Abseil C++",
+      "vendored_dir": "formatlib/third_party/abseil-cpp"
     },
     {
       "name": "ghc-filesystem",
       "version": "8a2edd6d",
       "license": "MIT",
-      "notice_marker": "## 3. ghc::filesystem"
+      "notice_marker": "## 3. ghc::filesystem",
+      "vendored_dir": "formatlib/third_party/ghc"
     },
     {
       "name": "simde",
       "version": "2bf459d4",
       "license": "MIT",
-      "notice_marker": "## 4. SIMDe"
+      "notice_marker": "## 4. SIMDe",
+      "vendored_dir": "formatlib/third_party/simde"
     }
-  ],
-  "sfizz_files": [
-    "CCMap.h",
-    "Config.h",
-    "Defaults.cpp",
-    "Defaults.h",
-    "LFOCommon.h",
-    "LFOCommon.hpp",
-    "LFODescription.h",
-    "MathHelpers.h",
-    "Opcode.cpp",
-    "Opcode.h",
-    "OpcodeCleanup.cpp",
-    "OpcodeCleanup.re",
-    "Range.h",
-    "SIMDConfig.h",
-    "SIMDHelpers.h",
-    "SfzFilter.h",
-    "SfzHelpers.h",
-    "modulations/ModId.h",
-    "modulations/ModKey.h",
-    "modulations/ModKeyHash.h",
-    "parser/Parser.cpp",
-    "parser/Parser.h",
-    "parser/ParserListener.h",
-    "parser/ParserPrivate.cpp",
-    "parser/ParserPrivate.h",
-    "parser/ParserPrivate.hpp",
-    "simd/HelpersScalar.h",
-    "utility/Debug.h",
-    "utility/LeakDetector.h",
-    "utility/Macros.h",
-    "utility/NumericId.h",
-    "utility/StringViewHelpers.h"
-  ],
-  "vendor_dirs": [
-    "formatlib/third_party/sfizz"
   ]
 }

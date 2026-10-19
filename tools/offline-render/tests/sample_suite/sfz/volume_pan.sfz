@@ -1,0 +1,10 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.05
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 volume=-6 pan=-50
+<region> sample=st.wav lokey=62 hikey=62 pitch_keycenter=62 pan=100
+<region> sample=st.wav lokey=64 hikey=64 pitch_keycenter=64 pan=-100 volume=3.5
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65 pan=100
+<region> sample=st.wav lokey=67 hikey=67 pitch_keycenter=67 pan=25 volume=-20
+<region> sample=a.wav lokey=69 hikey=69 pitch_keycenter=69
+<region> sample=st.wav lokey=71 hikey=71 pitch_keycenter=71

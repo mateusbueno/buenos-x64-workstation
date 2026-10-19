@@ -1,0 +1,11 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.03
+<group> lokey=60 hikey=60 pitch_keycenter=60 seq_length=4
+<region> sample=a.wav seq_position=1
+<region> sample=b.wav seq_position=2
+<region> sample=c.wav seq_position=3
+<region> sample=d.wav seq_position=4
+<group> lokey=64 hikey=64 pitch_keycenter=64 seq_length=2
+<region> sample=a.wav seq_position=1
+<region> sample=d.wav seq_position=2

@@ -332,7 +332,71 @@ static void test_render_frame_count() {
   CHECK(w.frames() == 451 * 64);
 }
 
+
+static Bytes pcm16_wav(const std::vector<std::int16_t>& s, int channels) {
+  Bytes v{'R', 'I', 'F', 'F'};
+  auto le32 = [&](std::uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back(static_cast<std::uint8_t>(x >> (8 * i))); };
+  auto le16 = [&](std::uint32_t x) { for (int i = 0; i < 2; ++i) v.push_back(static_cast<std::uint8_t>(x >> (8 * i))); };
+  le32(static_cast<std::uint32_t>(36 + s.size() * 2));
+  v.insert(v.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+  le32(16); le16(1); le16(channels); le32(48000); le32(48000 * channels * 2); le16(channels * 2); le16(16);
+  v.insert(v.end(), {'d', 'a', 't', 'a'});
+  le32(static_cast<std::uint32_t>(s.size() * 2));
+  for (std::int16_t x : s) le16(static_cast<std::uint16_t>(x));
+  return v;
+}
+
+static void test_pcm16_and_sfizz_decode() {
+  const std::vector<std::int16_t> s = {-32768, -1, 0, 1, 32767, 1000};
+  WavData w;
+  std::string err;
+  CHECK(decode_wav(pcm16_wav(s, 2), w, err) && w.channels == 2 && w.frames() == 3 && w.from_pcm16);
+  for (std::size_t i = 0; i < s.size(); ++i) CHECK(w.samples[i] == static_cast<float>(s[i]) / 32768.0f);
+  // sfizz_render's conversion is s = trunc((x + 1) * 32767.5) - 32768; the undo is (s + 1) / 32767.5.
+  CHECK(undo_sfizz_s16(w, err));
+  for (std::size_t i = 0; i < s.size(); ++i)
+    CHECK(std::fabs(w.samples[i] - (static_cast<double>(s[i]) + 1.0) / 32767.5) < 1e-6);
+  CHECK(w.samples[1] == 0.0f);  // -1 is silence
+  // A float WAV is not sfizz output: decoding it that way is an error.
+  WavData f;
+  f.channels = 1;
+  f.samples = {0.1f, 0.2f};
+  WavData g;
+  CHECK(decode_wav(encode_wav(f), g, err) && !g.from_pcm16);
+  CHECK(!undo_sfizz_s16(g, err) && !err.empty());
+  // 8-bit PCM stays unsupported.
+  Bytes bad = pcm16_wav(s, 2);
+  bad[34] = 8;
+  CHECK(!decode_wav(bad, g, err));
+}
+
+static void test_null_check_excess() {
+  WavData ref, cand;
+  ref.channels = cand.channels = 1;
+  for (int i = 0; i < 1000; ++i) ref.samples.push_back(0.5f * std::sin(0.05f * static_cast<float>(i)));
+  cand = ref;
+  for (int i = 0; i < 500; ++i) cand.samples.push_back(0.4f);  // a tail the reference lacks
+  NullParams p;
+  p.tolerance_db = -60.0;
+  const NullResult off = null_test(ref, cand, p);
+  CHECK(off.pass && off.residual_db <= -100.0);  // the overlap alone is perfect...
+  p.check_excess = true;
+  const NullResult on = null_test(ref, cand, p);
+  CHECK(!on.pass && on.excess_db > -60.0 && on.message.find("outside") != std::string::npos);  // ...the tail is not
+  // The reverse: a candidate that stops early lacks reference signal.
+  WavData shortc = ref;
+  shortc.samples.resize(500);
+  CHECK(null_test(ref, shortc, p).pass == false);
+  p.check_excess = false;
+  CHECK(null_test(ref, shortc, p).pass);
+  // Equal files pass with the check on.
+  p.check_excess = true;
+  CHECK(null_test(ref, ref, p).pass);
+}
+
 int main() {
+  test_pcm16_and_sfizz_decode();
+  test_null_check_excess();
   test_smf_more();
   test_null_robustness();
   test_null_length_limit();

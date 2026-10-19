@@ -1,0 +1,6 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.05
+<region> sample=a.wav lokey=0 hikey=96 pitch_keycenter=60
+<region> sample=a.wav lokey=100 hikey=100 pitch_keycenter=60 tune=37 transpose=-5
+<region> sample=rate44.wav lokey=97 hikey=99 pitch_keycenter=60

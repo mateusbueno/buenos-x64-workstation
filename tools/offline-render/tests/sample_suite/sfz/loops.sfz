@@ -1,0 +1,10 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.05
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 loop_mode=loop_continuous loop_start=2400 loop_end=7199
+<region> sample=loop.wav lokey=62 hikey=62 pitch_keycenter=62 loop_mode=loop_sustain loop_start=2400 loop_end=7199
+<region> sample=loop.wav lokey=64 hikey=64 pitch_keycenter=64 loop_mode=one_shot
+<region> sample=loop.wav lokey=65 hikey=65 pitch_keycenter=65 loop_mode=no_loop
+<region> sample=loop.wav lokey=67 hikey=67 pitch_keycenter=60 loop_mode=loop_continuous loop_start=2400 loop_end=7199
+<region> sample=trunc.wav lokey=69 hikey=69 pitch_keycenter=69
+<region> sample=loop.wav lokey=71 hikey=71 pitch_keycenter=71 loop_mode=loop_continuous

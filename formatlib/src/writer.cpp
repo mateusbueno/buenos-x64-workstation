@@ -13,6 +13,25 @@ void put_str(std::vector<std::uint8_t>& v, const std::string& s) {
   put_u32(v, static_cast<std::uint32_t>(s.size()));
   v.insert(v.end(), s.begin(), s.end());
 }
+void put_f32(std::vector<std::uint8_t>& v, float f) { put_u32(v, static_cast<std::uint32_t>(float_to_bits(f))); }
+
+void put_region(std::vector<std::uint8_t>& v, const Region& r) {
+  put_u32(v, r.sample);
+  put_u8(v, r.key_lo); put_u8(v, r.key_hi); put_u8(v, r.key_center);
+  put_u8(v, r.vel_lo); put_u8(v, r.vel_hi);
+  put_u8(v, static_cast<std::uint8_t>(r.loop_mode));
+  put_u8(v, static_cast<std::uint8_t>(r.trigger));
+  put_u8(v, r.has_loop_points ? 1 : 0);
+  put_u32(v, static_cast<std::uint32_t>(r.transpose));
+  put_f32(v, r.tune_cents); put_f32(v, r.volume_db); put_f32(v, r.pan);
+  put_u64(v, r.offset);
+  put_u32(v, r.seq_length); put_u32(v, r.seq_position);
+  put_f32(v, r.lorand); put_f32(v, r.hirand);
+  put_u64(v, r.loop_start); put_u64(v, r.loop_end);
+  put_f32(v, r.ampeg.delay); put_f32(v, r.ampeg.start); put_f32(v, r.ampeg.attack);
+  put_f32(v, r.ampeg.hold); put_f32(v, r.ampeg.decay); put_f32(v, r.ampeg.sustain);
+  put_f32(v, r.ampeg.release);
+}
 }  // namespace
 
 BundleWriter::BundleWriter(WriterOptions opt) : opt_(opt) {}
@@ -20,6 +39,24 @@ BundleWriter::BundleWriter(WriterOptions opt) : opt_(opt) {}
 void BundleWriter::set_library_id(const Uuid& id) {
   library_id_ = id;
   has_library_id_ = true;
+}
+
+Error BundleWriter::set_source_id(std::string_view source_id) {
+  if (source_id.empty()) return Error::kInvalidArgument;
+  source_id_ = std::string(source_id);
+  has_source_id_ = true;
+  return Error::kNone;
+}
+
+Error BundleWriter::add_region(std::size_t instrument, const Region& region) {
+  if (instrument >= instruments_.size()) return Error::kInvalidArgument;
+  auto& ins = instruments_[instrument];
+  if (region.sample >= ins.samples.size()) return Error::kInvalidArgument;
+  if (ins.regions.size() >= (1u << 24)) return Error::kInvalidArgument;
+  if (validate_region(region, ins.samples[region.sample].frames) != Error::kNone)
+    return Error::kInvalidArgument;
+  ins.regions.push_back(region);
+  return Error::kNone;
 }
 
 Result<std::size_t> BundleWriter::add_instrument(std::string_view name,
@@ -94,8 +131,19 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
     return Error::kInvalidArgument;  // only the documented test hook range is producible
 
   // Fingerprint of the source content (used for library_id unless vendor-assigned).
+  if (opt_.format_version < 2)
+    for (const auto& ins : instruments_)
+      if (!ins.regions.empty()) return Error::kInvalidArgument;  // v1 has no region table
   Uuid library_id = library_id_;
-  if (!has_library_id_) {
+  if (!has_library_id_ && has_source_id_) {
+    std::vector<std::uint8_t> fp;
+    static const char kTag[] = "velora.source.v1";
+    fp.insert(fp.end(), kTag, kTag + sizeof kTag - 1);
+    fp.push_back(0);
+    fp.insert(fp.end(), source_id_.begin(), source_id_.end());
+    const Digest256 d = Sha256::hash(fp);
+    library_id = library_id_from_fingerprint(d);
+  } else if (!has_library_id_) {
     std::vector<std::uint8_t> fp;
     put_u32(fp, static_cast<std::uint32_t>(instruments_.size()));
     for (const auto& ins : instruments_) {
@@ -160,6 +208,10 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
       put_u32(manifest, s.block_count);
       put_u64(manifest, first_block[flat++]);
       manifest.insert(manifest.end(), s.pcm_sha256.begin(), s.pcm_sha256.end());
+    }
+    if (opt_.format_version >= 2) {
+      put_u32(manifest, static_cast<std::uint32_t>(ins.regions.size()));
+      for (const auto& r : ins.regions) put_region(manifest, r);
     }
   }
 

@@ -46,7 +46,7 @@ Contributors to `sfizz`, in chronologic order:
 
 ## 2. Abseil C++ (c2435f83) — Apache License 2.0
 
-Copyright The Abseil Authors. Any modified Abseil file carries a prominent change notice in its header.
+Copyright The Abseil Authors. No vendored Abseil file is modified (any modified Abseil file would carry a prominent change notice in its header). Vendored under `formatlib/third_party/abseil-cpp/`.
 
 Apache License
                            Version 2.0, January 2004
@@ -254,6 +254,8 @@ Apache License
 
 Copyright (c) 2018, Steffen Schümann <s.schuemann@pobox.com>
 
+Only `ghc/fs_std.hpp` is vendored (`formatlib/third_party/ghc/`), modified to always use `std::filesystem` (stated in its header); no ghc code is compiled.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -298,3 +300,10 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Note: `simde/hedley.h` and `simde/debug-trap.h` are dedicated to the public domain under CC0-1.0.
+
+## Not shipped: test oracle
+
+The sfizz renderer (`sfizz_render`, sfizz 1.2.3, commit 4e70dc0b) used by the null tests (Story 1.15) is neither vendored in this
+repository nor linked into, or shipped with, any product binary or image. `tools/oracle/build-sfizz-render.sh` fetches it into the
+git-ignored `tools/oracle/.work/` on a developer machine only, to render reference audio; `tools/ci/check_third_party_notices.py`
+fails the build if oracle sources are committed or referenced from a shipped build file.

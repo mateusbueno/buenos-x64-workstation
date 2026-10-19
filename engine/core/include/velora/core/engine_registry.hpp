@@ -21,6 +21,11 @@ class EngineRegistry {
   // Returns false if the registry is full or the type is already bound.
   bool bind(Engine& engine) noexcept;
 
+  // Setup-time: undo the latest successful bind().
+  void unbind_last() noexcept {
+    if (count_) engines_[--count_] = nullptr;
+  }
+
   // kOk with `out` set; kEngineNotAvailable for a reserved id with no bound engine
   // (never substituted); kEngineUnknown otherwise.
   EngineStatus resolve(std::uint32_t id, Engine*& out) const noexcept VELORA_NONBLOCKING;

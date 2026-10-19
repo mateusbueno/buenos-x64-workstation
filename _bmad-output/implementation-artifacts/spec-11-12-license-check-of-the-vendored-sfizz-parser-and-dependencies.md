@@ -34,4 +34,4 @@ review_loop_iteration: 0
 
 - decision A applied: gate flags only sfizz dependency/link/fetch commands (CMake statements, multi-line aware); `sfizz_parser`/`sfizz::parser` allowed.
 - patched: top-level-only `tools`/`build` exemption, `tests` at any depth; utf-8; 32-file count; verdict wording; sign-off pending; shipped notices header cleaned; self-test expanded (no bare assert).
-- deferred items actioned: non-CMake build files scanned; manifest now carries file list and pins, checked against the table, notices headings and `vendor_dirs`. Image/About install tracked in deferred-work.md.
+- deferred items actioned: non-CMake build files scanned; Story 1.13's gate already checks the vendored tree against the table; added pinned-version-in-heading check. Image/About install tracked in deferred-work.md.

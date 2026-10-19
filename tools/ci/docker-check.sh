@@ -8,7 +8,7 @@ docker build -q -t "$IMAGE" tools/ci/docker >/dev/null
 job="${1:-all}"
 run() { # builds in a container-local copy so the host tree stays untouched
   docker run --rm -v "$PWD":/src:ro "$IMAGE" bash -euc "
-    mkdir /work/s && cd /src && tar --exclude=./build --exclude=./.git -cf - . | tar -xf - -C /work/s && cd /work/s
+    mkdir /work/s && cd /src && tar --exclude=./build --exclude=./.git --exclude=./tools/oracle/.work -cf - . | tar -xf - -C /work/s && cd /work/s
     $1"
 }
 case "$job" in purity|all)

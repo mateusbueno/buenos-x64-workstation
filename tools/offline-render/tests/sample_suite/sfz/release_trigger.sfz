@@ -1,0 +1,16 @@
+<control>
+default_path=samples/
+<group> lokey=60 hikey=60 pitch_keycenter=60 ampeg_release=0.08
+<region> sample=a.wav
+<group> trigger=release lokey=60 hikey=60 pitch_keycenter=60 volume=-6 ampeg_release=0.05
+<region> sample=b.wav
+<group> lokey=62 hikey=62 pitch_keycenter=62 ampeg_release=0.04
+<region> sample=short.wav
+<group> trigger=release lokey=62 hikey=62 pitch_keycenter=62
+<region> sample=c.wav
+<group> lokey=64 hikey=64 pitch_keycenter=64 ampeg_release=0.05
+<region> sample=a.wav lovel=1 hivel=60
+<region> sample=d.wav lovel=61 hivel=127
+<group> trigger=release lokey=64 hikey=64 pitch_keycenter=64 seq_length=2
+<region> sample=b.wav seq_position=1
+<region> sample=c.wav seq_position=2

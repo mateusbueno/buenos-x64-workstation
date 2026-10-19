@@ -2,6 +2,8 @@ add_library(velora_core STATIC
   src/version.cpp
   src/engine_registry.cpp
   src/test_tone_engine.cpp
+  src/sample_engine.cpp
+  src/voice_arbiter.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
 target_include_directories(velora_core PUBLIC include)
@@ -11,6 +13,15 @@ target_link_libraries(velora_core PUBLIC velora_ports)
 add_executable(core_tests tests/core_test.cpp)
 target_link_libraries(core_tests PRIVATE velora_core)
 add_test(NAME core_tests COMMAND core_tests)
+
+add_executable(sample_engine_tests tests/sample_engine_test.cpp)
+target_link_libraries(sample_engine_tests PRIVATE velora_core)
+add_test(NAME sample_engine_tests COMMAND sample_engine_tests)
+
+add_executable(voice_arbiter_tests tests/voice_arbiter_test.cpp)
+target_link_libraries(voice_arbiter_tests PRIVATE velora_core)
+target_compile_definitions(voice_arbiter_tests PRIVATE VELORA_ARBITER_TEST_HOOKS)
+add_test(NAME voice_arbiter_tests COMMAND voice_arbiter_tests)
 
 add_executable(engine_tests tests/engine_test.cpp)
 target_link_libraries(engine_tests PRIVATE velora_core)
@@ -41,6 +52,17 @@ if(VELORA_RTSAN)
     target_compile_options(rtsan_block_loop_test PRIVATE -fsanitize=realtime -g)
     target_link_options(rtsan_block_loop_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_block_loop_test COMMAND rtsan_block_loop_test)
+    add_executable(rtsan_sample_engine_test tests/rtsan_sample_engine_test.cpp)
+    target_link_libraries(rtsan_sample_engine_test PRIVATE velora_core)
+    target_compile_options(rtsan_sample_engine_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_sample_engine_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_sample_engine_test COMMAND rtsan_sample_engine_test)
+    add_executable(rtsan_arbiter_test tests/rtsan_arbiter_test.cpp)
+    target_link_libraries(rtsan_arbiter_test PRIVATE velora_core)
+    target_compile_definitions(rtsan_arbiter_test PRIVATE VELORA_ARBITER_TEST_HOOKS)
+    target_compile_options(rtsan_arbiter_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_arbiter_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_arbiter_test COMMAND rtsan_arbiter_test)
     add_test(NAME rtsan_safe_test COMMAND rtsan_safe_test)
     # The deliberately RT-unsafe test must be aborted by RTSan: expected failure.
     add_test(NAME rtsan_unsafe_test COMMAND rtsan_unsafe_test)

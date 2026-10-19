@@ -1,0 +1,7 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.05
+<group> lokey=48 hikey=72 pitch_keycenter=60
+<region> sample=a.wav lovel=1 hivel=40
+<region> sample=b.wav lovel=41 hivel=80
+<region> sample=c.wav lovel=81 hivel=127

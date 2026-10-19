@@ -20,7 +20,7 @@ enum class EngineStatus : std::uint8_t {
   kOk = 0,
   kEngineNotAvailable,  // reserved type with no compiled-in engine: silence, never another engine
   kEngineUnknown,       // id outside the reserved set (and not the test engine)
-  kPoolExhausted,       // no free voice: newest note-on dropped (stealing arrives in Story 1.19)
+  kPoolExhausted,       // no free voice and no steal victim: newest note-on dropped
   kVoiceNotFound,       // note-off with no matching held voice
   kEventOverflow,       // pending-event buffer full: event dropped (queue keeps draining)
   kCount
@@ -28,11 +28,31 @@ enum class EngineStatus : std::uint8_t {
 
 enum class VoiceState : std::uint8_t { kHeld, kSustained, kReleasing };
 
-// Steal metadata an engine reports per voice (consumed by the Story 1.19 arbiter).
+// Steal metadata an engine reports per voice (consumed by the VoiceArbiter, Story 1.19).
+//   state: kHeld = the key is down; kSustained = the sound outlives the key for a reason the engine
+//   knows (e.g. a one-shot sample after note off); kReleasing = fading out on its own or fired by a
+//   note off. The pedal is NOT known to the engine: the arbiter defers a pedal-held note off, so the
+//   engine still reports kHeld and the arbiter classifies it as pedal-sustained.
 struct VoiceInfo {
   std::uint64_t start_time = 0;  // engine frame clock at voice start
   float level = 0.0f;            // current output level estimate
   VoiceState state = VoiceState::kHeld;
+  std::uint32_t channel = 0;     // UMP channel the voice was started for
+  std::uint32_t note = 0;        // note number the voice was started for
+};
+
+class Engine;
+
+// The only way an engine obtains a voice slot once a pool arbiter is attached (AD-7, AD-22).
+class VoiceAllocator {
+ public:
+  static constexpr std::uint32_t kNoSlot = 0xFFFFFFFFu;
+  virtual ~VoiceAllocator() = default;
+  // Returns a free slot of `engine` for a voice about to start for (channel, note), stealing a
+  // voice (anywhere in the Live Set) when the pool is full; kNoSlot when no slot can be granted.
+  // The caller must fill the returned slot before it calls acquire() again.
+  virtual std::uint32_t acquire(Engine& engine, std::uint32_t channel, std::uint32_t note) noexcept
+      VELORA_NONBLOCKING = 0;
 };
 
 // The single static engine contract for Sample, Organ, FM and VA. Engines are compiled in (no
@@ -58,6 +78,30 @@ class Engine {
 
   // Steal metadata. Returns false when the slot is inactive.
   virtual bool voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept VELORA_NONBLOCKING = 0;
+
+  // Called by the arbiter when it steals `slot`: the voice must fade to silence with a monotone
+  // (never rising) gain ramp over `ramp_frames` rendered frames, then free itself. It stays active
+  // (voice_info() true) until silent, ignores later note offs, and keeps its slot meanwhile.
+  // False when the slot is inactive or already fading.
+  virtual bool begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept VELORA_NONBLOCKING = 0;
+
+  // Setup-time: attach the pool arbiter. Without one (standalone use in tests) the engine hands out
+  // its first free slot and reports kPoolExhausted when none is left.
+  void set_voice_allocator(VoiceAllocator* allocator) noexcept { allocator_ = allocator; }
+
+ protected:
+  // Slot for a voice that is about to start; VoiceAllocator::kNoSlot when none can be had.
+  std::uint32_t acquire_slot(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING {
+    if (allocator_) return allocator_->acquire(*this, channel, note);
+    VoiceInfo vi;
+    const std::uint32_t n = voice_capacity();
+    for (std::uint32_t i = 0; i < n; ++i)
+      if (!voice_info(i, vi)) return i;
+    return VoiceAllocator::kNoSlot;
+  }
+
+ private:
+  VoiceAllocator* allocator_ = nullptr;
 };
 
 }  // namespace velora::core
