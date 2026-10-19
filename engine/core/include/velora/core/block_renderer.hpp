@@ -42,8 +42,11 @@ class BlockRenderer {
   bool submit(const TimedUmp& ev) noexcept VELORA_NONBLOCKING { return queue_.push(ev); }
 
   // Setup-time: choose the engine type that serves a UMP channel (default kTestTone).
+  // The engine is also handed the current value of every performance parameter of that part (so drawbars
+  // set before the routing existed are not lost).
   void set_channel_engine(std::uint32_t channel, std::uint32_t engine_type_id) noexcept {
     channel_engine_[channel & 0xF] = engine_type_id;
+    sync_part_params(channel & 0xF);
   }
 
   // Setup-time: bind another compiled-in engine (e.g. the SampleEngine) next to the always-bound test
@@ -53,7 +56,11 @@ class BlockRenderer {
   // The engine joins the voice pool arbiter as well (call before arbiter().reserve()).
   bool bind_engine(Engine& engine) {
     if (!registry_.bind(engine)) return false;
-    if (arbiter_.bind(engine)) return true;
+    if (arbiter_.bind(engine)) {  // channels mapped before the bind receive the current performance values
+      for (std::uint32_t ch = 0; ch < 16; ++ch)
+        if (channel_engine_[ch] == static_cast<std::uint32_t>(engine.type_id())) sync_part_params(ch);
+      return true;
+    }
     registry_.unbind_last();  // keep registry and arbiter in step
     return false;
   }
@@ -100,6 +107,8 @@ class BlockRenderer {
 
   void release_deferred(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
   void adopt_generation() noexcept VELORA_NONBLOCKING;
+  void forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept VELORA_NONBLOCKING;
+  void sync_part_params(std::uint32_t channel) noexcept;
   void apply_param(const ParamEvent& ev) noexcept VELORA_NONBLOCKING;
   void bind_generation(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING;
   void reap_generation_refs() noexcept VELORA_NONBLOCKING;

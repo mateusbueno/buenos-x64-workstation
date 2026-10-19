@@ -30,6 +30,7 @@ bool VoiceArbiter::bind(Engine& engine) {
   engines_[i] = &engine;
   type_[i] = id;
   cost_[i] = engine.cost_units_per_voice();
+  protected_[i] = engine.steal_protected();
   capacity_[i] = engine.voice_capacity();
   slots_[i].assign(capacity_[i], Slot{});
   std::size_t total = 0;
@@ -44,6 +45,7 @@ void VoiceArbiter::unbind_last() noexcept {
   const std::size_t i = --count_;
   engines_[i]->set_voice_allocator(nullptr);
   engines_[i] = nullptr;
+  protected_[i] = false;
   slots_[i].clear();
   steals_[i].store(0, std::memory_order_relaxed);
 }
@@ -63,7 +65,7 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
     const int idx = index_of_type(f.engine_type_id);
     if (idx < 0) return ReserveStatus::kUnknownEngine;
     const auto k = static_cast<std::size_t>(idx);
-    if (seen[k] || cost_[k] == 0) return ReserveStatus::kInvalidConfig;
+    if (seen[k] || cost_[k] == 0 || protected_[k]) return ReserveStatus::kInvalidConfig;
     if (static_cast<std::uint64_t>(f.voices) + kFadeHeadroomVoices > capacity_[k])
       return ReserveStatus::kFloorExceedsCapacity;
     seen[k] = true;
@@ -72,6 +74,9 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
     if (fc[k] > kMax64 - floors) return ReserveStatus::kFloorsExceedBudget;
     floors += fc[k];
   }
+  for (std::size_t i = 0; i < count_; ++i)  // a bound protected engine needs its real cost reserved
+    if (protected_[i] && cfg.organ_rotary_cost < static_cast<std::uint64_t>(cost_[i]) * kMinProtectedVoices)
+      return ReserveStatus::kInvalidConfig;
   const int sample = index_of_type(static_cast<std::uint32_t>(EngineTypeId::kSample));
   if (sample >= 0 && fv[static_cast<std::size_t>(sample)] < min_sample_floor_)
     return ReserveStatus::kSampleFloorTooLow;
@@ -91,6 +96,8 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
   res_.floors = floors;
   res_.voice_budget = rem;
   res_.shared = rem - floors;
+  for (std::size_t i = 0; i < count_; ++i)  // protected engines draw on the organ reservation first
+    if (protected_[i]) fc[i] = cfg.organ_rotary_cost;
   floor_cost_ = fc;
   ramp_ = cfg.steal_ramp_frames;
   reserved_ = true;
@@ -332,6 +339,7 @@ std::uint32_t VoiceArbiter::acquire_reserved(std::size_t ei, bool& retry) noexce
     std::size_t bg = 0;
     std::uint32_t bs = 0;
     for (std::size_t g = 0; g < count_; ++g) {
+      if (protected_[g]) continue;  // the organ is never a steal victim
       // Never take from another engine that would drop to or below its floor.
       if (g != ei && static_cast<std::uint64_t>(live_[g]) * cost_[g] < floor_cost_[g] + cost_[g]) continue;
       Slot* sl = slots_[g].data();

@@ -11,6 +11,9 @@
 //    then newer, then lower (engine, slot) id. A note never steals voices of its own note-on.
 //  * A stolen voice fades over a short ramp (kStealRampFrames) and keeps counting against the budget until
 //    the engine reports it silent.
+//  * Engines that report steal_protected() (the tonewheel organ) are never victims. Their cost is covered by
+//    LiveSetConfig::organ_rotary_cost, reserved ahead of every floor; they count against that reservation
+//    first and only beyond it against the shared remainder. They cannot be given a floor.
 //  * Floors: an engine below its floor is always granted a voice (stealing from engines above their
 //    floor); nobody steals from an engine that is at or below its floor.
 //
@@ -163,6 +166,9 @@ class VoiceArbiter final : public VoiceAllocator {
   std::array<std::uint32_t, kMaxEngines> type_{}, cost_{}, capacity_{};
   std::array<std::vector<Slot>, kMaxEngines> slots_{};
   std::array<std::uint64_t, kMaxEngines> floor_cost_{};
+  // A bound protected engine needs at least this many of its voices' cost in organ_rotary_cost (73 keys).
+  static constexpr std::uint32_t kMinProtectedVoices = 73;
+  std::array<bool, kMaxEngines> protected_{};  // Engine::steal_protected() at bind(): never a victim
   std::array<std::uint32_t, kMaxEngines> live_{}, fade_{};
   std::array<std::atomic<std::uint64_t>, kMaxEngines> steals_{};
   std::size_t count_ = 0;

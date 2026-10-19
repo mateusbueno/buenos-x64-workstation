@@ -61,16 +61,40 @@ void BlockRenderer::adopt_generation() noexcept {
   // Initial performance values apply only on generation change, and only where they changed. The diff is
   // against an RT-owned copy of the last applied values: the previous generation is no longer held (the
   // hazard moved) and the control thread may free it at any moment, so it must not be read here.
+  std::array<bool, params::kPerfSlotCount> changed{};
   for (std::size_t i = 0; i < params::kPerfSlotCount; ++i) {
-    if (!applied_valid_ || next->perf_init[i] != applied_init_[i]) last_.store(i, next->perf_init[i]);
+    changed[i] = !applied_valid_ || next->perf_init[i] != applied_init_[i];
+    if (changed[i]) last_.store(i, next->perf_init[i]);
     applied_init_[i] = next->perf_init[i];
+  }
+  for (const params::ParamDef& d : params::kParams) {  // engines follow the values that changed
+    if (d.cls != params::Class::kPerformance) continue;
+    const std::uint32_t parts = d.scope == params::Scope::kPart ? params::kPartCount : 1;
+    for (std::uint32_t p = 0; p < parts; ++p) {
+      const std::size_t slot = params::perf_slot(d, p);
+      if (changed[slot]) forward_part_param(d, p, next->perf_init[slot]);
+    }
   }
   applied_valid_ = true;
   held_ = next;
 }
 
+void BlockRenderer::forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept {
+  if (d.scope != params::Scope::kPart || part >= 16) return;  // channel = part
+  Engine* engine = nullptr;
+  if (registry_.resolve(channel_engine_[part], engine) == EngineStatus::kOk) engine->set_part_param(part, d.id, value);
+}
+
+void BlockRenderer::sync_part_params(std::uint32_t channel) noexcept {
+  if (channel >= params::kPartCount) return;
+  for (const params::ParamDef& d : params::kParams)
+    if (d.cls == params::Class::kPerformance && d.scope == params::Scope::kPart)
+      forward_part_param(d, channel, last_.load(params::perf_slot(d, channel)));
+}
+
 void BlockRenderer::apply_param(const ParamEvent& ev) noexcept {
   last_.store(params::perf_slot(*ev.def, ev.part), ev.value);
+  forward_part_param(*ev.def, ev.part, ev.value);
   param_applied_.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -154,6 +178,8 @@ void BlockRenderer::process_block(float* left, float* right) noexcept {
   for (std::uint32_t i = 0; i < kBlockFrames; ++i) left[i] = right[i] = 0.0f;
   adopt_generation();
   drain_queue();
+  // Phase 2: shared per-part generators (the organ's tonewheels) produce their block before voices render.
+  for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->begin_block(kBlockFrames);
 
   std::uint32_t pos = 0;
   std::size_t consumed = 0;

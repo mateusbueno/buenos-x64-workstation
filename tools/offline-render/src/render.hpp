@@ -11,7 +11,7 @@
 
 namespace velora::offline {
 
-enum class EngineKind : std::uint8_t { kTestTone, kSample };
+enum class EngineKind : std::uint8_t { kTestTone, kSample, kOrgan };
 
 struct RenderOptions {
   EngineKind engine = EngineKind::kTestTone;
@@ -23,6 +23,9 @@ struct RenderOptions {
   float gain_db = 0.0f;  // sample engine output gain (the sfizz null tests use sfizz's -7.35 dB default master volume)
   velora::core::SampleInterpolation interpolation = velora::core::SampleInterpolation::kHermite3;
   std::uint32_t voices = 32;
+  // Organ engine only: nine drawbar steps 0..8 in drawbar order (16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1'),
+  // applied to every organ part (channels 0..7) at frame 0 as performance parameter events.
+  std::string drawbars = "008000000";
   double tail_seconds = 1.0;
   float detune_cents = 0.0f;  // test-only: used to produce a deliberately wrong render
 };

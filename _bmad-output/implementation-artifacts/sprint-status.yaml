@@ -63,7 +63,7 @@ development_status:
 
   epic-2: in-progress
   2-1-parameter-registry-and-control-thread-snapshots-for-engine-s: done
-  2-2-tonewheel-generator-and-drawbar-voices-at-full-polyphony: backlog
+  2-2-tonewheel-generator-and-drawbar-voices-at-full-polyphony: done
   2-3-organ-percussion-and-key-click: backlog
   2-4-vibrato-chorus-scanner-and-tonewheel-leakage: backlog
   2-5-multi-contact-onset-hook-in-the-organ: backlog

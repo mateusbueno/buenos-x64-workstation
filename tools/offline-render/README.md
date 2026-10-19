@@ -28,6 +28,10 @@ Dependency rule: may depend on `engine/core`, `engine/ports`, `engine/host` (the
   16-bit PCM WAVs are readable; `sfizz-s16` undoes `sfizz_render`'s float->s16 conversion (dr_wav maps silence to -1 and scales by
   32767.5, so the reference is decoded as `(s + 1) / 32767.5`), which would otherwise inject a -90 dBFS DC offset and a gain error of 1.5e-5.
 
+- `velora-offline-render --engine organ [--drawbars 888000000]` (Story 2.2) renders the MIDI through the tonewheel organ on
+  channels 0..7 (one organ part per MIDI channel; notes on channels 8..15 are refused as engine-not-available and stay silent). `--drawbars` is nine digits 0..8 for 16', 5 1/3',
+  8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1' (default `008000000`), applied to every part at frame 0.
+
 ## Golden render
 
 `tests/golden/` holds `golden.mid`, `golden.wav` and `golden.case`. ctest renders twice (byte-equality), null-tests a

@@ -72,6 +72,40 @@ add_test(NAME offline_render_rejects_bad_tail
 set_tests_properties(offline_render_rejects_bad_tail PROPERTIES
                      PASS_REGULAR_EXPRESSION "invalid --tail-seconds")
 
+# Organ engine (Story 2.2): deterministic offline renders with drawbar settings.
+add_test(NAME offline_render_organ_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/organ_a.wav ${_out}/organ_b.wav ${_out}/organ_alt.wav ${_out}/organ_zero.wav)
+set_tests_properties(offline_render_organ_clean PROPERTIES FIXTURES_SETUP organ_clean)
+add_test(NAME offline_render_organ_a
+         COMMAND velora-offline-render ${_render_args} --engine organ --drawbars 888000000 --out ${_out}/organ_a.wav)
+add_test(NAME offline_render_organ_b
+         COMMAND velora-offline-render ${_render_args} --engine organ --drawbars 888000000 --out ${_out}/organ_b.wav)
+add_test(NAME offline_render_organ_bit_identical
+         COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/organ_a.wav ${_out}/organ_b.wav)
+set_tests_properties(offline_render_organ_a PROPERTIES FIXTURES_REQUIRED organ_clean FIXTURES_SETUP organ_a)
+set_tests_properties(offline_render_organ_b PROPERTIES FIXTURES_REQUIRED organ_clean FIXTURES_SETUP organ_b)
+set_tests_properties(offline_render_organ_bit_identical PROPERTIES FIXTURES_REQUIRED "organ_a;organ_b")
+add_test(NAME offline_render_organ_rejects_bad_drawbars
+         COMMAND velora-offline-render ${_render_args} --engine organ --drawbars 9880000 --out ${_out}/never.wav)
+set_tests_properties(offline_render_organ_rejects_bad_drawbars PROPERTIES
+                     PASS_REGULAR_EXPRESSION "invalid --drawbars")
+add_test(NAME offline_render_drawbars_need_organ
+         COMMAND velora-offline-render ${_render_args} --drawbars 888000000 --out ${_out}/never.wav)
+set_tests_properties(offline_render_drawbars_need_organ PROPERTIES
+                     PASS_REGULAR_EXPRESSION "--drawbars needs --engine organ")
+
+add_test(NAME offline_render_organ_alt
+         COMMAND velora-offline-render ${_render_args} --engine organ --drawbars 008000000 --out ${_out}/organ_alt.wav)
+add_test(NAME offline_render_organ_zero
+         COMMAND velora-offline-render ${_render_args} --engine organ --drawbars 000000000 --out ${_out}/organ_zero.wav)
+set_tests_properties(offline_render_organ_alt offline_render_organ_zero PROPERTIES FIXTURES_REQUIRED organ_clean FIXTURES_SETUP organ_other)
+add_executable(organ_wav_check tests/organ_wav_check.cpp)
+target_link_libraries(organ_wav_check PRIVATE velora_offline)
+add_test(NAME offline_render_organ_content
+         COMMAND organ_wav_check ${_out}/organ_a.wav ${_out}/organ_alt.wav ${_out}/organ_zero.wav)
+set_tests_properties(offline_render_organ_content PROPERTIES FIXTURES_REQUIRED "organ_a;organ_other"
+                     PASS_REGULAR_EXPRESSION "organ_wav_check: ok")
+
 # Regenerate the golden: cmake --build build --target update-golden (review the diff before commit).
 add_custom_target(update-golden
   COMMAND velora-offline-render ${_render_args} --out ${_golden}/golden.wav

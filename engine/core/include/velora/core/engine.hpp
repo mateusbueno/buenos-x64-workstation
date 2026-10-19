@@ -85,6 +85,25 @@ class Engine {
   // False when the slot is inactive or already fading.
   virtual bool begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept VELORA_NONBLOCKING = 0;
 
+  // Phase 2 hook (Story 2.2). Called once per engine per block, before any voice renders and before
+  // render() is called for the block's segments, with the block length. An engine with a shared
+  // generator (the tonewheel organ) produces the block's shared per-part state here; voices then only
+  // read it. Default: nothing to do.
+  virtual void begin_block(std::uint32_t frames) noexcept VELORA_NONBLOCKING { (void)frames; }
+
+  // A performance parameter of `part` (registry param id, already clamped to its range) changed. Called
+  // by the block loop at the event's frame, between render segments, so the engine can start a ramp at
+  // exactly that in-block offset. Also called for initial values on a generation change. Default: ignored.
+  virtual void set_part_param(std::uint32_t part, std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING {
+    (void)part;
+    (void)param_id;
+    (void)value;
+  }
+
+  // True for an engine whose voices the arbiter must never choose as steal victims (the tonewheel organ).
+  // Its cost is reserved ahead of every engine floor through LiveSetConfig::organ_rotary_cost.
+  virtual bool steal_protected() const noexcept { return false; }
+
   // Setup-time: attach the pool arbiter. Without one (standalone use in tests) the engine hands out
   // its first free slot and reports kPoolExhausted when none is left.
   void set_voice_allocator(VoiceAllocator* allocator) noexcept { allocator_ = allocator; }

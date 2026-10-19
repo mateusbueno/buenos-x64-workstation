@@ -16,15 +16,17 @@ using namespace velora::offline;
 
 static int usage() {
   std::fprintf(stderr,
-               "usage: velora-offline-render --midi in.mid --out out.wav [--engine test-tone|sample]\n"
+               "usage: velora-offline-render --midi in.mid --out out.wav [--engine test-tone|sample|organ]\n"
                "       [--voices N] [--tail-seconds S] [--detune-cents C (test only)]\n"
+               "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
   return 2;
 }
 
 int main(int argc, char** argv) {
   std::string midi, out, engine = "test-tone", bundle_path, instrument_key, interp = "hermite";
-  bool voices_given = false, sample_opts = false;
+  bool voices_given = false, sample_opts = false, drawbars_given = false;
+  std::string drawbars;
   RenderOptions opt;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -42,6 +44,7 @@ int main(int argc, char** argv) {
       if (!parse_uint(v, 4096, n) || n < 1) { std::fprintf(stderr, "error: invalid --voices\n"); return 2; }
       opt.voices = static_cast<std::uint32_t>(n);
       voices_given = true;
+    } else if (a == "--drawbars" && val(v)) { drawbars = v; drawbars_given = true;
     } else if (a == "--bundle" && val(v)) bundle_path = v;
     else if (a == "--instrument" && val(v)) instrument_key = v;
     else if (a == "--interpolation" && val(v)) { interp = v; sample_opts = true; }
@@ -69,9 +72,26 @@ int main(int argc, char** argv) {
     } else return usage();
   }
   if (midi.empty() || out.empty()) return usage();
-  if (engine != "test-tone" && engine != "sample") {
-    std::fprintf(stderr, "error: unknown engine '%s' (test-tone or sample)\n", engine.c_str());
+  if (engine != "test-tone" && engine != "sample" && engine != "organ") {
+    std::fprintf(stderr, "error: unknown engine '%s' (test-tone, sample or organ)\n", engine.c_str());
     return 2;
+  }
+  if (drawbars_given && engine != "organ") {
+    std::fprintf(stderr, "error: --drawbars needs --engine organ\n");
+    return 2;
+  }
+  if (engine == "organ") {
+    if (drawbars_given) {
+      bool good = drawbars.size() == 9;
+      for (char c : drawbars) good = good && c >= '0' && c <= '8';
+      if (!good) { std::fprintf(stderr, "error: invalid --drawbars (nine digits 0..8, e.g. 888000000)\n"); return 2; }
+      opt.drawbars = drawbars;
+    }
+    opt.engine = EngineKind::kOrgan;
+    if (sample_opts || !bundle_path.empty() || !instrument_key.empty()) {
+      std::fprintf(stderr, "error: --bundle, --instrument, --seed, --gain-db, --interpolation and --oracle-block-frames need --engine sample\n");
+      return 2;
+    }
   }
   if (interp != "hermite" && interp != "linear") {
     std::fprintf(stderr, "error: invalid --interpolation (hermite or linear)\n");
@@ -103,6 +123,8 @@ int main(int argc, char** argv) {
     instrument = std::move(loaded.instrument);
     opt.engine = EngineKind::kSample;
     opt.instrument = instrument.get();
+  } else if (engine == "organ") {
+    // handled above
   } else if (!bundle_path.empty() || !instrument_key.empty() || sample_opts) {
     std::fprintf(stderr, "error: --bundle, --instrument, --seed, --gain-db, --interpolation and --oracle-block-frames need --engine sample\n");
     return 2;

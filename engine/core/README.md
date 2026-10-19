@@ -154,3 +154,10 @@ protobuf dependency; the wire format lives in `engine/host`.
   pinned by sounding notes the next structural command is refused with `BUSY`.
 - Tests: `params_tests` (registry, UMP round trip for every performance parameter, initial values only on generation change, held note
   across a swap); `rtsan_control_test` in `engine/host` covers RT safety (10,000 changes + 100 swaps).
+
+## Tonewheel organ (Story 2.2)
+
+`OrganEngine` (type id Organ=2, "tonewheel organ"): shared 91-wheel generator per part in the new `Engine::begin_block` phase-2 hook,
+one voice per key summing nine drawbar footages with foldback, 5 ms drawbar ramps started at the event frame via
+`Engine::set_part_param`, `Engine::steal_protected()` plus the organ reservation in `VoiceArbiter`. Clean-room sources of every
+table, the drawbar curve, smoothing and the reservation are in `ORGAN.md`.

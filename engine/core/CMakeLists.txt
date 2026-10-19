@@ -8,6 +8,7 @@ add_library(velora_core STATIC
   src/engine_registry.cpp
   src/test_tone_engine.cpp
   src/sample_engine.cpp
+  src/organ_engine.cpp
   src/voice_arbiter.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
@@ -35,6 +36,17 @@ add_test(NAME params_tests COMMAND params_tests)
 add_executable(engine_tests tests/engine_test.cpp)
 target_link_libraries(engine_tests PRIVATE velora_core)
 add_test(NAME engine_tests COMMAND engine_tests)
+
+add_executable(organ_tests tests/organ_test.cpp)
+target_link_libraries(organ_tests PRIVATE velora_core)
+target_compile_definitions(organ_tests PRIVATE VELORA_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_test(NAME organ_tests COMMAND organ_tests)
+
+# Host micro-benchmark (Story 2.2): cost per voice and per generator; host figures, not representative of the board.
+add_executable(organ_bench tests/organ_bench.cpp)
+target_link_libraries(organ_bench PRIVATE velora_core)
+add_test(NAME organ_bench COMMAND organ_bench)
+set_tests_properties(organ_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative")
 
 # --- RealtimeSanitizer gate -------------------------------------------------
 if(VELORA_RTSAN)
@@ -72,6 +84,11 @@ if(VELORA_RTSAN)
     target_compile_options(rtsan_arbiter_test PRIVATE -fsanitize=realtime -g)
     target_link_options(rtsan_arbiter_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_arbiter_test COMMAND rtsan_arbiter_test)
+    add_executable(rtsan_organ_test tests/rtsan_organ_test.cpp)
+    target_link_libraries(rtsan_organ_test PRIVATE velora_core)
+    target_compile_options(rtsan_organ_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_organ_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_organ_test COMMAND rtsan_organ_test)
     add_test(NAME rtsan_safe_test COMMAND rtsan_safe_test)
     # The deliberately RT-unsafe test must be aborted by RTSan: expected failure.
     add_test(NAME rtsan_unsafe_test COMMAND rtsan_unsafe_test)

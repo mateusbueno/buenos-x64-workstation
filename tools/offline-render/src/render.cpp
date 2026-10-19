@@ -5,6 +5,9 @@
 #include <memory>
 
 #include "velora/core/block_renderer.hpp"
+#include "velora/core/organ_engine.hpp"
+#include "velora/core/params_gen.hpp"
+#include "velora/core/param_events.hpp"
 
 namespace velora::offline {
 
@@ -58,6 +61,31 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kSample));
   }
 
+  std::unique_ptr<OrganEngine> organ;
+  if (opt.engine == EngineKind::kOrgan) {
+    if (opt.drawbars.size() != 9 ||
+        std::any_of(opt.drawbars.begin(), opt.drawbars.end(), [](char c) { return c < '0' || c > '8'; })) {
+      error = "invalid drawbars (nine digits 0..8)";
+      return false;
+    }
+    organ = std::make_unique<OrganEngine>();
+    if (!br->bind_engine(*organ)) {
+      error = "cannot bind the organ engine";
+      return false;
+    }
+    for (std::uint32_t ch = 0; ch < OrganEngine::kPartCount; ++ch) {
+      br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
+      for (std::uint32_t d = 0; d < 9; ++d)
+        if (!br->submit({make_param_event(*params::find(params::kDrawbar16 + d), ch, opt.drawbars[d] - '0'), 0})) {
+          error = "event queue full while setting the drawbars (try a render with fewer simultaneous events)";
+          return false;
+        }
+    }
+    // Channels 8..15 have no organ part: their notes are refused (engine not available), not played as test tone.
+    for (std::uint32_t ch = OrganEngine::kPartCount; ch < 16; ++ch)
+      br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kFm));
+  }
+
   out.sample_rate = kSampleRate;
   out.channels = 2;
   out.samples.assign(static_cast<std::size_t>(blocks * kBlockFrames * 2), 0.0f);
@@ -83,6 +111,10 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       dst[2 * i] = l[i];
       dst[2 * i + 1] = r[i];
     }
+  }
+  if (stats && organ) {
+    stats->pool_exhausted = br->status_count(EngineStatus::kPoolExhausted);
+    stats->voice_not_found = br->status_count(EngineStatus::kVoiceNotFound);
   }
   if (stats && sample) {
     stats->pool_exhausted = br->status_count(EngineStatus::kPoolExhausted);
