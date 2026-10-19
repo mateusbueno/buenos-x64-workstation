@@ -37,14 +37,14 @@ Known wording differences to resolve before the tests, not decided here: story 3
 ## 2. Preconditions and equipment
 
 Entry gates (stop if any is false):
-1. Story 11.7 delivered: MCU family and bootloader approach for both MCUs (HWI:143 item 3). Status: ____ (TBD from vendor docs).
+1. Story 11.7 delivered: MCU family and bootloader approach for both MCUs (HWI:143 item 3). Status: ____. Until then the founder's candidate is the ST Nucleo-G474RE (STM32G4), see hardware-platform.md; the steps below use it as the dev kit but nothing may be frozen before 11.7.
 2. Story 11.6 delivered: 73SW contact count (2 or 3) and aftertouch presence (HWI:142 item 2; EPICS:2035). Status: ____
 3. Story 11.8 delivered (panel stories): panel, display, LED and legend specs; encoder and fader part numbers; encoder rated maximum speed (EPICS:2185, 2191). Rated speed value: ____ (TBD from vendor docs).
 4. Story 3.1 library and ID maps built and passing host tests (`mcu/common/`); `MCU-ID-MAP.md` version 1.0, source hash `4e81bc5d...5c99c665` (MAP:7) matches the firmware build.
 5. For 3.4 and later: Story 3.2 (bring-up) done so the dev board / prototype provides the SoC end of the link, or a dev board with UART link (EPICS:2064).
 
 Equipment (categories; models TBD):
-- MCU dev kit of the chosen family plus its programmer/debug probe (TBD from vendor docs).
+- Candidate MCU dev kit: ST Nucleo-G474RE (STM32G4). Its on-board ST-LINK is the programmer and debug probe (USB cable, drag-and-drop or STM32CubeProgrammer). Two kits are needed, one for the keybed and one for the panel. Exact option bytes, bootloader memory map and dual-bank layout: TBD from ST reference manual RM0440.
 - 73SW keybed with harness (partner stock; EPICS:2033) and its connector adapter to the dev kit (TBD).
 - Panel harness: encoders, 9 faders, 2 wheels, 3 pedal inputs with real pedals of each type (sustain/half-pedal, expression, switch; HWI:55), buttons, LEDs (TBD).
 - Logic analyser or scope with enough channels to capture a contact line and the link at once; sample rate must resolve well below 200 us (instrument TBD).
@@ -171,3 +171,9 @@ Exit per story (for the founder to judge): all rows of that story's AC mapping P
 
 - **Resolution (3.8-AC2):** use 12 bits, the MCU-ID-MAP contract; it satisfies the story's >=10 bits. Update the story wording to match when convenient.
 - **Pedal polarity (3.8-AC4):** reported in `HELLO` (hardware property, rarely changes), not in `CONTROL`. Step 28 should expect polarity in `HELLO` only; the protocol spec needs a field for it.
+
+## Candidate kit and who does what (2026-10-19)
+
+- Firmware is written in this repository (`mcu/keybed/`, `mcu/panel/`, Stories 3.1, 3.3, 3.4, 3.8, 3.9). The person helping with the assembly does the physical work only: harness wiring, continuity checks with a multimeter, plugging in the USB cable and copying the firmware file with STM32CubeProgrammer.
+- Before any firmware step the assembler runs the continuity checklist: every contact line of the keybed harness to its dev-kit pin, ground common, no shorts to 3.3 V or 5 V. Record results in the evidence table.
+- First MCU bring-up (steps 2, 7) should be done together with someone who has flashed an MCU before, in person or on a call. Irreversible option-byte steps stay behind the sacrificial-unit gate.

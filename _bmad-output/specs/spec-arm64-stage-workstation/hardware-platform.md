@@ -30,6 +30,7 @@
 
 - Fatar 73SW (semi-weighted), from the partner's stock of ~100 units. Assumed waterfall profile, E to E.
 - A dedicated scan MCU (e.g. STM32 or RP2350) scans at ≥10 kHz. It derives attack and release velocity from contact timing, reads aftertouch if present, and sends timestamped events to the SoC over UART/SPI in <1 ms.
+- Candidate MCU dev kit for both MCUs (founder decision 2026-10-19, not final until the partners confirm by month 7, Story 11.7): ST Nucleo-G474RE (STM32G4; many ADC channels for the panel, native dual-bank flash, on-board ST-LINK, ST longevity programme). ESP32 is excluded because v1 has no radio (NFR41). RP2350 is the fallback for the keybed only, since its ADC count would force external multiplexers on the panel.
 - The keybed model is a calibration table, so a different Fatar model needs no code change.
 - Resupply beyond the first ~100 units needs Fatar OEM terms (open question).
 
