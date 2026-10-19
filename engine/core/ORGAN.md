@@ -266,7 +266,7 @@ a settled voice costs what it did before.
 ## Rotary speaker (Story 2.6)
 
 `RotarySpeaker` (`rotary_speaker.hpp`, `src/rotary_speaker.cpp`) is the rotary speaker unit of the organ's voice path. It has no organ
-dependency (Story 2.9 reuses it as an insert), fixed storage (two 128-sample delay lines, four biquads), no allocation, and one instance
+dependency (Story 2.9 reuses it as the `rotary` insert, `rotary_effect.hpp`: mono sum of the part bus, own speed parameter, README "Chorus/phaser, EP amp/drive and rotary inserts"), fixed storage (two 128-sample delay lines, four biquads), no allocation, and one instance
 per part. The effect is called "rotary speaker" everywhere (UI label ROTARY); `organ_tests` greps its sources, the offline-render sources
 and this file for the three forbidden product names.
 

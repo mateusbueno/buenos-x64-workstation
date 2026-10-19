@@ -306,7 +306,9 @@ void test_default_path_bit_exact() {
   CHECK(a.l.size() == b.l.size() && std::memcmp(a.l.data(), b.l.data(), a.l.size() * sizeof(float)) == 0);
   CHECK(std::memcmp(a.r.data(), b.r.data(), a.r.size() * sizeof(float)) == 0);
 
-  // All parts to Main at unity but with pass-through effects in the chains (the routed path): the same audio within float rounding.
+  // All parts to Main at unity but with transparent effects in the chains (the routed path): the same audio within float rounding.
+  // Story 2.9: the rotary and the EP amp are real DSP and never transparent, so those slots are bypassed (a bypassed slot is skipped bit for
+  // bit); the chorus/phaser at its registry default (mix 0) is the identity.
   Rig rig;
   Snapshot s = Snapshot::defaults();
   for (std::uint32_t p = 0; p < 4; ++p) {
@@ -315,6 +317,7 @@ void test_default_path_bit_exact() {
       s.parts[p].inserts[i].type = static_cast<std::uint8_t>(1 + (p + i) % 5);
       // EQ at the default (0 dB) is exactly transparent; the compressor needs ratio 1 and no makeup to be (Story 2.8).
       s.parts[p].inserts[i].params[1] = s.parts[p].inserts[i].type == params::kInsertTypeCompressor ? 0.0f : 0.5f;
+      s.parts[p].inserts[i].bypass = s.parts[p].inserts[i].type == params::kInsertTypeRotary || s.parts[p].inserts[i].type == params::kInsertTypeEpAmp;
     }
   }
   build_chains(s);
@@ -743,19 +746,22 @@ void test_fx_budget() {
   s.parts[0].insert_count = 2;
   s.parts[0].inserts[0].type = params::kInsertTypeRotary;
   s.parts[0].inserts[1].type = params::kInsertTypeCompressor;
-  s.parts[3].insert_count = 1;
+  s.parts[3].insert_count = 3;
   s.parts[3].inserts[0].type = params::kInsertTypeEq;
+  s.parts[3].inserts[1].type = params::kInsertTypeEpAmp;         // Story 2.9: the oversampled EP amp declares its larger cost
+  s.parts[3].inserts[2].type = params::kInsertTypeChorusPhaser;
   const std::uint64_t config_only = fx_cost_units(s);  // chains not built: counted from the configured types
   build_chains(s);
   const std::uint64_t built = fx_cost_units(s);
   CHECK(config_only == built);
   CHECK(built == kFixedFxCost + effect_cost_units(EffectType::kRotary) + effect_cost_units(EffectType::kCompressor) +
-                     effect_cost_units(EffectType::kEq));
+                     effect_cost_units(EffectType::kEq) + effect_cost_units(EffectType::kEpAmp) + effect_cost_units(EffectType::kChorusPhaser));
+  CHECK(effect_cost_units(EffectType::kEpAmp) > effect_cost_units(EffectType::kEq));
   CHECK(fx_cost_units(Snapshot::defaults()) == kFixedFxCost);
 
   VoiceArbiter::LiveSetConfig cfg;
   CHECK(fill_fx_costs(s, cfg));
-  CHECK(cfg.fx_instance_count == 8 + 3);  // per output bus: reverb, delay, master EQ, compressor; plus 3 inserts
+  CHECK(cfg.fx_instance_count == 8 + 5);  // per output bus: reverb, delay, master EQ, compressor; plus 5 inserts
   std::uint64_t sum = 0;
   for (std::uint32_t i = 0; i < cfg.fx_instance_count; ++i) sum += cfg.fx_instance_costs[i];
   CHECK(sum == built);
@@ -803,9 +809,12 @@ void test_effect_factory() {
     for (int i = 0; i < 64; ++i) l[i] = r[i] = 0.01f * static_cast<float>(i);
     StereoBlock b{l, r, 64};
     fx->process(b);
-    // placeholders and the EQ at its default (0 dB on every band) pass the signal through bit for bit; the compressor at its default
-    // setting (threshold -30 dB, ratio 4.5:1) works on it (Story 2.8: the real DSP is tested in eq_compressor_tests)
-    if (t != params::kInsertTypeCompressor) CHECK(l[63] == 0.01f * 63.0f && r[10] == 0.01f * 10.0f);
+    // The EQ at its default (0 dB on every band) and the chorus/phaser at its default (mix 0) pass the signal through bit for bit; the compressor at
+    // its default setting (threshold -30 dB, ratio 4.5:1), the EP amp and the rotary work on it (the real DSP is tested in eq_compressor_tests,
+    // chorus_phaser_tests, ep_amp_tests and rotary_insert_tests).
+    const bool transparent = t == params::kInsertTypeEq || t == params::kInsertTypeChorusPhaser;
+    if (transparent) CHECK(l[63] == 0.01f * 63.0f && r[10] == 0.01f * 10.0f);
+    else CHECK(l[63] != 0.01f * 63.0f || r[10] != 0.01f * 10.0f);
   }
   const std::int64_t n0 = Effect::live_instances();
   { auto fx = make_effect(EffectType::kEq); CHECK(Effect::live_instances() == n0 + 1); }

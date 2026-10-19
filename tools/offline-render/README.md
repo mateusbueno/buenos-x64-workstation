@@ -120,7 +120,7 @@ to `organ_map_X.mid` (the same chord with CC 79 = 64 / 127 / 0 and CC 89 at tick
 ## Routing options (Story 2.7)
 
 `velora-offline-render` can run the fixed routing topology so its null tests can check it: `--part-output P:main|aux` (repeatable; parts are the MIDI channels 0..7), `--send P:REVERB[:DELAY]` (levels 0..1),
-`--inserts P:type[@p1/p2/..][!],...` (at most 5 of `none rotary chorus_phaser ep_amp eq compressor`; `@` gives the normalised insert parameters 1..5, each 0..1, missing ones keep the defaults; `!` bypasses the slot; the EQ and compressor are real since Story 2.8, the other types are pass-through placeholders until Stories 2.9-2.11), `--master-level DB` (-60..12),
+`--inserts P:type[@p1/p2/..][!],...` (at most 5 of `none rotary chorus_phaser ep_amp eq compressor`; `@` gives the normalised insert parameters 1..5, each 0..1, missing ones keep the defaults; `!` bypasses the slot; every type is real DSP: EQ and compressor since Story 2.8, chorus/phaser, EP amp and rotary since Story 2.9), `--master-level DB` (-60..12),
 `--line-in in.wav [--line-in-level 0..1]` (mono or stereo 48 kHz WAV, mixed into the master Main bus only, silent after its end) and `--aux-out aux.wav` (the Aux bus, same length as the Main output). Any of them publishes
 a snapshot with those settings before the first block; with none of them no snapshot is published and the render is the pre-2.7 one, bit for bit (all existing goldens). The send returns are unity pass-throughs into Main,
 so expected buses are plain sums of the parts rendered alone. `tests/routing_test.cpp` (`offline_routing_tests`) does exactly that: Main/Aux assignment, send levels, master level, line-in to Main only and pass-through
@@ -134,3 +134,10 @@ Without them the master EQ is flat and the compressor 1:1 without makeup, which 
 (`--inserts 0:eq@0.9/0.2/0.6/0.8 --master-eq -4:5:2500:3` and `--inserts 0:compressor@0.2/0.6/0.3/0.4/0.15 --master-comp -30:3:5:150:2`, `--tail-seconds 0.25`); ctest renders each twice (`fx_*_bit_identical`),
 null-tests it at -100 dB (`fx_*_null_golden`) and requires a changed insert or master setting to fail (`fx_*_wrong_insert_fails`, `fx_*_wrong_master_fails`). `offline_routing_tests` also checks the master EQ, compressor,
 their order and bypasses, and the insert effects against the same DSP classes applied to the parts rendered alone. Regenerate a golden after an intentional change by rendering with the commands above over the `.wav`.
+
+## Chorus/phaser, EP amp and rotary inserts (Story 2.9)
+
+`--inserts 0:chorus_phaser@MODE/RATE/DEPTH/FEEDBACK/MIX`, `--inserts 0:ep_amp@DRIVE/TONE/PRESENCE/LEVEL/CABINET` and `--inserts 0:rotary@SPEED/WIDTH` set the normalised insert parameters (mapping table in `engine/core/README.md`). Goldens (`tests/fx_chorus_phaser/`,
+`tests/fx_ep_amp/`, `tests/fx_rotary_insert/`): the golden test-tone MIDI through the insert on part 0 (`--tail-seconds 0.25`): `--inserts 0:chorus_phaser@0.0/0.55/0.8/0.5/0.6,chorus_phaser@1.0/0.4/0.8/0.8/0.6` (a chorus slot, then a phaser slot),
+`--inserts 0:ep_amp@0.7/0.6/0.5/0.55/0.5` and `--inserts 0:rotary@0.9/0.5` (fast). Same scheme as the Story 2.8 goldens: ctest renders each twice (`fx_*_bit_identical`), null-tests it at -100 dB (`fx_*_null_golden`) and requires a different insert setting to fail
+(`fx_*_wrong_insert_fails`, `fx_*_wrong_master_fails`; these effects have no master counterpart, so the second wrong render is another changed insert setting). Regenerate a golden after an intentional change by rendering with the command above over the `.wav`.

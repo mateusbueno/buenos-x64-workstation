@@ -1,0 +1,7 @@
+# Null-test case for the rotary_insert golden render (Story 2.9): the golden test-tone MIDI through an insert rotary speaker (fast) on part 0.
+# -100 dB residual: far below the audible effect of the settings (the plain render nulls against this golden at about -10 dB or worse),
+# loose enough for libm/FMA differences between macOS and Linux builds.
+reference=fx_rotary_insert.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0

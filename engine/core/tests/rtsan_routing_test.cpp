@@ -2,6 +2,9 @@
 // carrying freshly built effect instances), send / line-in level changes and part output switches, inside a nonblocking function.
 // Story 2.8 adds EQ and compressor traffic: insert parameters, master EQ / compressor values and both master bypass flags cycle with
 // every generation, the line-in level moves the compressor input level, and the published gain reductions are checked.
+// Story 2.9 adds the chorus/phaser, EP amp and rotary inserts: all three types sit in the cycled chains, their parameters cycle through the whole 0..1
+// range, and every few generations sit exactly on the documented thresholds (chorus/phaser mode at 0.5 and its next float, rotary speed at 0.25 / 0.75,
+// drive / mix / cabinet at the ends), so the new types and their mode and speed changes run under the sanitizer; the run counts what it covered.
 // The control side (building snapshots and effect instances, freeing generations) runs outside it, as on the control thread. Built
 // twice: with RealtimeSanitizer (rtsan_routing_test, clang >= 20) and without (routing_traffic_test, everywhere) -- the second also
 // proves determinism: two runs give bit-identical output.
@@ -47,6 +50,9 @@ struct Control {
   Snapshot cur = Snapshot::defaults();
   std::uint64_t rev = 0;
   std::uint64_t published = 0, freed = 0;
+  // Story 2.9 coverage: generations whose chains held each of the new types, chorus/phaser in each mode, rotary at each speed.
+  std::uint64_t type_seen[6] = {0, 0, 0, 0, 0, 0};
+  std::uint64_t chorus_mode_seen[2] = {0, 0}, rotary_speed_seen[3] = {0, 0, 0};
 
   explicit Control(SnapshotExchange& e) : ex(e) {}
 
@@ -75,6 +81,17 @@ struct Control {
       // Story 2.8: EQ / compressor settings cycle through their whole range (threshold, ratio, attack, release, makeup; LOW, MID, MID FREQ, HIGH)
       for (std::uint32_t q = 0; q < p.inserts[i].params.size(); ++q)
         p.inserts[i].params[q] = static_cast<float>((k * 7 + i * 3 + q * 5) % 11) / 10.0f;
+      if (k % 4 == 0) {  // thresholds and ends of the Story 2.9 mappings
+        auto& pr = p.inserts[i].params;
+        const float edge[6] = {0.0f, 0.25f, 0.5f, std::nextafter(0.5f, 1.0f), 0.75f, 1.0f};
+        const float e = edge[(k / 4 + i) % 6];
+        if (p.inserts[i].type == params::kInsertTypeChorusPhaser) pr = {e, e, 1.0f, e, 1.0f};
+        else if (p.inserts[i].type == params::kInsertTypeRotary) pr = {e, e, 0.5f, 0.5f, 0.0f};
+        else if (p.inserts[i].type == params::kInsertTypeEpAmp) pr = {e, 1.0f - e, e, 1.0f - e, e};
+      }
+      ++type_seen[p.inserts[i].type];
+      if (p.inserts[i].type == params::kInsertTypeChorusPhaser) ++chorus_mode_seen[p.inserts[i].params[0] > 0.5f ? 1 : 0];
+      if (p.inserts[i].type == params::kInsertTypeRotary) ++rotary_speed_seen[p.inserts[i].params[0] < 0.25f ? 0 : (p.inserts[i].params[0] < 0.75f ? 1 : 2)];
     }
     p.chain = build_chain(p);
     p.output = static_cast<std::uint8_t>((k / 7) % 2);                     // Main / Aux switches
@@ -151,12 +168,17 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& chains_published) {
     }
   }
   chains_published = ctl.published;
+  bool covered = true;
+  for (std::size_t t : {1u, 2u, 3u}) covered = covered && ctl.type_seen[t] > 300;  // rotary, chorus/phaser, EP amp
+  for (int m = 0; m < 2; ++m) covered = covered && ctl.chorus_mode_seen[m] > 100;
+  for (int sp = 0; sp < 3; ++sp) covered = covered && ctl.rotary_speed_seen[sp] > 100;
   // settle: everything fades out, RT holds no reference but the live notes' and the current chains'
   for (int i = 0; i < 40; ++i) br->process_block(OutputBuses{l, r, al, ar});
   hash_out = hash;
   bool ok = true;
   if (!br->mixer().chains_settled()) { std::printf("FAIL: chains did not settle\n"); ok = false; }
   if (!finite) { std::printf("FAIL: non-finite output\n"); ok = false; }
+  if (!covered) { std::printf("FAIL: the Story 2.9 insert types / modes / speeds were not all exercised\n"); ok = false; }
   if (!gr_ok || !(max_gr > 1.0f)) { std::printf("FAIL: gain reduction invalid or never published (max %g dB)\n", static_cast<double>(max_gr)); ok = false; }
   if (!(peak > 0.01f)) { std::printf("FAIL: output is (nearly) silent, peak %g\n", static_cast<double>(peak)); ok = false; }
   return ok;

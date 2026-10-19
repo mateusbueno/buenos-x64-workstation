@@ -1,7 +1,8 @@
 #pragma once
 // Effect framework (Story 2.7): the effect-instance interface, the factory, the insert chain and the fixed costs of the
-// routing topology. The DSP of each effect type lands in Stories 2.8-2.11; until then a type is a PassThroughEffect behind the
-// final interface (see engine/core/README.md, "Routing topology"). The EQ and the compressor are real since Story 2.8 (eq.hpp, compressor.hpp).
+// routing topology. Every insert type is a real effect since Story 2.9: EQ and compressor (Story 2.8, eq.hpp, compressor.hpp), chorus/phaser,
+// EP amp/drive and rotary (Story 2.9, chorus_phaser.hpp, ep_amp.hpp, rotary_effect.hpp). PassThroughEffect stays for the send placeholders of
+// the Mixer (reverb and delay, Stories 2.10/2.11; see engine/core/README.md, "Routing topology").
 //
 // Threading: effects are created, prepared and destroyed ONLY by the control thread (make_effect(), FxChain construction and
 // destruction, i.e. snapshot generations being built and freed). The RT thread only calls process() on instances that a
@@ -53,9 +54,9 @@ static_assert(static_cast<std::uint8_t>(EffectType::kNone) == params::kInsertTyp
 // is computed from these. A bypassed instance still reserves its cost: bypass is a worst-case-preserving toggle.
 constexpr std::uint32_t effect_cost_units(EffectType t) noexcept {
   switch (t) {
-    case EffectType::kRotary: return 24;  // = RotarySpeaker::kCostUnits
-    case EffectType::kChorusPhaser: return 12;
-    case EffectType::kEpAmp: return 8;
+    case EffectType::kRotary: return 24;  // = RotarySpeaker::kCostUnits (Story 2.6); the insert (Story 2.9) runs the same DSP plus a mono sum and a width stage
+    case EffectType::kChorusPhaser: return 12;  // Story 2.9, host-measured (Release build: ~0.7 us / block in either mode), placeholder until 2.12
+    case EffectType::kEpAmp: return 24;         // Story 2.9, host-measured (Release build: ~1.3 us / block, 4x oversampling included), placeholder until 2.12
     case EffectType::kEq: return 16;          // Story 2.8, host-measured (3 active bands, ~1.0 us / block on the dev Mac), placeholder until 2.12
     case EffectType::kCompressor: return 8;   // Story 2.8, host-measured (~0.5 us / block, signal above threshold), placeholder until 2.12
     case EffectType::kNone: break;
@@ -63,6 +64,10 @@ constexpr std::uint32_t effect_cost_units(EffectType t) noexcept {
   return 0;
 }
 constexpr std::uint32_t kMaxInsertCost = 24;  // the largest effect_cost_units()
+static_assert(effect_cost_units(EffectType::kRotary) <= kMaxInsertCost && effect_cost_units(EffectType::kChorusPhaser) <= kMaxInsertCost &&
+                  effect_cost_units(EffectType::kEpAmp) <= kMaxInsertCost && effect_cost_units(EffectType::kEq) <= kMaxInsertCost &&
+                  effect_cost_units(EffectType::kCompressor) <= kMaxInsertCost,
+              "kMaxInsertCost is the largest declared insert cost");
 
 // The fixed part of the topology: per output bus (Main, Aux) a Reverb send, a Delay send (their returns go to the bus of the sending
 // part, so the real DSP of Stories 2.10/2.11 needs one instance per bus: costed twice from the start) and a master EQ and compressor.
@@ -128,8 +133,8 @@ class PassThroughEffect final : public Effect {
 };
 
 // Factory: control thread only (it allocates). nullptr for kNone and for a value outside the enum. The instance is prepared.
-// EQ and compressor: the real DSP (Story 2.8). Rotary: a pass-through here. The organ's built-in rotary stage (Story 2.6) stays as it is; the rotary as an insert
-// (a RotarySpeaker per insert slot) is Story 2.9.
+// All six types are real DSP: EQ and compressor (Story 2.8), chorus/phaser, EP amp and rotary (Story 2.9: one RotarySpeaker per rotary insert slot; the organ's
+// built-in rotary stage of Story 2.6 stays as it is and is never duplicated automatically).
 std::unique_ptr<Effect> make_effect(EffectType type);
 
 // An insert chain: up to params::kInsertSlotCount effects in order, each with a bypass flag. The topology (which effect in

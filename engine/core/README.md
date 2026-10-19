@@ -220,9 +220,8 @@ inactive and the engines render into the output exactly as before this story: th
 Any non-trivial routing switches to the part-bus path (sums in part order, so the audio differs from the direct sum only by float rounding, ~1e-7).
 
 **Effects (`fx.hpp`).** `Effect` (`type()`, `cost_units()`, `prepare()`, `reset()`, `set_params()` and the RT `process(StereoBlock&)`), `make_effect()` (control thread only; the only factory,
-types are the registry `insert_type` list: no plugin loading) and `FxChain` (<= 5 slots, bypass flag each). The EQ and the compressor are real DSP since Story 2.8 (below); the chorus/phaser, EP amp and rotary inserts are `PassThroughEffect` placeholders until Stories 2.9-2.11; the rotary insert is a
-pass-through too (the organ's built-in rotary stage, Story 2.6, is unchanged; the insert becomes a `RotarySpeaker` in Story 2.9). Declared costs (`effect_cost_units()`, `kReverbSendCost`, `kDelaySendCost`,
-`kMasterEqCost`, `kMasterCompCost`) are placeholders until measured on the board (2.12); the EQ (16 units, three active bands, ~1.0 us per block on the dev Mac) and the compressor (8 units, ~0.5 us per block with signal above the
+types are the registry `insert_type` list: no plugin loading) and `FxChain` (<= 5 slots, bypass flag each). All six insert types are real DSP: the EQ and the compressor since Story 2.8 and the chorus/phaser, EP amp and rotary since Story 2.9 (both below); `PassThroughEffect` remains only as the unity return of the reverb and delay sends of the Mixer (Stories 2.10/2.11). Declared costs (`effect_cost_units()`, `kReverbSendCost`, `kDelaySendCost`,
+`kMasterEqCost`, `kMasterCompCost`) are placeholders until measured on the board (2.12); the EQ (16 units, three active bands, ~1.0 us per block on the dev Mac, Release build) and the compressor (8 units, ~0.5 us per block with signal above the
 threshold) were re-based on host measurements in Story 2.8 (`eq_compressor_tests` prints them). Raising the EQ from 6 to 16 units raises `kFixedFxCost` by 20 and each EQ insert by 10, so a Live Set that fitted a tight FX budget before can now be refused with `FX_BUDGET_EXCEEDED`.
 
 **Chain changes.** The control thread builds the part's `FxChain` (new, prepared instances) when it builds the snapshot generation (`build_chain()`; `PartCfg::chain`, shared by generations that do not touch the part,
@@ -292,3 +291,50 @@ a fully bypassed stage does not run and its state is cleared (a bypass flag valu
 Tests: `eq_compressor_tests` (mapping, design curve, sine sweep, identity, smoothing step bound, static curve, attack/release times, stereo link, makeup, master order EQ -> compressor against a reference, master and insert bypass cross-fade step
 bound and exact return, identity bit-exact, published gain reduction, host cost print), `routing_traffic_test` / `rtsan_routing_test` (insert and master EQ/compressor settings and both bypass flags change with every generation for 10,000 blocks, gain reduction checked), `control_tests`
 (gain reduction over ws.v1), offline null tests in `tools/offline-render` (`fx_eq_*`, `fx_compressor_*` goldens; `offline_routing_tests`).
+
+## Chorus/phaser, EP amp/drive and rotary inserts (Story 2.9)
+
+`chorus_phaser.hpp`/`.cpp` (`ChorusPhaserEffect`), `ep_amp.hpp`/`.cpp` (`EpAmpEffect`) and `rotary_effect.hpp`/`.cpp` (`RotaryEffect`) replace the pass-through placeholders: `make_effect()` returns them for the registry insert types
+`chorus_phaser`, `ep_amp` and `rotary`. Same conventions as the EQ and the compressor: fixed storage, no allocation in `process()`, the five normalised registry params `insert_param_1..5`, parameters approached per 64-frame block (one-pole, about 10 ms)
+and interpolated per sample inside the block, non-finite input samples are replaced by 0 (a NaN is exactly a zero sample), `reset()` clears all signal state (a bypassed slot is reset by its chain, so stale state cannot step in on un-bypass; a bypassed slot is skipped bit for bit),
+`VELORA_NONBLOCKING` on the overrides, declared cost in `effect_cost_units()` (host-measured placeholders until Story 2.12). Registry: no new entries (ids unchanged); `ws.v1` is untouched.
+
+**Parameter mapping (the one table).**
+
+| effect | insert param | physical mapping |
+|---|---|---|
+| chorus/phaser | 1 MODE | chorus for p <= 0.5, phaser for p > 0.5 (one threshold, no hysteresis; the next float above 0.5 is already a phaser; NaN is 0.5, i.e. chorus) |
+| chorus/phaser | 2 RATE | LFO 0.1..10 Hz, logarithmic `0.1 * 100^p` (0.5 = 1 Hz) |
+| chorus/phaser | 3 DEPTH | 0..1 linear sweep depth |
+| chorus/phaser | 4 FEEDBACK | phaser feedback -0.8..+0.8, bipolar linear (0.5 = 0); unused by the chorus |
+| chorus/phaser | 5 MIX | wet amount 0..1, `out = dry + mix (wet - dry)`; the registry default 0 is the dry signal: bit-exact identity |
+| EP amp | 1 DRIVE | pre-gain 0..30 dB, linear in dB |
+| EP amp | 2 TONE | tilt +-6 dB around 1 kHz (0.5 = flat) |
+| EP amp | 3 PRESENCE | peak at 3 kHz (Q 0.9), 0..+9 dB |
+| EP amp | 4 LEVEL | output level -12..+12 dB (0.5 = 0 dB) |
+| EP amp | 5 CABINET | cabinet filter blend 0..1 (default 0 = off) |
+| rotary | 1 SPEED | stop for p < 0.25, slow for 0.25 <= p < 0.75, fast for p >= 0.75 (thresholds belong to the upper band; the default 0.5 and NaN are slow) |
+| rotary | 2 WIDTH | stereo width of the rotary output, `2 p`: 0 = mono, 0.5 = as designed, 1 = twice the side signal |
+| rotary | 3..5 | unused |
+
+**Chorus/phaser.** Per channel a 2048-sample delay line (chorus: 4-point Lagrange read at `15 ms + 10 ms * depth * lfo`, i.e. 5..25 ms) and four first-order all-pass stages (phaser: break frequency swept exponentially over 200 Hz..4 kHz around 894 Hz by `depth * lfo`,
+feedback of the chain output around the chain, coefficient held 16 frames). Stereo: both channels use the same LFO (parabolic sine approximation, error < 0.1 %) with a quarter-cycle (90 degree) offset, so the wet signals are decorrelated. A mode change on a running
+instance ramps the phaser weight over 480 frames (10 ms): the wet signal is `(1 - w) chorus + w phaser`, the delay line is always written, each mode runs only while its weight is non-zero (the phaser state is cleared while it is out). A mode change that arrives through the
+control plane is structural (a new chain, cross-faded by the Mixer like every insert change); the in-effect cross-fade covers `set_params()` on a live instance (tests, later performance routing). Mix exactly 0 leaves the block untouched and clears the state.
+
+**EP amp/drive.** Pre-gain, a soft clipper (the Pade approximation `x (27 + x^2) / (27 + 9 x^2)` of tanh, clamped at |x| = 3 where it is exactly +-1 with a continuous slope; odd, so only odd harmonics), then `1/sqrt(g)` loudness compensation, a 40 Hz high-pass, the tone tilt, the
+presence peak, the optional cabinet (80 Hz high-pass + 5 kHz low-pass, 2nd-order Butterworth, blended by CABINET) and the level. The clipper runs 4x oversampled (48 -> 96 -> 192 kHz): two cascaded Kaiser-windowed half-band stages (47 taps at 96 kHz, 15 taps at 192 kHz;
+round-trip passband ripple below 0.01 dB to 18 kHz, -0.13 dB at 20 kHz), block based and polyphase; the whole oversampler delays the signal by 25.75 frames (0.54 ms). A 9.7 kHz sine at full drive aliases 20 dB (drive 0.6: 60 dB) less than the same shaper at the base
+rate (`ep_amp_tests`). There is no identity setting (the shaper is always in the path): bypass is the slot flag. Declared cost 24 units (Release build ~1.3 us / block on the dev Mac, oversampling included), which makes it the heaviest insert together with the rotary
+(`kMaxInsertCost` = 24, so `kMaxFxCost` is unchanged).
+
+**Rotary insert.** The `RotarySpeaker` of Story 2.6 on the part bus. The organ's built-in rotary takes the mono part signal; the insert takes the stereo part bus, so it **sums to mono** `m = (L + R) / 2`, runs the rotary unit on `m` and writes the stereo result, with the side
+signal scaled by WIDTH (the input's stereo image is replaced by the rotary's own; a hard-panned source arrives at half level). Speed changes ramp with the horn and drum acceleration and braking time constants of the unit: on a running instance `set_params()` sets the unit's target (identical to
+the organ's behaviour, tested sample for sample against the unit), before the first block the rotors start settled at the speed. A structural speed change from the control plane builds a new chain like every insert change. The insert publishes no rotary state (the organ's built-in rotary does:
+`OrganEngine::rotary_status()`). **No automatic duplication:** an organ part keeps its built-in rotary (when `rotary_on`) and gets no second instance unless the user inserts one; `RotaryEffect::live_instances()` counts the inserts, and `rotary_insert_tests` shows one rotary stage for an organ part
+with the built-in rotary and no insert, two with an insert (and the render equals the built-in output run through a standalone insert). Declared cost 24 units (= `RotarySpeaker::kCostUnits`; ~1.2 us / block Release).
+
+Tests: `chorus_phaser_tests` (mapping and the mode threshold, delay range 5..25 ms and rate by ramp inversion, quarter-cycle stereo offset, phaser response against the analytic all-pass chain incl. feedback and the notch depth, swept notch, identity bit-exactness, mode cross-fade step bound against the
+click a hard switch would make, parameter-jump step bound, determinism, NaN/inf, reset equals fresh, chain bypass), `ep_amp_tests` (mapping, shaper shape, oversampler flatness / delay / block-split independence, aliasing with and without oversampling, drive harmonics and loudness
+compensation, tone / presence / cabinet / level against analytic references, determinism, NaN/inf, reset, bypass, step bound, cost), `rotary_insert_tests` (mapping and thresholds, mono/stereo handling against the unit, speed ramps equal to the unit's, step bound, NaN/inf, reset, bypass, the organ
+one-instance rule), `routing_traffic_test` / `rtsan_routing_test` (the three types, mode and speed thresholds and parameter extremes cycle with every generation for 10,000 blocks), offline null tests in `tools/offline-render` (`fx_chorus_phaser_*`, `fx_ep_amp_*`, `fx_rotary_insert_*` goldens).

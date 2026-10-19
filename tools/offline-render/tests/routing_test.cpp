@@ -138,7 +138,8 @@ static void test_assignment_sends_master() {
     CHECK(null_test(em, main, np).pass && null_test(ea, aux, np).pass);
     CHECK(max_diff(em, main) < 3e-6 && max_diff(ea, aux) < 3e-6);
   }
-  // Pass-through insert chains in every slot type, a bypassed one and an empty slot: audio unchanged.
+  // Transparent insert chains in every slot type, a bypassed one and an empty slot: audio unchanged. The rotary and the EP amp (Story 2.9) are real
+  // DSP, so they are bypassed here; the chorus/phaser at its default (mix 0) is the identity.
   {
     RenderOptions o;
     o.routing.enabled = true;
@@ -146,7 +147,7 @@ static void test_assignment_sends_master() {
       for (int i = 0; i < 5; ++i) {
         RoutingOptions::Insert in;
         in.type = static_cast<std::uint8_t>((part + i) % 6);
-        in.bypass = (i == 3);
+        in.bypass = (i == 3) || in.type == 1 || in.type == 3;  // rotary, ep_amp
         if (in.type == 5) {  // compressor: ratio 1:1, no makeup = transparent (Story 2.8)
           in.has_params = true;
           in.params[1] = 0.0f;

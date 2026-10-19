@@ -431,9 +431,24 @@ set_tests_properties(sample_demo_null_test PROPERTIES SKIP_RETURN_CODE 77)
 # EQ and compressor as inserts and in the master section (Story 2.8): the golden test-tone MIDI through an insert effect on part 0 and the
 # master effect. One golden per effect, same scheme as the other goldens: render twice (byte-equal), null-test against the committed golden at
 # -100 dB, and require different settings (insert or master) to fail it.
-foreach(_fx eq compressor)
+#
+# Story 2.9 adds the chorus/phaser (a chorus slot then a phaser slot, so both modes are in the golden), the EP amp and the rotary insert. They have
+# no master counterpart, so their second "wrong" render (the fx_*_wrong_master tests) is another wrong insert setting.
+foreach(_fx eq compressor chorus_phaser ep_amp rotary_insert)
   set(_d ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_${_fx})
-  if(_fx STREQUAL "eq")
+  if(_fx STREQUAL "chorus_phaser")
+    set(_fx_args --inserts 0:chorus_phaser@0.0/0.55/0.8/0.5/0.6,chorus_phaser@1.0/0.4/0.8/0.8/0.6)
+    set(_fx_wrong_insert --inserts 0:chorus_phaser@0.0/0.55/0.8/0.5/0.6,chorus_phaser@1.0/0.4/0.8/0.7/0.6)
+    set(_fx_wrong_master --inserts 0:chorus_phaser@1.0/0.55/0.8/0.5/0.6,chorus_phaser@1.0/0.4/0.8/0.8/0.6)
+  elseif(_fx STREQUAL "ep_amp")
+    set(_fx_args --inserts 0:ep_amp@0.7/0.6/0.5/0.55/0.5)
+    set(_fx_wrong_insert --inserts 0:ep_amp@0.6/0.6/0.5/0.55/0.5)
+    set(_fx_wrong_master --inserts 0:ep_amp@0.7/0.6/0.5/0.55/0.0)
+  elseif(_fx STREQUAL "rotary_insert")
+    set(_fx_args --inserts 0:rotary@0.9/0.5)
+    set(_fx_wrong_insert --inserts 0:rotary@0.5/0.5)
+    set(_fx_wrong_master --inserts 0:rotary@0.9/0.2)
+  elseif(_fx STREQUAL "eq")
     set(_fx_args --inserts 0:eq@0.9/0.2/0.6/0.8 --master-eq -4:5:2500:3)
     set(_fx_wrong_insert --inserts 0:eq@0.9/0.2/0.6/0.7 --master-eq -4:5:2500:3)
     set(_fx_wrong_master --inserts 0:eq@0.9/0.2/0.6/0.8 --master-eq -4:5:2500:4)

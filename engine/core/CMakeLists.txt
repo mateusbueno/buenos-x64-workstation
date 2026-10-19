@@ -14,6 +14,9 @@ add_library(velora_core STATIC
   src/fx.cpp
   src/eq.cpp
   src/compressor.cpp
+  src/chorus_phaser.cpp
+  src/ep_amp.cpp
+  src/rotary_effect.cpp
   src/mixer.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
@@ -70,6 +73,18 @@ add_test(NAME routing_tests COMMAND routing_tests)
 add_executable(eq_compressor_tests tests/eq_compressor_test.cpp)
 target_link_libraries(eq_compressor_tests PRIVATE velora_core)
 add_test(NAME eq_compressor_tests COMMAND eq_compressor_tests)
+
+add_executable(chorus_phaser_tests tests/chorus_phaser_test.cpp)
+target_link_libraries(chorus_phaser_tests PRIVATE velora_core)
+add_test(NAME chorus_phaser_tests COMMAND chorus_phaser_tests)
+
+add_executable(ep_amp_tests tests/ep_amp_test.cpp)
+target_link_libraries(ep_amp_tests PRIVATE velora_core)
+add_test(NAME ep_amp_tests COMMAND ep_amp_tests)
+
+add_executable(rotary_insert_tests tests/rotary_insert_test.cpp)
+target_link_libraries(rotary_insert_tests PRIVATE velora_core)
+add_test(NAME rotary_insert_tests COMMAND rotary_insert_tests)
 
 # The routing traffic (10,000 blocks, chain changes every 3 blocks, determinism) without the sanitizer, so macOS runs its logic too;
 # the RTSan build of the same file is below.

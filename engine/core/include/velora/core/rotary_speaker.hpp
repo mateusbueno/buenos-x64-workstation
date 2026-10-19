@@ -13,7 +13,7 @@
 // stopping, a rotor that falls below kRestCreepHz keeps creeping at that speed until its angle reaches 0, then stops dead (a speed
 // step of 0.25 Hz, i.e. a pitch step of 0.01 percent). It adds at most 4 s to the braking time.
 //
-// The unit is self-contained (no organ dependency) so Story 2.9 can use it as an insert. It is one instance per part; fixed
+// The unit is self-contained (no organ dependency) so Story 2.9 uses it as an insert (rotary_effect.hpp). It is one instance per part; fixed
 // storage, no allocation, no locks: safe on the audio thread. Control calls (set_target, set_speed_immediate) and process()/skip()
 // run on the same thread, in frame order, so a speed change lands on the exact sample where the caller makes it.
 #include <algorithm>
