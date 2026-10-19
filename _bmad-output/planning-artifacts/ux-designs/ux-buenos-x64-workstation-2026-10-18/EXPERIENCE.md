@@ -55,7 +55,7 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Setlist | Launcher | Choose, create and reorder setlists and their Live Sets; create a Live Set; edit setlist tags | [key-screens-device.html §1](mockups/key-screens-device.html) |
 | Setlist Browser | Launcher; Top Bar setlist context on Performance | Search across setlists and Live Sets; jump off-script; long press a Live Set → Action Sheet `★ Add to Favorites`. Chips: ★ Favorites, Recent, Setlists, All Live Sets, then user tags | [key-screens-device.html §1b](mockups/key-screens-device.html) |
 | Library | Launcher; Part › Change timbre | Find and assign a timbre by search, favorites, recent, category; long press a timbre → Action Sheet `★ Add to Favorites` | [key-screens-device.html §2](mockups/key-screens-device.html) |
-| Part | Part Strip card body on Performance; **VALUE push** on Performance (opens the knob-target part) | One part's timbre, sound, zone, level, effects and arpeggiator | spine-only |
+| Part | Part Strip card body on Performance; **VALUE push** on Performance (opens the knob-target part) | One part's timbre, sound, zone, level, effects and arpeggiator | FM and VA Sound sections and the not-available state: [part-surface-fm-va.html](mockups/part-surface-fm-va.html); other sections spine-only |
 | Effects | Launcher; `REV` in the Performance Status Bar | Part inserts, sends, master, outputs | spine-only |
 | Scenes | Launcher; long press a Scene Tile | Create, name and order the up-to-8 scenes | spine-only |
 | Write | WRITE hold (Interaction Primitives) | Confirm scope and name of a save | [key-screens-device.html §4](mockups/key-screens-device.html) |
@@ -185,12 +185,12 @@ Behavioral. Visual specs in DESIGN.md Components (same names). Timings and press
 | Segmented Control | VALUE changes the highlighted setting; touch selects directly. Used for every on/off and multi-choice setting. |
 | On-screen Keyboard | Opens for text entry (search, names); locale layout with accented letters; WRITE or Done confirms, EXIT closes it keeping the typed text. Playing keys still sounds. |
 | Category Picker | 17 categories with full localized labels; VALUE + WRITE or touch picks; in Import, "Apply one category to all" sets every row in a batch. → [category-picker.html](mockups/category-picker.html) |
-| Action Sheet | A short choice raised by a player action (missing library: Replace timbre / Import; pairing code; install update; `★ Add to Favorites` on long press of a Result Tile); WRITE confirms the highlighted action, EXIT cancels. Never appears unprompted during performance. |
+| Action Sheet | A short choice raised by a player action (missing library: Replace timbre / Import; pairing code; install update; `★ Add to Favorites` on long press of a Result Tile); WRITE confirms the highlighted action, EXIT cancels. Never appears unprompted during performance. → [mockups/action-sheet.html](mockups/action-sheet.html) |
 | Boot Screen | Says what is being restored (Live Set · Scene); ends on Performance with that sound playable. |
 | Studio Title Bar | Shows connection state; Import, Backup, and "Write to Velora" (same scopes as the device Write Dialog). |
 | Studio Sidebar | Selecting a Live Set loads it into the main view; library listed by category. |
 | Studio Part Strip | Click selects the part and fills the Part Editor; "+ Add timbre" opens library choice for an empty part. |
-| Part Editor | All parameters of the selected part at once (sound, envelope, EQ, inserts/sends, zone/keyboard, arpeggiator, assign) — no menus. |
+| Part Editor | All parameters of the selected part at once (sound, envelope, EQ, inserts/sends, zone/keyboard, arpeggiator, assign) — no menus. FM and VA Sound: [studio-part-editor-fm-va.html](mockups/studio-part-editor-fm-va.html). |
 | Studio Knob | Drag, type a value, scroll wheel, or keyboard (Accessibility Floor). Edits play live on the Velora. |
 | Primary Button | One per window: "Write to Velora". |
 | Studio Footer | Shows unsaved scope, live edit, write/transfer/export/import progress and last backup; announced to screen readers as a polite live region. |
