@@ -9,6 +9,7 @@ add_library(velora_core STATIC
   src/test_tone_engine.cpp
   src/sample_engine.cpp
   src/organ_engine.cpp
+  src/rotary_speaker.cpp
   src/voice_arbiter.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
@@ -53,6 +54,10 @@ add_test(NAME organ_scanner_tests COMMAND organ_scanner_tests)
 add_executable(organ_contact_tests tests/organ_contact_test.cpp)
 target_link_libraries(organ_contact_tests PRIVATE velora_core)
 add_test(NAME organ_contact_tests COMMAND organ_contact_tests)
+
+add_executable(rotary_tests tests/rotary_speaker_test.cpp)
+target_link_libraries(rotary_tests PRIVATE velora_core)
+add_test(NAME rotary_tests COMMAND rotary_tests)
 
 # Host micro-benchmark (Story 2.2): cost per voice and per generator; host figures, not representative of the board.
 add_executable(organ_bench tests/organ_bench.cpp)

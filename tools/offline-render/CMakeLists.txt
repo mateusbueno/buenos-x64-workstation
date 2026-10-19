@@ -219,6 +219,67 @@ add_test(NAME organ_scan_options_need_organ
          COMMAND velora-offline-render --midi ${_scan}/organ_scanner.mid --vibrato v1 --out ${_out}/never.wav)
 set_tests_properties(organ_scan_options_need_organ PROPERTIES PASS_REGULAR_EXPRESSION "need --engine organ")
 
+# Organ rotary speaker (Story 2.6): a committed MIDI file holds a chord while CC 89 switches the stage on and CC 79 goes fast, stop, slow
+# (the horn and the drum ramp with their own time constants). Same scheme as the other organ goldens: render twice (byte-equal),
+# null-test against the committed golden, and require a different starting rotary state to fail it.
+set(_rot ${CMAKE_CURRENT_SOURCE_DIR}/tests/organ_rotary)
+set(_rot_args --midi ${_rot}/organ_rotary.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2
+              --vibrato off --leakage 0 --rotary off --tail-seconds 0.3)
+add_test(NAME organ_rotary_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/rot_a.wav ${_out}/rot_b.wav ${_out}/rot_wrong_fast.wav ${_out}/rot_wrong_stop.wav)
+set_tests_properties(organ_rotary_clean PROPERTIES FIXTURES_SETUP rot_clean)
+add_test(NAME organ_rotary_render_a COMMAND velora-offline-render ${_rot_args} --out ${_out}/rot_a.wav)
+add_test(NAME organ_rotary_render_b COMMAND velora-offline-render ${_rot_args} --out ${_out}/rot_b.wav)
+set_tests_properties(organ_rotary_render_a PROPERTIES FIXTURES_REQUIRED rot_clean FIXTURES_SETUP rot_a)
+set_tests_properties(organ_rotary_render_b PROPERTIES FIXTURES_REQUIRED rot_clean FIXTURES_SETUP rot_b)
+add_test(NAME organ_rotary_bit_identical
+         COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/rot_a.wav ${_out}/rot_b.wav)
+set_tests_properties(organ_rotary_bit_identical PROPERTIES FIXTURES_REQUIRED "rot_a;rot_b")
+add_test(NAME organ_rotary_null_golden
+         COMMAND velora-null-test --case ${_rot}/organ_rotary.case --candidate ${_out}/rot_a.wav)
+set_tests_properties(organ_rotary_null_golden PROPERTIES FIXTURES_REQUIRED rot_a PASS_REGULAR_EXPRESSION "overall: PASS")
+add_test(NAME organ_rotary_wrong_fast
+         COMMAND velora-offline-render --midi ${_rot}/organ_rotary.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2
+                 --vibrato off --leakage 0 --rotary fast --tail-seconds 0.3 --out ${_out}/rot_wrong_fast.wav)
+add_test(NAME organ_rotary_wrong_stop
+         COMMAND velora-offline-render --midi ${_rot}/organ_rotary.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2
+                 --vibrato off --leakage 0 --rotary stop --tail-seconds 0.3 --out ${_out}/rot_wrong_stop.wav)
+set_tests_properties(organ_rotary_wrong_fast PROPERTIES FIXTURES_REQUIRED rot_clean FIXTURES_SETUP rot_wf)
+set_tests_properties(organ_rotary_wrong_stop PROPERTIES FIXTURES_REQUIRED rot_clean FIXTURES_SETUP rot_ws)
+add_test(NAME organ_rotary_wrong_fast_fails
+         COMMAND velora-null-test --case ${_rot}/organ_rotary.case --candidate ${_out}/rot_wrong_fast.wav)
+add_test(NAME organ_rotary_wrong_stop_fails
+         COMMAND velora-null-test --case ${_rot}/organ_rotary.case --candidate ${_out}/rot_wrong_stop.wav)
+set_tests_properties(organ_rotary_wrong_fast_fails PROPERTIES FIXTURES_REQUIRED rot_wf
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+set_tests_properties(organ_rotary_wrong_stop_fails PROPERTIES FIXTURES_REQUIRED rot_ws
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# The CLI mapping is pinned: --rotary slow|fast|stop on a plain chord renders byte-equal to the same chord with CC 79 (64 / 127 / 0) and
+# CC 89 at frame 0 and --rotary off.
+add_test(NAME organ_rotary_map_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/map_plain_slow.wav ${_out}/map_cc_slow.wav ${_out}/map_plain_fast.wav
+                 ${_out}/map_cc_fast.wav ${_out}/map_plain_stop.wav ${_out}/map_cc_stop.wav)
+set_tests_properties(organ_rotary_map_clean PROPERTIES FIXTURES_SETUP rot_map_clean)
+foreach(_m slow fast stop)
+  add_test(NAME organ_rotary_map_${_m}_cli
+           COMMAND velora-offline-render --midi ${_rot}/organ_map_plain.mid --engine organ --rotary ${_m} --tail-seconds 0.2
+                   --out ${_out}/map_plain_${_m}.wav)
+  add_test(NAME organ_rotary_map_${_m}_cc
+           COMMAND velora-offline-render --midi ${_rot}/organ_map_${_m}.mid --engine organ --rotary off --tail-seconds 0.2
+                   --out ${_out}/map_cc_${_m}.wav)
+  add_test(NAME organ_rotary_map_${_m}_equal
+           COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/map_plain_${_m}.wav ${_out}/map_cc_${_m}.wav)
+  set_tests_properties(organ_rotary_map_${_m}_cli organ_rotary_map_${_m}_cc PROPERTIES FIXTURES_REQUIRED rot_map_clean
+                       FIXTURES_SETUP rot_map_${_m})
+  set_tests_properties(organ_rotary_map_${_m}_equal PROPERTIES FIXTURES_REQUIRED rot_map_${_m})
+endforeach()
+add_test(NAME organ_rotary_rejects_bad_rotary
+         COMMAND velora-offline-render ${_rot_args} --rotary spin --out ${_out}/never.wav)
+set_tests_properties(organ_rotary_rejects_bad_rotary PROPERTIES PASS_REGULAR_EXPRESSION "invalid --rotary")
+add_test(NAME organ_rotary_options_need_organ
+         COMMAND velora-offline-render --midi ${_rot}/organ_rotary.mid --rotary slow --out ${_out}/never.wav)
+set_tests_properties(organ_rotary_options_need_organ PROPERTIES PASS_REGULAR_EXPRESSION "need --engine organ")
+
 # Organ multi-contact onset (Story 2.5): a committed contact_k event list (--events, test only) holds fast rolled chords (1 ms between
 # contacts), a slow smear (20 ms), half presses, skipped contacts, malformed traffic, a Note On/Off-only key and percussion triggered
 # by the first contact. Same scheme as the other organ goldens: render twice (byte-equal), null-test against the committed golden,
@@ -303,6 +364,10 @@ add_custom_target(update-organ-percussion-golden
 
 add_custom_target(update-organ-contacts-golden
   COMMAND velora-offline-render ${_cont_args} --out ${_cont}/organ_contacts.wav
+  DEPENDS velora-offline-render)
+
+add_custom_target(update-organ-rotary-golden
+  COMMAND velora-offline-render ${_rot_args} --out ${_rot}/organ_rotary.wav
   DEPENDS velora-offline-render)
 
 add_custom_target(update-organ-scanner-golden

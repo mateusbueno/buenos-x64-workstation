@@ -20,13 +20,19 @@
 //  * Multi-contact onset (Story 2.5, ORGAN.md): contact_k UMP events (contact_events.hpp) start a key voice on contact 1 and
 //    bring each drawbar busbar group in at its contact's frame (a short per-group gain ramp that starts at that frame), and
 //    reverse that as contacts open; a source with only Note On/Off starts and stops all groups together as before.
+//  * Rotary speaker (Story 2.6, rotary_speaker.hpp, ORGAN.md): each part's output passes through its own RotarySpeaker when
+//    rotary_on is set (stereo out; off is bit-exact pass-through); rotary_speed (stop/slow/fast) ramps the horn and the drum
+//    with their own time constants, and the state is published lock-free (rotary_status()).
 //  * Drawbar levels 0..8 arrive as performance parameters (registry ids 100..108) through
 //    Engine::set_part_param at the event's frame; a 5 ms linear ramp starts at exactly that frame.
 #include <array>
+#include <atomic>
+#include <bit>
 #include <cstdint>
 #include <vector>
 
 #include "velora/core/engine.hpp"
+#include "velora/core/rotary_speaker.hpp"
 #include "velora/core/tonewheel_tables.hpp"
 #include "velora/core/vibrato_scanner.hpp"
 
@@ -69,6 +75,7 @@ class OrganEngine final : public Engine {
   static constexpr float kLeakageMaxGain = 0.02f;       // -34 dB relative to the leaking wheel at leakage 1
   static constexpr float kLeakageMinFraction = 0.25f;   // weakest pattern entry = 0.25 x max
   static constexpr std::uint32_t kLeakRampFrames = 240; // 5 ms ramp when the leakage parameter moves
+  static constexpr std::uint32_t kRotaryRampFrames = 240;  // 5 ms crossfade when the rotary stage is switched on or off
 
   // Multi-contact onset (Story 2.5). The nine busbars are split into contact groups; contact k (1-based) brings group k-1 in.
   static constexpr std::uint32_t kMaxContacts = 3;
@@ -84,7 +91,7 @@ class OrganEngine final : public Engine {
   // Cost units (placeholders, to be measured on the dev board; the host benchmark prints host figures).
   static constexpr std::uint32_t kVoiceCostUnits = 2;
   static constexpr std::uint32_t kGeneratorCostUnits = 48;  // per part
-  static constexpr std::uint32_t kRotaryCostUnits = 24;     // per part, reserved now, used by Story 2.6
+  static constexpr std::uint32_t kRotaryCostUnits = RotarySpeaker::kCostUnits;  // per part (Story 2.6)
   // The organ+rotary reservation for `organ_parts` organ parts with all 73 keys down: pass it as
   // VoiceArbiter::LiveSetConfig::organ_rotary_cost.
   static constexpr std::uint64_t reservation_cost_units(std::uint32_t organ_parts = 1) noexcept {
@@ -160,6 +167,26 @@ class OrganEngine final : public Engine {
   // Current (ramped) leakage amount of a part, 0..1, and the scanner setting in force.
   float leakage_amount(std::uint32_t part) const noexcept { return parts_[part].leak.cur; }
   ScannerMode scanner_mode(std::uint32_t part) const noexcept { return parts_[part].scan.mode(); }
+  // Rotary speaker state of a part, readable from any thread without locks: the commanded speed (reported the moment the command
+  // is applied, before the rotors have reached it), whether the rotary stage is on, and the actual horn and drum speeds in Hz as of
+  // the end of the last rendered chunk. The fields are individually atomic.
+  struct RotaryStatus {
+    RotarySpeed target = RotarySpeed::kSlow;
+    bool on = false;
+    float horn_hz = 0.0f, drum_hz = 0.0f;
+  };
+  RotaryStatus rotary_status(std::uint32_t part) const noexcept {
+    RotaryStatus s;
+    if (part >= kPartCount) return s;
+    const std::uint32_t w = rot_state_[part].load(std::memory_order_acquire);
+    s.target = static_cast<RotarySpeed>(w & 3u);
+    s.on = (w & 4u) != 0;
+    s.horn_hz = std::bit_cast<float>(rot_horn_[part].load(std::memory_order_relaxed));
+    s.drum_hz = std::bit_cast<float>(rot_drum_[part].load(std::memory_order_relaxed));
+    return s;
+  }
+  // The part's rotary unit (introspection for tests and tools; RT thread or after rendering).
+  const RotarySpeaker& rotary(std::uint32_t part) const noexcept { return parts_[part < kPartCount ? part : 0].rot; }
   // Percussion time constant in seconds for a registry decay value (0 fast, 1 slow).
   static float percussion_tau_seconds(int decay) noexcept { return decay == 0 ? kPercTauFastSeconds : kPercTauSlowSeconds; }
   // Current (ramped) part-level factors: the 1' cancel (1 = 1' sounds, 0 = cancelled) and the drawbar factor.
@@ -228,6 +255,16 @@ class OrganEngine final : public Engine {
     int vc_type = 3;
     Ramp leak{0.0f, 0.0f, 0.0f, 0, kLeakRampFrames};
     std::uint32_t scan_tail = 0;  // frames of zeros still to run through the scanner after the last voice ended
+    // Story 2.6: rotary speaker (per-part state: filters, delay lines, rotor speed and angle; a part stays on one worker).
+    // `wet` is the 5 ms crossfade between the plain mono output (0) and the rotary output (1); at 0 with target 0 the
+    // rotary stage is bypassed exactly (no processing, only the rotors keep time).
+    RotarySpeaker rot;
+    bool rot_on = false;
+    Ramp wet{0.0f, 0.0f, 0.0f, 0, kRotaryRampFrames};
+    std::uint32_t rot_tail = 0;  // frames of zeros still to run through the rotary stage after the last voice ended
+    std::uint64_t rot_on_frame = ~0ull;  // engine frame at which the stage was last switched on with no crossfade (same-frame speed commands settle)
+    bool rot_dirty = false;      // the stage holds signal state that must be cleared when it is bypassed
+    bool rot_live() const noexcept { return wet.cur != 0.0f || wet.tgt != 0.0f; }
     void update_scanner(bool immediate) noexcept {
       const ScannerMode m = vc_on ? static_cast<ScannerMode>(1 + vc_type) : ScannerMode::kOff;
       if (immediate) scan.set_mode_immediate(m);  // nothing sounds: no crossfade needed
@@ -246,6 +283,8 @@ class OrganEngine final : public Engine {
   Voice* held_voice(std::uint32_t channel, std::uint32_t note) noexcept;
   void start_click(Voice& v, std::uint32_t which, float level, float scale) noexcept;
   void apply_percussion_targets(Part& p) noexcept;
+  void emit_part(Part& p, const float* dry, std::uint32_t frames, float* left, float* right) noexcept;
+  void publish_rotary(std::uint32_t part) noexcept;
 
   void render_chunk(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING;
 
@@ -260,6 +299,7 @@ class OrganEngine final : public Engine {
   std::array<std::uint8_t, kPartCount * 128> contact_released_{};  // key whose voice ended by contacts opening: a later Note Off is benign
   std::uint32_t contact_count_ = 3;
   std::uint64_t contact_applied_ = 0, contact_ignored_ = 0;
+  std::array<std::atomic<std::uint32_t>, kPartCount> rot_state_{}, rot_horn_{}, rot_drum_{};  // published rotary state
   std::uint32_t enabled_ = 0xFF;
   std::uint32_t block_pos_ = 0, gen_frames_ = 0;
   std::uint64_t clock_ = 0;

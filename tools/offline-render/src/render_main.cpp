@@ -1,7 +1,7 @@
 // velora-offline-render --midi in.mid --out out.wav [--engine test-tone|sample] [--voices N]
 //                       [--tail-seconds S] [--detune-cents C]
 //                       [--engine organ [--drawbars 888000000] [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]
-//                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1]]
+//                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]]
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
 #include <cstdio>
@@ -25,7 +25,7 @@ static int usage() {
                "       [--voices N] [--tail-seconds S] [--detune-cents C (test only)]\n"
                "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
-               "                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1]\n"
+               "                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
   return 2;
 }
@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
   std::string midi, events_path, out, engine = "test-tone", bundle_path, instrument_key, interp = "hermite";
   bool voices_given = false, sample_opts = false, drawbars_given = false;
   std::string drawbars, percussion;
-  bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false;
+  bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false, rotary_given = false;
   RenderOptions opt;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -73,6 +73,14 @@ int main(int argc, char** argv) {
       if (!parse_double(v, 0.0, 1.0, k)) { std::fprintf(stderr, "error: invalid --leakage (0..1)\n"); return 2; }
       opt.leakage = static_cast<float>(k);
       leakage_given = true;
+    } else if (a == "--rotary" && val(v)) {
+      static const char* const kNames[] = {"off", "slow", "fast", "stop"};
+      int found = -1;
+      for (int k = 0; k < 4; ++k)
+        if (std::strcmp(v, kNames[k]) == 0) found = k;
+      if (found < 0) { std::fprintf(stderr, "error: invalid --rotary (off, slow, fast or stop)\n"); return 2; }
+      opt.rotary = found;
+      rotary_given = true;
     } else if (a == "--bundle" && val(v)) bundle_path = v;
     else if (a == "--instrument" && val(v)) instrument_key = v;
     else if (a == "--interpolation" && val(v)) { interp = v; sample_opts = true; }
@@ -112,8 +120,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: --drawbars needs --engine organ\n");
     return 2;
   }
-  if ((percussion_given || key_click_given || vibrato_given || leakage_given) && engine != "organ") {
-    std::fprintf(stderr, "error: --percussion, --key-click, --vibrato and --leakage need --engine organ\n");
+  if ((percussion_given || key_click_given || vibrato_given || leakage_given || rotary_given) && engine != "organ") {
+    std::fprintf(stderr, "error: --percussion, --key-click, --vibrato, --leakage and --rotary need --engine organ\n");
     return 2;
   }
   if (engine == "organ") {

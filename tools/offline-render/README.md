@@ -101,3 +101,18 @@ measured residuals and every deviation are in `tests/sample_suite/README.md`. Re
 A reference oracle (sfizz's full engine) may only be used offline to produce reference renders for null tests. It is never linked
 into any shipped target and no oracle source is in this repository: `tools/oracle/` fetches sfizz 1.2.3 into an ignored build
 directory and builds its `sfizz_render` CLI there. `tools/ci/check_third_party_notices.py` enforces this.
+
+## Organ rotary speaker golden (Story 2.6)
+
+`velora-offline-render --engine organ` also takes `--rotary off|slow|fast|stop` (default off, the registry default), applied to every organ part at frame 0
+(`slow`/`fast`/`stop` set the speed and switch the rotary stage on at once); it is an error without `--engine organ`. The file's CC 89 (stage on/off) and CC 79
+(speed: 0-31 stop, 32-95 slow, 96-127 fast) change them later, and mid-file speed changes ramp with the horn and drum time constants. With the stage on the output is
+a true stereo pair. `tests/organ_rotary/` holds `organ_rotary.mid` (made by `make_midi.py`: a six-note chord held for 5 s on part 0 while CC 89 switches the stage on at 0.3 s
+and CC 79 goes fast at 1.0 s, stop at 2.4 s and slow at 4.2 s; a short chord on part 1 stays unprocessed), `organ_rotary.wav` (about 5.3 s, 2.0 MB) and `organ_rotary.case`
+(null test, -100 dB). The render command is `velora-offline-render --midi organ_rotary.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2 --vibrato off
+--leakage 0 --rotary off --tail-seconds 0.3`. ctest renders twice (`organ_rotary_bit_identical`), null-tests the render against the golden (`organ_rotary_null_golden`) and requires
+a different starting rotary state (`--rotary fast`, `--rotary stop`) to fail it. Regenerate after an intentional engine change with `cmake --build build --target
+update-organ-rotary-golden` and review. The other organ goldens do not use the rotary and are unchanged.
+
+The CLI mapping is pinned by `organ_rotary_map_{slow,fast,stop}_equal`: `--rotary X` on `organ_map_plain.mid` (a 1 s chord, made by `make_map_midi.py`) renders byte-equal
+to `organ_map_X.mid` (the same chord with CC 79 = 64 / 127 / 0 and CC 89 at tick 0) with `--rotary off`.

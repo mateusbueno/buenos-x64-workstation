@@ -1,4 +1,4 @@
-# Tonewheel organ engine (Stories 2.2, 2.3, 2.4, 2.5)
+# Tonewheel organ engine (Stories 2.2, 2.3, 2.4, 2.5, 2.6)
 
 `OrganEngine` (`organ_engine.hpp`, `tonewheel_tables.hpp`, type id Organ=2, engine name "tonewheel organ") is a clean-room
 tonewheel organ: one shared wheel generator per part and one voice per key, 73 keys x 9 drawbars sounding at once, never
@@ -263,6 +263,97 @@ burst (below).
 Gate cost: per voice per chunk three gate ramps (only while one is moving) and one multiply per drawbar-sample in a ramping group;
 a settled voice costs what it did before.
 
+## Rotary speaker (Story 2.6)
+
+`RotarySpeaker` (`rotary_speaker.hpp`, `src/rotary_speaker.cpp`) is the rotary speaker unit of the organ's voice path. It has no organ
+dependency (Story 2.9 reuses it as an insert), fixed storage (two 128-sample delay lines, four biquads), no allocation, and one instance
+per part. The effect is called "rotary speaker" everywhere (UI label ROTARY); `organ_tests` greps its sources, the offline-render sources
+and this file for the three forbidden product names.
+
+**Public facts used** (musical, acoustic and service-documentation level; no organ or rotary source read):
+
+1. A rotary speaker cabinet splits the signal with a crossover at about 800 Hz into a high band for a treble horn and a low band for a bass
+   rotor (a drum with a baffle). Each rotates; the horn is a small horn on a spinning mount, the drum a larger baffle.
+2. Two speeds: slow ("chorale", about 0.7 to 0.8 Hz for the rotors, roughly 40 to 50 rpm) and fast ("tremolo", about 6 to 7 Hz for the horn
+   and a little less for the drum, roughly 340 to 410 rpm). Switching is not instant: the lighter horn changes speed in about a second, the
+   heavy drum takes several seconds, and slowing down takes longer than speeding up. A stop switch lets both coast to a standstill.
+3. A rotating directional radiator heard from a fixed place is amplitude modulated (the horn points at the listener, then away), and since
+   the distance to the listener swings, its sound is Doppler shifted: the pitch deviation is the radial speed over the speed of sound.
+   Typical horn radius is 15 to 20 cm, so at 6.8 Hz the tip moves at about 7 m/s (2 percent, about +-36 cents).
+4. Microphones (or ears) at different places hear the rotation at different angles, so the channels are modulated out of phase: a
+   rotating sound image in stereo.
+
+**Design values** (named constants in `rotary_speaker.hpp`, to be refined against recordings in Story 2.13):
+
+| constant | horn | drum | meaning |
+|---|---|---|---|
+| `slow_hz` | 0.8 | 0.67 | rotation speed at SLOW |
+| `fast_hz` | 6.8 | 5.7 | rotation speed at FAST |
+| `accel_tau_s` | 0.6 s | 2.0 s | time constant of the speed rising toward its target (95 percent in 1.8 s and 6 s) |
+| `brake_tau_s` | 1.2 s | 3.0 s | time constant of the speed falling toward its target (also used toward STOP) |
+| `am_depth` | 0.60 | 0.35 | gain facing away from a microphone is 1 - depth |
+| `radius_m` | 0.17 | 0.12 | Doppler swing (delay swing `radius / 343 m/s`, 23.8 and 16.8 samples) |
+| `crossover_hz` | 800 | | Linkwitz-Riley 4th order (two cascaded Butterworth sections per band; the bands sum to an all-pass) |
+| `mic_half_angle_rad` | 60 degrees | | left and right microphones at -60 and +60 degrees; the channels are modulated 120 degrees apart |
+| `kStopOvershootHz` | 0.2 Hz | | STOP aims at -0.2 Hz so the speed falls through zero in finite time |
+| `kRestCreepHz` | 0.25 Hz | | while stopping, a rotor never goes slower than this until it reaches the rest angle 0, then stops dead (about 6.5 s for the horn and 8.5 s for the drum from FAST) |
+| `kMaxRadiusM` | 0.25 m | | config clamp: the largest delay is `4 + 3 x 35 = 109` samples, plus 3 for the interpolator, under the 128-sample line (static_assert); non-finite config values fall back to safe ones |
+
+**Model.** For rotor angle `a` and a microphone at azimuth `m`: gain `g = 1 - depth x (1 - cos(a - m)) / 2` (1 facing the microphone) and
+delay `d = d0 + k x (1 - cos(a - m))` samples, `k = radius / c x 48000`, read from the rotor's delay line with a 4-point Lagrange
+interpolator (so the pitch moves by `dd/dt`). Per rotor the speed is a first-order approach `w += (target - w) x (1 - exp(-1/(tau fs)))`
+per sample with `tau` the acceleration time constant when the target is above the speed and the braking one when below. The angle
+integrates the speed. Output = horn rotor + drum rotor, left and right microphones. Both delays are equal at angle 0 (the base delays
+compensate the different radii) so the bands do not comb at the crossover while the rotors rest there. Tested: bands flat within 0.1 dB
+with the rotors standing and no modulation; AM depth within 3 percent and rate within 5 percent at slow and fast in both bands; Doppler
+deviation bounded by `2 pi f radius / c` (about 2.1 percent at fast) and zero at standstill; L/R envelope correlation about -0.5 and level
+differences of several dB at fast; time constants measured separately for the horn and the drum, acceleration, braking and STOP, within 1 percent.
+
+**Speed states and STOP.** `RotarySpeed` is `kStop`, `kSlow`, `kFast`, the registry enum `rotary_speed` (0, 1, 2). A new target
+applies from the next processed frame: the block loop splits at the event frame, so the speed change lands on the event's exact in-block
+offset (tested bit-exact before that frame). Speeds are continuous, so the Doppler delay, the gain and the pan are continuous. STOP brakes both
+rotors to exactly 0 Hz in finite time and **both come to rest at the same angle, 0 (facing front)**: once a rotor has braked below
+`kRestCreepHz` it creeps at that speed until its angle reaches 0 and then stops dead (a 0.25 Hz speed step, 0.01 percent of pitch; at most 4 s extra).
+Freezing each rotor wherever it happened to stop would leave the horn and drum at different angles, so their delays and gains would differ at the
+crossover for good (a constant comb or level dip); with the common rest angle the response after STOP equals that of a fresh unit (tested from five
+pairs of starting angles, 500 Hz to 1.2 kHz, to 1e-4). Amplitude, delay and pan then stay constant; starting again from standstill accelerates from angle 0.
+A rotor that is already at standstill (`set_angles`, or a stopped unit) is left where it is. Click-free is measured as the
+largest sample-to-sample step through slow -> fast -> stop -> slow, which stays within what the steady fast rotation produces by itself
+(an abrupt angle jump is the contrast and exceeds that by more than 30 percent); the same under a held 73-key chord while speeds and the
+stage cycle.
+
+**In the organ.** Registry: `rotary_speed` (id 200, stop/slow/fast, default slow, CC 79: 7-bit values 0-31 stop, 32-95 slow, 96-127 fast)
+and `rotary_on` (id 201, bool, default 0 = off, CC 89, new in this story), part scope, performance class, delivered through
+`Engine::set_part_param` at the event's frame like the other organ parameters. The part's summed output (after the scanner and the soft
+limit) goes through its `RotarySpeaker` when the stage is on, giving a stereo pair (before this story every part's output was mono, the same
+signal added to both channels). **Rotary off is a bit-exact bypass**: nothing is processed or written, the existing mono goldens are unchanged
+(`rotary_tests`: bit-compare with and without explicit off, left equals right). Switching the stage on or off while a part sounds is a 5 ms linear
+crossfade between the plain mono signal and the rotary output (`kRotaryRampFrames`); with nothing sounding it applies at once. While the stage is
+bypassed the rotors keep time (speed and angle advance every frame, as `skip()`), so toggling does not depend on when it happens, and a speed
+command given while the stage is bypassed, or at the very frame at which the stage was switched on with nothing sounding, settles immediately
+(inaudible; it makes the frame-0 setup of an offline render exact and makes `rotary_on` and `rotary_speed` at the same frame order-independent, tested). With the stage on
+a speed command ramps from where the rotors are. After the last key the stage runs zeros for `kTailFrames` = 1024 frames so the filters and delay
+lines drain; then it is skipped and its signal state is cleared (stage on or off). A disabled part keeps its rotor time, publishes its state and has its
+signal state cleared (tested: a part that was sounding when disabled and a part that was silent render identically on re-enable). The stage output passes the
+same soft limit as the dry signal (linear below 0.8): without it the crossover and the two rotors summed to about 3.0 on a saturated 73-key chord; with it each
+channel of a part stays at or below 1.0. One part must stay on one worker. Rotary off after on is bit-exact again once the 5 ms crossfade is over (tested with memcmp
+against a render that never used the stage).
+
+**Published state.** `OrganEngine::rotary_status(part)` returns, without locks and from any thread, the commanded speed (`SLOW`/`FAST`/`STOP`),
+whether the stage is on and the horn and drum speeds in Hz. The state value **reports the target immediately** (the moment the command is applied,
+at its in-block frame) while the Hz fields follow the actual ramps, updated after every rendered chunk; the UI shows `ROTARY SLOW/FAST/STOP` from the
+target and may animate from the speeds. The target is also in the RT last-value table, so the existing `ws.v1` `GetPerformanceValues` read path
+returns it as the `PARAM_ROTARY_SPEED` and `PARAM_ROTARY_ON` values (no schema change needed; the actual Hz fields are core-side only for now).
+
+**Cost.** `RotarySpeaker::kCostUnits` = 24 per part (placeholder until measured on the dev board) is part of `OrganEngine::reservation_cost_units`, reserved
+ahead of the engine floors whether the stage is on or off.
+
+Tests: `rotary_tests` (`tests/rotary_speaker_test.cpp`: design values; crossover reconstruction; rest gain; AM depth and rate; Doppler; stereo spread; time
+constants; stop, common rest angle and standstill; click-free; delay-line bound for hostile configs; determinism and block-size independence; tail; registry and CC; bypass bit-exactness; event-frame exactness and
+state publication; click-free chord cycling; part independence; tail in the organ; reservation), `rtsan_organ_test` (a held 73-key chord on part 6 with the
+speed cycled for 8,000 blocks through UMP and CC 79, stage toggled; Linux CI only) and the golden `tools/offline-render/tests/organ_rotary/`
+(`--rotary off|slow|fast|stop` and the file's CC 89 / CC 79; see the offline-render README).
+
 ## Voices are never stolen; reservation
 
 `Engine::steal_protected()` (new, default false) is true for the organ. `VoiceArbiter::bind` records it; protected engines
@@ -274,12 +365,13 @@ ahead of every engine floor. With that reservation, a pool full of sample voices
 
 ## Cost units
 
-Placeholders until measured on the dev board: voice 2, generator 48 per part, rotary 24 per part (reserved for Story 2.6).
+Placeholders until measured on the dev board: voice 2, generator 48 per part, rotary 24 per part (`RotarySpeaker::kCostUnits`, used by Story 2.6; a part's rotary
+stage is reserved whether or not it is switched on, and `rotary_tests` checks that `reservation_cost_units` contains it).
 `organ_bench` prints host figures labelled "host, not representative".
 
-## Not in Stories 2.2 to 2.5
+## Not in Stories 2.2 to 2.6
 
-Rotary, effects, UI, Live Set loading, the keybed reader that emits `contact_k` (Epic 3).
+The insert chain and the other effects (Stories 2.7 to 2.11), UI, Live Set loading, the keybed reader that emits `contact_k` (Epic 3).
 
 ## Tests
 

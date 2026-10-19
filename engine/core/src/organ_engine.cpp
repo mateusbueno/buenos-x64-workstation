@@ -11,6 +11,10 @@ namespace {
 constexpr std::uint32_t kD = tonewheel::kDrawbarCount;
 constexpr std::uint32_t kW = tonewheel::kWheelCount;
 constexpr double kTwoPi = 6.28318530717958647692;
+static_assert(static_cast<std::uint8_t>(RotarySpeed::kStop) == params::kRotarySpeedStop &&
+                  static_cast<std::uint8_t>(RotarySpeed::kSlow) == params::kRotarySpeedSlow &&
+                  static_cast<std::uint8_t>(RotarySpeed::kFast) == params::kRotarySpeedFast,
+              "RotarySpeed follows the registry enum rotary_speed");
 static_assert(params::kDrawbar1 - params::kDrawbar16 == kD - 1, "drawbar ids are contiguous in drawbar order");
 
 float soft_limit(float x) noexcept {  // linear to the knee, then bounded by 1.0, continuous slope
@@ -77,7 +81,12 @@ OrganEngine::OrganEngine()
     p.vc_type = static_cast<int>(params::find(params::kVibratoChorusType)->def);
     p.scan.set_mode_immediate(p.vc_on ? static_cast<ScannerMode>(1 + p.vc_type) : ScannerMode::kOff);
     p.leak.cur = p.leak.tgt = params::find(params::kLeakage)->def;
+    // Rotary speaker (Story 2.6): rotors settled at the registry default speed, stage on or off as the registry says.
+    p.rot.set_speed_immediate(static_cast<RotarySpeed>(static_cast<int>(params::find(params::kRotarySpeed)->def)));
+    p.rot_on = params::find(params::kRotaryOn)->def >= 0.5f;
+    p.wet.cur = p.wet.tgt = p.rot_on ? 1.0f : 0.0f;
   }
+  for (std::uint32_t part = 0; part < kPartCount; ++part) publish_rotary(part);
   // Leakage pattern: fixed per-wheel, per-neighbour gains from a documented seed (same on every run and platform).
   std::uint64_t ls = kLeakageSeed;
   for (std::uint32_t w = 0; w < kW; ++w)
@@ -86,6 +95,13 @@ OrganEngine::OrganEngine()
       const bool exists = side == 0 ? w > 0 : w + 1 < kW;
       leak_pattern_[w * 2 + side] = exists ? kLeakageMaxGain * (kLeakageMinFraction + (1.0f - kLeakageMinFraction) * r) : 0.0f;
     }
+}
+
+void OrganEngine::publish_rotary(std::uint32_t part) noexcept {
+  const Part& p = parts_[part];
+  rot_state_[part].store(static_cast<std::uint32_t>(p.rot.target()) | (p.rot_on ? 4u : 0u), std::memory_order_release);
+  rot_horn_[part].store(std::bit_cast<std::uint32_t>(static_cast<float>(p.rot.horn_hz())), std::memory_order_relaxed);
+  rot_drum_[part].store(std::bit_cast<std::uint32_t>(static_cast<float>(p.rot.drum_hz())), std::memory_order_relaxed);
 }
 
 void OrganEngine::apply_percussion_targets(Part& p) noexcept {
@@ -313,6 +329,28 @@ void OrganEngine::set_part_param(std::uint32_t part, std::uint32_t param_id, flo
       }
       return;
     }
+    case params::kRotarySpeed: {
+      const RotarySpeed sp = static_cast<RotarySpeed>(std::clamp(static_cast<int>(std::lround(value)), 0, params::kRotarySpeedCount - 1));
+      // While the stage is bypassed the rotors are inaudible: the command settles at once (a later switch-on starts from that
+      // speed, and the frame-0 setup of an offline render is exact). Otherwise the rotors ramp from where they are, from this frame.
+      // A stage switched on at this very frame with nothing sounding counts as bypassed, so "on" and "speed" given at the same
+      // frame give the same result in either order.
+      if (p.rot_live() && p.rot_on_frame != clock_) p.rot.set_target(sp);
+      else p.rot.set_speed_immediate(sp);
+      publish_rotary(part);
+      return;
+    }
+    case params::kRotaryOn:
+      p.rot_on = value >= 0.5f;
+      if (part_sounding(part) || p.rot_tail > 0) {
+        p.wet.set(p.rot_on ? 1.0f : 0.0f);  // 5 ms crossfade so switching does not click
+      } else {  // nothing sounds on this part: no crossfade needed (also makes the frame-0 setup of a render exact)
+        p.wet.cur = p.wet.tgt = p.rot_on ? 1.0f : 0.0f;
+        p.wet.left = 0;
+        if (p.rot_on) p.rot_on_frame = clock_;
+      }
+      publish_rotary(part);
+      return;
     case params::kKeyClick:
       p.key_click = std::fmin(1.0f, std::fmax(0.0f, value));
       return;
@@ -365,6 +403,42 @@ void OrganEngine::render(float* left, float* right, std::uint32_t frames) noexce
   }
 }
 
+// Adds one part's output for `frames` frames. Rotary off (stage bypassed, no crossfade running) adds the plain mono signal to both
+// channels exactly as before Story 2.6; otherwise the signal goes through the part's rotary speaker and, while the stage is being
+// switched on or off, is crossfaded with the plain signal over 5 ms.
+void OrganEngine::emit_part(Part& p, const float* dry, std::uint32_t frames, float* left, float* right) noexcept {
+  if (!p.rot_live()) {
+    p.rot.skip(frames);  // the rotors keep time while the stage is bypassed
+    if (p.rot_dirty) { p.rot.clear_signal(); p.rot_dirty = false; }
+    for (std::uint32_t f = 0; f < frames; ++f) {
+      left[f] += dry[f];
+      right[f] += dry[f];
+    }
+    return;
+  }
+  float rl[kBlockFrames], rr[kBlockFrames];
+  p.rot.process(dry, rl, rr, frames);
+  p.rot_dirty = true;
+  // The crossover and the two rotors can add up to more than the (soft-limited) dry signal on a saturated chord (measured up to 3x):
+  // the same soft limit keeps the stage's output below 1.0 per channel. It is linear below the knee, so ordinary levels are untouched.
+  for (std::uint32_t f = 0; f < frames; ++f) {
+    rl[f] = soft_limit(rl[f]);
+    rr[f] = soft_limit(rr[f]);
+  }
+  if (p.wet.left == 0 && p.wet.cur == 1.0f) {
+    for (std::uint32_t f = 0; f < frames; ++f) {
+      left[f] += rl[f];
+      right[f] += rr[f];
+    }
+    return;
+  }
+  for (std::uint32_t f = 0; f < frames; ++f) {
+    const float w = p.wet.advance();
+    left[f] += (1.0f - w) * dry[f] + w * rl[f];
+    right[f] += (1.0f - w) * dry[f] + w * rr[f];
+  }
+}
+
 void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) noexcept {
   std::array<bool, kPartCount> has_voice{};
   for (const Voice& v : voices_)
@@ -378,6 +452,11 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
     if (!(enabled_ & (1u << part))) {
       p.scan.skip(frames);  // a disabled part keeps its sweep time and has an empty delay line
       p.scan_tail = 0;
+      p.rot_tail = 0;
+      p.rot.skip(frames);  // the rotors keep time too
+      if (p.rot_dirty) { p.rot.clear_signal(); p.rot_dirty = false; }
+      for (std::uint32_t f = 0; p.wet.left > 0 && f < frames; ++f) p.wet.advance();
+      publish_rotary(part);
       continue;
     }
     // Drawbar gains per frame. Ramps advance whether or not keys are down, so a ramp is the same wherever
@@ -406,23 +485,30 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
     }
     float* mix = &mix_[part * kBlockFrames];
     if (!has_voice[part]) {
-      if (p.scan_tail == 0) {
+      const bool rot_run = p.rot_live() && p.rot_tail > 0;
+      if (p.scan_tail == 0 && !rot_run) {
         p.scan.skip(frames);  // silent part: the sweep keeps its time, the (empty) delay line stays empty
+        p.rot.skip(frames);
+        if (p.rot_dirty) { p.rot.clear_signal(); p.rot_dirty = false; }  // tail expired (stage on or off): nothing left to drain
+        for (std::uint32_t f = 0; p.wet.left > 0 && f < frames; ++f) p.wet.advance();
+        publish_rotary(part);
         continue;
       }
-      // The last voice just ended: the scanner's delay line still holds up to 48 samples of signal. Run zeros through
-      // it so that tail drains (is not cut), then skip.
+      // The last voice just ended: the scanner's delay line still holds up to 48 samples of signal and the rotary stage's
+      // filters and delay lines some more. Run zeros through them so those tails drain (are not cut), then skip.
       std::fill(mix, mix + frames, 0.0f);
-      p.scan.process(mix, mix, frames);
+      if (p.scan_tail > 0) p.scan.process(mix, mix, frames);
+      else p.scan.skip(frames);
       p.scan_tail -= std::min(p.scan_tail, frames);
-      for (std::uint32_t f = 0; f < frames; ++f) {
-        const float y = soft_limit(mix[f] * kVoiceScale);
-        left[f] += y;
-        right[f] += y;
-      }
+      p.rot_tail -= std::min(p.rot_tail, frames);
+      float dry[kBlockFrames];
+      for (std::uint32_t f = 0; f < frames; ++f) dry[f] = soft_limit(mix[f] * kVoiceScale);
+      emit_part(p, dry, frames, left, right);
+      publish_rotary(part);
       continue;
     }
     p.scan_tail = VibratoScanner::kMaxDelaySamples + 16;  // > the delay line's reach
+    p.rot_tail = RotarySpeaker::kTailFrames;
     std::fill(mix, mix + frames, 0.0f);
     const float* wheels = &wheels_[part * kWheelStride];
     for (Voice& v : voices_) {
@@ -506,11 +592,10 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
       }
     }
     p.scan.process(mix, mix, frames);  // vibrato/chorus on the part's summed signal
-    for (std::uint32_t f = 0; f < frames; ++f) {
-      const float y = soft_limit(mix[f] * kVoiceScale);
-      left[f] += y;
-      right[f] += y;
-    }
+    float dry[kBlockFrames];
+    for (std::uint32_t f = 0; f < frames; ++f) dry[f] = soft_limit(mix[f] * kVoiceScale);
+    emit_part(p, dry, frames, left, right);
+    publish_rotary(part);
   }
   block_pos_ += frames;
   clock_ += frames;

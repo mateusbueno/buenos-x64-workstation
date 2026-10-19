@@ -82,15 +82,34 @@ void run_contact_block(BlockRenderer& br, float* l, float* r, std::uint32_t i) n
   br.process_block(l, r);
 }
 
+// Rotary speaker (Story 2.6) on part 6 under a held 73-key chord: the speed cycles stop/slow/fast through UMP parameter events at
+// varying in-block offsets (and through CC 79), and the stage is switched on and off now and then, for many blocks.
+void run_rotary_block(BlockRenderer& br, float* l, float* r, std::uint32_t i) noexcept [[clang::nonblocking]] {
+  const std::uint32_t part = 6;
+  if (i % 17 == 0) {
+    const std::uint32_t k = i / 17;
+    br.submit({make_param_event(*params::find(params::kRotarySpeed), part, static_cast<double>(k % 3)), (i * 7) % 64});
+  }
+  if (i % 41 == 5) {
+    Ump ev;
+    if (cc_to_param_event(make_control_change(0, part, 79, ((i / 41) % 3) * 0x7FFFFFFFu), ev)) br.submit({ev, 11});
+  }
+  if (i % 400 == 399) br.submit({make_param_event(*params::find(params::kRotaryOn), part, (i / 400) % 4 == 3 ? 0.0 : 1.0), (i * 3) % 64});
+  br.process_block(l, r);
+}
+
 }  // namespace
+
+constexpr float kPartPeak = 1.0f;  // see the bound derivation near the end of main()
+constexpr float kPartsRotaryPhase = 7.0f * kPartPeak;
 
 int main() {
   auto organ = std::make_unique<OrganEngine>();
   auto br = std::make_unique<BlockRenderer>(256);
   br->bind_engine(*organ);
-  for (std::uint32_t ch = 0; ch < 6; ++ch) br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
+  for (std::uint32_t ch = 0; ch < 7; ++ch) br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
   VoiceArbiter::LiveSetConfig cfg;
-  cfg.organ_rotary_cost = OrganEngine::reservation_cost_units(6);
+  cfg.organ_rotary_cost = OrganEngine::reservation_cost_units(7);
   cfg.budget = cfg.organ_rotary_cost + 256;
   int rc = 0;
   if (br->arbiter().reserve(cfg) != VoiceArbiter::ReserveStatus::kOk) {
@@ -133,14 +152,33 @@ int main() {
   if (!(contact_energy > 0.0) || organ->contact_events_applied() == 0 || organ->contact_events_ignored() == 0 ||
       br->contact_events_routed() == 0)
     rc = 1;
+  // Rotary phase: a held 73-key chord on part 6 with the rotary stage on, speeds cycled for 8,000 blocks.
+  br->submit({make_param_event(*params::find(params::kRotaryOn), 6, 1.0), 0});
+  for (std::uint32_t n = 28; n <= 100; ++n) br->submit({make_note_on(0, 6, n, 30000), n % 64});
+  double rotary_energy = 0.0, rotary_diff = 0.0;
+  float rotary_peak = 0.0f;
+  for (std::uint32_t i = 0; i < 8000; ++i) {
+    run_rotary_block(*br, l, r, i);
+    for (std::uint32_t k = 0; k < kBlockFrames; ++k) {
+      rotary_energy += static_cast<double>(l[k]) * l[k];
+      rotary_diff += std::fabs(static_cast<double>(l[k]) - r[k]);
+      rotary_peak = std::max({rotary_peak, std::fabs(l[k]), std::fabs(r[k])});
+      if (!std::isfinite(l[k]) || !std::isfinite(r[k])) rc = 1;
+    }
+  }
+  const auto rs = organ->rotary_status(6);
+  if (!(rotary_energy > 0.0) || !(rotary_diff > 0.0) || !(rs.horn_hz >= 0.0f) || rotary_peak > kPartsRotaryPhase) rc = 1;
+  std::printf("rtsan_organ_test: rotary energy=%.3g stereo diff=%.3g target=%d horn=%.2f Hz\n", rotary_energy, rotary_diff,
+              static_cast<int>(rs.target), static_cast<double>(rs.horn_hz));
   std::printf("rtsan_organ_test: contact energy=%.3g applied=%llu ignored=%llu\n", contact_energy,
               (unsigned long long)organ->contact_events_applied(), (unsigned long long)organ->contact_events_ignored());
   std::printf("rtsan_organ_test: energy=%.3g peak=%.3f peak_voices=%u organ_steals=%llu rejected=%llu\n", energy, peak,
               peak_voices, (unsigned long long)br->arbiter().steals(static_cast<std::uint32_t>(EngineTypeId::kOrgan)),
               (unsigned long long)br->param_events_rejected());
-  // Bound: every part's output passes the organ's soft limit, which keeps it strictly below 1.0, and the loop uses kParts parts,
-  // so the sum of the parts is below kParts. (It tracks the part count instead of a fixed number.)
-  constexpr float kParts = 6.0f;
+  // Bound: every part's output, with or without the rotary stage, ends in the organ's soft limit, so each channel of each part stays
+  // at or below 1.0 (rotary_tests measures 1.000 on the loudest 73-key chord through the stage, which is the reason for that limit).
+  // The first loop plays parts 0..3 only, so the sum of the parts is at most 4.0 per channel; in the rotary phase all 7 parts may sound.
+  constexpr float kParts = 4.0f * kPartPeak;
   if (!(energy > 0.0) || peak > kParts || peak_voices < 73 ||
       br->arbiter().steals(static_cast<std::uint32_t>(EngineTypeId::kOrgan)) != 0)
     rc = 1;

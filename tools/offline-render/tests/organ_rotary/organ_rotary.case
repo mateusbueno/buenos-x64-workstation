@@ -1,0 +1,7 @@
+# Null-test case for the organ rotary speaker golden render (Story 2.6).
+# -100 dB residual: far below the audible difference between rotary states (a rotor running at the wrong speed lands near
+# -10 dB), loose enough for libm/FMA differences between macOS and Linux builds.
+reference=organ_rotary.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0

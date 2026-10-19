@@ -618,7 +618,10 @@ void test_forbidden_strings() {
   const std::string root = VELORA_SOURCE_ROOT;
   const char* files[] = {"engine/core/include/velora/core/organ_engine.hpp", "engine/core/src/organ_engine.cpp",
                          "engine/core/include/velora/core/tonewheel_tables.hpp", "engine/core/include/velora/core/vibrato_scanner.hpp",
-                         "proto/params.json",
+                         "engine/core/include/velora/core/rotary_speaker.hpp", "engine/core/src/rotary_speaker.cpp",
+                         "engine/core/tests/rotary_speaker_test.cpp", "tools/offline-render/src/render.cpp",
+                         "tools/offline-render/src/render_main.cpp", "tools/offline-render/tests/organ_rotary/make_midi.py",
+                         "proto/params.json", "proto/README.md",
                          "engine/core/ORGAN.md"};
   for (const char* rel : files) {
     std::string text = slurp(root + "/" + rel);

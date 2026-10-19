@@ -33,6 +33,7 @@
     {"id": 116, "name": "key_click", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0, "max": 1, "default": 0.5, "cc": 82},
     {"id": 117, "name": "leakage", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0, "max": 1, "default": 0.5, "cc": 83},
     {"id": 200, "name": "rotary_speed", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "enum": "rotary_speed", "default": "slow", "cc": 79},
+    {"id": 201, "name": "rotary_on", "class": "performance", "type": "bool", "scope": "part", "unit": "flag", "min": 0, "max": 1, "default": 0, "cc": 89},
     {"id": 300, "name": "insert_type", "class": "structural", "type": "enum", "scope": "insert", "unit": "enum", "enum": "insert_type", "default": "none"},
     {"id": 301, "name": "insert_bypass", "class": "structural", "type": "bool", "scope": "insert", "unit": "flag", "min": 0, "max": 1, "default": 0},
     {"id": 302, "name": "insert_param_1", "class": "structural", "type": "float", "scope": "insert", "unit": "ratio", "min": 0, "max": 1, "default": 0.5},

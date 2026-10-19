@@ -178,3 +178,12 @@ contact 1 (before any Note On), brings in a busbar group per later contact and t
 table (3-contact and 2-contact variants), the ramps, the defined handling of malformed sequences and the interplay with percussion,
 key click and the arbiter are in `ORGAN.md` ("Multi-contact onset"). Note On/Off-only sources are unchanged. RTSan-covered
 (`rtsan_organ_test`), unit tests in `organ_contact_tests`.
+
+## Rotary speaker (Story 2.6)
+
+`RotarySpeaker` (`rotary_speaker.hpp`) is a self-contained DSP unit (crossover into horn and drum, per rotor amplitude modulation, Doppler from a fixed delay line,
+stereo spread through two virtual microphones, separate acceleration and braking time constants, slow/fast/stop) that the organ runs per part when
+`rotary_on` (id 201, CC 89, default off) is set; `rotary_speed` (id 200, CC 79) is stop/slow/fast. Off is a bit-exact bypass of the mono organ output; on, the
+part's output is stereo. `OrganEngine::rotary_status(part)` publishes the commanded speed and the actual horn/drum speeds lock-free, and the target is in the RT
+last-value table (so `ws.v1` `GetPerformanceValues` reports it). The rotary cost is part of the organ reservation. Design values, public facts, behaviour and
+tests: `ORGAN.md` ("Rotary speaker"). Covered by `rotary_tests` and `rtsan_organ_test`.
