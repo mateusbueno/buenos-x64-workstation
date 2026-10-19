@@ -1,0 +1,431 @@
+{
+  "schema_version": 1,
+  "_comment": "TEMPLATE. Copy to mapping.json and replace every null/TODO from the M-solo manual Drawbar Data List (pp. 64-65). Do not guess. Message fields: type CC|NRPN; CC uses 'number'; NRPN uses nrpn_msb+nrpn_lsb; value_bits 7 or 14; position_mapping is a list of {\"position\": label, \"value\": int}. positions_expected (if not null) is the exact label set required.",
+  "source": {
+    "manual_title": "TODO",
+    "manual_edition": "TODO",
+    "pages": "TODO",
+    "transcribed_by": "TODO",
+    "transcribed_on": "TODO",
+    "notes": "TODO"
+  },
+  "midi_channel": "TODO",
+  "controls": [
+    {
+      "id": "drawbar_16",
+      "label": "Upper drawbar 16'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_5_1_3",
+      "label": "Upper drawbar 5-1/3'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_8",
+      "label": "Upper drawbar 8'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_4",
+      "label": "Upper drawbar 4'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_2_2_3",
+      "label": "Upper drawbar 2-2/3'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_2",
+      "label": "Upper drawbar 2'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_1_3_5",
+      "label": "Upper drawbar 1-3/5'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_1_1_3",
+      "label": "Upper drawbar 1-1/3'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "drawbar_1",
+      "label": "Upper drawbar 1'",
+      "group": "drawbar",
+      "kind": "continuous",
+      "positions_expected": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "percussion_on",
+      "label": "Percussion on/off",
+      "group": "percussion",
+      "kind": "switch",
+      "positions_expected": [
+        "off",
+        "on"
+      ],
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "percussion_volume",
+      "label": "Percussion volume",
+      "group": "percussion",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "percussion_decay",
+      "label": "Percussion decay",
+      "group": "percussion",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "percussion_harmonic",
+      "label": "Percussion harmonic",
+      "group": "percussion",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "vibrato_chorus",
+      "label": "Vibrato/chorus (on/off and type/depth; split into extra controls if the data list uses separate messages)",
+      "group": "modulation",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "key_click",
+      "label": "Key click",
+      "group": "character",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "leakage",
+      "label": "Leakage",
+      "group": "character",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "rotary_slow",
+      "label": "Rotary slow",
+      "group": "rotary",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "rotary_fast",
+      "label": "Rotary fast",
+      "group": "rotary",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    },
+    {
+      "id": "rotary_stop",
+      "label": "Rotary stop",
+      "group": "rotary",
+      "kind": "select",
+      "positions_expected": null,
+      "message": {
+        "type": "TODO",
+        "number": null,
+        "nrpn_msb": null,
+        "nrpn_lsb": null,
+        "value_bits": null,
+        "value_min": null,
+        "value_max": null,
+        "position_mapping": "TODO"
+      }
+    }
+  ]
+}
