@@ -17,6 +17,7 @@ add_library(velora_core STATIC
   src/chorus_phaser.cpp
   src/ep_amp.cpp
   src/rotary_effect.cpp
+  src/reverb.cpp
   src/mixer.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
@@ -82,6 +83,10 @@ add_executable(ep_amp_tests tests/ep_amp_test.cpp)
 target_link_libraries(ep_amp_tests PRIVATE velora_core)
 add_test(NAME ep_amp_tests COMMAND ep_amp_tests)
 
+add_executable(reverb_tests tests/reverb_test.cpp)
+target_link_libraries(reverb_tests PRIVATE velora_core)
+add_test(NAME reverb_tests COMMAND reverb_tests)
+
 add_executable(rotary_insert_tests tests/rotary_insert_test.cpp)
 target_link_libraries(rotary_insert_tests PRIVATE velora_core)
 add_test(NAME rotary_insert_tests COMMAND rotary_insert_tests)
@@ -97,7 +102,13 @@ set_tests_properties(routing_traffic_test PROPERTIES TIMEOUT 120)
 add_executable(organ_bench tests/organ_bench.cpp)
 target_link_libraries(organ_bench PRIVATE velora_core)
 add_test(NAME organ_bench COMMAND organ_bench)
-set_tests_properties(organ_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative")
+set_tests_properties(organ_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative" FAIL_REGULAR_EXPRESSION "FAILED")
+
+# Reverb host benchmark (Story 2.10): worst-case reverb cost against the declared cost units; host figures, not representative of the board.
+add_executable(reverb_bench tests/reverb_bench.cpp)
+target_link_libraries(reverb_bench PRIVATE velora_core)
+add_test(NAME reverb_bench COMMAND reverb_bench)
+set_tests_properties(reverb_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative" FAIL_REGULAR_EXPRESSION "FAIL" TIMEOUT 120)
 
 # --- RealtimeSanitizer gate -------------------------------------------------
 if(VELORA_RTSAN)

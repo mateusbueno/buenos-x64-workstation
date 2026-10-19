@@ -5,6 +5,9 @@
 // Story 2.9 adds the chorus/phaser, EP amp and rotary inserts: all three types sit in the cycled chains, their parameters cycle through the whole 0..1
 // range, and every few generations sit exactly on the documented thresholds (chorus/phaser mode at 0.5 and its next float, rotary speed at 0.25 / 0.75,
 // drive / mix / cabinet at the ends), so the new types and their mode and speed changes run under the sanitizer; the run counts what it covered.
+// Story 2.10 adds the reverb: type, time (0.2 s .. 10 s) and return level cycle with every generation (so cross-fades run all the time, and
+// the level reaches 0 where the reverb clears itself), the part sends cycle with the events of every block, and the REV master send level moves
+// through 0..1 with live events; the run checks that both reverb instances worked (their tails are not required to fade out within the run: at 10 s they outlast it).
 // The control side (building snapshots and effect instances, freeing generations) runs outside it, as on the control thread. Built
 // twice: with RealtimeSanitizer (rtsan_routing_test, clang >= 20) and without (routing_traffic_test, everywhere) -- the second also
 // proves determinism: two runs give bit-identical output.
@@ -52,6 +55,7 @@ struct Control {
   std::uint64_t published = 0, freed = 0;
   // Story 2.9 coverage: generations whose chains held each of the new types, chorus/phaser in each mode, rotary at each speed.
   std::uint64_t type_seen[6] = {0, 0, 0, 0, 0, 0};
+  std::uint64_t reverb_type_seen[3] = {0, 0, 0};
   std::uint64_t chorus_mode_seen[2] = {0, 0}, rotary_speed_seen[3] = {0, 0, 0};
 
   explicit Control(SnapshotExchange& e) : ex(e) {}
@@ -110,6 +114,13 @@ struct Control {
     setm(params::kMasterCompRelease, 10.0f + 990.0f * static_cast<float>((k * 5) % 6) / 5.0f);
     setm(params::kMasterCompMakeup, k % 3 == 0 ? 0.0f : 24.0f * static_cast<float>(k % 5) / 4.0f);
     setm(params::kMasterCompBypass, k % 7 == 2 ? 1.0f : 0.0f);
+    {  // the reverb (Story 2.10): type every generation, time over its whole range, level including 0
+      static constexpr float kTimes[5] = {0.2f, 0.7f, 2.0f, 5.5f, 10.0f}, kLevels[4] = {1.0f, 0.0f, 0.25f, 0.6f};
+      setm(params::kReverbType, static_cast<float>(k % 3));
+      setm(params::kReverbTime, kTimes[(k * 3) % 5]);
+      setm(params::kReverbLevel, kLevels[(k / 5) % 4]);
+      ++reverb_type_seen[k % 3];
+    }
     reclaim();
     std::uint32_t idx = 0;
     while (idx < SnapshotExchange::kLedgerSlots && used(idx)) ++idx;
@@ -130,6 +141,7 @@ void run_block(BlockRenderer& br, OutputBuses ob, std::uint32_t i) noexcept VELO
   br.submit({make_param_event(*params::find(params::kSendReverbLevel), part, static_cast<double>(i % 11) / 10.0), (i * 3) % 64});
   if (i % 2 == 0)
     br.submit({make_param_event(*params::find(params::kSendDelayLevel), (part + 1) % 4, static_cast<double>((i / 2) % 7) / 6.0), 17});
+  if (i % 4 == 0) br.submit({make_param_event(*params::find(params::kSendReverbMaster), 0, static_cast<double>((i / 4) % 5) / 4.0), 29});
   if (i % 5 == 0) br.submit({make_param_event(*params::find(params::kLineInLevel), 0, static_cast<double>((i / 5) % 4) / 3.0), 40});
   br.process_block(ob);
 }
@@ -172,11 +184,14 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& chains_published) {
   for (std::size_t t : {1u, 2u, 3u}) covered = covered && ctl.type_seen[t] > 300;  // rotary, chorus/phaser, EP amp
   for (int m = 0; m < 2; ++m) covered = covered && ctl.chorus_mode_seen[m] > 100;
   for (int sp = 0; sp < 3; ++sp) covered = covered && ctl.rotary_speed_seen[sp] > 100;
+  for (int ty = 0; ty < 3; ++ty) covered = covered && ctl.reverb_type_seen[ty] > 300;
+  const bool reverb_worked = br->mixer().reverb(0).engine_blocks() > 1000 && br->mixer().reverb(1).engine_blocks() > 1000;
   // settle: everything fades out, RT holds no reference but the live notes' and the current chains'
   for (int i = 0; i < 40; ++i) br->process_block(OutputBuses{l, r, al, ar});
   hash_out = hash;
   bool ok = true;
   if (!br->mixer().chains_settled()) { std::printf("FAIL: chains did not settle\n"); ok = false; }
+  if (!reverb_worked) { std::printf("FAIL: the reverb instances did not run\n"); ok = false; }
   if (!finite) { std::printf("FAIL: non-finite output\n"); ok = false; }
   if (!covered) { std::printf("FAIL: the Story 2.9 insert types / modes / speeds were not all exercised\n"); ok = false; }
   if (!gr_ok || !(max_gr > 1.0f)) { std::printf("FAIL: gain reduction invalid or never published (max %g dB)\n", static_cast<double>(max_gr)); ok = false; }

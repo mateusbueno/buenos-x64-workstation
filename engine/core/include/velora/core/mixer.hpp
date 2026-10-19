@@ -3,7 +3,7 @@
 //
 //   engine voices --(per part)--> part bus (stereo, 64 frames)
 //   part bus --> insert chain (<= 5 effects, cross-faded when the chain changes) --> post-insert signal
-//   post-insert --> Reverb send bus  (x send_reverb_level)  --> Reverb return (placeholder, unity) --> Main
+//   post-insert --> Reverb send bus  (x send_reverb_level x send_reverb_master) --> Reverb (Story 2.10, one instance per output bus) --> Main or Aux
 //   post-insert --> Delay send bus   (x send_delay_level)   --> Delay return  (placeholder, unity) --> Main
 //   post-insert --> Main bus or Aux bus (part_output; switched with a short ramp)
 //   line-in (x line_in_level) --> Main bus
@@ -16,7 +16,8 @@
 // there are never more than two chains per part in flight. Every live (or waiting) entry holds a ledger reference on the generation that owns its chain
 // (SnapshotExchange::rt_ref), so the control thread cannot free the instances while RT still processes through them (AD-23).
 //
-// When the routing is trivial (all parts to Main at unity, no effect in any chain, sends at 0, line-in at 0, master at 0 dB)
+// When the routing is trivial (all parts to Main at unity, no effect in any chain, sends at 0 (or the REV master send at 0) and the reverb
+// tail gone (ReverbSend::quiet()), line-in at 0, master at 0 dB)
 // the Mixer is "inactive": the block loop renders the engines straight into the Main output exactly as before this story,
 // so such renders are bit-identical to the pre-2.7 goldens. The master EQ and compressor count as trivial when they cannot change
 // the signal: bypassed (cross-fade finished) or at identity settings (EQ 0 dB on every band, compressor ratio 1 and makeup 0 dB).
@@ -33,6 +34,7 @@
 #include "velora/core/compressor.hpp"
 #include "velora/core/eq.hpp"
 #include "velora/core/fx.hpp"
+#include "velora/core/reverb.hpp"
 #include "velora/core/snapshot.hpp"
 #include "velora/core/voice_arbiter.hpp"
 #include "velora/ports/line_in_source.hpp"
@@ -78,6 +80,8 @@ class Mixer {
   // --- introspection (RT thread or after rendering) -------------------------------------------------------
   bool routed() const noexcept { return routed_; }
   std::uint32_t chain_entries(std::uint32_t part) const noexcept { return part < kParts ? parts_[part].count : 0; }
+  // The reverb instance of an output bus (0 = Main, 1 = Aux): tests and the host's introspection.
+  const ReverbSend& reverb(std::uint32_t bus) const noexcept { return *reverb_send_[bus < kOutputBusCount ? bus : 0]; }
   // True when every part has settled on a single chain entry (no cross-fade running or waiting).
   bool chains_settled() const noexcept {
     for (const Part& p : parts_)
@@ -156,8 +160,13 @@ class Mixer {
   bool instant_levels_ = true;  // level targets apply without a ramp (before and in the block of the first adopted generation)
   std::int16_t send_rev_perf_ = -1, send_dly_perf_ = -1, line_slot_ = -1;  // -1: not in the registry (the level stays 0)
 
-  // Placeholders of the sends (DSP in Stories 2.10, 2.11), owned by the mixer, built at construction.
-  std::array<std::unique_ptr<Effect>, kOutputBusCount> reverb_send_, delay_send_;
+  // The sends, owned by the mixer, built at construction: the reverb (Story 2.10, one instance per output bus) and the delay placeholder
+  // (DSP in Story 2.11).
+  std::array<std::unique_ptr<ReverbSend>, kOutputBusCount> reverb_send_;
+  std::array<std::unique_ptr<Effect>, kOutputBusCount> delay_send_;
+  Ramp rev_master_g_;                                     // REV master send level (send_reverb_master): scales every part's reverb send
+  std::int16_t rev_master_slot_ = -1;                     // its last-value slot (-1: not in the registry, the scale stays 1)
+  std::array<std::int16_t, 3> reverb_idx_{};              // registry master_index of reverb_type, reverb_time, reverb_level
   // The master section (Story 2.8): one EQ and one compressor per output bus, bypass cross-fades (wet = 1 active, 0 bypassed).
   std::array<EqEffect, kOutputBusCount> master_eq_;
   std::array<CompressorEffect, kOutputBusCount> master_comp_;

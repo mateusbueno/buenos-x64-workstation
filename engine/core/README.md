@@ -197,14 +197,14 @@ the host **Main L/R and Aux L/R** per block (`process_block(left, right)` is the
 voices --(per part, Engine::render_split)--> part bus (stereo, 64 frames)
 part bus --> insert chain (<= 5 slots) --> post-insert signal
   --> Main or Aux bus per the part's part_output (structural; switched with a 5 ms ramp)
-  --> Reverb send (x send_reverb_level) --> Reverb return (placeholder, unity) --> the same bus (Main or Aux) as the part
+  --> Reverb send (x send_reverb_level x send_reverb_master) --> Reverb (Story 2.10, own instance per bus, x reverb_level) --> the same bus (Main or Aux) as the part
   --> Delay  send (x send_delay_level)  --> Delay return  (placeholder, unity) --> the same bus as the part
 line-in (x line_in_level) --> Main only
 Main, Aux --> master section per bus (master EQ, then master compressor, each with its own bypass; Story 2.8; then the master_level trim) --> outputs
 ```
 
-Decisions: a part's send returns go to the bus the part sits on, so an Aux part's reverb never leaks into Main. The Mixer keeps one send accumulator and one send placeholder per output bus; the real
-reverb and delay of Stories 2.10/2.11 therefore need **one instance per bus**, and the declared FX cost already counts them twice (`kFixedFxCost` = 2 x (reverb + delay + master EQ + compressor)).
+Decisions: a part's send returns go to the bus the part sits on, so an Aux part's reverb never leaks into Main. The Mixer keeps one send accumulator and one send processor per output bus; the
+reverb (Story 2.10) and the delay (Story 2.11) therefore need **one instance per bus**, and the declared FX cost counts them twice (`kFixedFxCost` = 2 x (reverb + delay + master EQ + compressor)).
 `process_block(left, right)` (an adapter with a single output) folds Aux into Main (counted in `aux_folded_blocks()`), so a part on Aux is still audible there; `process_block(OutputBuses)` with only one of
 `aux_left`/`aux_right` is refused (Main silenced, `rejected_output_blocks()`). UMP channels 8..15 alias parts 0..7 in the routing (`Engine::render_split` is pure virtual; channel c and c+8 share a part bus), and
 `velora-offline-render` rejects events above channel 8 (index 7) when a routing option is given.
@@ -215,12 +215,12 @@ Registry additions: `line_in_level` (id 800, performance, master scope, 0..1, de
 **Engines render per part.** `Engine::render_split(left[16], right[16], frames)` adds the voices of UMP channel c into `left[c]`/`right[c]` (the Mixer points c and c+8 at the
 same part bus); `render()` is the same code with all pointers equal. Sample, Organ and TestTone implement it; an engine that does not puts everything on channel 0's bus.
 
-**Trivial routing renders straight into Main.** When every part is on Main at unity, no chain holds an effect, the sends and line-in are 0 and the master is 0 dB, the Mixer is
+**Trivial routing renders straight into Main.** When every part is on Main at unity, no chain holds an effect, the sends (or the REV master send level, for the reverb) and line-in are 0, no reverb tail rings (`ReverbSend::quiet()`) and the master is 0 dB, the Mixer is
 inactive and the engines render into the output exactly as before this story: those renders are bit-identical to the existing goldens (`Mixer::routed()` tells).
 Any non-trivial routing switches to the part-bus path (sums in part order, so the audio differs from the direct sum only by float rounding, ~1e-7).
 
 **Effects (`fx.hpp`).** `Effect` (`type()`, `cost_units()`, `prepare()`, `reset()`, `set_params()` and the RT `process(StereoBlock&)`), `make_effect()` (control thread only; the only factory,
-types are the registry `insert_type` list: no plugin loading) and `FxChain` (<= 5 slots, bypass flag each). All six insert types are real DSP: the EQ and the compressor since Story 2.8 and the chorus/phaser, EP amp and rotary since Story 2.9 (both below); `PassThroughEffect` remains only as the unity return of the reverb and delay sends of the Mixer (Stories 2.10/2.11). Declared costs (`effect_cost_units()`, `kReverbSendCost`, `kDelaySendCost`,
+types are the registry `insert_type` list: no plugin loading) and `FxChain` (<= 5 slots, bypass flag each). All six insert types are real DSP: the EQ and the compressor since Story 2.8 and the chorus/phaser, EP amp and rotary since Story 2.9 (both below); `PassThroughEffect` remains only as the unity return of the delay send of the Mixer (Story 2.11); the reverb send is real since Story 2.10 (below). Declared costs (`effect_cost_units()`, `kReverbSendCost`, `kDelaySendCost`,
 `kMasterEqCost`, `kMasterCompCost`) are placeholders until measured on the board (2.12); the EQ (16 units, three active bands, ~1.0 us per block on the dev Mac, Release build) and the compressor (8 units, ~0.5 us per block with signal above the
 threshold) were re-based on host measurements in Story 2.8 (`eq_compressor_tests` prints them). Raising the EQ from 6 to 16 units raises `kFixedFxCost` by 20 and each EQ insert by 10, so a Live Set that fitted a tight FX budget before can now be refused with `FX_BUDGET_EXCEEDED`.
 
@@ -338,3 +338,55 @@ Tests: `chorus_phaser_tests` (mapping and the mode threshold, delay range 5..25 
 click a hard switch would make, parameter-jump step bound, determinism, NaN/inf, reset equals fresh, chain bypass), `ep_amp_tests` (mapping, shaper shape, oversampler flatness / delay / block-split independence, aliasing with and without oversampling, drive harmonics and loudness
 compensation, tone / presence / cabinet / level against analytic references, determinism, NaN/inf, reset, bypass, step bound, cost), `rotary_insert_tests` (mapping and thresholds, mono/stereo handling against the unit, speed ramps equal to the unit's, step bound, NaN/inf, reset, bypass, the organ
 one-instance rule), `routing_traffic_test` / `rtsan_routing_test` (the three types, mode and speed thresholds and parameter extremes cycle with every generation for 10,000 blocks), offline null tests in `tools/offline-render` (`fx_chorus_phaser_*`, `fx_ep_amp_*`, `fx_rotary_insert_*` goldens).
+
+## Reverb send (Story 2.10)
+
+`reverb.hpp`/`reverb.cpp` (`ReverbSend`, an `Effect`) is the processor behind the Reverb send bus. The Mixer owns one instance per output bus (Main, Aux): each is fed by the sum of the per-part sends of the parts that sit on that bus
+(`send_reverb_level` per part, smoothed per block, x `send_reverb_master`), and its wet output (x `reverb_level`) is added to the same bus. The declared cost covers both instances (`kReverbSendCost` per bus in `kFixedFxCost`).
+Fixed storage (the engines are members, about 0.3 MB per instance), nothing allocates in `process()`, all RT functions are `VELORA_NONBLOCKING`. **Clean-room:** only public algorithms were used (no reverb source was consulted, GPL or otherwise):
+the feedback delay network of Stautner and Puckette (1982) and Jot and Chaigne (1991), with the Householder reflection `x - (2/N) sum(x)` as feedback matrix, Jot's rule for the loop gain of a delay line,
+and Schroeder all-pass diffusers (Schroeder 1962). Mono-summed send in, stereo out. `process()` accepts any block length (processed in slices of 64 frames; bit-identical to 64-frame calls).
+
+```
+send sum (stereo) -> (L+R)/2 -> DC blocker -> pre-delay -> 4 all-pass diffusers -> FDN (8 lines, Householder matrix, one-pole damping and gain per line, slowly modulated read positions)
+  -> left tap and right tap (two orthogonal +-1 sign patterns over the 8 line outputs: decorrelated stereo) -> x reverb_level -> wet
+```
+
+**Time (RT60).** `reverb_time` is RT60 in seconds, 0.2 .. 10, **at 1 kHz**. A delay line of d samples gets the loop gain `10^(-3 d / (T60 fs))` at 1 kHz: the line gain is that value divided by the magnitude of its one-pole damping filter at 1 kHz
+(`(1-p)/sqrt(1 - 2 p cos w + p^2)`, w = 2 pi 1000 / 48000) and, for a modulated line, of the mean linear-interpolation loss at 1 kHz. The orthogonal feedback matrix loses no energy, so every line decays at the same rate per second.
+Above 1 kHz the damping shortens the decay (the "colour" of each type), below it the decay is the same (the gain is limited below unity). **Level.** The two taps are scaled so that white noise at the send comes out with about the same power
+whatever the time (measured -2.3 .. +2.6 dB between 0.3 s and 10 s, asserted within +-6 dB); `reverb_level` 1 is that unit return, 0 mutes (and clears) the reverb.
+
+**Types.** Three parameter sets of the same engine (48 kHz, delay lengths in samples; all primes so the modes do not pile up):
+
+| type | FDN lines | pre-delay | diffusers (all-pass, g) | damping p | modulation |
+|---|---|---|---|---|---|
+| room (0) | 601, 709, 827, 947, 1061, 1193, 1297, 1427 (12.5 .. 29.7 ms) | 96 (2 ms) | 89, 131, 191, 263 (0.50) | 0.20 | none |
+| hall (1, default) | 1499, 1699, 1901, 2111, 2347, 2593, 2837, 3109 (31 .. 65 ms) | 960 (20 ms) | 137, 199, 293, 419 (0.60) | 0.32 | 0.8 samples, ~0.45 Hz triangle |
+| plate (2) | 977, 1151, 1303, 1481, 1657, 1861, 2053, 2273 (20 .. 47 ms) | 0 | 73, 109, 157, 223 (0.70) | 0.10 (bright) | 1.2 samples, ~0.9 Hz triangle |
+
+**Type change.** Two engines run during a 50 ms cross-fade (2400 frames, linear weights that sum to 1): the old type keeps ringing while the new one fills; a change that arrives mid-fade waits and the latest wins (one fade at a time).
+Time and level changes apply at once to every running engine (the gains sit inside the loop, so the output stays continuous); the level ramps over one block. A change while nothing rings (the reverb is quiet) switches at once.
+
+**Idle and transparency.** `quiet()` is true once the state was cleared and no input has arrived since. The tail clears itself: after `kFlushAfterFrames` (8192) frames without input, once the wet output stayed below `kFlushLevel` (1e-8, -160 dBFS) for
+8 consecutive blocks; a steady return level of 0 clears it at once (a fade or waiting type change in flight is finished then: the newest requested type is adopted). With a return level of 0 and part sends up the Mixer stays routed (a send is up, so it is not trivial) but the reverb does no work and the output is exactly the dry one (tested). A quiet reverb with silent input does no work (`engine_blocks()` does not advance), and the Mixer treats it as transparent: the routing is trivial (the engines render straight into Main, bit-identical to
+the pre-reverb behaviour) when all part sends are 0, **or** the REV master send level is 0 (the part ramps are settled), **and** every reverb instance is quiet. While a tail still rings after the sends went to 0 the Mixer stays routed (the tail is not cut), then goes inactive again.
+Mixer mapping: type, time and level come from the adopted snapshot's `master` values (`reverb_type`, `reverb_time`, `reverb_level`; NaN or out-of-range values are clamped by `reverbmap`); the first generation applies without a cross-fade or ramp.
+
+**Registry (additive, ids stable).** `reverb_type` (530, structural, master scope, enum room/hall/plate, default hall), `reverb_time` (531, structural, master, s, 0.2 .. 10, default 2), `reverb_level` (532, structural, master, ratio 0..1, default 1),
+and `send_reverb_master` (801, **performance**, master scope, ratio 0..1, default 1): the REV master send level, one value that scales the reverb send of all parts together (so the 9th fader in MIXER can drive it later); it multiplies the
+per-part `send_reverb_level` (400, unchanged, part scope, CC 91) per frame with a one-block ramp, so only the part whose send moves changes its own contribution (the wet signals add linearly: tested). Like `line_in_level` it is a master-scope performance parameter: its UMP uses channel 0
+and it has **no CC** (CC mappings exist only for part-scope parameters in the registry; the natural CC, 91, already drives the per-part send). The ws.v1 path is the existing one: `SetMasterParams` (structural, all or nothing, range checked), `SetPerformanceParam` /
+`GetPerformanceValues` for `send_reverb_master`, `GetState` (`master`, `performance_init`) and the dev configuration; `ParamId` and the `ReverbType` enum are generated from the registry. No new messages.
+
+**RT60 measurement (the test).** `reverb_tests`: an impulse through the send (return level 1, both channels), the left and the right response band-passed with a third-octave filter around 1 kHz (RBJ band-pass, Q = 4.32), squared and Schroeder backward-integrated;
+a least-squares line through the decay curve between -5 and -25 dB (T20) and between -5 and -35 dB (T30) is extrapolated to 60 dB. Test points: each of room, hall, plate at 0.3, 0.6, 1.2, 2.5, 5 and 10 s; both channels, T20 and T30 must be within 15 % of the parameter
+(measured worst 8 %, at 0.3 s where the line fit spans only 60 ms; at 1.2 s and above the deviation stays within about 2 %). A running instance whose time changes settles to the new time too.
+
+**Cost (host, not representative).** `reverb_bench` (Release numbers on the dev Mac, longest time, loud input): one reverb instance 0.75 us per 64-frame block, about 1.1 x an EQ insert (0.67 us, 16 units); while a type cross-fade runs two engines, 1.5 us (2.2 x). With all 8 parts
+sending the Mixer adds about 0.6 us per block over the same Mixer without sends. The declared `kReverbSendCost` is **48 units** per instance (it was a 40-unit placeholder): it covers the cross-fade case ratio-wise (2.2 x 16 = 36) with a margin; the bench asserts that in optimised
+builds only (CMake default builds are unoptimised and distort the ratio: there the cost check is skipped and the bench just prints; the bench test fails on any `FAIL` line). The dev-board measurement that replaces it is Story 2.12. Raising 40 to 48 raises `kFixedFxCost` by 16.
+
+Tests: `reverb_tests` (registry, RT60 per type and time, level normalisation and linearity, type-change step bound with a hard-switch control, mid-fade requests, idle/no work, bit-exact idle through the Mixer for sends 0 / REV master 0 / level 0, per-part linearity, REV master scaling and live
+change, Main vs Aux instance, type/time/level through new generations, determinism), `reverb_bench`, `routing_traffic_test` / `rtsan_routing_test` (type, time, level, part sends and REV master change continuously for 10,000 blocks; both instances must run), `control_tests` (reverb over ws.v1),
+offline null tests in `tools/offline-render` (`fx_reverb_room`, `fx_reverb_hall`, `fx_reverb_plate` goldens with wrong-setting renders that must fail; `offline_routing_tests` compares the render with a stand-alone `ReverbSend`).

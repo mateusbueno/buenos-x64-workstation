@@ -4,6 +4,7 @@
 //                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]]
 //                       [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[@p1/p2/..][!][,...]] [--master-level DB]
 //                       [--master-eq LOW:MID:MIDHZ:HIGH[!]] [--master-comp THRESH:RATIO:ATTACK:RELEASE:MAKEUP[!]]   (Story 2.8)
+//                       [--reverb room|hall|plate] [--reverb-time S] [--reverb-level 0..1] [--rev-master 0..1]   (reverb, Story 2.10)
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
@@ -34,6 +35,7 @@ static int usage() {
                "                     (type: rotary chorus_phaser ep_amp eq compressor, '@p1/p2/..' = normalised params, '!' = bypassed)\n"
                "                     [--master-level DB] [--master-eq LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]]\n"
                "                     [--master-comp THRESHOLD_DB:RATIO:ATTACK_MS:RELEASE_MS:MAKEUP_DB[!]]\n"
+               "                     [--reverb room|hall|plate] [--reverb-time 0.2..10] [--reverb-level 0..1] [--rev-master 0..1]\n"
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
   return 2;
@@ -45,7 +47,7 @@ int main(int argc, char** argv) {
   std::string drawbars, percussion;
   bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false, rotary_given = false;
   RenderOptions opt;
-  bool master_eq_seen = false, master_comp_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
+  bool master_eq_seen = false, master_comp_seen = false, reverb_seen = false, reverb_time_seen = false, reverb_level_seen = false, rev_master_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
   std::string line_in_path, aux_out_path;
   WavData line_in_wav, aux_wav;
   // "P:rest" -> part index 0..7 and the text after the colon.
@@ -173,6 +175,37 @@ int main(int argc, char** argv) {
       double db = 0;
       if (!parse_double(v, -60.0, 12.0, db)) { std::fprintf(stderr, "error: invalid --master-level (-60..12 dB)\n"); return 2; }
       opt.routing.master_level_db = static_cast<float>(db);
+      opt.routing.enabled = true;
+    } else if (a == "--reverb" && val(v)) {
+      if (reverb_seen) { std::fprintf(stderr, "error: duplicate --reverb\n"); return 2; }
+      reverb_seen = true;  // Story 2.10: reverb type room|hall|plate
+      static const char* const kTypes[3] = {"room", "hall", "plate"};
+      int found = -1;
+      for (int k = 0; k < 3; ++k)
+        if (std::strcmp(v, kTypes[k]) == 0) found = k;
+      if (found < 0) { std::fprintf(stderr, "error: invalid --reverb (room, hall or plate)\n"); return 2; }
+      opt.routing.reverb_type = static_cast<std::uint8_t>(found);
+      opt.routing.enabled = true;
+    } else if (a == "--reverb-time" && val(v)) {
+      if (reverb_time_seen) { std::fprintf(stderr, "error: duplicate --reverb-time\n"); return 2; }
+      reverb_time_seen = true;
+      double t = 0;
+      if (!parse_double(v, 0.2, 10.0, t)) { std::fprintf(stderr, "error: invalid --reverb-time (0.2..10 seconds)\n"); return 2; }
+      opt.routing.reverb_time_s = static_cast<float>(t);
+      opt.routing.enabled = true;
+    } else if (a == "--reverb-level" && val(v)) {
+      if (reverb_level_seen) { std::fprintf(stderr, "error: duplicate --reverb-level\n"); return 2; }
+      reverb_level_seen = true;
+      double lv = 0;
+      if (!parse_double(v, 0.0, 1.0, lv)) { std::fprintf(stderr, "error: invalid --reverb-level (0..1)\n"); return 2; }
+      opt.routing.reverb_level = static_cast<float>(lv);
+      opt.routing.enabled = true;
+    } else if (a == "--rev-master" && val(v)) {
+      if (rev_master_seen) { std::fprintf(stderr, "error: duplicate --rev-master\n"); return 2; }
+      rev_master_seen = true;
+      double lv = 0;
+      if (!parse_double(v, 0.0, 1.0, lv)) { std::fprintf(stderr, "error: invalid --rev-master (0..1)\n"); return 2; }
+      opt.routing.reverb_master = static_cast<float>(lv);
       opt.routing.enabled = true;
     } else if (a == "--master-eq" && val(v)) {  // LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]   (! = bypassed)
       if (master_eq_seen) { std::fprintf(stderr, "error: duplicate --master-eq\n"); return 2; }

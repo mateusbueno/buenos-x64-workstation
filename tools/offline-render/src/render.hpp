@@ -38,6 +38,9 @@ struct RoutingOptions {
   std::array<float, 8> send_reverb{}, send_delay{};   // 0..1 per part
   std::array<std::vector<Insert>, 8> inserts;         // up to 5 per part
   float master_level_db = 0.0f;
+  // Reverb (Story 2.10), registry defaults: type 1 (hall), time 2 s, return level 1, REV master send level 1. type: 0 room, 1 hall, 2 plate.
+  std::uint8_t reverb_type = 1;
+  float reverb_time_s = 2.0f, reverb_level = 1.0f, reverb_master = 1.0f;
   MasterEq master_eq;
   MasterComp master_comp;
   float line_in_level = 0.0f;                         // 0..1

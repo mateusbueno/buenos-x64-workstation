@@ -35,7 +35,7 @@ status 0x3), group 0, channel = part, bank = `id >> 7`, index = `id & 0x7F`, 32-
 MIDI CC numbers map through `cc` (drawbars 1-9 = CC 70-78, rotary speed 79 (stop/slow/fast: the 7-bit range splits as 0-31 stop, 32-95 slow, 96-127 fast), rotary on/off 89, percussion 80, vibrato/chorus 81, key click 82, leakage 83, percussion harmonic/decay/volume 84/85/86 (value < 64 = first enum entry), vibrato/chorus type 87 (the 32-bit range is split evenly over v1..c3: index = round(value/127 * 5) for a 7-bit CC),
 reverb send 91, delay send 94); the CC's channel is the part (0..7).
 `line_in_level` (id 800) is the one performance parameter with master scope: its UMP uses channel 0 and it has no CC. `master_level` (id 520, dB) is structural.
-`master_eq_bypass` (504) and `master_comp_bypass` (515) are structural flags (Story 2.8). The compressors' gain reduction is engine state, not a parameter: `GetPerformanceValues` returns it in `PerformanceValues.gain_reductions`.
+`master_eq_bypass` (504) and `master_comp_bypass` (515) are structural flags (Story 2.8). Story 2.10 adds `reverb_type` (530, enum room/hall/plate), `reverb_time` (531, s) and `reverb_level` (532) as structural master parameters (`SetMasterParams`), and `send_reverb_master` (801, performance, master scope, 0..1, default 1: the REV master send level that scales every part's reverb send; UMP channel 0, no CC). The compressors' gain reduction is engine state, not a parameter: `GetPerformanceValues` returns it in `PerformanceValues.gain_reductions`.
 `ERROR_CODE_FX_BUDGET_EXCEEDED` (15, Story 2.7): a structural command whose insert chains, sends and master would cost more than the FX budget reserved by the arbiter.
 
 ## Key contact events (`contact_k`, Story 2.5)

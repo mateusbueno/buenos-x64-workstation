@@ -122,8 +122,7 @@ to `organ_map_X.mid` (the same chord with CC 79 = 64 / 127 / 0 and CC 89 at tick
 `velora-offline-render` can run the fixed routing topology so its null tests can check it: `--part-output P:main|aux` (repeatable; parts are the MIDI channels 0..7), `--send P:REVERB[:DELAY]` (levels 0..1),
 `--inserts P:type[@p1/p2/..][!],...` (at most 5 of `none rotary chorus_phaser ep_amp eq compressor`; `@` gives the normalised insert parameters 1..5, each 0..1, missing ones keep the defaults; `!` bypasses the slot; every type is real DSP: EQ and compressor since Story 2.8, chorus/phaser, EP amp and rotary since Story 2.9), `--master-level DB` (-60..12),
 `--line-in in.wav [--line-in-level 0..1]` (mono or stereo 48 kHz WAV, mixed into the master Main bus only, silent after its end) and `--aux-out aux.wav` (the Aux bus, same length as the Main output). Any of them publishes
-a snapshot with those settings before the first block; with none of them no snapshot is published and the render is the pre-2.7 one, bit for bit (all existing goldens). The send returns are unity pass-throughs into Main,
-so expected buses are plain sums of the parts rendered alone. `tests/routing_test.cpp` (`offline_routing_tests`) does exactly that: Main/Aux assignment, send levels, master level, line-in to Main only and pass-through
+a snapshot with those settings before the first block; with none of them no snapshot is published and the render is the pre-2.7 one, bit for bit (all existing goldens). The delay send return is a unity pass-through (Story 2.11 replaces it) and the reverb return is real since Story 2.10 (below): tests that want plain sums mute it with `--reverb-level 0`. `tests/routing_test.cpp` (`offline_routing_tests`) does exactly that: Main/Aux assignment, send levels, master level, line-in to Main only and pass-through
 chains, each as a null test at -110..-120 dB against the analytically mixed reference, plus the CLI flags and their error cases.
 
 ## EQ and compressor (Story 2.8)
@@ -141,3 +140,12 @@ their order and bypasses, and the insert effects against the same DSP classes ap
 `tests/fx_ep_amp/`, `tests/fx_rotary_insert/`): the golden test-tone MIDI through the insert on part 0 (`--tail-seconds 0.25`): `--inserts 0:chorus_phaser@0.0/0.55/0.8/0.5/0.6,chorus_phaser@1.0/0.4/0.8/0.8/0.6` (a chorus slot, then a phaser slot),
 `--inserts 0:ep_amp@0.7/0.6/0.5/0.55/0.5` and `--inserts 0:rotary@0.9/0.5` (fast). Same scheme as the Story 2.8 goldens: ctest renders each twice (`fx_*_bit_identical`), null-tests it at -100 dB (`fx_*_null_golden`) and requires a different insert setting to fail
 (`fx_*_wrong_insert_fails`, `fx_*_wrong_master_fails`; these effects have no master counterpart, so the second wrong render is another changed insert setting). Regenerate a golden after an intentional change by rendering with the command above over the `.wav`.
+
+## Reverb (Story 2.10)
+
+`--reverb room|hall|plate` (default hall), `--reverb-time S` (RT60 at 1 kHz, 0.2..10 s, default 2), `--reverb-level 0..1` (return level, default 1) and `--rev-master 0..1` (the REV master send level, default 1) set the reverb of the
+snapshot the routing options publish; the part send levels are `--send P:REVERB[:DELAY]`. Invalid values exit 2 and write nothing. With every send at 0 (or `--rev-master 0` or `--reverb-level 0`) the render is bit-identical to the default path.
+Goldens (`tests/fx_reverb_room/`, `fx_reverb_hall/`, `fx_reverb_plate/`, one per type, 1.75 s each): the golden test-tone MIDI with `--send 0:0.7 --reverb-level 0.8 --rev-master 0.9 --tail-seconds 1.0` and the type with its time
+(`--reverb room --reverb-time 0.9`, `hall` 1.4, `plate` 1.1); the 1 s tail is the reverb ringing out. ctest renders each twice (`fx_reverb_*_bit_identical`), null-tests it at -100 dB (`fx_reverb_*_null_golden`, with `check_excess`) and requires a wrong type,
+time, return level, REV master or part send level to fail (`fx_reverb_*_wrong_*_fails`). Regenerate after an intentional change with `cmake --build build --target update-reverb-goldens` and review.
+`offline_routing_tests` (`test_reverb`) also null-tests Main and Aux against a stand-alone `ReverbSend` fed with the part's dry render x send x REV master (-110 dB), per type.

@@ -866,6 +866,112 @@ static void test_master_level_and_line_in_through_control() {
   CHECK(std::fabs(lp - 0.1f) < 0.002f);
 }
 
+// Story 2.10: reverb_type / reverb_time / reverb_level through SetMasterParams (structural, all or nothing, range-checked), the REV master send
+// level as a performance parameter with master scope, and the reverb heard through the part's send level.
+static void test_reverb_through_control() {
+  auto master = [](std::initializer_list<std::pair<ws::v1::ParamId, float>> vals) {
+    ws::v1::ClientMessage m;
+    m.set_request_id(++g_rid);
+    for (const auto& kv : vals) {
+      auto* v = m.mutable_set_master_params()->add_values();
+      v->set_param_id(kv.first);
+      v->set_value(kv.second);
+    }
+    return m;
+  };
+  Rig rig;
+  CHECK(rig.load("{}"));
+  bool changed = false;
+  // registry defaults are in the state: hall, 2 s, level 1
+  auto master_value = [&](ws::v1::ParamId id, float& out) {
+    ws::v1::ClientMessage gs;
+    gs.set_request_id(++g_rid);
+    gs.mutable_get_state();
+    const ws::v1::ServerMessage r = rig.plane.handle(gs, changed);
+    for (const auto& pv : r.state().master())
+      if (pv.param_id() == id) {
+        out = pv.value();
+        return true;
+      }
+    return false;
+  };
+  float v = -1;
+  CHECK(master_value(ws::v1::PARAM_REVERB_TYPE, v) && v == 1.0f);
+  CHECK(master_value(ws::v1::PARAM_REVERB_TIME, v) && v == 2.0f);
+  CHECK(master_value(ws::v1::PARAM_REVERB_LEVEL, v) && v == 1.0f);
+  CHECK(ws::v1::REVERB_TYPE_ROOM == 0 && ws::v1::REVERB_TYPE_HALL == 1 && ws::v1::REVERB_TYPE_PLATE == 2);
+  // valid change: all three at once
+  CHECK(rig.plane.handle(master({{ws::v1::PARAM_REVERB_TYPE, 2}, {ws::v1::PARAM_REVERB_TIME, 6.5f}, {ws::v1::PARAM_REVERB_LEVEL, 0.5f}}), changed).has_ack() && changed);
+  CHECK(master_value(ws::v1::PARAM_REVERB_TYPE, v) && v == 2.0f);
+  CHECK(master_value(ws::v1::PARAM_REVERB_TIME, v) && v == 6.5f);
+  CHECK(master_value(ws::v1::PARAM_REVERB_LEVEL, v) && v == 0.5f);
+  // refused: out of range (nothing changes, all or nothing), a fractional enum, the wrong class and scope
+  for (const auto& bad : {master({{ws::v1::PARAM_REVERB_TIME, 10.5f}}), master({{ws::v1::PARAM_REVERB_TIME, 0.1f}}),
+                          master({{ws::v1::PARAM_REVERB_TYPE, 3}}), master({{ws::v1::PARAM_REVERB_TYPE, 1.5f}}),
+                          master({{ws::v1::PARAM_REVERB_LEVEL, 1.5f}}),
+                          master({{ws::v1::PARAM_REVERB_LEVEL, 0.25f}, {ws::v1::PARAM_REVERB_TIME, 99}})}) {
+    const ws::v1::ServerMessage r = rig.plane.handle(bad, changed);
+    CHECK(!changed && is_err(r, ws::v1::ERROR_CODE_OUT_OF_RANGE));
+  }
+  CHECK(master_value(ws::v1::PARAM_REVERB_LEVEL, v) && v == 0.5f);  // the valid value of the failed pair did not stick
+  CHECK(is_err(rig.plane.handle(master({{ws::v1::PARAM_SEND_REVERB_MASTER, 0.5f}}), changed), ws::v1::ERROR_CODE_WRONG_CLASS));
+  ws::v1::ClientMessage bad_perf;
+  bad_perf.set_request_id(++g_rid);
+  bad_perf.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_REVERB_TIME);
+  bad_perf.mutable_set_performance_param()->set_value(0.5f);
+  CHECK(is_err(rig.plane.handle(bad_perf, changed), ws::v1::ERROR_CODE_WRONG_CLASS));
+
+  // the REV master send level: a performance parameter with master scope (default 1), set live through SetPerformanceParam
+  CHECK(std::fabs(rig.live(p::kSendReverbMaster, 0) - 1.0f) < 1e-6f);
+  ws::v1::ClientMessage pm;
+  pm.set_request_id(++g_rid);
+  pm.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_SEND_REVERB_MASTER);
+  pm.mutable_set_performance_param()->set_value(0.25f);
+  CHECK(rig.plane.handle(pm, changed).has_ack() && !changed);
+  rig.step(4);
+  CHECK(std::fabs(rig.live(p::kSendReverbMaster, 0) - 0.25f) < 1e-6f);
+  pm.set_request_id(++g_rid);
+  pm.mutable_set_performance_param()->set_value(1.5f);
+  CHECK(is_err(rig.plane.handle(pm, changed), ws::v1::ERROR_CODE_OUT_OF_RANGE));
+  // and it is listed with the live performance values
+  ws::v1::ClientMessage gp;
+  gp.set_request_id(++g_rid);
+  gp.mutable_get_performance_values();
+  const ws::v1::ServerMessage pv = rig.plane.handle(gp, changed);
+  bool listed = false;
+  for (const auto& e : pv.performance_values().values())
+    if (e.param_id() == ws::v1::PARAM_SEND_REVERB_MASTER) listed = std::fabs(e.value() - 0.25f) < 1e-6f;
+  CHECK(listed);
+
+  // heard: a part's send level puts the reverb on the output; the REV master at 0 takes it away again
+  auto note_peak_tail = [&](float send, float master_level) {
+    Rig r;
+    CHECK(r.load("{}"));
+    ws::v1::ClientMessage sl;
+    sl.set_request_id(++g_rid);
+    sl.mutable_set_send_levels()->set_part(0);
+    sl.mutable_set_send_levels()->set_reverb(send);
+    CHECK(r.plane.handle(sl, changed).has_ack());
+    ws::v1::ClientMessage rm;
+    rm.set_request_id(++g_rid);
+    rm.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_SEND_REVERB_MASTER);
+    rm.mutable_set_performance_param()->set_value(master_level);
+    CHECK(r.plane.handle(rm, changed).has_ack());
+    r.step(6);  // both levels are taken by the mixer before the note starts
+    const std::uint32_t on[] = {0x2000'0000u | (0x9u << 20) | (0u << 16) | (60u << 8) | 100u};
+    const std::uint32_t off[] = {0x2000'0000u | (0x8u << 20) | (0u << 16) | (60u << 8) | 0u};
+    r.ingest.on_ump(on, 1, r.now());
+    r.step(60);
+    r.ingest.on_ump(off, 1, r.now());
+    r.step(40);  // the note is released (organ-less test tone: a short release); what is left is the reverb tail
+    return window_peak(r, 20);
+  };
+  const float dry = note_peak_tail(0.0f, 1.0f), wet = note_peak_tail(1.0f, 1.0f), muted = note_peak_tail(1.0f, 0.0f);
+  CHECK(dry < 1e-4f);
+  CHECK(wet > 0.002f);
+  CHECK(muted < 1e-4f);
+}
+
 static void test_render_block_buses_equivalence() {
   Rig a, b;
   CHECK(a.load("{}") && b.load("{}"));
@@ -1219,6 +1325,7 @@ int main() {
   test_effect_lifetime_across_generations();
   test_chain_identity_and_budget_lowering();
   test_master_level_and_line_in_through_control();
+  test_reverb_through_control();
   test_render_block_buses_equivalence();
   test_concurrent_clients();
   test_generation_exhaustion();

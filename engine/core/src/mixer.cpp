@@ -21,9 +21,18 @@ Mixer::Mixer(SnapshotExchange& exchange) : exchange_(exchange) {
   master_level_index_ = lvl ? lvl->master_index : -1;
   if (const params::ParamDef* d = params::find(params::kSendReverbLevel)) send_rev_perf_ = d->perf_index;
   if (const params::ParamDef* d = params::find(params::kSendDelayLevel)) send_dly_perf_ = d->perf_index;
+  if (const params::ParamDef* d = params::find(params::kSendReverbMaster)) rev_master_slot_ = static_cast<std::int16_t>(params::perf_slot(*d, 0));
+  rev_master_g_.cur = rev_master_g_.tgt = 1.0f;
+  {
+    static constexpr std::uint16_t kRevIds[3] = {params::kReverbType, params::kReverbTime, params::kReverbLevel};
+    for (std::size_t i = 0; i < 3; ++i) {
+      const params::ParamDef* d = params::find(kRevIds[i]);
+      reverb_idx_[i] = d ? d->master_index : static_cast<std::int16_t>(-1);
+    }
+  }
   if (const params::ParamDef* d = params::find(params::kLineInLevel)) line_slot_ = static_cast<std::int16_t>(params::perf_slot(*d, 0));
   for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
-    reverb_send_[b] = std::make_unique<PassThroughEffect>(EffectType::kNone, kReverbSendCost);
+    reverb_send_[b] = std::make_unique<ReverbSend>();
     delay_send_[b] = std::make_unique<PassThroughEffect>(EffectType::kNone, kDelaySendCost);
     eq_wet_[b].cur = eq_wet_[b].tgt = 1.0f;
     comp_wet_[b].cur = comp_wet_[b].tgt = 1.0f;
@@ -128,6 +137,15 @@ void Mixer::adopt(const Snapshot& s) noexcept {
     eq_wet_[b].retarget(mv(4, 0.0f) >= 0.5f ? 0.0f : 1.0f, first ? 0 : kFadeFrames);  // flag: >= 0.5 bypasses; NaN and < 0.5 do not
     comp_wet_[b].retarget(mv(10, 0.0f) >= 0.5f ? 0.0f : 1.0f, first ? 0 : kFadeFrames);
   }
+  // Reverb (Story 2.10): type, time and level of this generation (registry defaults when the registry lacks one).
+  {
+    auto rv = [&](std::size_t i, float dflt) {
+      return reverb_idx_[i] >= 0 ? s.master[static_cast<std::size_t>(reverb_idx_[i])] : dflt;
+    };
+    const ReverbType type = reverbmap::type(rv(0, static_cast<float>(params::kReverbTypeHall)));
+    const float time = rv(1, reverbmap::kDefaultTimeS), level = rv(2, 1.0f);
+    for (std::uint32_t b = 0; b < kOutputBusCount; ++b) reverb_send_[b]->configure(type, time, level, /*instant=*/first);
+  }
   primed_ = true;
 }
 
@@ -144,15 +162,19 @@ bool Mixer::begin_block(LastValueTable& live) noexcept {
   const std::uint32_t ramp = instant_levels_ ? 0 : kLevelRampFrames;
   const std::uint32_t fade = instant_levels_ ? 0 : kFadeFrames;
   bool trivial = true;
+  if (rev_master_slot_ >= 0) rev_master_g_.retarget(clamp01(live.load(static_cast<std::size_t>(rev_master_slot_))), ramp);
+  const bool rev_master_off = rev_master_g_.steady(0.0f);
   for (std::uint32_t i = 0; i < kParts; ++i) {
     Part& p = parts_[i];
     p.main_g.retarget(p.main_target, fade);
     p.aux_g.retarget(p.aux_target, fade);
     if (send_rev_perf_ >= 0) p.rev_g.retarget(clamp01(live.load(static_cast<std::size_t>(send_rev_perf_) * kParts + i)), ramp);
     if (send_dly_perf_ >= 0) p.dly_g.retarget(clamp01(live.load(static_cast<std::size_t>(send_dly_perf_) * kParts + i)), ramp);
-    trivial = trivial && p.main_g.steady(1.0f) && p.aux_g.steady(0.0f) && p.rev_g.steady(0.0f) && p.dly_g.steady(0.0f) &&
+    // A send counts as zero when the part's own level or the REV master level is steadily 0 (the master is checked below).
+    trivial = trivial && p.main_g.steady(1.0f) && p.aux_g.steady(0.0f) && (p.rev_g.steady(0.0f) || rev_master_off) && p.dly_g.steady(0.0f) &&
               p.count == 1 && p.entries[0].chain == nullptr;
   }
+  for (const auto& r : reverb_send_) trivial = trivial && r->quiet();  // a tail that still rings is not transparent
   master_g_.retarget(master_target_, ramp);
   if (line_slot_ >= 0) line_g_.retarget(clamp01(live.load(static_cast<std::size_t>(line_slot_))), ramp);
   trivial = trivial && master_g_.steady(1.0f) && line_g_.steady(0.0f) && master_trivial();
@@ -162,6 +184,13 @@ bool Mixer::begin_block(LastValueTable& live) noexcept {
     bus_l_.fill(0.0f);
     bus_r_.fill(0.0f);
   } else {
+    // The sends are muted by the REV master: settle the ramps that will not run in this skipped block.
+    for (Part& p : parts_) {
+      p.rev_g.cur = p.rev_g.tgt;
+      p.rev_g.left = 0;
+    }
+    rev_master_g_.cur = rev_master_g_.tgt;  // together with the part gains, so a master that left 0 later ramps up from the settled value
+    rev_master_g_.left = 0;
     if (gr_nonzero_) {  // nothing runs any more: no compressor reduces gain
       for (std::size_t i = 0; i < LastValueTable::kGainReductionSlots; ++i) live.store_gain_reduction(i, 0.0f);
       gr_nonzero_ = false;
@@ -235,9 +264,17 @@ void Mixer::finish(const OutputBuses& out, LastValueTable& live) noexcept {
   // [0] = Main, [1] = Aux. The sends of a part are returned to the bus the part sits on.
   float bus_l[2][kN] = {}, bus_r[2][kN] = {}, rev_l[2][kN] = {}, rev_r[2][kN] = {}, dly_l[2][kN] = {}, dly_r[2][kN] = {};
 
+  float rev_m[kN];  // REV master send level per frame
+  const bool rev_master_on = !rev_master_g_.steady(0.0f);
+  for (std::uint32_t f = 0; f < kN; ++f) rev_m[f] = rev_master_g_.next();
+  bool rev_in[kOutputBusCount] = {false, false};  // some part may feed the reverb of this bus in this block
   for (std::uint32_t i = 0; i < kParts; ++i) {
     Part& p = parts_[i];
     StereoBlock in{&bus_l_[i * kN], &bus_r_[i * kN], kN};
+    if (rev_master_on && !p.rev_g.steady(0.0f)) {  // this part may feed the reverb of the bus(es) it sits on (judged before the ramps advance)
+      rev_in[0] = rev_in[0] || !p.main_g.steady(0.0f);
+      rev_in[1] = rev_in[1] || !p.aux_g.steady(0.0f);
+    }
     float acc_l[kN], acc_r[kN];
     const float* ol;
     const float* orr;
@@ -267,7 +304,7 @@ void Mixer::finish(const OutputBuses& out, LastValueTable& live) noexcept {
       orr = acc_r;
     }
     for (std::uint32_t f = 0; f < kN; ++f) {
-      const float gm = p.main_g.next(), ga = p.aux_g.next(), gr = p.rev_g.next(), gd = p.dly_g.next();
+      const float gm = p.main_g.next(), ga = p.aux_g.next(), gr = p.rev_g.next() * rev_m[f], gd = p.dly_g.next();
       const float l = ol[f], r = orr[f];
       bus_l[0][f] += gm * l;
       bus_r[0][f] += gm * r;
@@ -296,10 +333,12 @@ void Mixer::finish(const OutputBuses& out, LastValueTable& live) noexcept {
     }
   }
 
-  // The sends, one instance per bus: placeholders now (real DSP in Stories 2.10/2.11); the return is unity, into the same bus.
+  // The sends, one instance per bus, returned into the same bus. Reverb (Story 2.10): skipped while nothing feeds it and nothing rings;
+  // the delay is still a placeholder (Story 2.11, unity return).
   for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
     StereoBlock rev{rev_l[b], rev_r[b], kN}, dly{dly_l[b], dly_r[b], kN};
-    reverb_send_[b]->process(rev);
+    if (rev_in[b] || !reverb_send_[b]->quiet()) reverb_send_[b]->process(rev);
+    else std::fill(rev_l[b], rev_l[b] + kN, 0.0f), std::fill(rev_r[b], rev_r[b] + kN, 0.0f);
     delay_send_[b]->process(dly);
     for (std::uint32_t f = 0; f < kN; ++f) {
       bus_l[b][f] += rev_l[b][f] + dly_l[b][f];

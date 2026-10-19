@@ -123,6 +123,10 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       routing_snapshot->master[static_cast<std::size_t>(params::find(id)->master_index)] = v;
     };
     set_master(params::kMasterLevel, ro.master_level_db);
+    set_master(params::kReverbType, static_cast<float>(ro.reverb_type));
+    set_master(params::kReverbTime, ro.reverb_time_s);
+    set_master(params::kReverbLevel, ro.reverb_level);
+    routing_snapshot->perf_init[params::perf_slot(*params::find(params::kSendReverbMaster), 0)] = ro.reverb_master;
     set_master(params::kMasterEqLowGain, ro.master_eq.low_db);
     set_master(params::kMasterEqMidGain, ro.master_eq.mid_db);
     set_master(params::kMasterEqMidFreq, ro.master_eq.mid_hz);

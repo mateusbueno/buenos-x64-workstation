@@ -1,8 +1,8 @@
 #pragma once
 // Effect framework (Story 2.7): the effect-instance interface, the factory, the insert chain and the fixed costs of the
 // routing topology. Every insert type is a real effect since Story 2.9: EQ and compressor (Story 2.8, eq.hpp, compressor.hpp), chorus/phaser,
-// EP amp/drive and rotary (Story 2.9, chorus_phaser.hpp, ep_amp.hpp, rotary_effect.hpp). PassThroughEffect stays for the send placeholders of
-// the Mixer (reverb and delay, Stories 2.10/2.11; see engine/core/README.md, "Routing topology").
+// EP amp/drive and rotary (Story 2.9, chorus_phaser.hpp, ep_amp.hpp, rotary_effect.hpp). PassThroughEffect stays for the delay send placeholder of
+// the Mixer (Story 2.11; the reverb send is real since Story 2.10, reverb.hpp; see engine/core/README.md, "Routing topology").
 //
 // Threading: effects are created, prepared and destroyed ONLY by the control thread (make_effect(), FxChain construction and
 // destruction, i.e. snapshot generations being built and freed). The RT thread only calls process() on instances that a
@@ -71,7 +71,10 @@ static_assert(effect_cost_units(EffectType::kRotary) <= kMaxInsertCost && effect
 
 // The fixed part of the topology: per output bus (Main, Aux) a Reverb send, a Delay send (their returns go to the bus of the sending
 // part, so the real DSP of Stories 2.10/2.11 needs one instance per bus: costed twice from the start) and a master EQ and compressor.
-constexpr std::uint32_t kReverbSendCost = 40;
+// Reverb (Story 2.10), host-measured with engine/core/tests/reverb_bench.cpp (Release build, longest time, 64-frame blocks): one instance
+// costs about 1.1x an EQ insert (~0.75 us), 2.2x while a type cross-fade runs two engines (~1.5 us); the declared figure covers the
+// cross-fade case ratio-wise (EQ = 16 units -> ~36) with a margin. Placeholder until the dev board measurement of Story 2.12.
+constexpr std::uint32_t kReverbSendCost = 48;
 constexpr std::uint32_t kDelaySendCost = 16;
 // Note (Story 2.8): re-basing the EQ from 6 to 16 units raises the fixed topology by 20 units (two buses) and every EQ insert by 10, so a
 // Live Set accepted against an older, tighter FX budget can now exceed it and be refused with FX_BUDGET_EXCEEDED; budgets are derived from these

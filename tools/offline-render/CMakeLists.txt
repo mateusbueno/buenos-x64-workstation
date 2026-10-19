@@ -151,6 +151,78 @@ set_tests_properties(organ_perc_wrong_click_fails PROPERTIES FIXTURES_REQUIRED p
                      PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
 set_tests_properties(organ_perc_wrong_drawbars_fails PROPERTIES FIXTURES_REQUIRED perc_wd
                      PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# Reverb send (Story 2.10): the golden test-tone MIDI with part 0 sending to the reverb and a 1 s tail, one golden per reverb type. Same scheme as
+# the other goldens: render twice (byte-equal), null-test against the committed golden at -100 dB, and require a wrong setting (type, time,
+# return level, REV master send level, part send level) to fail it. Regenerate after an intentional change with the command in the README.
+set(_rv_args --midi ${_golden}/golden.mid --tail-seconds 1.0 --send 0:0.7)
+foreach(_rv room:0.9 hall:1.4 plate:1.1)
+  string(REPLACE ":" ";" _rvl "${_rv}")
+  list(GET _rvl 0 _ty)
+  list(GET _rvl 1 _tm)
+  set(_d ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_reverb_${_ty})
+  set(_rv_good ${_rv_args} --reverb ${_ty} --reverb-time ${_tm} --reverb-level 0.8 --rev-master 0.9)
+  if(_ty STREQUAL "plate")
+    set(_other room)
+  else()
+    set(_other plate)
+  endif()
+  set(_rv_wrong_type ${_rv_args} --reverb ${_other} --reverb-time ${_tm} --reverb-level 0.8 --rev-master 0.9)
+  set(_rv_wrong_time ${_rv_args} --reverb ${_ty} --reverb-time 2.2 --reverb-level 0.8 --rev-master 0.9)
+  set(_rv_wrong_level ${_rv_args} --reverb ${_ty} --reverb-time ${_tm} --reverb-level 0.7 --rev-master 0.9)
+  set(_rv_wrong_master ${_rv_args} --reverb ${_ty} --reverb-time ${_tm} --reverb-level 0.8 --rev-master 1.0)
+  set(_rv_wrong_send --midi ${_golden}/golden.mid --tail-seconds 1.0 --send 0:0.6 --reverb ${_ty} --reverb-time ${_tm} --reverb-level 0.8 --rev-master 0.9)
+  add_test(NAME fx_reverb_${_ty}_clean
+           COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/fx_reverb_${_ty}_a.wav ${_out}/fx_reverb_${_ty}_b.wav ${_out}/fx_reverb_${_ty}_wt.wav
+                   ${_out}/fx_reverb_${_ty}_wi.wav ${_out}/fx_reverb_${_ty}_wl.wav ${_out}/fx_reverb_${_ty}_wm.wav ${_out}/fx_reverb_${_ty}_ws.wav)
+  set_tests_properties(fx_reverb_${_ty}_clean PROPERTIES FIXTURES_SETUP fx_reverb_${_ty}_clean)
+  add_test(NAME fx_reverb_${_ty}_render_a COMMAND velora-offline-render ${_rv_good} --out ${_out}/fx_reverb_${_ty}_a.wav)
+  add_test(NAME fx_reverb_${_ty}_render_b COMMAND velora-offline-render ${_rv_good} --out ${_out}/fx_reverb_${_ty}_b.wav)
+  set_tests_properties(fx_reverb_${_ty}_render_a PROPERTIES FIXTURES_REQUIRED fx_reverb_${_ty}_clean FIXTURES_SETUP fx_reverb_${_ty}_a)
+  set_tests_properties(fx_reverb_${_ty}_render_b PROPERTIES FIXTURES_REQUIRED fx_reverb_${_ty}_clean FIXTURES_SETUP fx_reverb_${_ty}_b)
+  add_test(NAME fx_reverb_${_ty}_bit_identical
+           COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/fx_reverb_${_ty}_a.wav ${_out}/fx_reverb_${_ty}_b.wav)
+  set_tests_properties(fx_reverb_${_ty}_bit_identical PROPERTIES FIXTURES_REQUIRED "fx_reverb_${_ty}_a;fx_reverb_${_ty}_b")
+  add_test(NAME fx_reverb_${_ty}_null_golden
+           COMMAND velora-null-test --case ${_d}/fx_reverb_${_ty}.case --candidate ${_out}/fx_reverb_${_ty}_a.wav)
+  set_tests_properties(fx_reverb_${_ty}_null_golden PROPERTIES FIXTURES_REQUIRED fx_reverb_${_ty}_a PASS_REGULAR_EXPRESSION "overall: PASS")
+  foreach(_w type:wt time:wi level:wl master:wm send:ws)
+    string(REPLACE ":" ";" _wl "${_w}")
+    list(GET _wl 0 _wn)
+    list(GET _wl 1 _wf)
+    add_test(NAME fx_reverb_${_ty}_wrong_${_wn} COMMAND velora-offline-render ${_rv_wrong_${_wn}} --out ${_out}/fx_reverb_${_ty}_${_wf}.wav)
+    set_tests_properties(fx_reverb_${_ty}_wrong_${_wn} PROPERTIES FIXTURES_REQUIRED fx_reverb_${_ty}_clean FIXTURES_SETUP fx_reverb_${_ty}_${_wf})
+    add_test(NAME fx_reverb_${_ty}_wrong_${_wn}_fails
+             COMMAND velora-null-test --case ${_d}/fx_reverb_${_ty}.case --candidate ${_out}/fx_reverb_${_ty}_${_wf}.wav)
+    set_tests_properties(fx_reverb_${_ty}_wrong_${_wn}_fails PROPERTIES FIXTURES_REQUIRED fx_reverb_${_ty}_${_wf}
+                         PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+  endforeach()
+endforeach()
+# Regenerate the reverb goldens: cmake --build build --target update-reverb-goldens (review the diff before commit).
+add_custom_target(update-reverb-goldens
+  COMMAND velora-offline-render --midi ${_golden}/golden.mid --tail-seconds 1.0 --send 0:0.7 --reverb room --reverb-time 0.9 --reverb-level 0.8 --rev-master 0.9
+          --out ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_reverb_room/fx_reverb_room.wav
+  COMMAND velora-offline-render --midi ${_golden}/golden.mid --tail-seconds 1.0 --send 0:0.7 --reverb hall --reverb-time 1.4 --reverb-level 0.8 --rev-master 0.9
+          --out ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_reverb_hall/fx_reverb_hall.wav
+  COMMAND velora-offline-render --midi ${_golden}/golden.mid --tail-seconds 1.0 --send 0:0.7 --reverb plate --reverb-time 1.1 --reverb-level 0.8 --rev-master 0.9
+          --out ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_reverb_plate/fx_reverb_plate.wav)
+foreach(_dup "--reverb;room;hall" "--reverb-time;1;2" "--reverb-level;0.5;0.6" "--rev-master;0.5;0.6")
+  list(GET _dup 0 _opt)
+  list(GET _dup 1 _v1)
+  list(GET _dup 2 _v2)
+  string(MAKE_C_IDENTIFIER "${_opt}" _id)
+  add_test(NAME fx_rejects_duplicate${_id}
+           COMMAND velora-offline-render ${_render_args} ${_opt} ${_v1} ${_opt} ${_v2} --out ${_out}/never.wav)
+  set_tests_properties(fx_rejects_duplicate${_id} PROPERTIES PASS_REGULAR_EXPRESSION "duplicate ${_opt}")
+endforeach()
+foreach(_bad "--reverb;cave" "--reverb-time;11" "--reverb-time;0.1" "--reverb-level;2" "--rev-master;-1")
+  list(GET _bad 0 _opt)
+  list(GET _bad 1 _val)
+  string(MAKE_C_IDENTIFIER "${_opt}_${_val}" _id)
+  add_test(NAME fx_rejects_${_id}
+           COMMAND velora-offline-render ${_render_args} ${_opt} ${_val} --out ${_out}/never.wav)
+  set_tests_properties(fx_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid ${_opt}")
+endforeach()
+
 # Option parsing.
 add_test(NAME organ_perc_rejects_bad_percussion
          COMMAND velora-offline-render ${_perc_args} --percussion third,third --out ${_out}/never.wav)

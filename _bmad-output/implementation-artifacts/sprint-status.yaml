@@ -71,7 +71,7 @@ development_status:
   2-7-fixed-routing-topology-with-insert-chains-sends-master-and-o: done
   2-8-eq-and-compressor-as-inserts-and-in-the-master-section: done
   2-9-chorus-phaser-ep-amp-drive-and-rotary-speaker-inserts: done
-  2-10-reverb-send: backlog
+  2-10-reverb-send: done
   2-11-delay-send-with-tempo-sync: backlog
   2-12-full-effects-load-within-the-latency-and-dropout-budget: backlog
   2-13-organ-objective-a-b-against-hammond-m-solo-renders: backlog
