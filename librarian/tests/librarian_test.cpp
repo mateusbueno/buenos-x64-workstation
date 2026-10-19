@@ -223,15 +223,18 @@ void test_category() {
   std::ifstream in(fs::path(r.bundle_dir) / "category");
   std::string line;
   std::getline(in, line);
-  CHECK(line == "Piano");
+  CHECK(line == "category.piano");  // the stable key (Story 5.5), whatever spelling was passed
+  CHECK(r.suggested_category == fmt::Category::kPiano);  // from Piano.sfz; a suggestion only
   // Re-import with another category refreshes it; the bundle stays the same.
   o.category = "Keys";
   const auto r2 = import_sfz(o);
   CHECK(r2.ok() && r2.bundle_id == r.bundle_id && !r2.bundle_created);
   std::ifstream in2(fs::path(r.bundle_dir) / "category");
   std::getline(in2, line);
-  CHECK(line == "Keys");
+  CHECK(line == "category.keys");
   o.category = "bad/name";
+  CHECK(import_sfz(o).status == Status::kInvalidArgument);
+  o.category = "none";
   CHECK(import_sfz(o).status == Status::kInvalidArgument);
 }
 

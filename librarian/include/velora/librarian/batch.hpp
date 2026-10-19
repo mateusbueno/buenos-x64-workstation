@@ -9,7 +9,8 @@
 //    "failing_path":S,"offenders":[{"opcode":S,"file":S,"line":N,"message":S}],
 //    "allowlisted_count":N,"allowlisted":[{"opcode":S,"file":S,"line":N}],
 //    "warnings":[{"code":"ignored_opcode","opcode":S,"file":S,"line":N,"message":S}],"warning_count":N,
-//    "messages":[S],"library_id":S,"bundle_id":S,"samples":N,"regions":N,"detail":S}
+//    "messages":[S],"library_id":S,"bundle_id":S,"samples":N,"regions":N,"detail":S,"suggested_category":S}
+//   `suggested_category` (Story 5.5) is a category key ("category.piano") or "none"; a suggestion only.
 //   An SF2 file line (Story 5.3) has the same keys and ends with
 //    ,"format":"sf2","presets":N,"ignored_generators":N,"ignored_modulators":N
 //   its warnings have the code "ignored_sf2_feature" (or "ignored_zone", "ignored_empty_preset") and one more key after "code":

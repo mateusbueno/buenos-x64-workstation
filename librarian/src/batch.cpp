@@ -210,6 +210,7 @@ std::string report_file_line(const FileReport& f) {
   o += "],\"library_id\":" + esc(r.library_id) + ",\"bundle_id\":" + esc(r.bundle_id);
   o += ",\"samples\":" + std::to_string(r.sample_count) + ",\"regions\":" + std::to_string(r.region_count);
   o += ",\"detail\":" + esc(r.status == Status::kOk || r.status == Status::kSkipped ? "" : to_string(r.status));
+  o += ",\"suggested_category\":" + esc(std::string(velora::format::key(r.suggested_category)));
   if (r.sf2)
     o += ",\"format\":\"sf2\",\"presets\":" + std::to_string(r.preset_count) + ",\"ignored_generators\":" +
          std::to_string(r.ignored_generators) + ",\"ignored_modulators\":" + std::to_string(r.ignored_modulators);

@@ -59,7 +59,10 @@ add_library(velora_format STATIC
   src/writer.cpp
   src/reader.cpp
   src/wav_source.cpp
-  src/sf2_import.cpp)
+  src/sf2_import.cpp
+  src/category.cpp
+  src/json_lite.cpp
+  src/locale_catalog.cpp)
 add_library(velora::format ALIAS velora_format)
 target_include_directories(velora_format PUBLIC include PRIVATE src)
 # Dependency rule: formatlib links only libFLAC; it never uses engine/core or engine/host.
@@ -94,3 +97,13 @@ target_link_libraries(format_sf2_test PRIVATE velora_format)
 target_compile_options(format_sf2_test PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
 add_test(NAME format_sf2_test COMMAND format_sf2_test)
+
+# Story 5.5: category model, minimal locale catalog (locale/*.json), proto/category.proto guard.
+add_executable(format_category_test tests/category_test.cpp)
+target_link_libraries(format_category_test PRIVATE velora_format)
+target_compile_options(format_category_test PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+target_compile_definitions(format_category_test PRIVATE
+  VELORA_LOCALE_DIR="${PROJECT_SOURCE_DIR}/locale"
+  VELORA_CATEGORY_PROTO="${PROJECT_SOURCE_DIR}/proto/category.proto")
+add_test(NAME format_category_test COMMAND format_category_test)

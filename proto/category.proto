@@ -1,0 +1,37 @@
+// The 17 instrument categories (Story 5.5, AD-20/FR21). Every timbre carries exactly one of them.
+//
+// Rules (the schema only grows by addition, like every proto here):
+//  - numeric ids are stable: never renumbered, never reused. A retired category would be removed here and its
+//    id added to a `reserved` statement; the guard test (`format_category_test`) fails if any id of the table
+//    below is reserved, missing, renamed or renumbered.
+//  - CATEGORY_NONE (0) is the explicit "no category" value: a filter / "unassigned" sentinel for the UI and
+//    queries. It can never be stored on an imported instrument (formatlib `is_assignable()` is false for it;
+//    the librarian refuses it).
+//  - value names are "CATEGORY_" + the upper-cased slug of the stable key (`category.epiano` -> CATEGORY_EPIANO),
+//    which is also the locale-catalog key stem (`category.epiano.full` / `.short`, see locale/).
+// The C++ twin is formatlib/include/velora/format/category.hpp (hand maintained; the guard test compares the
+// two, and engine/host/tests/category_pb_test.cpp compares it with the protoc output).
+syntax = "proto3";
+
+package velora.library.v1;
+
+enum Category {
+  CATEGORY_NONE = 0;  // sentinel, never stored on an instrument
+  CATEGORY_PIANO = 1;
+  CATEGORY_EPIANO = 2;
+  CATEGORY_ORGAN = 3;
+  CATEGORY_KEYS = 4;
+  CATEGORY_MALLET_BELLS = 5;
+  CATEGORY_STRINGS = 6;
+  CATEGORY_BRASS = 7;
+  CATEGORY_WOODWIND = 8;
+  CATEGORY_CHOIR_VOCAL = 9;
+  CATEGORY_GUITAR = 10;
+  CATEGORY_BASS = 11;
+  CATEGORY_SYNTH_LEAD = 12;
+  CATEGORY_SYNTH_PAD = 13;
+  CATEGORY_SYNTH_POLY = 14;
+  CATEGORY_DRUMS_PERC = 15;
+  CATEGORY_WORLD = 16;
+  CATEGORY_FX_AMBIENT = 17;
+}

@@ -12,8 +12,11 @@ build/librarian/librarian import <file.sfz | file.sf2 | dir>... --root <data roo
 
 Exit code 0 = imported (or identical bundle already current), 1 = nothing published for at least one file (reasons on
 stderr, one line each, `file:line: ...`), 2 = usage. `--base` is the directory the `instrument_key` is relative to (default: the SFZ's own
-directory, so `Piano.sfz` gets the key `Piano.sfz`). `--category` is stored as `<bundle_dir>/category`, written inside the staging directory so it is part of the atomic publish
-(placeholder until the Epic 5 catalog; an identical re-import refreshes it before the flip). `--root` must be an existing directory
+directory, so `Piano.sfz` gets the key `Piano.sfz`). `--category` takes a category key (`category.piano`), its slug (`piano`) or an English name (`E.Piano`, `Mallet & Bells`, `FX/Amb`), case-insensitive,
+and rejects `none` and unknown names (exit 1, nothing written); it is stored as `<bundle_dir>/category`, written inside the staging directory so it is part of the atomic publish
+(an identical re-import refreshes it before the flip). Since Story 5.5 the file holds the **stable key** (`category.piano\n`) whatever spelling was passed; bundles written
+before it hold free text such as `Piano\n`, which `parse_category_file` (formatlib) still reads, and a bundle without a category file stays byte-identical (the manifest is
+not touched, so no format bump). `librarian suggest-category [--table FILE] <name>...` prints `<name><TAB><key|none>` per argument. `--root` must be an existing directory
 (a mistyped root is an error, never created); the file argument must come first.
 
 Identity: `library_id` = UUIDv5 of the SFZ's canonical absolute path (formatlib `set_source_id`), so changing a sample
@@ -117,3 +120,34 @@ It imports every `*.sfz` below it into a temporary root and checks the bundle's 
 the SFZ sources (parser count and an independent text scan). Without the variable the test is reported as skipped
 (exit code 77). A library using opcodes outside the subset (for example `amp_veltrack`) is reported as a failure with the
 offending file:line, which is the intended behaviour of the subset.
+
+## Category suggestion (Story 5.5)
+
+`suggest_category(SuggestInput{file_name, folder_names[], metadata_strings[]}) -> optional<Category>` (`velora/librarian/category_suggest.hpp`) suggests ONE of the 17
+categories (`formatlib/README.md`, "Categories and locale catalog") or none. It is a suggestion only: `ImportResult::suggested_category` (and `"suggested_category"` in each
+report file line, a category key or `"none"`) carries it, the import never stores it and still needs the caller's explicit category (Story 5.7 preflight and the Import
+surface use it; `import_file` fills it for SFZ from the file name, the three nearest folders and the file's `label_*` values and `//` comments, for SF2 from the preset names; a skipped or damaged file still carries the suggestion from its name and folders). Paths with a `/` are made absolute and normalised first and volume or account names (`/Volumes/<vol>`, `/media/<user>/<vol>`, `/Users/<user>`) are not folders. The SFZ scan reads a regular file only (a FIFO or device gives nothing), at most 1 MiB and 4096 bytes per line; label values (64) and comments (32) have separate caps, `//` starts a comment only at a line start or after whitespace (never inside `sample=dir//a.wav`) and `/* */` blocks are skipped. If the embedded table failed to parse (`KeywordTable::embedded_error()`), nothing is ever suggested, a message goes to stderr (assert in debug) and `suggest-category` exits 3.
+
+Rules, in this order:
+
+1. **Tokenise** each text: UTF-8, accents folded (PT-BR and ES diacritics, NFD combining marks dropped), lower-cased, split on non-letters, underscores, camelCase and acronym
+   boundaries (`EPiano` -> `e piano`, `XMLFile` -> `xml file`); digits are dropped (`Rhodes_Mk1` -> `rhodes mk`).
+2. **Match** the keyword table: a phrase is a sequence of whole tokens (no substring matches: `airbass` is not `bass`). Candidates are taken by phrase length in tokens (longest first), then weight (heavier first), then position in the text, and may not overlap, so
+   `bass clarinet` (Woodwind) consumes `bass`; `synth brass` is Synth Poly, as in the Categories table of the UX spec. Per category the weights of the distinct matched
+   phrases add up.
+3. **Precedence** file name > metadata > folder names. The first source with any match decides and its decision is final: an explicit exception phrase (category `none`,
+   e.g. `viola caipira`, `viola de cocho`) gives none; otherwise the highest total wins and a tie for the top gives none. A source without a match falls through.
+4. No match, a tie or an exception: **none**. The module prefers none to a wrong guess (`Piano Pad`, `Choir Pad`, `Contrabass`, `Yamaha_C3_Grand` are none).
+
+The table is data: `librarian/data/category_keywords.json`, `{"table_version": N, "entries": [{"category": slug|"none", "weight": 1..100, "phrases": [..]}]}` with phrases in
+English, PT-BR and Spanish (plain ASCII; accents are folded on load, so `orgao` matches `Órgão`). A phrase listed twice (also under another category) is a load error. It is
+loaded at runtime with `KeywordTable::load_file` (CLI `--table`) and **embedded** into the library at CMake configure time (`category_keywords_embedded.cpp`, regenerated
+when the JSON changes), so the `librarian` binary needs no file; `KeywordTable::embedded()` is the default and a test proves it equals the file.
+**Versioning policy:** `table_version` is bumped by 1 on every change of the data file (new words, weights, exceptions); changing the algorithm above is a code change
+that must keep `librarian/tests/category_fixtures.tsv` passing. Words are added only when unambiguous: a word that names more than one family (`horn`, `gaita`,
+`contrabass`, `grand`) stays out and the file ends up none, which the user then confirms in the UI.
+
+Tests: `librarian_category_test` (tokenizer, table parse errors and embedded-equals-file, `category_fixtures.tsv`: 95 rows of real-world style names, Salamander / VSCO2 /
+Sonatina / Pianobook / PT-BR / ES / SF2 General MIDI names, each category at least once, 13 rows expected `none` with a precision gate that no `none` row may get a category,
+the three Flow 2 examples, precedence and tie rules, metadata scan, `import --category` spellings, `none` and unknown names refused with nothing written, SF2 preset-name
+suggestion, the report field and the CLI). The fixtures are added to by appending rows; an expectation is written from the instrument, never copied from the output.

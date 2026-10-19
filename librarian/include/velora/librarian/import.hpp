@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "velora/format/category.hpp"
 #include "velora/format/error.hpp"
 
 namespace velora::librarian {
@@ -60,7 +61,11 @@ struct ImportOptions {
   std::string sfz_path;   // the source file: an .sfz, or an .sf2 for import_sf2/import_file
   std::string root;       // existing data root directory: bundles go to <root>/lib/...
   std::string base_dir;   // instrument_key is the sfz path relative to this; default: sfz's directory
-  std::string category;   // optional, stored as <bundle_dir>/category inside the atomic publish (Epic 5 owns the UX)
+  // Optional (empty = none stored). A category key (`category.piano`), slug or English name (formatlib
+  // `parse_category`), never "none"; anything else is `kInvalidArgument`. Stored as the stable key text in
+  // <bundle_dir>/category inside the atomic publish (Story 5.5; bundles written before it hold free text,
+  // which `parse_category_file` still reads).
+  std::string category;
   FaultInjection fault;
 };
 
@@ -138,8 +143,15 @@ struct ImportResult {
   // that became regions, and the file-level counters of ignored_sf2_feature warnings.
   bool sf2 = false;
   std::size_t preset_count = 0, ignored_generators = 0, ignored_modulators = 0;
+  // Story 5.5: the librarian's suggestion for this file (kNone = no confident suggestion). Never stored in the
+  // bundle and never a substitute for the caller's explicit category.
+  velora::format::Category suggested_category = velora::format::Category::kNone;
   bool ok() const { return status == Status::kOk; }
 };
+
+// "" if `category` is empty or a valid assignable category (accepted spellings: see ImportOptions::category),
+// otherwise the reason it is refused (unknown name, "none", control characters).
+std::string category_problem(const std::string& category);
 
 ImportResult import_sfz(const ImportOptions& opt);
 ImportResult import_sf2(const ImportOptions& opt);   // Story 5.3

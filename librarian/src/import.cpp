@@ -15,14 +15,27 @@
 #include <memory>
 
 #include "velora/format/bundle.hpp"
+#include "velora/format/category.hpp"
 #include "velora/format/sf2_import.hpp"
 #include "velora/format/sfz_import.hpp"
 #include "velora/format/wav_source.hpp"
 #include "velora/host/library_resolver.hpp"
+#include "velora/librarian/category_suggest.hpp"
 
 namespace velora::librarian {
 namespace fs = std::filesystem;
 namespace fmt = velora::format;
+
+std::string category_problem(const std::string& category) {
+  if (category.empty()) return {};
+  if (category.size() > 128) return "category too long";
+  for (unsigned char c : category)
+    if (c < 0x20 || c == 0x7f) return "invalid category";
+  const auto parsed = fmt::parse_category(category);
+  if (!parsed) return "unknown category '" + category + "' (use a key such as category.piano or an English name)";
+  if (!fmt::is_assignable(*parsed)) return "'none' is not a category an instrument can carry";
+  return {};
+}
 
 const char* to_string(Stage s) {
   switch (s) {
@@ -264,7 +277,10 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
   auto write_category = [&](const std::string& dir) -> bool {
     const std::string cat = dir + "/" + kCategoryFileName, tmp = cat + ".tmp";
     Fd f(::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644));
-    const std::string text = opt.category + "\n";
+    // Validated by the importers: the stable key of an assignable category (never "none"), see category.hpp.
+    const auto parsed = fmt::parse_assignable_category(opt.category);
+    const std::string text = parsed ? fmt::category_file_text(*parsed) : std::string();
+    if (text.empty()) return false;
     return f.ok() && ::write(f.fd, text.data(), text.size()) == static_cast<ssize_t>(text.size()) &&
            full_sync(f.fd) && ::rename(tmp.c_str(), cat.c_str()) == 0;
   };
@@ -394,11 +410,10 @@ ImportResult import_sfz(const ImportOptions& opt) {
 
   if (opt.sfz_path.empty() || opt.root.empty())
     return fail(Status::kInvalidArgument, "an SFZ file and a data root are required");
-  if (!opt.category.empty()) {
-    for (unsigned char c : opt.category)
-      if (c < 0x20 || c == 0x7f || c == '/') return fail(Status::kInvalidArgument, "invalid category");
-    if (opt.category.size() > 128) return fail(Status::kInvalidArgument, "category too long");
-  }
+  if (const std::string why = category_problem(opt.category); !why.empty()) return fail(Status::kInvalidArgument, why);
+  // Suggestion only (Story 5.5): never stored; the caller decides the category.
+  res.suggested_category =
+      suggest_category(suggest_input_for_path(opt.sfz_path, sfz_metadata_strings(opt.sfz_path))).value_or(fmt::Category::kNone);
 
   {
     struct stat st;
@@ -553,11 +568,7 @@ ImportResult import_sf2(const ImportOptions& opt) {
   auto fail = [&](Status s, std::string why) -> ImportResult& { return fail_res(res, s, std::move(why)); };
   if (opt.sfz_path.empty() || opt.root.empty())
     return fail(Status::kInvalidArgument, "an SF2 file and a data root are required");
-  if (!opt.category.empty()) {
-    for (unsigned char c : opt.category)
-      if (c < 0x20 || c == 0x7f || c == '/') return fail(Status::kInvalidArgument, "invalid category");
-    if (opt.category.size() > 128) return fail(Status::kInvalidArgument, "category too long");
-  }
+  if (const std::string why = category_problem(opt.category); !why.empty()) return fail(Status::kInvalidArgument, why);
   {
     struct stat st;
     if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
@@ -565,6 +576,9 @@ ImportResult import_sf2(const ImportOptions& opt) {
   }
 
   // 1. Parse (no filesystem writes). Damaged beats unsupported; nothing of a skipped file is written.
+  // The suggestion from the name and folders is there even when the file turns out damaged (as for SFZ); a
+  // successful parse refines it with the preset names below.
+  res.suggested_category = suggest_category(suggest_input_for_path(opt.sfz_path, {})).value_or(fmt::Category::kNone);
   fmt::Sf2ParseResult parsed = fmt::parse_sf2_file(opt.sfz_path);
   auto skip = [&](ReasonCode rc, std::string why) -> ImportResult& {
     res.status = Status::kSkipped;
@@ -587,6 +601,12 @@ ImportResult import_sf2(const ImportOptions& opt) {
   }
   for (const auto& w : parsed.warnings)
     res.warnings.push_back({w.code, w.item, opt.sfz_path, 0, w.message, w.preset});
+  {
+    // SF2: the preset names are the metadata (bank names are not in the model). Suggestion only.
+    std::vector<std::string> names;
+    for (const auto& pr : parsed.presets) names.push_back(pr.name);
+    res.suggested_category = suggest_category(suggest_input_for_path(opt.sfz_path, std::move(names))).value_or(fmt::Category::kNone);
+  }
   res.preset_count = parsed.presets.size();
   res.ignored_generators = parsed.stats.ignored_generators;
   res.ignored_modulators = parsed.stats.ignored_modulators;

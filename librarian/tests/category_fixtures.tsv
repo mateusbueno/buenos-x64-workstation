@@ -1,0 +1,99 @@
+# Story 5.5 fixture: <file name><TAB><expected category key | none>. Names in the style of well-known free
+# libraries (Salamander, VSCO2, Sonatina, Karoryfer, Pianobook), PT-BR / ES names and SF2 GM preset names.
+# Expectations are written from the instrument, not from the module's output. Rows expected `none` are the
+# precision gate: the module must never put a category on them.
+Salamander Grand Piano V3	category.piano
+Salamander_Grand_Piano_44k_16bit.sfz	category.piano
+Piano Cauda	category.piano
+Steinway D Concert	category.piano
+Upright Piano Felt	category.piano
+Honky Tonk Piano	category.piano
+Acoustic Grand Piano	category.piano
+Bright Acoustic Piano	category.piano
+Rhodes_Mk1	category.epiano
+Rhodes Suitcase 73	category.epiano
+Wurly_200A	category.epiano
+Wurlitzer 200A.sfz	category.epiano
+Electric Piano 1	category.epiano
+EPiano_Soft	category.epiano
+Piano Elétrico	category.epiano
+Piano Eléctrico Suave	category.epiano
+Fender Rhodes Piano	category.epiano
+Church Organ	category.organ
+Hammond_B3_Slow	category.organ
+Órgão de Tubos	category.organ
+Órgano Eléctrico	category.organ
+Vox Humana	category.organ
+Pipe Organ Full	category.organ
+Clavinet D6	category.keys
+Harpsichord 8ft	category.keys
+Cravo Barroco	category.keys
+Celesta	category.keys
+Sanfona	category.keys
+Acordeón Musette	category.keys
+Vibraphone Motor On	category.mallet_bells
+Marimba Soft	category.mallet_bells
+Glockenspiel	category.mallet_bells
+Sinos Tubulares	category.mallet_bells
+Xilofone	category.mallet_bells
+Violins Sustain	category.strings
+Cello Pizzicato	category.strings
+Cordas Ensemble	category.strings
+Cuerdas Sintéticas	category.strings
+Viola	category.strings
+Violino Solo	category.strings
+Synth Strings 1	category.strings
+String Section Legato	category.strings
+Tuba	category.brass
+Trumpet Mute	category.brass
+Trombone Sustain	category.brass
+Metais Ensemble	category.brass
+French Horn Solo	category.brass
+Bass Clarinet	category.woodwind
+Flute Vibrato	category.woodwind
+Oboé	category.woodwind
+Alto Sax	category.woodwind
+Maderas Solo	category.woodwind
+Coro Feminino	category.choir_vocal
+Choir Aahs	category.choir_vocal
+Vozes Corais	category.choir_vocal
+Voces Etéreas	category.choir_vocal
+Violão Nylon	category.guitar
+Nylon Guitar	category.guitar
+Guitarra Eléctrica	category.guitar
+Acoustic_Guitar_Steel	category.guitar
+Upright_Bass_Jazz	category.bass
+Baixo Elétrico	category.bass
+Bajo Eléctrico	category.bass
+Electric Bass Finger	category.bass
+Fretless Bass	category.bass
+Bass Guitar	category.bass
+Synth Bass 2	category.bass
+Saw Lead	category.synth_lead
+Warm Pad	category.synth_pad
+Poly Synth Pluck	category.synth_poly
+Synth Brass 1	category.synth_poly
+Standard Kit	category.drums_perc
+Bateria Rock	category.drums_perc
+Percussão Latina	category.drums_perc
+Bass Drum	category.drums_perc
+Sitar	category.world
+Berimbau	category.world
+Cavaquinho	category.world
+Koto	category.world
+Ambient Texture	category.fx_ambient
+Efeitos Sonoros	category.fx_ambient
+Risers Cinematic	category.fx_ambient
+Viola_Caipira	none
+Viola de Cocho	none
+Brazilian Viola	none
+Yamaha_C3_Grand	none
+Contrabass	none
+Piano Pad	none
+Choir Pad	none
+Strings Piano	none
+Untitled	none
+My Instrument 01	none
+Layer_Bright_V2	none
+Sample Pack 03	none
+Lead Sheet	none

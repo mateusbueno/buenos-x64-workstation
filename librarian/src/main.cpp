@@ -6,6 +6,12 @@
 // Exit codes: 0 every file imported (or already up to date), 1 at least one file not imported
 // (reasons on stderr), 2 usage. `--report FILE` writes the JSON Lines import report
 // (velora/librarian/batch.hpp); `--report -` writes it to stdout instead of the text output.
+//
+// librarian suggest-category [--table FILE] <name>...
+// Prints "<name><TAB><category key | none>" per argument (Story 5.5): the keyword-table suggestion for a file name
+// or a path (its folders count too, below the file name). `--table` replaces the embedded keyword table with a JSON
+// file (same format as librarian/data/category_keywords.json). Exit 0 for a usable table, 2 on usage or an unreadable --table, 3 if the embedded table is invalid. Control characters in names are echoed as \\xNN.
+// `import --category` takes a category key (category.piano), its slug or an English name, never "none".
 // Test builds only (-DVELORA_LIBRARIAN_TEST_HOOKS): VELORA_LIBRARIAN_FAULT=<stage>
 // (staged|verified|fsynced|renamed|link-created|flipped) makes the process _exit(137) there.
 #include <sys/stat.h>
@@ -19,16 +25,57 @@
 #include <vector>
 
 #include "velora/librarian/batch.hpp"
+#include "velora/librarian/category_suggest.hpp"
 
 using namespace velora::librarian;
 
 int main(int argc, char** argv) {
   auto usage = [&]() {
     std::fprintf(stderr,
-                 "usage: %s import <file.sfz|file.sf2|dir>... --root DIR [--base DIR] [--category NAME] [--report FILE|-]\n",
-                 argv[0]);
+                 "usage: %s import <file.sfz|file.sf2|dir>... --root DIR [--base DIR] [--category NAME] [--report FILE|-]\n"
+                 "       %s suggest-category [--table FILE] <name>...\n",
+                 argv[0], argv[0]);
     return 2;
   };
+  if (argc >= 2 && std::strcmp(argv[1], "suggest-category") == 0) {
+    KeywordTable custom;
+    const KeywordTable* table = &KeywordTable::embedded();
+    int a = 2;
+    if (a + 1 < argc && std::strcmp(argv[a], "--table") == 0) {
+      std::string err;
+      if (!KeywordTable::load_file(argv[a + 1], custom, &err)) {
+        std::fprintf(stderr, "librarian: keyword table %s: %s\n", argv[a + 1], err.c_str());
+        return 2;
+      }
+      table = &custom;
+      a += 2;
+    }
+    if (table == &KeywordTable::embedded() && !KeywordTable::embedded_error().empty()) {
+      std::fprintf(stderr, "librarian: the embedded keyword table is invalid: %s\n", KeywordTable::embedded_error().c_str());
+      return 3;
+    }
+    if (a >= argc || std::strncmp(argv[a], "--", 2) == 0) {
+      std::fprintf(stderr, "usage: %s suggest-category [--table FILE] <name>...\n", argv[0]);
+      return 2;
+    }
+    for (; a < argc; ++a) {
+      const auto c = suggest_category(suggest_input_for_path(argv[a], {}), *table);
+      // Control characters in the echoed name (tab, newline...) would break the TSV: print them as \xNN.
+      std::string shown;
+      for (const char* q = argv[a]; *q; ++q) {
+        const unsigned char ch = static_cast<unsigned char>(*q);
+        if (ch < 0x20 || ch == 0x7f) {
+          char hex[8];
+          std::snprintf(hex, sizeof(hex), "\\x%02x", ch);
+          shown += hex;
+        } else {
+          shown.push_back(*q);
+        }
+      }
+      std::printf("%s\t%s\n", shown.c_str(), c ? std::string(velora::format::key(*c)).c_str() : "none");
+    }
+    return 0;
+  }
   if (argc < 3 || std::strcmp(argv[1], "import") != 0 || std::strncmp(argv[2], "--", 2) == 0) return usage();
   BatchOptions opt;
   std::string report_path;

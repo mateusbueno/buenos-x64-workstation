@@ -390,7 +390,7 @@ void test_protocol() {
     ImportOptions o = e.opts("gm.sf2");
     o.category = "Piano";
     const ImportResult r = import_sf2(o);
-    CHECK(r.ok() && slurp(e.lib() / r.library_id / "current" / "category") == "Piano\n");
+    CHECK(r.ok() && slurp(e.lib() / r.library_id / "current" / "category") == "category.piano\n");
   }
   {  // a lock held by another import
     Env e("lock");

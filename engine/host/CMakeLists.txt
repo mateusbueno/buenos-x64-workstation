@@ -25,14 +25,14 @@ velora_params_output(host VELORA_PARAMS_HOST_HPP)
 velora_params_output(proto VELORA_PARAMS_PROTO)
 
 set(VELORA_PB_DIR "${VELORA_GENERATED_DIR}/pb")
-set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc" "${VELORA_PB_DIR}/live_set.pb.cc" "${VELORA_PB_DIR}/setlist.pb.cc")
-set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h" "${VELORA_PB_DIR}/live_set.pb.h" "${VELORA_PB_DIR}/setlist.pb.h")
+set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc" "${VELORA_PB_DIR}/live_set.pb.cc" "${VELORA_PB_DIR}/setlist.pb.cc" "${VELORA_PB_DIR}/category.pb.cc")
+set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h" "${VELORA_PB_DIR}/live_set.pb.h" "${VELORA_PB_DIR}/setlist.pb.h" "${VELORA_PB_DIR}/category.pb.h")
 add_custom_command(
   OUTPUT ${VELORA_PB_SOURCES} ${VELORA_PB_HEADERS}
   COMMAND ${CMAKE_COMMAND} -E make_directory "${VELORA_PB_DIR}"
   COMMAND $<TARGET_FILE:protobuf::protoc> -I "${CMAKE_SOURCE_DIR}/proto" -I "${VELORA_GENERATED_DIR}/proto"
-          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${VELORA_PARAMS_PROTO}"
-  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${VELORA_PARAMS_PROTO}"
+          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${CMAKE_SOURCE_DIR}/proto/category.proto" "${VELORA_PARAMS_PROTO}"
+  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${CMAKE_SOURCE_DIR}/proto/category.proto" "${VELORA_PARAMS_PROTO}"
   COMMENT "Generating ws.v1 protobuf code"
   VERBATIM)
 
@@ -53,6 +53,11 @@ target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${V
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
 # The generated protobuf sources are not ours to police for warnings.
 set_source_files_properties(${VELORA_PB_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+
+# Story 5.5: the generated Category enum equals the formatlib header (ids and names).
+add_executable(category_pb_test tests/category_pb_test.cpp)
+target_link_libraries(category_pb_test PRIVATE velora_control)
+add_test(NAME category_pb_test COMMAND category_pb_test)
 
 set(VELORA_DEV_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/dev/engine-dev.json")
 

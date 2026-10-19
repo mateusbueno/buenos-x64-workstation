@@ -94,3 +94,23 @@ Tests: `format_sf2_test` (`tests/sf2_test.cpp`; fixtures from the test-only SF2 
 Custom sources: `BundleReader::open_source` takes a `ByteSource` (`velora/format/byte_source.hpp`) so a host can back a reader with its own file-system port (used by the library resolver).
 
 Tests: `format_sf2_test` (above), `format_hash_test`, `format_bundle_test` (round trips, seek, truncation and bit-flip sweeps, corruption, version 1 and 2, region table, identity), `format_wav_test`, `format_sfz_test` (opcode mapping, inheritance, unsupported constructs, allow-list, Story 5.1 opcodes, README table parity).
+
+## Categories and locale catalog (Story 5.5)
+
+**Category model.** `velora/format/category.hpp` is the C++ twin of `proto/category.proto` (package `velora.library.v1`, enum `Category`): `CATEGORY_NONE = 0` (the "unassigned"
+sentinel for filters and queries, **never storable**: `is_assignable()` is false, `category_file_text()` and the librarian refuse it) and the 17 categories with stable
+numeric ids 1..17 (Piano, E.Piano, Organ, Keys, Mallet & Bells, Strings, Brass, Woodwind, Choir & Vocal, Guitar, Bass, Synth Lead, Synth Pad, Synth Poly, Drums & Perc,
+World, FX & Ambient). Ids only grow by addition and are never renumbered or reused; a retired category would be removed and its id put in a proto `reserved` statement.
+`format_category_test` freezes the id -> slug list, parses `proto/category.proto` (no value reserved, no duplicate, names `CATEGORY_<SLUG>`, equal to the header) and
+`engine/host/tests/category_pb_test.cpp` compares the protoc output with the header. Helpers: `key(c)` (`category.piano`, `category.epiano`, `category.mallet_bells`, ...),
+`slug`, `english_name`, `english_short_name`, `is_assignable`, `category_from_id`, `parse_category` / `parse_assignable_category` (key, slug or English full/short name, case-insensitive,
+ignoring spaces and punctuation), `kCategoryCount = 17`. The bundle carries it as the file `<bundle_dir>/category` holding the key (`category_file_text` / `parse_category_file`;
+the reader also accepts the free text older bundles hold). The manifest is not touched (no `format_version` bump, bundles without a category stay byte-identical); the catalog of
+Story 5.6 records the category from this file.
+
+**Locale catalog** (minimal, AD-20; Epic 10 / Story 10.7 extends it). `locale/en.json`, `locale/pt-BR.json`, `locale/es.json`: one UTF-8 JSON object per locale, flat string
+keys to string values (no nesting, no duplicates; English is the source and default locale; placeholders will be `{name}`, none today). The category keys are
+`category.<slug>.full` and `category.<slug>.short`, copied verbatim from the Categories table of the UX EXPERIENCE.md. `LocaleCatalog` (`velora/format/locale_catalog.hpp`, host code, not
+`engine/core`) loads them with the in-house strict JSON reader (`json_lite.hpp`): `find_own` (no fallback), `find` / `get` (fall back to English, then the key itself), `category_label`.
+`format_category_test` fails when a category key is missing in a shipped locale (the English fallback does not hide it), when a short label exceeds 10 Unicode code points (counted
+as code points, not bytes) or when the three locales do not have exactly the same key set; it also proves those checks fail on broken catalogs.
