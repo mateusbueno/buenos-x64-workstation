@@ -1,0 +1,48 @@
+// Setlists, setlist tags and the default ASSIGN map: the persisted forms of Story 4.6 (package velora.setlist.v1, the file format, distinct
+// from the ws.v1 wire protocol). Written only by the engine control thread (engine/host SetlistStore), read by any version N or N-1 reader.
+//
+// Layout (documented in engine/host/README.md): the directory `<data>/setlists/` holds
+//   * `setlists.library`  one SetlistLibrary: the tags and the setlists, in the order the player arranged them (ONE file, so that every command
+//                         is all-or-nothing with a single atomic rename)
+//   * `assign_default.pb` one AssignDefault: the global default ASSIGN map copied into every new Live Set
+//   * `.writer.lock`      the exclusive single-writer lock
+// Conventions as live_set.proto: PascalCase messages, snake_case fields; the schema only grows by addition, numbers are never reused;
+// format_version is bumped only for a change old readers cannot survive; readers accept N and N-1, refuse every other value and keep the
+// fields they do not know on re-write. Serialisation is deterministic (no map fields; fields in number order; unknown fields last).
+syntax = "proto3";
+
+package velora.setlist.v1;
+
+enum FormatVersion {
+  FORMAT_VERSION_UNSPECIFIED = 0;  // a missing/zero format_version is never valid
+  FORMAT_VERSION_1 = 1;
+}
+
+// A user tag that can be put on setlists (Setlist Browser chips, Story 4.30).
+message SetlistTag {
+  string id = 1;     // UUIDv4, canonical lowercase
+  string name = 2;   // 1..64 bytes UTF-8, no control characters
+}
+
+// An ordered list of Live Set ids. A Live Set may appear in several setlists but at most once in one. A reference to a Live Set that no
+// longer exists is kept (it is flagged "missing" in the published state), never silently dropped.
+message Setlist {
+  string id = 1;                       // UUIDv4
+  string name = 2;                     // 1..64 bytes UTF-8, no control characters
+  repeated string live_set_ids = 3;    // UUIDv4 strings, ordered, no duplicates
+  repeated string tag_ids = 4;         // ids of SetlistTag entries of the same library, no duplicates
+  uint32 format_version = 5;           // informational copy of the library's version when this setlist was written
+}
+
+message SetlistLibrary {
+  uint32 format_version = 1;           // FormatVersion
+  repeated SetlistTag tags = 2;        // any stable order (creation order)
+  repeated Setlist setlists = 3;       // the order IS the position of the setlist in the list (reordering rewrites it)
+}
+
+// The global default ASSIGN map: exactly 8 slots (K1..K8), 0 = empty, else a registry *performance* param_id. A new Live Set copies it;
+// changing it never alters existing Live Sets. Editing it is Story 4.10.
+message AssignDefault {
+  uint32 format_version = 1;
+  repeated uint32 assign = 2;
+}

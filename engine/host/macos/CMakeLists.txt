@@ -33,3 +33,11 @@ target_link_libraries(engine_host_switch_smoke PRIVATE velora_control)
 add_dependencies(engine_host_switch_smoke engine-host)
 add_test(NAME engine_host_switch_smoke COMMAND engine_host_switch_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/switch ${_ehs_dir}/root b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71)
 set_tests_properties(engine_host_switch_smoke PROPERTIES TIMEOUT 90)
+
+# engine-host setlist smoke test (Story 4.6): --data-dir, ws.v1 setlist commands, LIVE SET stepping through the real switcher, persistence across a restart,
+# single-writer refusal of a second engine. Runs engine-host --no-audio.
+add_executable(engine_host_setlist_smoke engine_host_setlist_smoke.cpp)
+target_link_libraries(engine_host_setlist_smoke PRIVATE velora_control)
+add_dependencies(engine_host_setlist_smoke engine-host)
+add_test(NAME engine_host_setlist_smoke COMMAND engine_host_setlist_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/switch ${_ehs_dir}/root b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71)
+set_tests_properties(engine_host_setlist_smoke PROPERTIES TIMEOUT 120)

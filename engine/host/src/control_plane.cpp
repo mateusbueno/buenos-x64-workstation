@@ -376,6 +376,7 @@ bool ControlPlane::load_initial(const ws::v1::State& config, std::string& err) {
 void ControlPlane::fill_state(ws::v1::State* out) const {
   if (current_) fill_from(*current_, out);
   if (switch_handler_) switch_handler_->fill_status(out);
+  if (setlist_handler_) setlist_handler_->fill_status(out);
 }
 
 void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
@@ -421,7 +422,24 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   using B = ws::v1::ClientMessage;
   const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;
   const bool switch_cmd = msg.body_case() == B::kJumpToLiveSet || msg.body_case() == B::kCancelLoad;
-  if (switch_cmd) {
+  const bool setlist_cmd = msg.body_case() >= B::kCreateSetlist && msg.body_case() <= B::kGetSetlists;
+  if (setlist_cmd) {
+    // Setlists, tags, Live Set creation and stepping (Story 4.6): the SetlistController owns the work and answers with typed errors.
+    if (!setlist_handler_) {
+      fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "setlists are not available: the engine was started without a data directory");
+    } else {
+      HandlerFailure hf;
+      bool bump = false, push = false;
+      ok = setlist_handler_->run(msg, reply, hf, bump, push);
+      if (!ok) {
+        f.code = hf.code;
+        f.message = hf.message;
+        f.details = hf.details;
+      }
+      if (bump) bump_revision();  // also for a partial failure that changed the state (DeleteLiveSet)
+      changed = push || bump;
+    }
+  } else if (switch_cmd) {
     // Live Set switching (Story 4.5): the switcher owns the work; a jump returns at once, the load runs on its worker.
     if (!switch_handler_ || !current_) {
       fail(f, ws::v1::ERROR_CODE_NO_LIVE_SET, "no Live Set catalog is available");
@@ -560,6 +578,25 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kPreviousScene:
       case B::kJumpToLiveSet:
       case B::kCancelLoad:
+        break;  // handled before the snapshot is copied
+      case B::kCreateSetlist:
+      case B::kRenameSetlist:
+      case B::kReorderSetlists:
+      case B::kDeleteSetlist:
+      case B::kAddLiveSetToSetlist:
+      case B::kRemoveLiveSetFromSetlist:
+      case B::kReorderLiveSetsInSetlist:
+      case B::kCreateLiveSet:
+      case B::kDeleteLiveSet:
+      case B::kCreateTag:
+      case B::kRenameTag:
+      case B::kDeleteTag:
+      case B::kSetSetlistTags:
+      case B::kLoadSetlist:
+      case B::kUnloadSetlist:
+      case B::kNextLiveSet:
+      case B::kPreviousLiveSet:
+      case B::kGetSetlists:
         break;  // handled before the snapshot is copied
       case B::kHello:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "handshake already done on this connection");

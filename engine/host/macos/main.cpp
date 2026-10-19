@@ -7,12 +7,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <sys/stat.h>
 #include <string>
 #include <vector>
 
@@ -34,6 +36,8 @@
 #include "velora/host/midi_ingest.hpp"
 #include "velora/host/render_driver.hpp"
 #include "velora/host/scene_controller.hpp"
+#include "velora/host/setlist_controller.hpp"
+#include "velora/host/setlist_store.hpp"
 
 namespace {
 std::atomic<bool> g_quit{false};
@@ -47,7 +51,7 @@ int main(int argc, char** argv) {
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false, no_audio = false;
-  std::string live_set_path, library_root, live_set_dir;
+  std::string live_set_path, library_root, live_set_dir, data_dir;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--duration") && i + 1 < argc) {
       const char* arg = argv[++i];
@@ -69,6 +73,8 @@ int main(int argc, char** argv) {
       live_set_path = argv[++i];
     } else if (!std::strcmp(argv[i], "--live-set-dir") && i + 1 < argc) {
       live_set_dir = argv[++i];
+    } else if (!std::strcmp(argv[i], "--data-dir") && i + 1 < argc) {
+      data_dir = argv[++i];
     } else if (!std::strcmp(argv[i], "--library-root") && i + 1 < argc) {
       library_root = argv[++i];
     } else {
@@ -76,8 +82,23 @@ int main(int argc, char** argv) {
                    "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in] [--no-audio (dev/test only)]\n"
                    "                   [--live-set FILE --library-root DIR]   (load a Live Set at start; its parts play from the keyboard by zone)\n"
                    "                   [--live-set-dir DIR --library-root DIR]   (the Live Sets of a directory (<id>.liveset) that ws.v1 JumpToLiveSet can switch to,\n"
-                   "                                                              seamlessly, loading in the background; without --live-set the first by name loads at start)\n");
+                   "                                                              seamlessly, loading in the background; without --live-set the first by name loads at start)\n"
+                   "                   [--data-dir DIR --library-root DIR]   (the persisted data root: DIR/live_sets/ holds the Live Sets, DIR/setlists/ the setlists, tags and the\n"
+                   "                                                          default ASSIGN map; ws.v1 setlist commands and LIVE SET stepping; replaces --live-set-dir)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
+    }
+  }
+  if (!data_dir.empty()) {
+    if (!live_set_dir.empty()) {
+      std::fprintf(stderr, "engine-host: --data-dir and --live-set-dir exclude each other (--data-dir uses DIR/live_sets)\n");
+      return 2;
+    }
+    live_set_dir = data_dir + "/live_sets";
+    for (const std::string& d : {data_dir, live_set_dir, data_dir + "/setlists"}) {
+      if (::mkdir(d.c_str(), 0755) != 0 && errno != EEXIST) {
+        std::fprintf(stderr, "engine-host: cannot create %s: %s\n", d.c_str(), std::strerror(errno));
+        return 1;
+      }
     }
   }
   if ((live_set_path.empty() && live_set_dir.empty()) != library_root.empty()) {
@@ -100,14 +121,19 @@ int main(int argc, char** argv) {
         if (!known) catalog.push_back(std::move(e));
       }
     }
-    if (live_set_path.empty()) {
+    if (live_set_path.empty() && data_dir.empty()) {
       if (catalog.empty()) {
         std::fprintf(stderr, "engine-host: %s holds no Live Set to start with\n", live_set_dir.c_str());
         return 1;
       }
       live_set_path = catalog.front().path;  // the first by name
+    } else if (live_set_path.empty() && !catalog.empty()) {
+      live_set_path = catalog.front().path;  // --data-dir: the first by name
     }
   }
+  // A fresh data root (no Live Set yet): the engine starts on the dev configuration with the switcher, the stores and the setlist controller, so that
+  // CreateLiveSet and JumpToLiveSet can bootstrap an empty install.
+  const bool bootstrap = live_set_path.empty() && !data_dir.empty();
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
@@ -141,8 +167,12 @@ int main(int argc, char** argv) {
   std::unique_ptr<host::SceneController> scenes;  // Story 4.4: ws.v1 RecallScene / NextScene / PreviousScene; destroyed before the plane
   std::unique_ptr<host::LiveSetLoader> loader;     // kept for the run: the switcher commits through it
   std::unique_ptr<host::LiveSetSwitcher> switcher; // Story 4.5: ws.v1 JumpToLiveSet / CancelLoad; destroyed before the loader and the plane
+  std::unique_ptr<host::LiveSetSwitcherPort> switch_port;  // Story 4.6: what the setlist controller uses of the switcher
+  std::unique_ptr<host::liveset::LiveSetStore> live_store;  // Story 4.6: sole writer of the Live Set files (create / delete Live Set commands)
+  std::unique_ptr<host::setlist::SetlistStore> setlist_store;  // Story 4.6: sole writer of setlists, tags and the default ASSIGN map
+  std::unique_ptr<host::SetlistController> setlists;           // Story 4.6: ws.v1 setlist commands and LIVE SET stepping; destroyed first
   std::atomic<bool> audio_running{false};  // set once the audio stream starts; the loader refuses to run while it is true
-  if (!live_set_path.empty()) {
+  if (!live_set_path.empty() || bootstrap) {
     if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ)) {
       std::fprintf(stderr, "engine-host: cannot bind the sample engine and the organ\n");
       return 1;
@@ -154,21 +184,61 @@ int main(int argc, char** argv) {
     scenes = std::make_unique<host::SceneController>(plane);
     lopt.scenes = scenes.get();
     loader = std::make_unique<host::LiveSetLoader>(*renderer, plane, resolver, heads, &sample, lopt);
-    const host::LiveSetLoadResult loaded = loader->load_file(live_set_path);
-    if (!loaded.ok()) {
-      std::fprintf(stderr, "engine-host: live set %s: %s%s%s\n", live_set_path.c_str(), host::to_string(loaded.status),
-                   loaded.detail.empty() ? "" : " ", loaded.detail.c_str());
-      return 1;
+    if (bootstrap) {
+      // No Live Set to load: the flat FX reservation of the dev configuration (as without --live-set); the first jump replaces it seamlessly.
+      core::VoiceArbiter::LiveSetConfig reservation;
+      reservation.budget = 1u << 20;
+      reservation.fx_cost = plane.fx_budget();
+      reservation.waive_sample_floor = true;  // the engines are bound for the first jump, but nothing plays on them yet
+      reservation.waive_organ_reservation = true;
+      const auto st = renderer->arbiter().reserve(reservation);
+      if (st != core::VoiceArbiter::ReserveStatus::kOk) {
+        std::fprintf(stderr, "engine-host: cannot reserve the FX budget (status %d)\n", static_cast<int>(st));
+        return 1;
+      }
+      std::printf("data dir %s holds no Live Set yet: running on the dev configuration\n", data_dir.c_str());
+    } else {
+      const host::LiveSetLoadResult loaded = loader->load_file(live_set_path);
+      if (!loaded.ok()) {
+        std::fprintf(stderr, "engine-host: live set %s: %s%s%s\n", live_set_path.c_str(), host::to_string(loaded.status),
+                     loaded.detail.empty() ? "" : " ", loaded.detail.c_str());
+        return 1;
+      }
+      for (std::size_t p = 0; p < loaded.parts.size(); ++p)
+        std::printf("live set part %zu: %s\n", p, host::to_string(loaded.parts[p].state));
+      std::printf("live set: %s -> generation %llu, %zu bytes of samples resident\n", live_set_path.c_str(),
+                  (unsigned long long)loaded.revision, loaded.resident_bytes);
     }
-    for (std::size_t p = 0; p < loaded.parts.size(); ++p)
-      std::printf("live set part %zu: %s\n", p, host::to_string(loaded.parts[p].state));
-    std::printf("live set: %s -> generation %llu, %zu bytes of samples resident\n", live_set_path.c_str(),
-                (unsigned long long)loaded.revision, loaded.resident_bytes);
     {
       // After audio starts the voice pool is switched without stopping: the reservation is applied by the RT thread with the new generation.
       host::SwitcherOptions sopt;
       switcher = std::make_unique<host::LiveSetSwitcher>(*loader, plane, sopt);
       switcher->set_catalog(catalog);
+    }
+    if (!data_dir.empty()) {
+      host::liveset::StoreOptions lso;
+      lso.dir = live_set_dir;
+      host::setlist::StoreOptions sso;
+      sso.dir = data_dir + "/setlists";
+      std::size_t removed = 0;
+      const host::liveset::Status ls_st = host::liveset::LiveSetStore::open(lso, live_store);
+      if (ls_st != host::liveset::Status::kOk) {
+        std::fprintf(stderr, "engine-host: live set store %s: cannot open: %s (another engine-host running on it?)\n", live_set_dir.c_str(),
+                     host::liveset::to_string(ls_st));
+        return 1;
+      }
+      if (const host::liveset::Status rc = live_store->reconcile(removed); rc != host::liveset::Status::kOk)
+        std::fprintf(stderr, "engine-host: warning: live set store %s: leftovers could not all be removed: %s\n", live_set_dir.c_str(), host::liveset::to_string(rc));
+      const host::setlist::Status ss_st = host::setlist::SetlistStore::open(sso, setlist_store);
+      if (ss_st != host::setlist::Status::kOk) {
+        std::fprintf(stderr, "engine-host: setlists %s: cannot open: %s (the file is left untouched)\n", sso.dir.c_str(), host::setlist::to_string(ss_st));
+        return 1;
+      }
+      if (const host::setlist::Status rc = setlist_store->reconcile(removed); rc != host::setlist::Status::kOk)
+        std::fprintf(stderr, "engine-host: warning: setlists %s: leftovers could not all be removed: %s\n", sso.dir.c_str(), host::setlist::to_string(rc));
+      switch_port = std::make_unique<host::LiveSetSwitcherPort>(*switcher);
+      setlists = std::make_unique<host::SetlistController>(plane, *setlist_store, *live_store, *switch_port);
+      std::printf("data dir %s: %d setlist(s), %d tag(s)\n", data_dir.c_str(), setlist_store->library().setlists_size(), setlist_store->library().tags_size());
     }
   } else {
     // FX budget (Story 2.7): reserved for the effects FIRST, before voices; the control plane refuses a command that would exceed it.
@@ -221,7 +291,22 @@ int main(int argc, char** argv) {
   host::ControlServer control(plane, socket_path);
   if (switcher) {
     host::LiveSetSwitcher* sw = switcher.get();
-    control.set_tick([sw] { return sw->tick(); });  // the control tick: loading status at least once per second, commit of a finished load
+    host::SetlistController* sc = setlists.get();
+    // The control tick: loading status at least once per second, commit of a finished load, and the setlist position following jumps.
+    control.set_tick([sw, sc] {
+      const bool a = sw->tick();
+      const bool b = sc ? sc->tick() : false;
+      return a || b;
+    });
+  }
+  if (setlists) {
+    // The server thread is the control thread: the single-writer stores (opened on this thread) are handed over to it before it serves a command.
+    host::liveset::LiveSetStore* lst = live_store.get();
+    host::setlist::SetlistStore* sst = setlist_store.get();
+    control.set_thread_start([lst, sst] {
+      lst->rebind_control_thread();
+      sst->rebind_control_thread();
+    });
   }
   if (!control.start(err)) {
     std::fprintf(stderr, "engine-host: control: %s\n", err.c_str());
@@ -281,6 +366,8 @@ int main(int argc, char** argv) {
   line_in.stop();
   midi.close();
   control.stop();
+  setlists.reset();  // before the switcher and the plane it registered with
+  switch_port.reset();
   switcher.reset();  // cancels a load in progress and joins its worker
   const auto& rc = driver.counters();
   const auto& mc = ingest.counters();

@@ -312,6 +312,25 @@ bool ends_with(const std::string& s, const char* suffix) {
 
 }  // namespace
 
+const char* to_string(Status s) {
+  switch (s) {
+    case Status::kOk: return "ok";
+    case Status::kIo: return "io";
+    case Status::kNotFound: return "not_found";
+    case Status::kTooLarge: return "too_large";
+    case Status::kParseError: return "parse_error";
+    case Status::kUnsupportedVersion: return "unsupported_version";
+    case Status::kInvalid: return "invalid";
+    case Status::kBadId: return "bad_id";
+    case Status::kNotControlThread: return "not_control_thread";
+    case Status::kWriterBusy: return "writer_busy";
+    case Status::kFaultInjected: return "fault_injected";
+    case Status::kCommittedNotDurable: return "committed_not_durable";
+    case Status::kCount: break;
+  }
+  return "?";
+}
+
 ValidationReport validate(const lsp::LiveSet& ls, std::uint32_t part_count) {
   Validator v;
   v.run(ls, part_count);
@@ -556,10 +575,15 @@ Status LiveSetStore::write(const lsp::LiveSet& ls, ValidationReport* report) {
   std::string bytes;
   if (const Status s = serialize(*src, bytes); s != Status::kOk) return s;
 
-  const std::string final_path = path_for(ls.id());
-  const std::string tmp = opt_.dir + "/" + ls.id() + kTmpExt;
+  return atomic_replace_file(opt_.dir, ls.id() + kExt, ls.id() + kTmpExt, bytes, opt_.on_stage, opt_.inject_dir_sync_failure);
+}
+
+Status atomic_replace_file(const std::string& dir, const std::string& name, const std::string& tmp_name, const std::string& bytes,
+                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure) {
+  const std::string final_path = dir + "/" + name;
+  const std::string tmp = dir + "/" + tmp_name;
   ::unlink(tmp.c_str());  // a stale temp of ours (we hold the writer lock)
-  const auto hook = [&](Stage st) { return opt_.on_stage && opt_.on_stage(st) == HookAction::kAbort; };
+  const auto hook = [&](Stage st) { return on_stage && on_stage(st) == HookAction::kAbort; };
   {
     Fd f(::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644));
     if (!f.ok()) return Status::kIo;
@@ -579,10 +603,49 @@ Status LiveSetStore::write(const lsp::LiveSet& ls, ValidationReport* report) {
     return Status::kIo;
   }
   if (hook(Stage::kRenamed)) return Status::kFaultInjected;
-  if (opt_.inject_dir_sync_failure || !sync_dir(opt_.dir)) return Status::kCommittedNotDurable;
+  if (inject_dir_sync_failure || !sync_dir(dir)) return Status::kCommittedNotDurable;
   if (hook(Stage::kDirSynced)) return Status::kFaultInjected;
   return Status::kOk;
 }
+
+Status read_regular_file(const std::string& path, std::size_t max_bytes, std::string& out) {
+  out.clear();
+  Fd f(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+  if (!f.ok()) return (errno == ENOENT || errno == ENOTDIR) ? Status::kNotFound : Status::kIo;
+  struct stat st{};
+  if (::fstat(f.fd, &st) != 0 || !S_ISREG(st.st_mode)) return Status::kIo;
+  if (static_cast<std::uint64_t>(st.st_size) > max_bytes) return Status::kTooLarge;
+  std::string buf(static_cast<std::size_t>(st.st_size), '\0');
+  std::size_t got = 0;
+  while (got < buf.size()) {
+    const ssize_t r = ::read(f.fd, buf.data() + got, buf.size() - got);
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      return Status::kIo;
+    }
+    if (r == 0) break;
+    got += static_cast<std::size_t>(r);
+  }
+  buf.resize(got);
+  out = std::move(buf);
+  return Status::kOk;
+}
+
+Status LiveSetStore::remove(const std::string& id, const std::string& path) {
+  if (std::this_thread::get_id() != owner_) return Status::kNotControlThread;
+  if (!is_uuid_v4(id)) return Status::kBadId;
+  std::string target = path_for(id);
+  if (!path.empty() && path != target) {
+    const std::size_t slash = path.rfind('/');
+    if (slash == std::string::npos || path.substr(0, slash) != opt_.dir || !ends_with(path, kExt)) return Status::kBadId;
+    target = path;
+  }
+  if (opt_.inject_remove_failure) return Status::kIo;
+  if (::unlink(target.c_str()) != 0) return errno == ENOENT ? Status::kNotFound : Status::kIo;
+  return sync_dir(opt_.dir) ? Status::kOk : Status::kCommittedNotDurable;
+}
+
+bool valid_display_name(const std::string& s) { return Validator::name_ok(s); }
 
 Status LiveSetStore::reconcile(std::size_t& removed) {
   removed = 0;

@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,24 @@ class SwitchHandler {
   virtual void fill_status(ws::v1::State* out) const = 0;
 };
 
+// Setlist commands (Story 4.6): the plane routes CreateSetlist ... GetSetlists to this seam (the SetlistController implements it) and asks it
+// to add the setlist status to every State. The plane does not depend on the store. Control thread only.
+struct HandlerFailure {
+  ws::v1::ErrorCode code = ws::v1::ERROR_CODE_INTERNAL;
+  std::string message;
+  std::map<std::string, std::string> details;
+};
+class SetlistHandler {
+ public:
+  virtual ~SetlistHandler() = default;
+  // Runs one command of the setlist family. On success fills `reply`'s body (Ack when left unset) and returns true; `bump_revision` says the
+  // command changed the published state (the plane's revision then moves). On failure fills `err` (nothing changed in the model; `push_state`
+  // may still be set when a visible flag changed, e.g. end_of_setlist). `push_state`: subscribers get a State push.
+  virtual bool run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& reply, HandlerFailure& err, bool& bump_revision, bool& push_state) = 0;
+  // Fills State.setlists.
+  virtual void fill_status(ws::v1::State* out) const = 0;
+};
+
 class ControlPlane {
  public:
   using Clock = std::function<std::uint64_t()>;  // host time in ns, the same clock the MIDI adapter stamps with
@@ -109,6 +128,11 @@ class ControlPlane {
   std::uint64_t next_program_generation() noexcept { return ++program_generation_; }
   // Live Set switching (Story 4.5): the LiveSetSwitcher registers itself here (and unregisters in its destructor). Control thread only.
   void set_switch_handler(SwitchHandler* h) noexcept { switch_handler_ = h; }
+  // Setlist commands (Story 4.6): the SetlistController registers itself here (and unregisters in its destructor). Control thread only.
+  void set_setlist_handler(SetlistHandler* h) noexcept { setlist_handler_ = h; }
+  // The published state changed without a new generation (a setlist, a tag, the loaded setlist): moves the revision so subscribers and
+  // replies see a new one. Control thread only.
+  void bump_revision() noexcept { revision_.fetch_add(1, std::memory_order_acq_rel); }
   // A reservation epoch that was never handed out before (Snapshot::reservation_epoch); control thread only.
   std::uint64_t next_reservation_epoch() noexcept { return ++reservation_epoch_; }
   // The generation RT announced it is reading (hazard pointer), nullptr before RT ran. Control thread only: it is the only thread that frees
@@ -154,6 +178,7 @@ class ControlPlane {
   const core::Snapshot* current_ = nullptr;
   SceneHandler* scene_handler_ = nullptr;
   SwitchHandler* switch_handler_ = nullptr;
+  SetlistHandler* setlist_handler_ = nullptr;
   std::uint64_t program_generation_ = 0;
   std::uint64_t reservation_epoch_ = 0;
   std::vector<core::Snapshot*> generations_;  // everything not yet freed, oldest first

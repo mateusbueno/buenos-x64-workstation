@@ -41,6 +41,7 @@
 #include "velora/host/live_set_loader.hpp"
 #include "velora/host/live_set_switcher.hpp"
 #include "velora/host/scene_controller.hpp"
+#include "velora/host/setlist_controller.hpp"
 
 namespace fs = std::filesystem;
 using namespace velora;
@@ -1491,6 +1492,130 @@ void test_rapid_jumps_last_wins() {
 
 }  // namespace
 
+
+// Story 4.6: LIVE SET stepping and the setlist commands through the REAL switcher (background load, catalog from the Live Set directory, the
+// loader's loaded id): the portable counterpart of engine_host_setlist_smoke.
+void test_setlist_stepping_through_the_real_switcher() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(thread_opts(), w.dir);
+  const std::string sdir = w.tmp.path + "/setlists";
+  fs::create_directories(sdir);
+  ls::StoreOptions lo;
+  lo.dir = w.dir;
+  std::unique_ptr<ls::LiveSetStore> live;
+  CHECK(ls::LiveSetStore::open(lo, live) == ls::Status::kOk);
+  host::setlist::StoreOptions so;
+  so.dir = sdir;
+  std::unique_ptr<host::setlist::SetlistStore> store;
+  CHECK(host::setlist::SetlistStore::open(so, store) == host::setlist::Status::kOk);
+  host::LiveSetSwitcherPort port(*rig.sw);
+  host::SetlistController ctl(rig.plane, *store, *live, port);
+
+  auto send = [&](ws::v1::ClientMessage m) {
+    static std::uint64_t rid = 5000;
+    m.set_request_id(++rid);
+    bool changed = false;
+    return rig.plane.handle(m, changed);
+  };
+  std::string sid;
+  CHECK(store->create_setlist("Show", sid) == host::setlist::Status::kOk);
+  for (const lsp::LiveSet* s : {&w.B, &w.C, &w.Y}) CHECK(store->add_live_set(sid, s->id(), std::nullopt) == host::setlist::Status::kOk);
+  ws::v1::ClientMessage m;
+  m.mutable_load_setlist()->set_id(sid);
+  auto r = send(m);
+  CHECK(r.has_load_setlist_reply() && r.load_setlist_reply().position() == -1);
+  CHECK(!rig.sw->loading() && rig.loader.loaded_id() == w.A.id());  // loading the setlist loaded nothing: A keeps playing
+
+  // next: the first Live Set of the setlist, through the switcher's background load.
+  m.Clear();
+  m.mutable_next_live_set();
+  r = send(m);
+  CHECK(r.has_step_reply() && r.step_reply().live_set_id() == w.B.id() && r.step_reply().position() == 0 &&
+        r.step_reply().jump_result() == ws::v1::JUMP_RESULT_ACCEPTED);
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == w.B.id() && rig.sw->status().state == host::SwitchState::kReady);
+  rig.run(2);
+  rig.note_on(60);
+  rig.run(6);
+  CHECK_NEAR(rig.level(), 0.01, 1e-3);  // Song B sounds
+  rig.note_off(60);
+  rig.run(400);
+  ws::v1::State st;
+  rig.plane.fill_state(&st);
+  CHECK(st.setlists().loaded_setlist_id() == sid && st.setlists().last_setlist_position() == 0 && st.setlists().current_live_set_id() == w.B.id());
+
+  // Off-script: a plain JumpToLiveSet to X. The position stays; next returns into the setlist (C).
+  m.Clear();
+  m.mutable_jump_to_live_set()->set_id(w.X.id());
+  CHECK(send(m).has_jump_reply());
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == w.X.id());
+  rig.plane.fill_state(&st);
+  CHECK(st.setlists().last_setlist_position() == 0 && st.setlists().current_live_set_id() == w.X.id());
+  m.Clear();
+  m.mutable_next_live_set();
+  r = send(m);
+  CHECK(r.has_step_reply() && r.step_reply().live_set_id() == w.C.id() && r.step_reply().position() == 1);
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == w.C.id());
+  // A choice inside the setlist moves the position; the end of the setlist does nothing (the engine keeps playing Y).
+  m.Clear();
+  m.mutable_jump_to_live_set()->set_id(w.Y.id());
+  CHECK(send(m).has_jump_reply());
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == w.Y.id());
+  const std::uint64_t pub = rig.sw->switches_published();
+  m.Clear();
+  m.mutable_next_live_set();
+  r = send(m);
+  CHECK(r.has_error() && r.error().code() == ws::v1::ERROR_CODE_END_OF_SETLIST);
+  rig.plane.fill_state(&st);
+  CHECK(st.setlists().end_of_setlist() && st.setlists().last_setlist_position() == 2 && !rig.sw->loading() && rig.sw->switches_published() == pub);
+
+  // No setlist loaded: All Live Sets by name ("Song A", "Song B", "Song Big", "Song C", "Song X", "Song Y").
+  m.Clear();
+  m.mutable_unload_setlist();
+  CHECK(send(m).has_ack());
+  m.Clear();
+  m.mutable_previous_live_set();
+  r = send(m);
+  CHECK(r.has_step_reply() && r.step_reply().live_set_id() == w.X.id() && !r.step_reply().in_setlist() && r.step_reply().position() == 4);
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == w.X.id());
+  for (const lsp::LiveSet* want : {&w.C, &w.Big}) {
+    m.Clear();
+    m.mutable_previous_live_set();
+    r = send(m);
+    CHECK(r.has_step_reply() && r.step_reply().live_set_id() == want->id());
+    CHECK(pump(rig) > 0 && rig.loader.loaded_id() == want->id());
+  }
+  // A new Live Set made by the command joins the catalog and the walk.
+  m.Clear();
+  m.mutable_create_live_set()->set_name("Song AA new");
+  r = send(m);
+  CHECK(r.has_created_reply());
+  const std::string fresh = r.created_reply().id();
+  CHECK(rig.sw->catalog().size() == 7);
+  m.Clear();
+  m.mutable_jump_to_live_set()->set_id(w.A.id());
+  CHECK(send(m).has_jump_reply());
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == w.A.id());
+  m.Clear();
+  m.mutable_next_live_set();
+  r = send(m);  // "Song A" < "Song AA new" < "Song B"
+  CHECK(r.has_step_reply() && r.step_reply().live_set_id() == fresh);
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == fresh);  // the empty Live Set loads (no timbre to make resident)
+  // It cannot be deleted while it sounds; after moving on it can, and it leaves the catalog.
+  m.Clear();
+  m.mutable_delete_live_set()->set_id(fresh);
+  CHECK(send(m).has_error());
+  m.Clear();
+  m.mutable_next_live_set();
+  CHECK(send(m).has_step_reply());
+  CHECK(pump(rig) > 0);
+  m.Clear();
+  m.mutable_delete_live_set()->set_id(fresh);
+  CHECK(send(m).has_ack() && rig.sw->catalog().size() == 6 && !fs::exists(live->path_for(fresh)));
+  CHECK(rig.sw->sounding_id() == rig.loader.loaded_id() && rig.sw->effective_id() == rig.loader.loaded_id());
+}
+
 int main(int argc, char** argv) {
   const char* only = argc > 1 ? argv[1] : nullptr;  // run the tests whose name contains this text
 #define RUN(t) \
@@ -1519,6 +1644,7 @@ int main(int argc, char** argv) {
   RUN(test_stage_failure_reports_parts);
   RUN(test_provider_cancel_and_sizes);
   RUN(test_rapid_jumps_last_wins);
+  RUN(test_setlist_stepping_through_the_real_switcher);
   if (g_fail) {
     std::printf("live_set_switcher_tests: %d FAILED\n", g_fail);
     return 1;

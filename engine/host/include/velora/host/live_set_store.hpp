@@ -61,6 +61,8 @@ enum class Status : std::uint8_t {
   kCount
 };
 
+const char* to_string(Status s);  // closed names, for logs
+
 enum class IssueCode : std::uint8_t {
   kBadId = 0,
   kBadName,
@@ -194,9 +196,21 @@ EngineAvailability availability_of(const core::EngineRegistry& registry);
 // Per-part state without loading anything (no file or library access).
 std::vector<PartState> resolve_parts(const lsp::LiveSet& ls, const EngineAvailability& engine_available);
 
+// Shared with the setlist store (Story 4.6): a display name is 1..kMaxNameBytes bytes of valid UTF-8 without control characters.
+bool valid_display_name(const std::string& s);
+
 // ---- the store -----------------------------------------------------------------------------------------------------
 enum class Stage : std::uint8_t { kTempWritten, kFsynced, kRenamed, kDirSynced };
 enum class HookAction : std::uint8_t { kContinue, kAbort };
+
+// The atomic replace discipline shared by every single-writer file of the data root (Live Sets, the setlist library, the default ASSIGN
+// map): temp file `<dir>/<tmp_name>` (created exclusively, never following a symlink), fsync (F_FULLFSYNC on macOS), rename over
+// `<dir>/<name>`, fsync of the directory. `on_stage` is the fault-injection hook (kAbort leaves the temp file, kFaultInjected).
+// kCommittedNotDurable: renamed, but the directory fsync failed (or `inject_dir_sync_failure`). Control thread only (the caller checks ownership).
+Status atomic_replace_file(const std::string& dir, const std::string& name, const std::string& tmp_name, const std::string& bytes,
+                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure);
+// Reads a regular file (no symlink) of at most `max_bytes` into `out`. kNotFound when absent, kTooLarge above the cap, kIo otherwise.
+Status read_regular_file(const std::string& path, std::size_t max_bytes, std::string& out);
 
 struct StoreOptions {
   std::string dir;   // an existing directory on the journaled partition; temp files live in it too
@@ -206,6 +220,7 @@ struct StoreOptions {
   // or the hook may _exit() to simulate a crash.
   std::function<HookAction(Stage)> on_stage;
   bool inject_dir_sync_failure = false;  // test only: makes the directory fsync after the rename report failure
+  bool inject_remove_failure = false;    // test only: remove() fails with kIo before touching the file
 };
 
 class LiveSetStore {
@@ -225,6 +240,11 @@ class LiveSetStore {
   // partial one. Empty `timbre` messages are normalised to unset first (see normalize()). kCommittedNotDurable: the file
   // is in place but the directory sync failed. Invalid Live Sets are rejected with nothing written (`report` gets the issues).
   Status write(const lsp::LiveSet& ls, ValidationReport* report = nullptr);
+  // Deletes `<id>.liveset` (the caller has already removed it from every setlist) and fsyncs the directory. kNotFound when there is no such
+  // file, kBadId for a malformed id, kNotControlThread from another thread. Control thread only.
+  // `path` (optional) is the file to delete when it is not `<id>.liveset` (a catalog entry from a directory scan): it must be a `.liveset` file directly
+  // in the store directory, else kBadId.
+  Status remove(const std::string& id, const std::string& path = {});
   // Removes leftover `*.liveset.tmp` files of an interrupted write. Control thread only.
   Status reconcile(std::size_t& removed);
   // Reads `<id>.liveset` (any thread).

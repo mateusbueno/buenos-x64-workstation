@@ -145,6 +145,7 @@ void ControlServer::stop() {
 }
 
 void ControlServer::run() {
+  if (thread_start_) thread_start_();
   std::vector<pollfd> fds;
   while (!stop_.load()) {
     fds.clear();

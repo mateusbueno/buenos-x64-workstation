@@ -46,6 +46,10 @@ class ControlServer {
   // were served and before generations are reclaimed. When it returns true the current State is pushed to the subscribers (the Live Set
   // switcher uses it to publish the loading status and to commit a finished background load). Set it before start().
   void set_tick(std::function<bool()> f) { tick_ = std::move(f); }
+  // Story 4.6: `f` runs once on the server thread before it serves anything. The server thread is THE control thread, so the single-writer
+  // stores (LiveSetStore, SetlistStore), which record the thread that opened them, hand their ownership over here (rebind_control_thread()).
+  // Set it before start().
+  void set_thread_start(std::function<void()> f) { thread_start_ = std::move(f); }
 
   std::uint64_t accepted() const noexcept { return accepted_.load(std::memory_order_relaxed); }
   std::uint64_t dropped_slow() const noexcept { return dropped_slow_.load(std::memory_order_relaxed); }
@@ -76,6 +80,7 @@ class ControlServer {
   std::atomic<bool> stop_{false};
   std::vector<Client> clients_;
   std::function<bool()> tick_;
+  std::function<void()> thread_start_;
   std::atomic<std::uint64_t> accepted_{0}, frames_in_{0}, dropped_slow_{0};
 };
 

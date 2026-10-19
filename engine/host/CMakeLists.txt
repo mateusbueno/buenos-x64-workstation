@@ -25,14 +25,14 @@ velora_params_output(host VELORA_PARAMS_HOST_HPP)
 velora_params_output(proto VELORA_PARAMS_PROTO)
 
 set(VELORA_PB_DIR "${VELORA_GENERATED_DIR}/pb")
-set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc" "${VELORA_PB_DIR}/live_set.pb.cc")
-set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h" "${VELORA_PB_DIR}/live_set.pb.h")
+set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc" "${VELORA_PB_DIR}/live_set.pb.cc" "${VELORA_PB_DIR}/setlist.pb.cc")
+set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h" "${VELORA_PB_DIR}/live_set.pb.h" "${VELORA_PB_DIR}/setlist.pb.h")
 add_custom_command(
   OUTPUT ${VELORA_PB_SOURCES} ${VELORA_PB_HEADERS}
   COMMAND ${CMAKE_COMMAND} -E make_directory "${VELORA_PB_DIR}"
   COMMAND $<TARGET_FILE:protobuf::protoc> -I "${CMAKE_SOURCE_DIR}/proto" -I "${VELORA_GENERATED_DIR}/proto"
-          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${VELORA_PARAMS_PROTO}"
-  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${VELORA_PARAMS_PROTO}"
+          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${VELORA_PARAMS_PROTO}"
+  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${VELORA_PARAMS_PROTO}"
   COMMENT "Generating ws.v1 protobuf code"
   VERBATIM)
 
@@ -44,7 +44,9 @@ add_library(velora_control STATIC
   src/live_set_store.cpp
   src/live_set_loader.cpp
   src/scene_controller.cpp
-  src/live_set_switcher.cpp)
+  src/live_set_switcher.cpp
+  src/setlist_store.cpp
+  src/setlist_controller.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -99,6 +101,30 @@ add_executable(switch_rt_traffic_test tests/rtsan_switch_test.cpp)
 target_link_libraries(switch_rt_traffic_test PRIVATE velora_control)
 add_test(NAME switch_rt_traffic_test COMMAND switch_rt_traffic_test)
 set_tests_properties(switch_rt_traffic_test PROPERTIES TIMEOUT 300)
+
+# Setlists, setlist tags, the default ASSIGN map, new Live Sets (Story 4.6): format, store commands, atomicity, single writer, corpus.
+set(VELORA_SETLIST_CORPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus/setlists")
+add_executable(setlist_tests tests/setlist_test.cpp)
+target_link_libraries(setlist_tests PRIVATE velora_control)
+target_compile_definitions(setlist_tests PRIVATE
+  VELORA_SETLIST_CORPUS_DIR="${VELORA_SETLIST_CORPUS_DIR}" VELORA_SETLIST_GOLDEN_DIR="${VELORA_LIVESET_GOLDEN_DIR}")
+add_test(NAME setlist_tests COMMAND setlist_tests)
+set_tests_properties(setlist_tests PROPERTIES TIMEOUT 180)
+
+# Setlist controller (Story 4.6): ws.v1 commands, loaded setlist, stepping scenarios, concurrent clients.
+add_executable(setlist_controller_tests tests/setlist_controller_test.cpp)
+target_link_libraries(setlist_controller_tests PRIVATE velora_control)
+target_compile_definitions(setlist_controller_tests PRIVATE VELORA_DEV_CONFIG="${VELORA_DEV_CONFIG}")
+add_test(NAME setlist_controller_tests COMMAND setlist_controller_tests)
+set_tests_properties(setlist_controller_tests PROPERTIES TIMEOUT 180)
+
+add_executable(setlist_corpus_gen tests/setlist_corpus_gen.cpp)
+target_link_libraries(setlist_corpus_gen PRIVATE velora_control)
+add_custom_target(setlist_corpus_regen
+  COMMAND setlist_corpus_gen "${VELORA_SETLIST_CORPUS_DIR}" "${VELORA_LIVESET_GOLDEN_DIR}"
+  DEPENDS setlist_corpus_gen
+  COMMENT "Regenerating the setlist compatibility corpus"
+  VERBATIM)
 
 # Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
 #   cmake --build build --target live_set_corpus_regen

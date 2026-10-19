@@ -117,6 +117,10 @@ void LiveSetSwitcher::add_to_catalog(CatalogEntry entry) {
   catalog_.push_back(std::move(entry));
 }
 
+void LiveSetSwitcher::remove_from_catalog(const std::string& id) {
+  catalog_.erase(std::remove_if(catalog_.begin(), catalog_.end(), [&](const CatalogEntry& e) { return e.id == id; }), catalog_.end());
+}
+
 void LiveSetSwitcher::publish() {
   ++status_.seq;
   dirty_ = true;

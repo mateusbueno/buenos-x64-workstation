@@ -40,6 +40,21 @@ enum ErrorCode {
   ERROR_CODE_NO_SUCH_LIVE_SET = 20;    // Story 4.5: JumpToLiveSet named an id the engine does not list (details: id); nothing changes
   ERROR_CODE_LIVE_SET_LOAD_FAILED = 21;  // Story 4.5: the target could not be loaded and the current Live Set keeps playing (details: reason = read_failed |
                                          // invalid_live_set | part_count_unsupported | instrument_load_failed | arbiter_rejected | fx_budget_exceeded | busy | internal)
+                                         // Story 4.6: also the typed refusal of NextLiveSet / PreviousLiveSet whose target file is missing or invalid (details: id, reason = missing |
+                                         // read_failed | invalid_live_set); the position does not move and nothing is skipped
+  // Story 4.6: setlists, tags and stepping. A failed command changes nothing.
+  ERROR_CODE_NO_SUCH_SETLIST = 22;     // details: id
+  ERROR_CODE_NO_SUCH_TAG = 23;         // details: id
+  ERROR_CODE_DUPLICATE_LIVE_SET_IN_SETLIST = 24;  // the Live Set is already in this setlist (details: setlist_id, live_set_id)
+  ERROR_CODE_INVALID_NAME = 25;        // name empty, longer than 64 bytes, not valid UTF-8 or holding a control character
+  ERROR_CODE_END_OF_SETLIST = 26;      // NextLiveSet at the last Live Set of the loaded setlist (or of All Live Sets); State.setlists.end_of_setlist is set
+  ERROR_CODE_START_OF_SETLIST = 27;    // PreviousLiveSet at the first Live Set (or before the first of a freshly loaded setlist); State.setlists.start_of_setlist is set
+  ERROR_CODE_EMPTY_SETLIST = 28;       // stepping with a loaded setlist that holds no Live Set
+  ERROR_CODE_LIMIT_REACHED = 29;       // too many setlists / tags / Live Sets in a setlist / tags on a setlist (details: limit_name = setlists | tags | live_sets_per_setlist | tags_per_setlist, limit)
+  ERROR_CODE_LIVE_SET_IN_USE = 30;     // DeleteLiveSet of the Live Set that sounds or is loading
+  ERROR_CODE_INVALID_ORDER = 31;       // a reorder that is not a permutation of the current ids, or an index past the end
+  ERROR_CODE_LIVE_SET_NOT_IN_SETLIST = 32;  // RemoveLiveSetFromSetlist of a Live Set the setlist does not hold
+  ERROR_CODE_STORAGE_FAILED = 33;      // the file could not be written (details: reason); nothing changed, EXCEPT details partial=references_removed_file_kept (DeleteLiveSet: the setlists were cleaned, the file could not be removed)
 }
 
 message Error {
@@ -98,6 +113,25 @@ message State {
   LoadingStatus loading = 8;             // Story 4.5: the state of the Live Set switch (background load); additive
   string live_set_id = 9;                // Story 4.5: id of the Live Set that sounds (the one last published by the engine), "" when none
   string live_set_name = 10;
+  SetlistStatus setlists = 11;           // Story 4.6: the loaded setlist and the stepping position; additive
+}
+
+// Story 4.6: the setlist side of the State. `current_live_set_id` is the Live Set that sounds (as State.live_set_id). `last_setlist_position` is the index
+// in the loaded setlist of the last Live Set that was current while inside it (-1 = none yet, or no setlist loaded); an off-script jump leaves it unchanged.
+// `end_of_setlist` / `start_of_setlist` latch when a step was refused at that end and clear at the next change of position, Live Set or loaded setlist.
+message SetlistStatus {
+  bool available = 1;                    // the engine was started with a data directory (setlists are available)
+  string loaded_setlist_id = 2;          // "" = no setlist loaded (stepping walks All Live Sets by name)
+  string loaded_setlist_name = 3;
+  int32 last_setlist_position = 4;
+  string current_live_set_id = 5;
+  bool end_of_setlist = 6;
+  bool start_of_setlist = 7;
+  uint32 setlist_count = 8;
+  uint32 loaded_setlist_size = 9;        // Live Sets in the loaded setlist
+  uint64 status_seq = 10;                // increases with every visible change (also flags that do not move the revision)
+  uint64 library_revision = 11;          // increases with every persisted change of setlists / tags
+  uint32 not_durable_commits = 12;       // commits since start whose directory sync failed (the change is applied and in place, but not known durable)
 }
 
 // Story 4.5: seamless Live Set switching. The state of the (single) background load. It is part of State and is pushed to subscribers whenever it
@@ -226,6 +260,64 @@ message CancelLoadReply {
   bool cancelled = 1;                    // false: no load was in progress
 }
 
+// --- Story 4.6: setlists, tags, Live Set creation and stepping --------------------------------------------------------------------
+// All of these are applied by the control thread (the sole writer), in the order they arrive, all or nothing: the file is written (atomic
+// replace) BEFORE the new state is published, and a failure leaves the state and the file as they were. Success replies are Ack unless noted.
+// Errors: NO_SUCH_SETLIST, NO_SUCH_TAG, NO_SUCH_LIVE_SET, DUPLICATE_LIVE_SET_IN_SETLIST, INVALID_NAME, INVALID_ORDER, LIMIT_REACHED,
+// LIVE_SET_NOT_IN_SETLIST, LIVE_SET_IN_USE, STORAGE_FAILED, INVALID_COMMAND (setlists not available: the engine has no data directory).
+message CreateSetlist { string name = 1; }                        // reply CreatedReply
+message RenameSetlist { string id = 1; string name = 2; }
+message ReorderSetlists { repeated string ids = 1; }              // the new order of ALL setlists: a permutation of the current ids
+message DeleteSetlist { string id = 1; }                          // never deletes a Live Set; deleting the loaded setlist unloads it
+message AddLiveSetToSetlist {
+  string setlist_id = 1;
+  string live_set_id = 2;                                         // must exist (NO_SUCH_LIVE_SET) and not be in the setlist yet
+  optional uint32 index = 3;                                      // insert position, absent = append; past the end = INVALID_ORDER
+}
+message RemoveLiveSetFromSetlist { string setlist_id = 1; string live_set_id = 2; }
+message ReorderLiveSetsInSetlist { string setlist_id = 1; repeated string live_set_ids = 2; }  // permutation of the setlist's current ids
+message CreateLiveSet { string name = 1; }                        // 8 empty parts, one scene, ASSIGN copied from the default; reply CreatedReply
+message DeleteLiveSet { string id = 1; }                          // also removes it from every setlist
+message CreateTag { string name = 1; }                            // reply CreatedReply
+message RenameTag { string id = 1; string name = 2; }
+message DeleteTag { string id = 1; }                              // removes it from every setlist
+message SetSetlistTags { string setlist_id = 1; repeated string tag_ids = 2; }  // replaces the setlist's tags (assign / remove)
+message LoadSetlist { string id = 1; }                            // the current generation keeps playing; no Live Set is loaded; reply LoadSetlistReply
+message UnloadSetlist {}                                          // no setlist loaded: stepping walks All Live Sets
+message NextLiveSet {}                                            // reply StepReply, or END_OF_SETLIST / EMPTY_SETLIST / LIVE_SET_LOAD_FAILED errors
+message PreviousLiveSet {}                                        // reply StepReply, or START_OF_SETLIST / EMPTY_SETLIST / LIVE_SET_LOAD_FAILED errors
+message GetSetlists {
+  string setlist_id = 1;                                          // "" = summaries only; else also the ordered entries of that setlist (NO_SUCH_SETLIST)
+}
+
+message CreatedReply { string id = 1; string name = 2; bool not_durable = 3; }
+message LoadSetlistReply { string setlist_id = 1; int32 position = 2; uint32 live_set_count = 3; }
+message StepReply {
+  string live_set_id = 1;                // the Live Set the step jumped to
+  string live_set_name = 2;
+  int32 position = 3;                    // index in the loaded setlist, or in All Live Sets when none is loaded
+  JumpResult jump_result = 4;            // what the Story 4.5 switcher answered (ACCEPTED, ALREADY_LOADED, ALREADY_LOADING)
+  bool superseded_previous = 5;
+  bool in_setlist = 6;                   // false: the step walked All Live Sets
+}
+message SetlistTagInfo { string id = 1; string name = 2; }
+message SetlistSummary {
+  string id = 1;
+  string name = 2;
+  repeated string tag_ids = 3;
+  uint32 live_set_count = 4;
+  uint32 missing_count = 5;              // entries whose Live Set no longer exists (kept, flagged)
+  bool loaded = 6;
+}
+message SetlistEntry { string live_set_id = 1; string name = 2; bool missing = 3; }
+message SetlistsReply {
+  repeated SetlistSummary setlists = 1;  // in list order
+  repeated SetlistTagInfo tags = 2;
+  SetlistStatus status = 3;
+  string detail_setlist_id = 4;          // the setlist `entries` belongs to ("" when GetSetlists named none)
+  repeated SetlistEntry entries = 5;
+}
+
 message GetState {}
 message GetPerformanceValues {}
 message Subscribe {                      // after this, every new revision is pushed as a State message
@@ -250,10 +342,30 @@ message ClientMessage {
     PreviousScene previous_scene = 22;
     JumpToLiveSet jump_to_live_set = 23;  // Story 4.5
     CancelLoad cancel_load = 24;
+    CreateSetlist create_setlist = 25;    // Story 4.6
+    RenameSetlist rename_setlist = 26;
+    ReorderSetlists reorder_setlists = 27;
+    DeleteSetlist delete_setlist = 28;
+    AddLiveSetToSetlist add_live_set_to_setlist = 29;
+    RemoveLiveSetFromSetlist remove_live_set_from_setlist = 30;
+    ReorderLiveSetsInSetlist reorder_live_sets_in_setlist = 31;
+    CreateLiveSet create_live_set = 32;
+    DeleteLiveSet delete_live_set = 33;
+    CreateTag create_tag = 34;
+    RenameTag rename_tag = 35;
+    DeleteTag delete_tag = 36;
+    SetSetlistTags set_setlist_tags = 37;
+    LoadSetlist load_setlist = 38;
+    UnloadSetlist unload_setlist = 39;
+    NextLiveSet next_live_set = 40;
+    PreviousLiveSet previous_live_set = 41;
+    GetSetlists get_setlists = 42;
   }
 }
 
-message Ack {}
+message Ack {
+  bool not_durable = 1;                  // Story 4.6: a setlist command was committed (the new file is in place) but the directory sync failed; the change is applied
+}
 
 message ServerMessage {
   uint64 request_id = 1;                 // 0 for pushed messages
@@ -267,5 +379,9 @@ message ServerMessage {
     SceneReply scene_reply = 15;         // Story 4.4
     JumpReply jump_reply = 16;           // Story 4.5
     CancelLoadReply cancel_load_reply = 17;
+    CreatedReply created_reply = 18;      // Story 4.6
+    LoadSetlistReply load_setlist_reply = 19;
+    StepReply step_reply = 20;
+    SetlistsReply setlists_reply = 21;
   }
 }

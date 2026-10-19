@@ -111,7 +111,12 @@ class LiveSetSwitcher final : public SwitchHandler {
   // The Live Sets a jump can name. Control thread.
   void set_catalog(std::vector<CatalogEntry> entries);
   void add_to_catalog(CatalogEntry entry);  // replaces an entry with the same id
+  void remove_from_catalog(const std::string& id);  // Story 4.6: a deleted Live Set can no longer be a jump target
   const std::vector<CatalogEntry>& catalog() const { return catalog_; }
+  // Story 4.6: the Live Set that sounds (last published by the loader, "" before the first) and the one stepping is relative to: the target of the
+  // load in progress, else the Live Set that sounds. Control thread.
+  const std::string& sounding_id() const { return loader_.loaded_id(); }
+  const std::string& effective_id() const { return active_ ? active_job_.target.id : loader_.loaded_id(); }
 
   // Control thread. See the header comment for the rules; returns at once.
   SwitchOutcome jump_to(const std::string& id);
