@@ -116,3 +116,12 @@ update-organ-rotary-golden` and review. The other organ goldens do not use the r
 
 The CLI mapping is pinned by `organ_rotary_map_{slow,fast,stop}_equal`: `--rotary X` on `organ_map_plain.mid` (a 1 s chord, made by `make_map_midi.py`) renders byte-equal
 to `organ_map_X.mid` (the same chord with CC 79 = 64 / 127 / 0 and CC 89 at tick 0) with `--rotary off`.
+
+## Routing options (Story 2.7)
+
+`velora-offline-render` can run the fixed routing topology so its null tests can check it: `--part-output P:main|aux` (repeatable; parts are the MIDI channels 0..7), `--send P:REVERB[:DELAY]` (levels 0..1),
+`--inserts P:type[!],type[!]...` (at most 5 of `none rotary chorus_phaser ep_amp eq compressor`; `!` bypasses the slot; every type is a pass-through placeholder until Stories 2.8-2.11), `--master-level DB` (-60..12),
+`--line-in in.wav [--line-in-level 0..1]` (mono or stereo 48 kHz WAV, mixed into the master Main bus only, silent after its end) and `--aux-out aux.wav` (the Aux bus, same length as the Main output). Any of them publishes
+a snapshot with those settings before the first block; with none of them no snapshot is published and the render is the pre-2.7 one, bit for bit (all existing goldens). The send returns are unity pass-throughs into Main,
+so expected buses are plain sums of the parts rendered alone. `tests/routing_test.cpp` (`offline_routing_tests`) does exactly that: Main/Aux assignment, send levels, master level, line-in to Main only and pass-through
+chains, each as a null test at -110..-120 dB against the analytically mixed reference, plus the CLI flags and their error cases.

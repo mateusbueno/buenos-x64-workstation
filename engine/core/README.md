@@ -92,7 +92,7 @@ a monotone gain `fade_left/fade_total` (strictly falling, 0 ends the voice) whil
 ignores note offs. FM/VA need nothing beyond this.
 
 **Reservation** (`reserve(LiveSetConfig)`, called when a Live Set loads, never on RT): `budget` is in cost units; the order is
-1. `fx_cost`, 2. `organ_rotary_cost` (0 without an organ; never stolen), 3. each engine's floor (`floors[]`: engine type id and
+1. the FX budget (`fx_cost` plus the declared costs in `fx_instance_costs`, Story 2.7), 2. `organ_rotary_cost` (0 without an organ; never stolen), 3. each engine's floor (`floors[]`: engine type id and
 voices, cost = voices x `cost_units_per_voice()`); `shared = budget - fx - organ - sum(floors)`. All arithmetic is 64-bit
 integer with overflow checks. It is atomic: on any error (`ReserveStatus`: `kFxExceedsBudget`, `kOrganExceedsBudget`,
 `kFloorsExceedBudget`, `kFloorExceedsCapacity` (capacity < floor + `kFadeHeadroomVoices` = 64: stolen voices keep their slot for the ramp, so a below-floor engine always finds a free slot), `kUnknownEngine`, `kInvalidConfig`, `kSampleFloorTooLow`) nothing changes.
@@ -187,3 +187,56 @@ stereo spread through two virtual microphones, separate acceleration and braking
 part's output is stereo. `OrganEngine::rotary_status(part)` publishes the commanded speed and the actual horn/drum speeds lock-free, and the target is in the RT
 last-value table (so `ws.v1` `GetPerformanceValues` reports it). The rotary cost is part of the organ reservation. Design values, public facts, behaviour and
 tests: `ORGAN.md` ("Rotary speaker"). Covered by `rotary_tests` and `rtsan_organ_test`.
+
+## Routing topology (Story 2.7)
+
+Phase 5 of the block loop (after the voices render) is the `Mixer` (`mixer.hpp`), a fixed topology; `BlockRenderer::process_block(const OutputBuses&)` hands
+the host **Main L/R and Aux L/R** per block (`process_block(left, right)` is the Main bus only, which is what the CoreAudio adapter plays for now; physical outputs are Epic 3):
+
+```
+voices --(per part, Engine::render_split)--> part bus (stereo, 64 frames)
+part bus --> insert chain (<= 5 slots) --> post-insert signal
+  --> Main or Aux bus per the part's part_output (structural; switched with a 5 ms ramp)
+  --> Reverb send (x send_reverb_level) --> Reverb return (placeholder, unity) --> the same bus (Main or Aux) as the part
+  --> Delay  send (x send_delay_level)  --> Delay return  (placeholder, unity) --> the same bus as the part
+line-in (x line_in_level) --> Main only
+Main, Aux --> master section per bus (EQ, compressor: placeholders until 2.8; master_level trim) --> outputs
+```
+
+Decisions: a part's send returns go to the bus the part sits on, so an Aux part's reverb never leaks into Main. The Mixer keeps one send accumulator and one send placeholder per output bus; the real
+reverb and delay of Stories 2.10/2.11 therefore need **one instance per bus**, and the declared FX cost already counts them twice (`kFixedFxCost` = 2 x (reverb + delay + master EQ + compressor)).
+`process_block(left, right)` (an adapter with a single output) folds Aux into Main (counted in `aux_folded_blocks()`), so a part on Aux is still audible there; `process_block(OutputBuses)` with only one of
+`aux_left`/`aux_right` is refused (Main silenced, `rejected_output_blocks()`). UMP channels 8..15 alias parts 0..7 in the routing (`Engine::render_split` is pure virtual; channel c and c+8 share a part bus), and
+`velora-offline-render` rejects events above channel 8 (index 7) when a routing option is given.
+Line-in is mixed into the Main bus at the master (before the master EQ/compressor and the trim) and never into Aux; the master section (and its FX cost) exists once per bus.
+Levels (`send_*_level`, `line_in_level`, `master_level`) ramp linearly over one block (64 frames); a level event is taken at the start of the next block (<= 1.3 ms).
+Registry additions: `line_in_level` (id 800, performance, master scope, 0..1, default 0: line-in is muted until raised) and `master_level` (id 520, structural, dB, default 0).
+
+**Engines render per part.** `Engine::render_split(left[16], right[16], frames)` adds the voices of UMP channel c into `left[c]`/`right[c]` (the Mixer points c and c+8 at the
+same part bus); `render()` is the same code with all pointers equal. Sample, Organ and TestTone implement it; an engine that does not puts everything on channel 0's bus.
+
+**Trivial routing renders straight into Main.** When every part is on Main at unity, no chain holds an effect, the sends and line-in are 0 and the master is 0 dB, the Mixer is
+inactive and the engines render into the output exactly as before this story: those renders are bit-identical to the existing goldens (`Mixer::routed()` tells).
+Any non-trivial routing switches to the part-bus path (sums in part order, so the audio differs from the direct sum only by float rounding, ~1e-7).
+
+**Effects (`fx.hpp`).** `Effect` (`type()`, `cost_units()`, `prepare()`, `reset()`, `set_params()` and the RT `process(StereoBlock&)`), `make_effect()` (control thread only; the only factory,
+types are the registry `insert_type` list: no plugin loading) and `FxChain` (<= 5 slots, bypass flag each). Every type is a `PassThroughEffect` placeholder until Stories 2.8-2.11; the rotary insert is a
+pass-through too (the organ's built-in rotary stage, Story 2.6, is unchanged; the insert becomes a `RotarySpeaker` in Story 2.9). Declared costs (`effect_cost_units()`, `kReverbSendCost`, `kDelaySendCost`,
+`kMasterEqCost`, `kMasterCompCost`) are placeholders until measured on the board (2.12).
+
+**Chain changes.** The control thread builds the part's `FxChain` (new, prepared instances) when it builds the snapshot generation (`build_chain()`; `PartCfg::chain`, shared by generations that do not touch the part,
+so an unchanged chain keeps its instances and RT does not cross-fade). RT adopts the generation, starts the new chain fading in linearly over 240 frames (5 ms) while the old one fades out (weights always sum to 1: no dip, no
+bump, no click), and never allocates. A change that arrives during a fade waits and the latest request wins (at most two chains in flight per part). Each chain entry holds a ledger reference on the generation that owns its
+instances (`SnapshotExchange::rt_ref`), moved to the newest generation that still carries the chain, so instances are freed (control thread, `ControlPlane::reclaim()`) only after RT stopped processing through
+them and after the notes that started on that generation ended (AD-23). Instance state is not carried across a changed chain: a changed chain starts with fresh instances (bypass toggles included).
+
+**FX budget (AR18).** `VoiceArbiter::LiveSetConfig` gets `fx_instance_costs`/`fx_instance_count` next to the flat `fx_cost`; `reserve()` sums them as the FIRST step (FX -> organ+rotary -> floors; `fill_fx_costs(snapshot, cfg)` in
+`mixer.hpp` fills the list from a snapshot: per bus reverb, delay, master EQ and compressor, plus the insert chains). The control plane (`engine/host`) keeps the same budget (`ControlPlane::set_fx_budget()`, default `kMaxFxCost` = every slot of every part holding
+the heaviest insert) and refuses a command that raises the cost above the budget with `ERROR_CODE_FX_BUDGET_EXCEEDED`, changing nothing (a command that does not raise the cost, e.g. removing an effect after the budget was lowered, always goes through). Callers reserve the arbiter with the same amount as the control plane's budget.
+
+**Line-in.** `velora/ports/line_in_source.hpp`: `LineInSource::read_block()` is called once per block (also while the level is 0, to keep the source in step); no source = silence.
+
+Tests: `routing_tests` (bus summation, Main/Aux, sends, master level, line-in to the master only, cross-fade continuity with a known gain effect and the step bound, add/remove/reorder/bypass, overlapping changes,
+generation lifetime of the instances with a held note, FX budget and reservation order, default path bit-exact), `routing_traffic_test` / `rtsan_routing_test` (10,000 blocks with a chain change every 3 blocks,
+part output switches, send and line-in changes; allocation-free under RTSan, deterministic: two runs hash equal), an organ per-part split check inside `routing_tests`; offline null tests in `tools/offline-render`
+(`offline_routing_tests`); control plane tests in `engine/host` (`control_tests`).

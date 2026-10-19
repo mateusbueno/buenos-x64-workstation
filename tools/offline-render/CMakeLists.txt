@@ -23,6 +23,16 @@ target_compile_definitions(offline_render_tests PRIVATE
 add_dependencies(offline_render_tests velora-offline-render)
 add_test(NAME offline_render_tests COMMAND offline_render_tests)
 
+# --- routing (Story 2.7): Main/Aux, sends, line-in and master verified by null tests against analytically mixed references ---
+add_executable(offline_routing_tests tests/routing_test.cpp)
+target_link_libraries(offline_routing_tests PRIVATE velora_offline)
+target_compile_definitions(offline_routing_tests PRIVATE
+  OFFLINE_RENDER_EXE="$<TARGET_FILE:velora-offline-render>"
+  OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+  ROUTING_TEST_MIDI="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/golden.mid")
+add_dependencies(offline_routing_tests velora-offline-render)
+add_test(NAME offline_routing_tests COMMAND offline_routing_tests)
+
 # --- golden pipeline ---------------------------------------------------------
 set(_golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden)
 set(_out ${CMAKE_CURRENT_BINARY_DIR})

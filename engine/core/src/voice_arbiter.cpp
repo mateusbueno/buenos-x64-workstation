@@ -51,8 +51,15 @@ void VoiceArbiter::unbind_last() noexcept {
 }
 
 VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noexcept {
-  if (cfg.floor_count > kMaxEngines || cfg.steal_ramp_frames == 0 || cfg.steal_ramp_frames > kMaxStealRampFrames)
+  if (cfg.floor_count > kMaxEngines || cfg.steal_ramp_frames == 0 || cfg.steal_ramp_frames > kMaxStealRampFrames ||
+      cfg.fx_instance_count > LiveSetConfig::kMaxFxInstances)
     return ReserveStatus::kInvalidConfig;
+  // Step 1 of the reservation: the FX budget = the flat amount plus the declared cost of every configured effect instance.
+  std::uint64_t fx_total = cfg.fx_cost;
+  for (std::uint32_t i = 0; i < cfg.fx_instance_count; ++i) {
+    if (cfg.fx_instance_costs[i] > kMax64 - fx_total) return ReserveStatus::kFxExceedsBudget;
+    fx_total += cfg.fx_instance_costs[i];
+  }
   for (std::size_t i = 0; i < count_; ++i)  // an engine must not have changed since bind()
     if (engines_[i]->voice_capacity() != capacity_[i] || engines_[i]->cost_units_per_voice() != cost_[i])
       return ReserveStatus::kInvalidConfig;
@@ -83,15 +90,15 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
 
   // Reservation order: FX, organ+rotary, floors.
   std::uint64_t rem = cfg.budget;
-  if (cfg.fx_cost > rem) return ReserveStatus::kFxExceedsBudget;
-  rem -= cfg.fx_cost;
+  if (fx_total > rem) return ReserveStatus::kFxExceedsBudget;
+  rem -= fx_total;
   if (cfg.organ_rotary_cost > rem) return ReserveStatus::kOrganExceedsBudget;
   rem -= cfg.organ_rotary_cost;
   if (floors > rem) return ReserveStatus::kFloorsExceedBudget;
 
   // Commit (nothing above has modified state).
   res_.budget = cfg.budget;
-  res_.fx = cfg.fx_cost;
+  res_.fx = fx_total;
   res_.organ_rotary = cfg.organ_rotary_cost;
   res_.floors = floors;
   res_.voice_budget = rem;

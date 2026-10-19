@@ -57,6 +57,16 @@ class ControlPlane {
   std::uint64_t freed_generations() const noexcept { return freed_.load(std::memory_order_acquire); }
   std::uint64_t commands_rejected() const noexcept { return rejected_.load(std::memory_order_relaxed); }
 
+  // FX budget (Story 2.7, AR18): the most the insert effects, sends and master may cost, in arbiter cost units. It is the amount
+  // reserved for FX FIRST by VoiceArbiter::reserve() (LiveSetConfig::fx_cost), so voices can never eat into it; a command that RAISES the
+  // cost above it (the resulting snapshot costs more than the budget and more than the current one) is refused with ERROR_CODE_FX_BUDGET_EXCEEDED and changes nothing (nothing published,
+  // the effect instances built for it are freed on the spot). Set it before load_initial(); the default (core::kMaxFxCost) is
+  // the cost of every slot of every part holding the heaviest insert, i.e. nothing is ever refused.
+  void set_fx_budget(std::uint64_t units) noexcept { fx_budget_.store(units, std::memory_order_release); }
+  std::uint64_t fx_budget() const noexcept { return fx_budget_.load(std::memory_order_acquire); }
+  // Declared cost of the effect instances of the current generation (fixed topology included); 0 before load_initial().
+  std::uint64_t fx_cost() const noexcept { return fx_cost_.load(std::memory_order_acquire); }
+
   static constexpr std::uint32_t kProtocolVersion = 1;
 
  private:
@@ -72,6 +82,7 @@ class ControlPlane {
   std::atomic<std::uint64_t> revision_{0};
   std::atomic<std::size_t> live_count_{0};
   std::atomic<std::uint64_t> freed_{0}, rejected_{0};
+  std::atomic<std::uint64_t> fx_budget_{core::kMaxFxCost}, fx_cost_{0};
 };
 
 }  // namespace velora::host

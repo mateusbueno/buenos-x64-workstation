@@ -5,3 +5,5 @@ Role: port interfaces through which `engine/core` reaches the outside world; imp
 Dependency rule: header-only interfaces that may depend only on the C++ standard library (and other ports).
 
 Sample-source port (Story 1.15, `velora/ports/sample_source.hpp`): an instrument's region table (`SampleRegionDesc`) and fully RAM-resident float PCM, planar per channel (`SamplePcm`), as plain structs and spans. `SampleEngine` in `engine/core` consumes it; `engine/host` (`sample_bundle_loader`) fills it from a formatlib bundle. The source owns the memory and must outlive the engine's use of it.
+
+Line-in port (Story 2.7, `velora/ports/line_in_source.hpp`): `LineInSource::read_block(left, right, frames)` fills the next 64-frame stereo block of an external input; the engine mixes it into the master only, at the `line_in_level` parameter. `SilentLineIn` is the default (dev board and Linux until Epic 3). Real-time safe: adapters that capture on another thread hand over through their own lock-free buffer and return silence for what they do not have.

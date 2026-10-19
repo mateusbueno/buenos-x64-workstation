@@ -1,0 +1,177 @@
+#pragma once
+// Effect framework (Story 2.7): the effect-instance interface, the factory, the insert chain and the fixed costs of the
+// routing topology. The DSP of each effect type lands in Stories 2.8-2.11; until then every type is a PassThroughEffect
+// behind the final interface (see engine/core/README.md, "Routing topology").
+//
+// Threading: effects are created, prepared and destroyed ONLY by the control thread (make_effect(), FxChain construction and
+// destruction, i.e. snapshot generations being built and freed). The RT thread only calls process() on instances that a
+// published snapshot generation holds, and the AD-23 lifetime rules guarantee the control thread frees a generation only
+// after RT stopped using it (including the chain cross-fade of the Mixer).
+#include <array>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <utility>
+
+#include "velora/core/params_gen.hpp"
+#include "velora/core/rt.hpp"
+
+namespace velora::core {
+
+constexpr std::uint32_t kFxBlockFrames = 64;  // = kBlockFrames (checked in block_renderer.cpp)
+
+// A stereo block processed in place. `frames` <= kFxBlockFrames.
+struct StereoBlock {
+  float* left = nullptr;
+  float* right = nullptr;
+  std::uint32_t frames = 0;
+};
+
+// The effect types of an insert slot. The numeric values are the registry enum insert_type (params.json) and are
+// checked against the generated constants below. Only these types exist: effects are compiled in, there is no plugin loading.
+enum class EffectType : std::uint8_t {
+  kNone = 0,
+  kRotary = 1,
+  kChorusPhaser = 2,
+  kEpAmp = 3,
+  kEq = 4,
+  kCompressor = 5,
+};
+static_assert(static_cast<std::uint8_t>(EffectType::kNone) == params::kInsertTypeNone &&
+              static_cast<std::uint8_t>(EffectType::kRotary) == params::kInsertTypeRotary &&
+              static_cast<std::uint8_t>(EffectType::kChorusPhaser) == params::kInsertTypeChorusPhaser &&
+              static_cast<std::uint8_t>(EffectType::kEpAmp) == params::kInsertTypeEpAmp &&
+              static_cast<std::uint8_t>(EffectType::kEq) == params::kInsertTypeEq &&
+              static_cast<std::uint8_t>(EffectType::kCompressor) == params::kInsertTypeCompressor &&
+              params::kInsertTypeCount == 6);
+
+// Declared cost of one instance in arbiter cost units (placeholders until measured on the dev board in Story 2.12). The FX budget
+// is computed from these. A bypassed instance still reserves its cost: bypass is a worst-case-preserving toggle.
+constexpr std::uint32_t effect_cost_units(EffectType t) noexcept {
+  switch (t) {
+    case EffectType::kRotary: return 24;  // = RotarySpeaker::kCostUnits
+    case EffectType::kChorusPhaser: return 12;
+    case EffectType::kEpAmp: return 8;
+    case EffectType::kEq: return 6;
+    case EffectType::kCompressor: return 8;
+    case EffectType::kNone: break;
+  }
+  return 0;
+}
+constexpr std::uint32_t kMaxInsertCost = 24;  // the largest effect_cost_units()
+
+// The fixed part of the topology: per output bus (Main, Aux) a Reverb send, a Delay send (their returns go to the bus of the sending
+// part, so the real DSP of Stories 2.10/2.11 needs one instance per bus: costed twice from the start) and a master EQ and compressor.
+constexpr std::uint32_t kReverbSendCost = 40;
+constexpr std::uint32_t kDelaySendCost = 16;
+constexpr std::uint32_t kMasterEqCost = 6;    // per bus
+constexpr std::uint32_t kMasterCompCost = 8;  // per bus
+constexpr std::uint32_t kOutputBusCount = 2;
+constexpr std::uint32_t kFixedFxCost =
+    kOutputBusCount * (kReverbSendCost + kDelaySendCost + kMasterEqCost + kMasterCompCost);
+// Every slot of every part filled with the heaviest insert, plus the fixed topology: a budget at which no command is ever refused.
+constexpr std::uint64_t kMaxFxCost =
+    static_cast<std::uint64_t>(params::kPartCount) * params::kInsertSlotCount * kMaxInsertCost + kFixedFxCost;
+
+// One effect instance. process() runs on the RT thread and must not allocate, lock or block.
+class Effect {
+ public:
+  Effect() noexcept { live_.fetch_add(1, std::memory_order_relaxed); }
+  virtual ~Effect() { live_.fetch_sub(1, std::memory_order_relaxed); }
+  Effect(const Effect&) = delete;
+  Effect& operator=(const Effect&) = delete;
+
+  virtual EffectType type() const noexcept = 0;
+  virtual std::uint32_t cost_units() const noexcept = 0;
+  // Control thread, before the instance is handed over: allocate whatever the DSP needs for this rate / block size.
+  virtual void prepare(std::uint32_t sample_rate, std::uint32_t max_block_frames) noexcept {
+    (void)sample_rate;
+    (void)max_block_frames;
+  }
+  virtual void reset() noexcept {}
+  // The four normalised insert parameters (registry insert_param_1..4). Control thread, before the hand-over.
+  virtual void set_params(const std::array<float, params::kInsertParamCount>& p) noexcept { (void)p; }
+  virtual void process(StereoBlock& block) noexcept VELORA_NONBLOCKING = 0;
+
+  // Effect instances alive in the process (tests: generation lifetime).
+  static std::int64_t live_instances() noexcept { return live_.load(std::memory_order_relaxed); }
+
+ private:
+  static inline std::atomic<std::int64_t> live_{0};
+};
+
+// The placeholder every effect type is until its DSP lands: leaves the block untouched.
+class PassThroughEffect final : public Effect {
+ public:
+  PassThroughEffect(EffectType t, std::uint32_t cost) noexcept : type_(t), cost_(cost) {}
+  EffectType type() const noexcept override { return type_; }
+  std::uint32_t cost_units() const noexcept override { return cost_; }
+  void set_params(const std::array<float, params::kInsertParamCount>& p) noexcept override { params_ = p; }
+  void process(StereoBlock&) noexcept VELORA_NONBLOCKING override {}
+  const std::array<float, params::kInsertParamCount>& params() const noexcept { return params_; }
+
+ private:
+  EffectType type_;
+  std::uint32_t cost_;
+  std::array<float, params::kInsertParamCount> params_{0.5f, 0.5f, 0.5f, 0.5f};
+};
+
+// Factory: control thread only (it allocates). nullptr for kNone and for a value outside the enum. The instance is prepared.
+// Rotary: a pass-through here. The organ's built-in rotary stage (Story 2.6) stays as it is; the rotary as an insert
+// (a RotarySpeaker per insert slot) is Story 2.9.
+std::unique_ptr<Effect> make_effect(EffectType type);
+
+// An insert chain: up to params::kInsertSlotCount effects in order, each with a bypass flag. The topology (which effect in
+// which slot, bypass) is fixed at construction; a command that changes it builds a NEW chain (new instances, pre-allocated by the
+// control thread) and the Mixer cross-fades from the old to the new one. The instances' internal DSP state is mutated by RT.
+class FxChain {
+ public:
+  static constexpr std::uint32_t kMaxSlots = params::kInsertSlotCount;
+
+  struct Slot {
+    std::unique_ptr<Effect> effect;  // nullptr: empty slot (type none)
+    bool bypass = false;
+  };
+
+  FxChain() = default;
+  FxChain(const FxChain&) = delete;
+  FxChain& operator=(const FxChain&) = delete;
+
+  // Control thread, while building. False when the slot index is out of range.
+  bool set_slot(std::uint32_t index, std::unique_ptr<Effect> effect, bool bypass) {
+    if (index >= kMaxSlots) return false;
+    slots_[index].effect = std::move(effect);
+    slots_[index].bypass = bypass;
+    if (index >= count_) count_ = index + 1;
+    return true;
+  }
+
+  std::uint32_t slot_count() const noexcept { return count_; }
+  const Slot& slot(std::uint32_t i) const noexcept { return slots_[i]; }
+  // Declared cost of every instance in the chain, bypassed ones included.
+  std::uint32_t cost_units() const noexcept {
+    std::uint32_t c = 0;
+    for (std::uint32_t i = 0; i < count_; ++i)
+      if (slots_[i].effect) c += slots_[i].effect->cost_units();
+    return c;
+  }
+  // True when no slot would process (no effect, or every effect bypassed): the chain leaves a block untouched.
+  bool is_empty() const noexcept {
+    for (std::uint32_t i = 0; i < count_; ++i)
+      if (slots_[i].effect && !slots_[i].bypass) return false;
+    return true;
+  }
+
+  // RT: the non-bypassed effects, in order, in place.
+  void process(StereoBlock& block) noexcept VELORA_NONBLOCKING {
+    for (std::uint32_t i = 0; i < count_; ++i)
+      if (slots_[i].effect && !slots_[i].bypass) slots_[i].effect->process(block);
+  }
+
+ private:
+  std::array<Slot, kMaxSlots> slots_{};
+  std::uint32_t count_ = 0;
+};
+
+}  // namespace velora::core

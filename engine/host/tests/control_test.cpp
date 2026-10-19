@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "velora/core/block_renderer.hpp"
+#include "velora/core/fx.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
 #include "velora/host/dev_config.hpp"
@@ -568,6 +569,274 @@ static void test_held_note_across_swap() {
   CHECK(L.rig.plane.live_generations() == 1 && L.rig.plane.freed_generations() == 4);
 }
 
+// --- Story 2.7: effect instances travel with the generation, the FX budget refuses, lifetimes ------------------------------------
+static ws::v1::ClientMessage chain_slots(std::uint32_t part, std::initializer_list<std::pair<ws::v1::InsertType, bool>> slots) {
+  ws::v1::ClientMessage m;
+  m.set_request_id(++g_rid);
+  auto* c = m.mutable_set_insert_chain();
+  c->set_part(part);
+  for (const auto& sl : slots) {
+    auto* s = c->add_slots();
+    s->set_type(sl.first);
+    s->set_bypass(sl.second);
+  }
+  return m;
+}
+
+static void test_fx_chain_and_budget() {
+  Rig rig;
+  CHECK(rig.load("{}"));
+  const std::int64_t base = core::Effect::live_instances();
+  CHECK(rig.plane.fx_cost() == core::kFixedFxCost && rig.plane.fx_budget() == core::kMaxFxCost);
+  bool changed = false;
+  ws::v1::ServerMessage r;
+
+  // A chain command builds its effect instances on the control thread and publishes them with the generation.
+  r = rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_COMPRESSOR, true}, {ws::v1::INSERT_TYPE_NONE, false}}), changed);
+  CHECK(changed && r.has_ack() && r.revision() == 2);
+  const core::Snapshot* s2 = rig.br->snapshots().current();
+  CHECK(s2->parts[1].chain && s2->parts[1].chain->slot_count() == 3);
+  CHECK(s2->parts[1].chain->slot(0).effect->type() == core::EffectType::kEq && !s2->parts[1].chain->slot(0).bypass);
+  CHECK(s2->parts[1].chain->slot(1).effect->type() == core::EffectType::kCompressor && s2->parts[1].chain->slot(1).bypass);
+  CHECK(s2->parts[1].chain->slot(2).effect == nullptr);  // type none: an empty slot
+  CHECK(core::Effect::live_instances() == base + 2);
+  CHECK(rig.plane.fx_cost() == core::kFixedFxCost + core::effect_cost_units(core::EffectType::kEq) + core::effect_cost_units(core::EffectType::kCompressor));
+
+  // Commands that do not touch the chain, or repeat it, keep the very same instances (RT would not cross-fade).
+  const core::FxChain* c1 = s2->parts[1].chain.get();
+  r = rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_COMPRESSOR, true}, {ws::v1::INSERT_TYPE_NONE, false}}), changed);
+  CHECK(changed && rig.br->snapshots().current()->parts[1].chain.get() == c1);
+  ws::v1::ClientMessage out;
+  out.set_request_id(++g_rid);
+  out.mutable_set_part_output()->set_part(1);
+  out.mutable_set_part_output()->set_output(ws::v1::PART_OUTPUT_AUX);
+  r = rig.plane.handle(out, changed);
+  CHECK(changed && r.has_ack() && rig.br->snapshots().current()->parts[1].chain.get() == c1 &&
+        rig.br->snapshots().current()->parts[1].output == p::kPartOutputAux);
+  // A changed chain gets new instances (a bypass toggle included).
+  r = rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_COMPRESSOR, false}}), changed);
+  CHECK(changed && rig.br->snapshots().current()->parts[1].chain.get() != c1);
+  // Other parts' chains are untouched by it.
+  CHECK(rig.br->snapshots().current()->parts[0].chain == nullptr);
+
+  // The FX budget: exactly the current cost still fits; anything above is refused with the typed error and nothing changes.
+  rig.plane.set_fx_budget(rig.plane.fx_cost());
+  const std::uint64_t rev = rig.plane.revision();
+  const core::Snapshot* before = rig.br->snapshots().current();
+  const std::int64_t live_before = core::Effect::live_instances();
+  ws::v1::State st_before;
+  rig.plane.fill_state(&st_before);
+  r = rig.plane.handle(chain_slots(2, {{ws::v1::INSERT_TYPE_ROTARY, false}}), changed);
+  CHECK(!changed && is_err(r, ws::v1::ERROR_CODE_FX_BUDGET_EXCEEDED) && r.revision() == rev);
+  CHECK(r.error().details().at("fx_budget") == std::to_string(rig.plane.fx_budget()));
+  CHECK(rig.plane.revision() == rev && rig.br->snapshots().current() == before);
+  CHECK(core::Effect::live_instances() == live_before);  // the instances built for the refused command are gone
+  ws::v1::State st_after;
+  rig.plane.fill_state(&st_after);
+  CHECK(st_before.SerializeAsString() == st_after.SerializeAsString());
+  // a replacement of equal or lower cost fits (two EQ instances cost less than EQ + compressor)
+  r = rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_EQ, false}}), changed);
+  CHECK(changed && r.has_ack());
+  // removing effects always fits; then the heavier one does too
+  r = rig.plane.handle(chain_slots(1, {}), changed);
+  CHECK(changed && r.has_ack() && rig.plane.fx_cost() == core::kFixedFxCost);
+  rig.plane.set_fx_budget(core::kFixedFxCost + core::effect_cost_units(core::EffectType::kRotary));
+  r = rig.plane.handle(chain_slots(2, {{ws::v1::INSERT_TYPE_ROTARY, false}}), changed);
+  CHECK(changed && r.has_ack());
+  r = rig.plane.handle(chain_slots(3, {{ws::v1::INSERT_TYPE_CHORUS_PHASER, false}}), changed);
+  CHECK(!changed && is_err(r, ws::v1::ERROR_CODE_FX_BUDGET_EXCEEDED));
+  // refusals are counted like every other rejected command
+  CHECK(rig.plane.commands_rejected() >= 2);
+
+  // The budget also applies to the initial configuration: the engine refuses to start on a dev file that does not fit.
+  Rig r2;
+  r2.plane.set_fx_budget(core::kFixedFxCost + 1);
+  ws::v1::State st;
+  std::string err;
+  CHECK_MSG(load_dev_config(VELORA_DEV_CONFIG, st, err), err);
+  CHECK(!r2.plane.load_initial(st, err) && err.find("FX budget") != std::string::npos);
+  CHECK(r2.plane.revision() == 0 && r2.br->snapshots().current() == nullptr);
+}
+
+// The effect instances live exactly as long as the generations that hold them: a held note keeps the old generation (and its
+// instances); the cross-fade keeps the generation RT still processes through.
+static void test_effect_lifetime_across_generations() {
+  Rig rig;
+  CHECK(rig.load("{}"));
+  const std::int64_t base = core::Effect::live_instances();
+  bool changed = false;
+  CHECK(rig.plane.handle(chain_slots(0, {{ws::v1::INSERT_TYPE_EQ, false}}), changed).has_ack());  // generation 2
+  rig.step(2);
+  const std::uint32_t gen2_ledger = rig.br->held_snapshot()->ledger_index;
+  const std::uint32_t on[] = {0x2000'0000u | (0x9u << 20) | (0u << 16) | (60u << 8) | 100u};
+  rig.ingest.on_ump(on, 1, rig.now());
+  rig.step(3);  // the note sounds on generation 2
+  CHECK(rig.br->snapshots().refs(gen2_ledger) == 2);  // the note and the chain entry
+  CHECK(core::Effect::live_instances() == base + 1);
+
+  CHECK(rig.plane.handle(chain_slots(0, {{ws::v1::INSERT_TYPE_COMPRESSOR, false}}), changed).has_ack());  // generation 3
+  rig.step(1);
+  rig.plane.reclaim();
+  CHECK(core::Effect::live_instances() == base + 2);  // the cross-fade is running: the old chain is still in use
+  rig.step(8);
+  rig.plane.reclaim();
+  CHECK(core::Effect::live_instances() == base + 2);  // fade over, but the held note still references generation 2
+  CHECK(rig.br->snapshots().refs(gen2_ledger) == 1);
+
+  CHECK(rig.plane.handle(chain_slots(0, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_EQ, false}}), changed).has_ack());  // generation 4
+  rig.step(10);
+  rig.plane.reclaim();
+  CHECK(core::Effect::live_instances() == base + 3);  // generation 2 (held note) + generation 4's two; generation 3 is gone
+  const std::uint32_t off[] = {0x2000'0000u | (0x8u << 20) | (0u << 16) | (60u << 8)};
+  rig.ingest.on_ump(off, 1, rig.now());
+  rig.step(12);
+  rig.plane.reclaim();
+  CHECK(core::Effect::live_instances() == base + 2);  // generation 2 freed with its instance, generation 3's chain was skipped/freed
+  CHECK(rig.plane.live_generations() == 1);
+}
+
+// --- Story 2.7 follow-ups: params compare, budget lowering, master level and line-in through the control plane, bus driver ------
+static ws::v1::ClientMessage chain_one(std::uint32_t part, ws::v1::InsertType t, float p1) {
+  ws::v1::ClientMessage m;
+  m.set_request_id(++g_rid);
+  auto* c = m.mutable_set_insert_chain();
+  c->set_part(part);
+  auto* sl = c->add_slots();
+  sl->set_type(t);
+  sl->add_params(p1);
+  return m;
+}
+
+static void test_chain_identity_and_budget_lowering() {
+  Rig rig;
+  CHECK(rig.load("{}"));
+  bool changed = false;
+  CHECK(rig.plane.handle(chain_one(0, ws::v1::INSERT_TYPE_EQ, 0.25f), changed).has_ack());
+  const core::FxChain* c1 = rig.br->snapshots().current()->parts[0].chain.get();
+  CHECK(rig.plane.handle(chain_one(0, ws::v1::INSERT_TYPE_EQ, 0.25f), changed).has_ack() &&
+        rig.br->snapshots().current()->parts[0].chain.get() == c1);  // identical: same instances
+  CHECK(rig.plane.handle(chain_one(0, ws::v1::INSERT_TYPE_EQ, 0.75f), changed).has_ack());  // only a parameter value differs
+  const core::FxChain* c2 = rig.br->snapshots().current()->parts[0].chain.get();
+  CHECK(c2 != c1 && c2 != nullptr);
+
+  // Lowering the budget below the current cost never blocks a command that does not raise the cost.
+  CHECK(rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_COMPRESSOR, false}}), changed).has_ack());
+  const std::uint64_t cost = rig.plane.fx_cost();
+  rig.plane.set_fx_budget(core::kFixedFxCost);  // far below the current cost
+  ws::v1::ServerMessage r = rig.plane.handle(chain_slots(2, {{ws::v1::INSERT_TYPE_EQ, false}}), changed);
+  CHECK(!changed && is_err(r, ws::v1::ERROR_CODE_FX_BUDGET_EXCEEDED));  // raising it is refused
+  r = rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_EQ, false}}), changed);  // removes the compressor
+  CHECK(changed && r.has_ack() && rig.plane.fx_cost() < cost);
+  ws::v1::ClientMessage out;
+  out.set_request_id(++g_rid);
+  out.mutable_set_part_output()->set_part(4);
+  out.mutable_set_part_output()->set_output(ws::v1::PART_OUTPUT_AUX);
+  CHECK(rig.plane.handle(out, changed).has_ack() && changed);  // other commands go through
+  r = rig.plane.handle(chain_slots(1, {}), changed);
+  CHECK(changed && r.has_ack());
+  r = rig.plane.handle(chain_slots(0, {}), changed);
+  CHECK(changed && r.has_ack() && rig.plane.fx_cost() == core::kFixedFxCost);
+}
+
+static float window_peak(Rig& rig, int blocks) {
+  float pk = 0;
+  for (int b = 0; b < blocks; ++b) {
+    rig.step();
+    for (int i = 0; i < 64; ++i) pk = std::max(pk, std::max(std::fabs(rig.l[i]), std::fabs(rig.r[i])));
+  }
+  return pk;
+}
+
+class ConstLineIn final : public ports::LineInSource {
+ public:
+  void read_block(float* l, float* r, std::uint32_t frames) noexcept override {
+    for (std::uint32_t i = 0; i < frames; ++i) l[i] = r[i] = 0.2f;
+  }
+};
+
+static void test_master_level_and_line_in_through_control() {
+  Rig rig;
+  CHECK(rig.load("{}"));
+  const std::uint32_t on[] = {0x2000'0000u | (0x9u << 20) | (0u << 16) | (60u << 8) | 100u};
+  rig.ingest.on_ump(on, 1, rig.now());
+  rig.step(40);
+  const float before = window_peak(rig, 12);
+  CHECK(before > 0.01f);
+  ws::v1::ClientMessage m;
+  m.set_request_id(++g_rid);
+  auto* v = m.mutable_set_master_params()->add_values();
+  v->set_param_id(ws::v1::PARAM_MASTER_LEVEL);
+  v->set_value(-6.0206f);
+  bool changed = false;
+  CHECK(rig.plane.handle(m, changed).has_ack() && changed);
+  rig.step(6);
+  const float after = window_peak(rig, 12);
+  CHECK(std::fabs(after / before - 0.5f) < 0.03f);
+
+  // line_in_level is a performance parameter with master scope: a UMP event reaches the mixer (the part field is ignored)
+  ConstLineIn src;
+  Rig r2;
+  CHECK(r2.load("{}"));
+  r2.br->set_line_in(&src);
+  r2.step(4);
+  CHECK(window_peak(r2, 4) == 0.0f);  // default level 0
+  ws::v1::ClientMessage lm;
+  lm.set_request_id(++g_rid);
+  auto* pm = lm.mutable_set_performance_param();
+  pm->set_param_id(ws::v1::PARAM_LINE_IN_LEVEL);
+  pm->set_value(0.5f);
+  CHECK(r2.plane.handle(lm, changed).has_ack() && !changed);
+  r2.step(6);
+  CHECK(std::fabs(r2.live(p::kLineInLevel, 0) - 0.5f) < 1e-6f);
+  const float lp = window_peak(r2, 4);
+  CHECK(std::fabs(lp - 0.1f) < 0.002f);
+}
+
+static void test_render_block_buses_equivalence() {
+  Rig a, b;
+  CHECK(a.load("{}") && b.load("{}"));
+  bool changed = false;
+  for (Rig* r : {&a, &b}) {
+    ws::v1::ClientMessage out;
+    out.set_request_id(++g_rid);
+    out.mutable_set_part_output()->set_part(0);
+    out.mutable_set_part_output()->set_output(ws::v1::PART_OUTPUT_AUX);
+    CHECK(r->plane.handle(out, changed).has_ack());
+    ws::v1::ClientMessage sm;
+    sm.set_request_id(++g_rid);
+    sm.mutable_set_send_levels()->set_part(0);
+    sm.mutable_set_send_levels()->set_reverb(0.5f);
+    CHECK(r->plane.handle(sm, changed).has_ack());
+  }
+  const std::uint32_t on[] = {0x2000'0000u | (0x9u << 20) | (0u << 16) | (60u << 8) | 100u};
+  for (Rig* r : {&a, &b}) r->ingest.on_ump(on, 1, r->now());
+  ws::v1::ClientMessage pm;  // a control-lane event as well
+  pm.set_request_id(++g_rid);
+  auto* sp = pm.mutable_set_performance_param();
+  sp->set_param_id(ws::v1::PARAM_SEND_DELAY_LEVEL);
+  sp->set_part(0);
+  sp->set_value(0.25f);
+  for (Rig* r : {&a, &b}) CHECK(r->plane.handle(pm, changed).has_ack());
+  float al[64], ar[64];
+  float worst = 0, peak_aux = 0;
+  for (int i = 0; i < 40; ++i) {
+    const std::uint64_t t = a.clock_ns.fetch_add(1'333'333) + 1'333'333;
+    b.clock_ns.store(a.now());
+    a.drv.render_block(a.l, a.r, t);
+    core::OutputBuses ob{b.l, b.r, al, ar};
+    b.drv.render_block_buses(ob, t);
+    for (int k = 0; k < 64; ++k) {
+      worst = std::max(worst, std::fabs(a.l[k] - (b.l[k] + al[k])));  // render_block folds Aux into Main
+      worst = std::max(worst, std::fabs(a.r[k] - (b.r[k] + ar[k])));
+      peak_aux = std::max(peak_aux, std::fabs(al[k]));
+    }
+  }
+  CHECK(worst < 1e-7f && peak_aux > 0.01f);
+  CHECK(a.drv.counters().blocks.load() == b.drv.counters().blocks.load() && a.drv.counters().blocks.load() == 40);
+  CHECK(a.drv.counters().events.load() == b.drv.counters().events.load() && a.drv.counters().events.load() >= 2);
+  CHECK(a.br->aux_folded_blocks() > 0 && b.br->aux_folded_blocks() == 0);
+}
+
 static void test_concurrent_clients() {
   Live L("conc");
   constexpr int kClients = 8, kPerClient = 25;
@@ -870,6 +1139,11 @@ int main() {
   test_invalid_commands();
   test_performance_path();
   test_held_note_across_swap();
+  test_fx_chain_and_budget();
+  test_effect_lifetime_across_generations();
+  test_chain_identity_and_budget_lowering();
+  test_master_level_and_line_in_through_control();
+  test_render_block_buses_equivalence();
   test_concurrent_clients();
   test_generation_exhaustion();
   test_socket_lifecycle();

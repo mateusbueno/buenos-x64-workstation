@@ -79,6 +79,7 @@ void BlockRenderer::adopt_generation() noexcept {
   }
   applied_valid_ = true;
   held_ = next;
+  mixer_.adopt(*next);  // part outputs, master level and the insert chains (the generation is held: safe to read)
 }
 
 void BlockRenderer::forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept {
@@ -217,29 +218,67 @@ void BlockRenderer::apply_contact(const Ump& ump) noexcept {
   }
 }
 
-void BlockRenderer::render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to) noexcept {
+void BlockRenderer::render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to, bool routed) noexcept {
   if (to <= from) return;
-  for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->render(l + from, r + from, to - from);
+  if (!routed) {
+    for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->render(l + from, r + from, to - from);
+    return;
+  }
+  float* ls[Engine::kSplitChannels];
+  float* rs[Engine::kSplitChannels];
+  mixer_.part_sinks(from, ls, rs);  // each engine adds its parts into the part buses
+  for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->render_split(ls, rs, to - from);
 }
 
 void BlockRenderer::process_block(float* left, float* right) noexcept {
   if (!left || !right) return;
+  OutputBuses out;
+  out.main_left = left;
+  out.main_right = right;
+  out.aux_left = &fold_[0];
+  out.aux_right = &fold_[kBlockFrames];
+  process_block(out);
+  if (!mixer_.routed()) return;  // trivial routing: Aux is silent
+  bool any = false;
+  for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
+    any = any || fold_[i] != 0.0f || fold_[kBlockFrames + i] != 0.0f;
+    left[i] += fold_[i];
+    right[i] += fold_[kBlockFrames + i];
+  }
+  if (any) aux_folded_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void BlockRenderer::process_block(const OutputBuses& out) noexcept {
+  float* const left = out.main_left;
+  float* const right = out.main_right;
+  if (!left || !right) return;
+  const bool has_aux = out.aux_left && out.aux_right;
+  if ((out.aux_left != nullptr) != (out.aux_right != nullptr)) {  // half an Aux bus: refuse the block
+    for (std::uint32_t i = 0; i < kBlockFrames; ++i) left[i] = right[i] = 0.0f;
+    rejected_outputs_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
   for (std::uint32_t i = 0; i < kBlockFrames; ++i) left[i] = right[i] = 0.0f;
+  if (has_aux)
+    for (std::uint32_t i = 0; i < kBlockFrames; ++i) out.aux_left[i] = out.aux_right[i] = 0.0f;
   adopt_generation();
   drain_queue();
   // Phase 2: shared per-part generators (the organ's tonewheels) produce their block before voices render.
   for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->begin_block(kBlockFrames);
+  // Phase 5 setup: trivial routing renders straight into Main (the pre-2.7 path, bit-identical); otherwise into the part buses.
+  const bool routed = mixer_.begin_block(last_);
 
   std::uint32_t pos = 0;
   std::size_t consumed = 0;
   while (consumed < pending_count_ && pending_[consumed].target_frame < kBlockFrames) {
     const std::uint32_t f = pending_[consumed].target_frame;
-    render_segment(left, right, pos, f);
+    render_segment(left, right, pos, f, routed);
     pos = f;
     apply(pending_[consumed].ump);
     ++consumed;
   }
-  render_segment(left, right, pos, kBlockFrames);
+  render_segment(left, right, pos, kBlockFrames, routed);
+  if (routed) mixer_.finish(out);  // chains, sends, Main/Aux, line-in, master
 
   // Drop applied events, carry the rest into the next block.
   const std::size_t remaining = pending_count_ - consumed;

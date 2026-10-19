@@ -14,7 +14,9 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
+#include "velora/core/fx.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/rt.hpp"
 
@@ -31,6 +33,11 @@ struct PartCfg {
   std::uint8_t output = 0;       // registry enum part_output (main/aux)
   std::uint8_t insert_count = 0;
   std::array<InsertSlotCfg, params::kInsertSlotCount> inserts{};
+  // The part's effect instances (Story 2.7), pre-allocated by the control thread (build_chain()) and shared by the generations
+  // that carry the same chain: the pointer is the chain's identity, so a generation that does not touch this part's inserts
+  // keeps the very same chain and RT does not cross-fade. nullptr = no inserts. RT reads the raw pointer only (it never copies or
+  // releases the shared_ptr); the instances die with the last generation that holds them, on the control thread.
+  std::shared_ptr<FxChain> chain;
 };
 
 struct Snapshot {
@@ -47,6 +54,15 @@ struct Snapshot {
   // Every field at its registry default.
   static Snapshot defaults() noexcept;
 };
+
+// Control thread: builds the part's effect chain from its inserts[0..insert_count) (new, prepared instances, one per non-none
+// slot; nullptr when the part has no slot at all).
+std::shared_ptr<FxChain> build_chain(const PartCfg& part);
+// Control thread: build_chain() for every part (setup code and tests that fill a Snapshot by hand).
+void build_chains(Snapshot& s);
+// Declared cost of every effect instance the snapshot holds plus the fixed topology (sends, master), in arbiter cost units.
+// Computed from the chain instances; a part with inserts configured but no chain built counts the cost of its configured types.
+std::uint64_t fx_cost_units(const Snapshot& s) noexcept;
 
 // RT-owned live values of the performance parameters. RT is the single writer (it applies the
 // parameter UMPs); any thread may read without locks (one 32-bit atomic per slot).

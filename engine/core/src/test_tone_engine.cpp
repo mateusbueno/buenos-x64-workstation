@@ -55,11 +55,23 @@ void TestToneEngine::set_param(std::uint32_t param_id, float value) noexcept {
 }
 
 void TestToneEngine::render(float* left, float* right, std::uint32_t frames) noexcept {
+  float* l[kSplitChannels];
+  float* r[kSplitChannels];
+  for (std::uint32_t c = 0; c < kSplitChannels; ++c) {
+    l[c] = left;
+    r[c] = right;
+  }
+  render_split(l, r, frames);
+}
+
+void TestToneEngine::render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept {
   constexpr float kAttackStep = 1.0f / static_cast<float>(kAttackFrames);
   constexpr float kReleaseStep = 1.0f / static_cast<float>(kReleaseFrames);
   for (std::uint32_t i = 0; i < capacity_; ++i) {
     Voice& v = voices_[i];
     if (!v.active) continue;
+    float* const lc = left[v.channel & (kSplitChannels - 1)];
+    float* const rc = right[v.channel & (kSplitChannels - 1)];
     for (std::uint32_t f = 0; f < frames; ++f) {
       float fade = 1.0f;
       if (v.stolen) {  // steal ramp: gain fade_left/fade_total, strictly falling, 0 ends the voice
@@ -81,8 +93,8 @@ void TestToneEngine::render(float* left, float* right, std::uint32_t frames) noe
         if (v.env > 1.0f) v.env = 1.0f;
       }
       const float s = std::sin(6.28318530717958647692f * v.phase) * v.env * v.amp * gain_ * fade;
-      left[f] += s;
-      right[f] += s;
+      lc[f] += s;
+      rc[f] += s;
       v.phase += v.inc;
       if (v.phase >= 1.0f) v.phase -= 1.0f;
     }

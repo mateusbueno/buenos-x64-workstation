@@ -8,7 +8,7 @@ Role: the single owner of parameter ids and of the `ws.v1` wire schema (Story 2.
   a `scope` (`part` = one value per part (8), `master`, `insert` = per insert slot), `min`/`max`/`default`, a `unit` and an optional
   MIDI `cc` (performance + part scope only). Enum parameters name an entry of `enums`; their range is `0..count-1` and the default
   is a value name. Declared here only what Epic 2 needs: tonewheel organ (drawbars 1-9, percussion, vibrato/chorus, key click,
-  leakage), rotary speed, inserts (type, bypass, 4 params), send levels, master EQ/compressor, per-part output, timbre reference.
+  leakage), rotary speed, inserts (type, bypass, 4 params), send levels, master EQ/compressor, master level, line-in level, per-part output, timbre reference.
 - **Ids are never reused.** To retire a parameter delete it from `params` and add its id to `reserved`; the generator fails if a
   parameter ever takes a reserved id.
 - `gen_params.py` -- deterministic generator (same input, same bytes). Emits `--core` (C++ header for `engine/core`, numeric tables,
@@ -34,6 +34,8 @@ Performance UMP mapping (`engine/core/include/velora/core/param_events.hpp`): MI
 status 0x3), group 0, channel = part, bank = `id >> 7`, index = `id & 0x7F`, 32-bit value normalised over the parameter range.
 MIDI CC numbers map through `cc` (drawbars 1-9 = CC 70-78, rotary speed 79 (stop/slow/fast: the 7-bit range splits as 0-31 stop, 32-95 slow, 96-127 fast), rotary on/off 89, percussion 80, vibrato/chorus 81, key click 82, leakage 83, percussion harmonic/decay/volume 84/85/86 (value < 64 = first enum entry), vibrato/chorus type 87 (the 32-bit range is split evenly over v1..c3: index = round(value/127 * 5) for a 7-bit CC),
 reverb send 91, delay send 94); the CC's channel is the part (0..7).
+`line_in_level` (id 800) is the one performance parameter with master scope: its UMP uses channel 0 and it has no CC. `master_level` (id 520, dB) is structural.
+`ERROR_CODE_FX_BUDGET_EXCEEDED` (15, Story 2.7): a structural command whose insert chains, sends and master would cost more than the FX budget reserved by the arbiter.
 
 ## Key contact events (`contact_k`, Story 2.5)
 

@@ -28,6 +28,7 @@ class TestToneEngine final : public Engine {
   EngineStatus stop_voice(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING override;
   void set_param(std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
   void render(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
+  void render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
   bool voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept VELORA_NONBLOCKING override;
   bool begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept VELORA_NONBLOCKING override;
 

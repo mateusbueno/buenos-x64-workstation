@@ -9,6 +9,13 @@ void RenderDriver::render_block(float* left, float* right, std::uint64_t block_s
   counters_.blocks.fetch_add(1, std::memory_order_relaxed);
 }
 
+void RenderDriver::render_block_buses(const core::OutputBuses& out, std::uint64_t block_start_ns) noexcept {
+  drain(midi_, block_start_ns);
+  drain(control_, block_start_ns);
+  renderer_.process_block(out);
+  counters_.blocks.fetch_add(1, std::memory_order_relaxed);
+}
+
 void RenderDriver::drain(Lane& lane, std::uint64_t block_start_ns) noexcept {
   if (!lane.queue) return;
   // A beyond-horizon event is held (with everything behind it) until it is within the horizon, so

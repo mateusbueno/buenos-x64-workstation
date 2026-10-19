@@ -430,6 +430,12 @@ void SampleEngine::render(float* left, float* right, std::uint32_t frames) noexc
   clock_ += frames;
 }
 
+void SampleEngine::render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept {
+  for (auto& v : voices_)
+    if (v.active) render_voice(v, left[v.channel & (kSplitChannels - 1)], right[v.channel & (kSplitChannels - 1)], frames);
+  clock_ += frames;
+}
+
 void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32_t frames) noexcept {
   const RegionRt& r = regions_[v.region];
   const bool linear = cfg_.interpolation == SampleInterpolation::kLinear;

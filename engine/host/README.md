@@ -72,6 +72,14 @@ panel, Velora Studio) talk to it with `ws.v1` (`proto/ws_v1.proto`) over a Unix 
   After the handshake an unparsable frame or an invalid command gets an error reply and the connection survives. `Subscribe(true)`
   immediately pushes the current `State`. The socket is created 0600 (umask 0177), a path that is not a socket is never touched,
   and a stale socket is replaced only when connecting to it is refused. A reply above 64 KiB becomes an `INTERNAL` error. A client that falls 4 MiB behind is dropped. A stale socket file is replaced, a live listener is never stolen.
+- **Effect instances and the FX budget (Story 2.7).** A `SetInsertChain` (or a dev-config part) makes the control thread build the part's `core::FxChain` (new, prepared effect instances
+  from `core::make_effect()`; no plugin loading) and publish it with the generation; a command that does not change the chain (same types, bypass flags and params, or any other command) keeps the
+  same instances, so RT only cross-fades when the chain really changed. `set_fx_budget(units)` (default `core::kMaxFxCost`) bounds `core::fx_cost_units()` of the resulting snapshot (insert effects,
+  sends, master): a command that raises the cost above it returns `ERROR_CODE_FX_BUDGET_EXCEEDED` (details `fx_cost`, `fx_budget`), nothing is published and the instances built for it are freed on the spot; the same
+  check refuses a dev configuration that does not fit. `fx_cost()` is the current generation's cost. `engine-host` reserves the arbiter with this budget FIRST
+  (`LiveSetConfig::fx_cost = plane.fx_budget()`), so voices cannot eat into it. It is the flat budget, not `fill_fx_costs()` of the initial snapshot, because the arbiter reservation is static for the run while commands may raise the FX cost up to the budget. The dev configuration now sounds: its sends feed the unity placeholder returns (part 0 reverb 0.25 adds 25% of its own signal
+  to Main) and part 2 is on the Aux bus, which no adapter plays yet; the single-output `render_block` folds Aux into Main, so it is audible in `engine-host`.
+  `RenderDriver::render_block_buses()` gives both buses.
 - `dev_config` + `dev/engine-dev.json` -- the first generation until Live Sets exist (Epic 4): the JSON mapping of the `ws.v1`
   `State` message (parts 0-7: `timbreRef`, `inserts`, `sendReverb`/`sendDelay`, `output`; `master`; `performanceInit`). It is
   validated like a command and published as generation 1 **before audio runs**; an invalid file (unknown field, bad enum, out of range,
@@ -86,6 +94,11 @@ panel, Velora Studio) talk to it with `ws.v1` (`proto/ws_v1.proto`) over a Unix 
   abseil next to formatlib's vendored abseil only in the `engine-host` binary; the two use different inline namespaces.
 
 ## macOS only (`macos/`, built only when `APPLE`)
+
+- `CoreAudioLineIn` (Story 2.7, `ports::LineInSource`): optional capture of the default CoreAudio input device as 48 kHz stereo float into a lock-free ring that the engine drains once per block; mixed into the
+  master (Main) only, at `line_in_level` (default 0). `engine-host --line-in` opens it; without the flag nothing is opened (so macOS asks for microphone permission only on request). With no input device, no permission, or an input device whose rate is not 48 kHz (captured audio is never resampled)
+  `engine-host` prints "line-in: unavailable (reason)" and starts with a silent line-in. A mono device is duplicated onto both channels; callbacks larger than the slice buffer are captured in chunks. Capture and playback run on different clocks: a short jitter buffer pads with silence on underrun and drops the oldest
+  frames when it runs ahead (`underruns()`/`drops()`). Not covered by automated tests (needs an input device); the port and the mixing are (`routing_tests`, `offline_routing_tests`).
 
 - `CoreAudioOutput`: HAL output AudioUnit at 48 kHz stereo float; requests a 64-frame device buffer and reports
   what the device granted. The engine always renders 64-frame blocks; leftover frames carry to the next callback.

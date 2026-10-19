@@ -71,6 +71,15 @@ bool check_enum(std::uint32_t id, int v, std::uint32_t count, const char* what, 
   return fail(f, ws::v1::ERROR_CODE_UNKNOWN_ENUM_VALUE, std::string("unknown ") + what + " value");
 }
 
+bool same_inserts(const core::PartCfg& a, const core::PartCfg& b) {
+  if (a.insert_count != b.insert_count) return false;
+  for (std::uint32_t i = 0; i < a.insert_count; ++i) {
+    const core::InsertSlotCfg &x = a.inserts[i], &y = b.inserts[i];
+    if (x.type != y.type || x.bypass != y.bypass || x.params != y.params) return false;
+  }
+  return true;
+}
+
 bool apply_insert_chain(core::Snapshot& s, std::uint32_t part,
                         const google::protobuf::RepeatedPtrField<ws::v1::InsertSlot>& slots, Fail& f) {
   if (!check_part(part, f)) return false;
@@ -107,6 +116,11 @@ bool apply_insert_chain(core::Snapshot& s, std::uint32_t part,
       }
       dst.params[static_cast<std::size_t>(k)] = in.params(k);
     }
+  }
+  if (pc.chain && same_inserts(pc, next)) {
+    next.chain = pc.chain;  // nothing changed: the generation keeps the very same effect instances (RT does not cross-fade)
+  } else {
+    next.chain = core::build_chain(next);  // pre-allocated here, off the RT thread; they travel with the snapshot
   }
   pc = next;
   return true;
@@ -251,6 +265,15 @@ bool ControlPlane::commit(const core::Snapshot& work, ControlFail& f) {
   constexpr std::uint32_t kAll = core::SnapshotExchange::kLedgerSlots >= 32
                                      ? 0xFFFFFFFFu
                                      : ((1u << core::SnapshotExchange::kLedgerSlots) - 1);
+  const std::uint64_t cost = core::fx_cost_units(work);
+  const std::uint64_t budget = fx_budget();  // read once
+  // Only a command that raises the cost is refused: lowering the budget below the current cost never blocks removing effects
+  // or changing anything else that does not add cost.
+  if (cost > budget && (!current_ || cost > fx_cost_.load(std::memory_order_acquire))) {
+    f.details["fx_cost"] = std::to_string(cost);
+    f.details["fx_budget"] = std::to_string(budget);
+    return fail(f, ws::v1::ERROR_CODE_FX_BUDGET_EXCEEDED, "the effects would cost more than the FX budget");
+  }
   if (ledger_used_ == kAll) reclaim();
   if (ledger_used_ == kAll) {
     f.details["live_generations"] = std::to_string(generations_.size());
@@ -267,6 +290,7 @@ bool ControlPlane::commit(const core::Snapshot& work, ControlFail& f) {
   live_count_.store(generations_.size(), std::memory_order_release);
   exchange_.publish(s);  // the one atomic store RT sees
   current_ = s;
+  fx_cost_.store(cost, std::memory_order_release);
   revision_.store(s->revision, std::memory_order_release);
   reclaim();
   return true;

@@ -9,8 +9,35 @@
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/param_events.hpp"
+#include "velora/core/mixer.hpp"
+#include "velora/core/snapshot.hpp"
+#include "velora/ports/line_in_source.hpp"
 
 namespace velora::offline {
+
+namespace {
+// Reads a WAV (mono or stereo, 48 kHz) block by block; silent after its end.
+class WavLineIn final : public velora::ports::LineInSource {
+ public:
+  explicit WavLineIn(const WavData& w) : w_(w) {}
+  void read_block(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override {
+    for (std::uint32_t i = 0; i < frames; ++i, ++pos_) {
+      if (pos_ >= w_.frames()) {
+        left[i] = right[i] = 0.0f;
+      } else if (w_.channels == 1) {
+        left[i] = right[i] = w_.samples[pos_];
+      } else {
+        left[i] = w_.samples[pos_ * w_.channels];
+        right[i] = w_.samples[pos_ * w_.channels + 1];
+      }
+    }
+  }
+
+ private:
+  const WavData& w_;
+  std::uint64_t pos_ = 0;
+};
+}  // namespace
 
 bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& opt, WavData& out,
                    std::string& error) {
@@ -24,6 +51,12 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     error = "invalid render options";
     return false;
   }
+  if (opt.routing.enabled)  // UMP channels 8..15 would alias parts 0..7 in the routing topology: refuse them
+    for (const NoteEvent& e : events)
+      if (e.channel > 7) {
+        error = "routing options need MIDI channels 0..7 (parts); the input has an event on channel " + std::to_string(e.channel + 1);
+        return false;
+      }
   const std::uint64_t tail = static_cast<std::uint64_t>(std::llround(opt.tail_seconds * kSampleRate));
   // Controllers that map to no parameter are dropped (they neither play nor extend the render).
   // Controllers are an organ-engine feature (its parts are channels 0..7); other renders ignore them entirely.
@@ -53,6 +86,41 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   if (!br->ready()) {
     error = "block renderer failed to initialise";
     return false;
+  }
+  std::unique_ptr<Snapshot> routing_snapshot;
+  std::unique_ptr<WavLineIn> line_in;
+  if (opt.routing.enabled) {
+    const RoutingOptions& ro = opt.routing;
+    if (ro.line_in) {
+      if (ro.line_in->sample_rate != kSampleRate || (ro.line_in->channels != 1 && ro.line_in->channels != 2)) {
+        error = "line-in must be a mono or stereo 48 kHz WAV";
+        return false;
+      }
+      line_in = std::make_unique<WavLineIn>(*ro.line_in);
+      br->set_line_in(line_in.get());
+    }
+    routing_snapshot = std::make_unique<Snapshot>(Snapshot::defaults());
+    routing_snapshot->revision = 1;
+    routing_snapshot->ledger_index = 0;
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+      PartCfg& pc = routing_snapshot->parts[p];
+      pc.output = ro.output[p];
+      if (ro.inserts[p].size() > params::kInsertSlotCount) {
+        error = "too many inserts on a part (at most 5)";
+        return false;
+      }
+      pc.insert_count = static_cast<std::uint8_t>(ro.inserts[p].size());
+      for (std::size_t i = 0; i < ro.inserts[p].size(); ++i) {
+        pc.inserts[i].type = ro.inserts[p][i].type;
+        pc.inserts[i].bypass = ro.inserts[p][i].bypass ? 1 : 0;
+      }
+      routing_snapshot->perf_init[params::perf_slot(*params::find(params::kSendReverbLevel), p)] = ro.send_reverb[p];
+      routing_snapshot->perf_init[params::perf_slot(*params::find(params::kSendDelayLevel), p)] = ro.send_delay[p];
+    }
+    routing_snapshot->perf_init[params::perf_slot(*params::find(params::kLineInLevel), 0)] = ro.line_in_level;
+    routing_snapshot->master[static_cast<std::size_t>(params::find(params::kMasterLevel)->master_index)] = ro.master_level_db;
+    build_chains(*routing_snapshot);
+    br->snapshots().publish(routing_snapshot.get());
   }
   if (opt.detune_cents != 0.0f) br->test_tone().set_param(TestToneEngine::kParamDetuneCents, opt.detune_cents);
 
@@ -131,8 +199,13 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   out.sample_rate = kSampleRate;
   out.channels = 2;
   out.samples.assign(static_cast<std::size_t>(blocks * kBlockFrames * 2), 0.0f);
+  if (opt.aux_out) {
+    opt.aux_out->sample_rate = kSampleRate;
+    opt.aux_out->channels = 2;
+    opt.aux_out->samples.assign(static_cast<std::size_t>(blocks * kBlockFrames * 2), 0.0f);
+  }
 
-  float l[kBlockFrames], r[kBlockFrames];
+  float l[kBlockFrames], r[kBlockFrames], al[kBlockFrames], ar[kBlockFrames];
   std::size_t next = 0;
   for (std::uint64_t b = 0; b < blocks; ++b) {
     const std::uint64_t end = (b + 1) * kBlockFrames;
@@ -162,7 +235,16 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       }
     }
     for (std::uint32_t i = 0; i < kBlockFrames; ++i) { l[i] = 0.0f; r[i] = 0.0f; }
-    br->process_block(l, r);
+    if (opt.aux_out) {
+      OutputBuses ob;
+      ob.main_left = l;
+      ob.main_right = r;
+      ob.aux_left = al;
+      ob.aux_right = ar;
+      br->process_block(ob);
+    } else {
+      br->process_block(l, r);
+    }
     if (br->status_count(EngineStatus::kEventOverflow) != 0) {
       error = "event buffer overflow (too many events in one block, including the organ setup events)";
       return false;
@@ -171,6 +253,13 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
       dst[2 * i] = l[i];
       dst[2 * i + 1] = r[i];
+    }
+    if (opt.aux_out) {
+      float* adst = &opt.aux_out->samples[static_cast<std::size_t>(b * kBlockFrames * 2)];
+      for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
+        adst[2 * i] = al[i];
+        adst[2 * i + 1] = ar[i];
+      }
     }
   }
   if (stats && organ) {

@@ -4,7 +4,7 @@ find_library(AUDIO_TOOLBOX AudioToolbox REQUIRED)
 find_library(CORE_MIDI CoreMIDI REQUIRED)
 find_library(CORE_FOUNDATION CoreFoundation REQUIRED)
 
-add_library(velora_host_macos STATIC coreaudio_output.cpp coremidi_input.cpp)
+add_library(velora_host_macos STATIC coreaudio_output.cpp coreaudio_line_in.cpp coremidi_input.cpp)
 target_include_directories(velora_host_macos PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(velora_host_macos PUBLIC velora_host
   ${CORE_AUDIO} ${AUDIO_TOOLBOX} ${CORE_MIDI} ${CORE_FOUNDATION})

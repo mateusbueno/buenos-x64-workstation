@@ -62,6 +62,7 @@ class FakeEngine final : public Engine {
     return found ? EngineStatus::kOk : EngineStatus::kVoiceNotFound;
   }
   void set_param(std::uint32_t, float) noexcept override {}
+  void render_split(float* const* l, float* const* r, std::uint32_t frames) noexcept override { render(l[0], r[0], frames); }
   void render(float* l, float* r, std::uint32_t frames) noexcept override {
     for (auto& v : v_) {
       if (!v.active) continue;

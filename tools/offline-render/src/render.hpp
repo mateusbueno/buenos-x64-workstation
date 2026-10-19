@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -10,6 +11,22 @@
 #include "wav.hpp"
 
 namespace velora::offline {
+
+// Routing options (Story 2.7) for the null tests of the fixed topology. Nothing set = no snapshot is published and the render is
+// the pre-2.7 one, bit for bit. Parts are the MIDI channels 0..7.
+struct RoutingOptions {
+  struct Insert {
+    std::uint8_t type = 0;  // registry insert_type
+    bool bypass = false;
+  };
+  bool enabled = false;                               // any routing option given
+  std::array<std::uint8_t, 8> output{};               // registry part_output per part: 0 main (default), 1 aux
+  std::array<float, 8> send_reverb{}, send_delay{};   // 0..1 per part
+  std::array<std::vector<Insert>, 8> inserts;         // up to 5 per part
+  float master_level_db = 0.0f;
+  float line_in_level = 0.0f;                         // 0..1
+  const WavData* line_in = nullptr;                   // stereo or mono, 48 kHz (borrowed); read once, silent after its end
+};
 
 enum class EngineKind : std::uint8_t { kTestTone, kSample, kOrgan };
 
@@ -41,6 +58,9 @@ struct RenderOptions {
   int rotary = 0;
   // Organ engine only (Story 2.5): contacts per key of the keybed behind contact_k events (2 or 3).
   unsigned contact_count = 3;
+  // Routing (Story 2.7): see RoutingOptions. `aux_out` (optional) receives the Aux bus, same length as the Main output.
+  RoutingOptions routing;
+  WavData* aux_out = nullptr;
   double tail_seconds = 1.0;
   float detune_cents = 0.0f;  // test-only: used to produce a deliberately wrong render
 };

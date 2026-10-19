@@ -58,7 +58,12 @@ class VoiceArbiter final : public VoiceAllocator {
   // Everything the arbiter needs when a Live Set loads. Plain data, no allocation.
   struct LiveSetConfig {
     std::uint64_t budget = 0;             // total, in cost units
-    std::uint64_t fx_cost = 0;            // reserved first
+    std::uint64_t fx_cost = 0;            // reserved first (a flat amount; see fx_instance_costs for the Story 2.7 computation)
+    // The declared costs of the configured effect instances (insert effects, sends, master), added to fx_cost: the FX
+    // reservation is computed from them (fill_fx_costs() in mixer.hpp fills the list from a Snapshot).
+    static constexpr std::size_t kMaxFxInstances = 128;
+    std::array<std::uint32_t, kMaxFxInstances> fx_instance_costs{};
+    std::uint32_t fx_instance_count = 0;
     std::uint64_t organ_rotary_cost = 0;  // reserved second, never stolen; 0 when there is no organ
     std::array<EngineFloor, kMaxEngines> floors{};
     std::uint32_t floor_count = 0;

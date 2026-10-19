@@ -2,6 +2,8 @@
 //                       [--tail-seconds S] [--detune-cents C]
 //                       [--engine organ [--drawbars 888000000] [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]
 //                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]]
+//                       [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[!][,type[!]...]] [--master-level DB]
+//                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
 #include <cstdio>
@@ -9,6 +11,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "events_file.hpp"
 #include "parse_util.hpp"
@@ -26,6 +29,9 @@ static int usage() {
                "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
                "                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]\n"
+               "       routing (parts = channels 0..7): [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[!],...]\n"
+               "                     (type: rotary chorus_phaser ep_amp eq compressor, '!' = bypassed) [--master-level DB]\n"
+               "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
   return 2;
 }
@@ -36,6 +42,17 @@ int main(int argc, char** argv) {
   std::string drawbars, percussion;
   bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false, rotary_given = false;
   RenderOptions opt;
+  std::string line_in_path, aux_out_path;
+  WavData line_in_wav, aux_wav;
+  // "P:rest" -> part index 0..7 and the text after the colon.
+  auto split_part = [](const std::string& arg, std::uint32_t& part, std::string& rest) {
+    const std::size_t colon = arg.find(':');
+    std::uint64_t p = 0;
+    if (colon == std::string::npos || !parse_uint(arg.substr(0, colon), 7, p)) return false;
+    part = static_cast<std::uint32_t>(p);
+    rest = arg.substr(colon + 1);
+    return true;
+  };
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     auto val = [&](const char*& v) {
@@ -81,6 +98,72 @@ int main(int argc, char** argv) {
       if (found < 0) { std::fprintf(stderr, "error: invalid --rotary (off, slow, fast or stop)\n"); return 2; }
       opt.rotary = found;
       rotary_given = true;
+    } else if (a == "--part-output" && val(v)) {
+      std::uint32_t part = 0;
+      std::string rest;
+      if (!split_part(v, part, rest) || (rest != "main" && rest != "aux")) {
+        std::fprintf(stderr, "error: invalid --part-output (P:main or P:aux, P = 0..7)\n");
+        return 2;
+      }
+      opt.routing.output[part] = rest == "aux" ? 1 : 0;
+      opt.routing.enabled = true;
+    } else if (a == "--send" && val(v)) {
+      std::uint32_t part = 0;
+      std::string rest;
+      double rev = 0, dly = 0;
+      bool good = split_part(v, part, rest);
+      if (good) {
+        const std::size_t colon = rest.find(':');
+        good = parse_double(rest.substr(0, colon), 0.0, 1.0, rev) &&
+               (colon == std::string::npos || parse_double(rest.substr(colon + 1), 0.0, 1.0, dly));
+      }
+      if (!good) { std::fprintf(stderr, "error: invalid --send (P:REVERB or P:REVERB:DELAY, levels 0..1)\n"); return 2; }
+      opt.routing.send_reverb[part] = static_cast<float>(rev);
+      opt.routing.send_delay[part] = static_cast<float>(dly);
+      opt.routing.enabled = true;
+    } else if (a == "--inserts" && val(v)) {
+      std::uint32_t part = 0;
+      std::string rest;
+      bool good = split_part(v, part, rest);
+      std::vector<RoutingOptions::Insert> list;
+      std::size_t pos = 0;
+      while (good && !rest.empty() && pos <= rest.size()) {
+        std::size_t comma = rest.find(',', pos);
+        if (comma == std::string::npos) comma = rest.size();
+        std::string w = rest.substr(pos, comma - pos);
+        RoutingOptions::Insert in;
+        if (!w.empty() && w.back() == '!') { in.bypass = true; w.pop_back(); }
+        static const char* const kTypes[] = {"none", "rotary", "chorus_phaser", "ep_amp", "eq", "compressor"};
+        int t = -1;
+        for (int k = 0; k < 6; ++k)
+          if (w == kTypes[k]) t = k;
+        if (t < 0 || list.size() >= 5) { good = false; break; }
+        in.type = static_cast<std::uint8_t>(t);
+        list.push_back(in);
+        pos = comma + 1;
+      }
+      if (!good) {
+        std::fprintf(stderr, "error: invalid --inserts (P:type[!],... with at most 5 of none rotary chorus_phaser ep_amp eq compressor)\n");
+        return 2;
+      }
+      opt.routing.inserts[part] = list;
+      opt.routing.enabled = true;
+    } else if (a == "--master-level" && val(v)) {
+      double db = 0;
+      if (!parse_double(v, -60.0, 12.0, db)) { std::fprintf(stderr, "error: invalid --master-level (-60..12 dB)\n"); return 2; }
+      opt.routing.master_level_db = static_cast<float>(db);
+      opt.routing.enabled = true;
+    } else if (a == "--line-in" && val(v)) {
+      line_in_path = v;
+      opt.routing.enabled = true;
+    } else if (a == "--line-in-level" && val(v)) {
+      double lv = 0;
+      if (!parse_double(v, 0.0, 1.0, lv)) { std::fprintf(stderr, "error: invalid --line-in-level (0..1)\n"); return 2; }
+      opt.routing.line_in_level = static_cast<float>(lv);
+      opt.routing.enabled = true;
+    } else if (a == "--aux-out" && val(v)) {
+      aux_out_path = v;
+      opt.routing.enabled = true;
     } else if (a == "--bundle" && val(v)) bundle_path = v;
     else if (a == "--instrument" && val(v)) instrument_key = v;
     else if (a == "--interpolation" && val(v)) { interp = v; sample_opts = true; }
@@ -219,6 +302,14 @@ int main(int argc, char** argv) {
   }
   WavData wav;
   std::string err;
+  if (!line_in_path.empty()) {
+    if (!read_wav(line_in_path, line_in_wav, err)) {
+      std::fprintf(stderr, "error: %s: %s\n", line_in_path.c_str(), err.c_str());
+      return 1;
+    }
+    opt.routing.line_in = &line_in_wav;
+  }
+  if (!aux_out_path.empty()) opt.aux_out = &aux_wav;
   SampleRenderStats stats;
   if (!render_events(smf.events, opt, wav, err, &stats)) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
@@ -230,6 +321,10 @@ int main(int argc, char** argv) {
     return 1;
   }
   if (!write_wav(out, wav, err)) {
+    std::fprintf(stderr, "error: %s\n", err.c_str());
+    return 1;
+  }
+  if (!aux_out_path.empty() && !write_wav(aux_out_path, aux_wav, err)) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
     return 1;
   }

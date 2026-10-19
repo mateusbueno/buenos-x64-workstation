@@ -144,6 +144,8 @@ class OrganEngine final : public Engine {
   // contiguous segments summing to the block; a standalone caller may call render() alone, in which case
   // it runs the generator itself at every block boundary.
   void render(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
+  // Part p is added into left[p]/right[p] (Story 2.7, per-part buses); render() is render_split() with all pointers equal.
+  void render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
   bool voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept VELORA_NONBLOCKING override;
   bool begin_steal_fade(std::uint32_t slot, std::uint32_t ramp_frames) noexcept VELORA_NONBLOCKING override;
 
@@ -286,7 +288,7 @@ class OrganEngine final : public Engine {
   void emit_part(Part& p, const float* dry, std::uint32_t frames, float* left, float* right) noexcept;
   void publish_rotary(std::uint32_t part) noexcept;
 
-  void render_chunk(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING;
+  void render_chunk(float* const* left, float* const* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING;
 
   std::vector<Voice> voices_;
   std::array<Part, kPartCount> parts_{};

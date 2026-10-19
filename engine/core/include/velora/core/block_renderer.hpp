@@ -8,6 +8,7 @@
 #include "velora/core/arena.hpp"
 #include "velora/core/engine.hpp"
 #include "velora/core/engine_registry.hpp"
+#include "velora/core/mixer.hpp"
 #include "velora/core/param_events.hpp"
 #include "velora/core/snapshot.hpp"
 #include "velora/core/spsc_queue.hpp"
@@ -70,8 +71,23 @@ class BlockRenderer {
   VoiceArbiter& arbiter() noexcept { return arbiter_; }
   const VoiceArbiter& arbiter() const noexcept { return arbiter_; }
 
-  // Render one block. left/right each hold kBlockFrames floats and are overwritten.
+  // Render one block for an adapter with a single stereo output. left/right each hold kBlockFrames floats and are overwritten.
+  // The Aux bus is FOLDED INTO Main here (Main + Aux, so a part assigned to Aux is still heard); blocks in which Aux carried
+  // signal are counted in aux_folded_blocks(). Adapters with an Aux output use the OutputBuses overload.
   void process_block(float* left, float* right) noexcept VELORA_NONBLOCKING;
+  // Render one block to the Main bus and the Aux bus (Story 2.7). All four buffers hold kBlockFrames floats and are overwritten.
+  // Aux must be given completely or not at all (not at all = the Aux bus is discarded); with only one of aux_left / aux_right
+  // set, or without Main, nothing is rendered, Main is silenced and the block is counted in rejected_output_blocks().
+  void process_block(const OutputBuses& out) noexcept VELORA_NONBLOCKING;
+  std::uint64_t aux_folded_blocks() const noexcept { return aux_folded_.load(std::memory_order_relaxed); }
+  std::uint64_t rejected_output_blocks() const noexcept { return rejected_outputs_.load(std::memory_order_relaxed); }
+
+  // --- routing (Story 2.7) --------------------------------------------------------------------------------
+  // The fixed routing topology after the voices: per-part insert chains, sends, Main/Aux, line-in and the master section.
+  Mixer& mixer() noexcept { return mixer_; }
+  const Mixer& mixer() const noexcept { return mixer_; }
+  // Setup-time: the line-in source (not owned, must outlive the renderer's use; nullptr = silent). Mixed into the master only.
+  void set_line_in(ports::LineInSource* source) noexcept { mixer_.set_line_in(source); }
 
   // contact_k events (Story 2.5, contact_events.hpp) are neither notes nor ignored events: contact_events_routed() counts those
   // delivered to an engine that follows contacts (the organ; the engine counts the malformed ones it refuses),
@@ -110,7 +126,7 @@ class BlockRenderer {
   void apply_contact(const Ump& ump) noexcept VELORA_NONBLOCKING;
   void record(EngineStatus s) noexcept VELORA_NONBLOCKING;
   void drain_queue() noexcept VELORA_NONBLOCKING;
-  void render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to) noexcept VELORA_NONBLOCKING;
+  void render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to, bool routed) noexcept VELORA_NONBLOCKING;
 
   void release_deferred(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
   void adopt_generation() noexcept VELORA_NONBLOCKING;
@@ -136,6 +152,7 @@ class BlockRenderer {
   bool bound_ = false;
 
   SnapshotExchange exchange_;
+  Mixer mixer_{exchange_};
   LastValueTable last_;
   const Snapshot* held_ = nullptr;
   std::array<float, params::kPerfSlotCount> applied_init_{};  // RT-owned: perf_init last applied
@@ -145,6 +162,8 @@ class BlockRenderer {
   std::array<std::uint8_t, 16 * 128> present_{};  // scratch for reap_generation_refs()
   std::uint32_t ref_keys_ = 0;                     // keys with a non-zero mask
   std::atomic<std::uint64_t> param_applied_{0}, param_rejected_{0};
+  std::atomic<std::uint64_t> aux_folded_{0}, rejected_outputs_{0};
+  std::array<float, 2 * 64> fold_{};  // scratch: Aux bus of the single-output overload (64 = kBlockFrames)
   std::atomic<std::uint64_t> contact_routed_{0}, contact_dropped_{0};
 };
 

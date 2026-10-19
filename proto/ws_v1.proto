@@ -32,6 +32,7 @@ enum ErrorCode {
   ERROR_CODE_UNKNOWN_ENUM_VALUE = 12;  // enum value outside the registry enum
   ERROR_CODE_BUSY = 13;                // temporarily out of resources (too many unreclaimed generations, RT queue full)
   ERROR_CODE_INTERNAL = 14;
+  ERROR_CODE_FX_BUDGET_EXCEEDED = 15;  // the insert chains, sends and master would cost more than the FX budget reserved by the arbiter (nothing changes)
 }
 
 message Error {

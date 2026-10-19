@@ -11,6 +11,8 @@ add_library(velora_core STATIC
   src/organ_engine.cpp
   src/rotary_speaker.cpp
   src/voice_arbiter.cpp
+  src/fx.cpp
+  src/mixer.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
 target_include_directories(velora_core PUBLIC include ${VELORA_GENERATED_DIR}/core)
@@ -59,6 +61,17 @@ add_executable(rotary_tests tests/rotary_speaker_test.cpp)
 target_link_libraries(rotary_tests PRIVATE velora_core)
 add_test(NAME rotary_tests COMMAND rotary_tests)
 
+add_executable(routing_tests tests/routing_test.cpp)
+target_link_libraries(routing_tests PRIVATE velora_core)
+add_test(NAME routing_tests COMMAND routing_tests)
+
+# The routing traffic (10,000 blocks, chain changes every 3 blocks, determinism) without the sanitizer, so macOS runs its logic too;
+# the RTSan build of the same file is below.
+add_executable(routing_traffic_test tests/rtsan_routing_test.cpp)
+target_link_libraries(routing_traffic_test PRIVATE velora_core)
+add_test(NAME routing_traffic_test COMMAND routing_traffic_test)
+set_tests_properties(routing_traffic_test PROPERTIES TIMEOUT 120)
+
 # Host micro-benchmark (Story 2.2): cost per voice and per generator; host figures, not representative of the board.
 add_executable(organ_bench tests/organ_bench.cpp)
 target_link_libraries(organ_bench PRIVATE velora_core)
@@ -106,6 +119,12 @@ if(VELORA_RTSAN)
     target_compile_options(rtsan_organ_test PRIVATE -fsanitize=realtime -g)
     target_link_options(rtsan_organ_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_organ_test COMMAND rtsan_organ_test)
+    add_executable(rtsan_routing_test tests/rtsan_routing_test.cpp)
+    target_link_libraries(rtsan_routing_test PRIVATE velora_core)
+    target_compile_options(rtsan_routing_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_routing_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_routing_test COMMAND rtsan_routing_test)
+    set_tests_properties(rtsan_routing_test PROPERTIES TIMEOUT 120)
     add_test(NAME rtsan_safe_test COMMAND rtsan_safe_test)
     # The deliberately RT-unsafe test must be aborted by RTSan: expected failure.
     add_test(NAME rtsan_unsafe_test COMMAND rtsan_unsafe_test)

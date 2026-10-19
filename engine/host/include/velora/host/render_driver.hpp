@@ -31,7 +31,10 @@ class RenderDriver final : public ports::BlockSink {
                HostEventQueue* control = nullptr) noexcept
       : renderer_(renderer), mapper_(cfg), midi_{&queue}, control_{control} {}
 
+  // The BlockSink path of the device adapters: the Main bus (the Aux bus is not played by any adapter yet; physical outputs: Epic 3).
   void render_block(float* left, float* right, std::uint64_t block_start_ns) noexcept VELORA_NONBLOCKING override;
+  // The same block with both output buses (Story 2.7): Main and, when set, Aux.
+  void render_block_buses(const core::OutputBuses& out, std::uint64_t block_start_ns) noexcept VELORA_NONBLOCKING;
 
   const RenderCounters& counters() const noexcept { return counters_; }
   const TimeMapper& mapper() const noexcept { return mapper_; }

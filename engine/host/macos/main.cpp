@@ -15,10 +15,12 @@
 #include <memory>
 #include <string>
 
+#include "coreaudio_line_in.hpp"
 #include "coreaudio_output.hpp"
 #include "coremidi_input.hpp"
 #include "mach_time.hpp"
 #include "velora/core/block_renderer.hpp"
+#include "velora/core/mixer.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
 #include "velora/host/dev_config.hpp"
@@ -35,6 +37,7 @@ int main(int argc, char** argv) {
   double duration_s = 0;  // 0 = run until q / SIGINT
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
+  bool want_line_in = false;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--duration") && i + 1 < argc) {
       const char* arg = argv[++i];
@@ -48,8 +51,10 @@ int main(int argc, char** argv) {
       socket_path = argv[++i];
     } else if (!std::strcmp(argv[i], "--config") && i + 1 < argc) {
       config_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--line-in")) {
+      want_line_in = true;
     } else {
-      std::fprintf(stderr, "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json]\n");
+      std::fprintf(stderr, "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in]\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
@@ -75,7 +80,32 @@ int main(int argc, char** argv) {
     }
   }
 
+  // FX budget (Story 2.7): reserved for the effects FIRST, before voices; the control plane refuses a command that would exceed it.
+  // The reservation is the flat worst case (the plane's budget) rather than fill_fx_costs() of the initial snapshot: the arbiter
+  // reservation is static for the run while commands may raise the FX cost up to that budget, so a smaller reservation would
+  // let voices occupy budget the control plane still promises to the effects.
+  {
+    core::VoiceArbiter::LiveSetConfig reservation;
+    reservation.budget = 1u << 20;
+    reservation.fx_cost = plane.fx_budget();
+    const auto st = renderer->arbiter().reserve(reservation);
+    if (st != core::VoiceArbiter::ReserveStatus::kOk) {
+      std::fprintf(stderr, "engine-host: cannot reserve the FX budget (status %d)\n", static_cast<int>(st));
+      return 1;
+    }
+  }
+
   host::macos::CoreAudioOutput audio;
+  host::macos::CoreAudioLineIn line_in;
+  // On every exit path (including early returns) audio stops and the renderer lets go of the line-in before it is destroyed.
+  struct LineInGuard {
+    core::BlockRenderer& renderer;
+    host::macos::CoreAudioOutput& audio;
+    ~LineInGuard() {
+      audio.stop();
+      renderer.set_line_in(nullptr);
+    }
+  } line_in_guard{*renderer, audio};
   host::macos::CoreMidiInput midi;
   std::string err;
   if (!audio.open(core::kSampleRate, core::kBlockFrames, driver, err)) {
@@ -101,6 +131,17 @@ int main(int argc, char** argv) {
   }
   std::printf("control: ws.v1 on %s, generation %llu from %s\n", socket_path.c_str(),
               (unsigned long long)plane.revision(), config_path.c_str());
+  // Optional line-in (mixed into the master only, at the line_in_level parameter): if there is no input device or no permission
+  // the engine still starts and the line-in stays silent.
+  if (want_line_in) {
+    std::string lerr;
+    if (line_in.open(core::kSampleRate, lerr) && line_in.start(lerr)) {
+      renderer->set_line_in(&line_in);
+      std::printf("line-in: default input device captured (mixed at line_in_level, default 0)\n");
+    } else {
+      std::printf("line-in: unavailable (%s); continuing with a silent line-in\n", lerr.c_str());
+    }
+  }
   if (!audio.start(err)) {
     std::fprintf(stderr, "engine-host: audio: %s\n", err.c_str());
     return 1;
@@ -137,6 +178,8 @@ int main(int argc, char** argv) {
   }
 
   audio.stop();
+  renderer->set_line_in(nullptr);
+  line_in.stop();
   midi.close();
   control.stop();
   const auto& rc = driver.counters();

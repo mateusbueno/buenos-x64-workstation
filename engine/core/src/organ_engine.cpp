@@ -393,12 +393,31 @@ void OrganEngine::begin_block(std::uint32_t frames) noexcept {
 }
 
 void OrganEngine::render(float* left, float* right, std::uint32_t frames) noexcept {
+  float* l[kSplitChannels];
+  float* r[kSplitChannels];
+  for (std::uint32_t c = 0; c < kSplitChannels; ++c) {
+    l[c] = left;
+    r[c] = right;
+  }
+  render_split(l, r, frames);
+}
+
+// Part p (a UMP channel 0..7) is added into left[p]/right[p]; a render() call has all of them equal.
+void OrganEngine::render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept {
+  float* l[kPartCount];
+  float* r[kPartCount];
+  for (std::uint32_t p = 0; p < kPartCount; ++p) {
+    l[p] = left[p];
+    r[p] = right[p];
+  }
   while (frames > 0) {
     if (block_pos_ >= gen_frames_) begin_block(kBlockFrames);  // standalone use: next block
     const std::uint32_t n = std::min(frames, gen_frames_ - block_pos_);
-    render_chunk(left, right, n);
-    left += n;
-    right += n;
+    render_chunk(l, r, n);
+    for (std::uint32_t p = 0; p < kPartCount; ++p) {
+      l[p] += n;
+      r[p] += n;
+    }
     frames -= n;
   }
 }
@@ -439,7 +458,7 @@ void OrganEngine::emit_part(Part& p, const float* dry, std::uint32_t frames, flo
   }
 }
 
-void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) noexcept {
+void OrganEngine::render_chunk(float* const* left, float* const* right, std::uint32_t frames) noexcept {
   std::array<bool, kPartCount> has_voice{};
   for (const Voice& v : voices_)
     if (v.active) has_voice[v.part] = true;
@@ -503,7 +522,7 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
       p.rot_tail -= std::min(p.rot_tail, frames);
       float dry[kBlockFrames];
       for (std::uint32_t f = 0; f < frames; ++f) dry[f] = soft_limit(mix[f] * kVoiceScale);
-      emit_part(p, dry, frames, left, right);
+      emit_part(p, dry, frames, left[part], right[part]);
       publish_rotary(part);
       continue;
     }
@@ -594,7 +613,7 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
     p.scan.process(mix, mix, frames);  // vibrato/chorus on the part's summed signal
     float dry[kBlockFrames];
     for (std::uint32_t f = 0; f < frames; ++f) dry[f] = soft_limit(mix[f] * kVoiceScale);
-    emit_part(p, dry, frames, left, right);
+    emit_part(p, dry, frames, left[part], right[part]);
     publish_rotary(part);
   }
   block_pos_ += frames;
