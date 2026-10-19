@@ -49,6 +49,19 @@ in the last bit between macOS and Linux) and requires a different key click leve
 command is `velora-offline-render --midi organ_percussion.mid --engine organ --percussion off --key-click 0.4 --tail-seconds 0.3`.
 Regenerate after an intentional engine change with `cmake --build build --target update-organ-percussion-golden` and review.
 
+## Organ scanner and leakage golden (Story 2.4)
+
+`velora-offline-render --engine organ` also takes `--vibrato off|v1|v2|v3|c1|c2|c3` (default off) and `--leakage 0..1` (default 0.5, the registry
+default), applied to every organ part at frame 0; both are errors without `--engine organ`. The file's CC 81 (on/off), CC 87 (type) and CC 83
+(leakage) change them later. `tests/organ_scanner/` holds `organ_scanner.mid` (made by `make_midi.py`: a six-note chord held for 4.4 s on part 0
+while the controllers step through V1, V2, V3, C1, C2, C3, off, then raise leakage in two steps and finish in C3; a short chord on part 1 stays
+unscanned), `organ_scanner.wav` (about 4.7 s, 1.8 MB) and `organ_scanner.case` (null test, -100 dB). The render command is
+`velora-offline-render --midi organ_scanner.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2 --vibrato off --leakage 0 --tail-seconds 0.3`.
+ctest renders twice (`organ_scan_bit_identical`), null-tests the render against the golden (`organ_scan_null_golden`) and requires a different
+starting scanner setting or leakage to fail it. Regenerate after an intentional engine change with
+`cmake --build build --target update-organ-scanner-golden` and review. The percussion golden now passes `--leakage 0` (leakage did not exist
+when it was made), so it is unchanged.
+
 ## Golden render
 
 `tests/golden/` holds `golden.mid`, `golden.wav` and `golden.case`. ctest renders twice (byte-equality), null-tests a

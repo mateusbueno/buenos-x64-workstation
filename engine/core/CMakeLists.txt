@@ -46,6 +46,10 @@ add_executable(organ_percussion_tests tests/organ_percussion_test.cpp)
 target_link_libraries(organ_percussion_tests PRIVATE velora_core)
 add_test(NAME organ_percussion_tests COMMAND organ_percussion_tests)
 
+add_executable(organ_scanner_tests tests/organ_scanner_test.cpp)
+target_link_libraries(organ_scanner_tests PRIVATE velora_core)
+add_test(NAME organ_scanner_tests COMMAND organ_scanner_tests)
+
 # Host micro-benchmark (Story 2.2): cost per voice and per generator; host figures, not representative of the board.
 add_executable(organ_bench tests/organ_bench.cpp)
 target_link_libraries(organ_bench PRIVATE velora_core)

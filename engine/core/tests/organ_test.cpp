@@ -37,8 +37,12 @@ void set_drawbars(OrganEngine& e, const char* nine, std::uint32_t part = 0) {
   for (int d = 0; d < 9; ++d) e.set_part_param(part, params::kDrawbar16 + d, static_cast<float>(nine[d] - '0'));
 }
 
-// Key click is on by default (registry default 0.5): tests that look at the tones alone switch it off.
-void no_click(OrganEngine& e, std::uint32_t part = 0) { e.set_part_param(part, params::kKeyClick, 0.0f); }
+// Key click and leakage are on by default (registry default 0.5 each): tests that look at the bare tones alone switch both off
+// (the helper keeps its Story 2.3 name; leakage joined in Story 2.4).
+void no_click(OrganEngine& e, std::uint32_t part = 0) {
+  e.set_part_param(part, params::kKeyClick, 0.0f);
+  e.set_part_param(part, params::kLeakage, 0.0f);
+}
 
 // Finish any drawbar ramp so tests start from steady state (a standalone engine, no keys down).
 void settle(OrganEngine& e) {
@@ -199,6 +203,8 @@ void test_no_zipper() {
   // the gain starting at k, bounded steps.
   const std::uint32_t k = 21;
   OrganEngine a, b;
+  no_click(a);
+  no_click(b);
   set_drawbars(a, "000000000");
   set_drawbars(b, "000000000");
   set_drawbars(a, "008000000");
@@ -611,7 +617,8 @@ void test_forbidden_strings() {
   const std::string needles[] = {std::string("ham") + "mond", std::string("les") + "lie", std::string("b") + "-3"};
   const std::string root = VELORA_SOURCE_ROOT;
   const char* files[] = {"engine/core/include/velora/core/organ_engine.hpp", "engine/core/src/organ_engine.cpp",
-                         "engine/core/include/velora/core/tonewheel_tables.hpp", "proto/params.json",
+                         "engine/core/include/velora/core/tonewheel_tables.hpp", "engine/core/include/velora/core/vibrato_scanner.hpp",
+                         "proto/params.json",
                          "engine/core/ORGAN.md"};
   for (const char* rel : files) {
     std::string text = slurp(root + "/" + rel);

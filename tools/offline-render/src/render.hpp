@@ -32,6 +32,10 @@ struct RenderOptions {
   bool percussion_on = false;
   int percussion_harmonic = 1, percussion_decay = 0, percussion_volume = 0;
   float key_click = 0.5f;
+  // Organ engine only (Story 2.4): vibrato/chorus setting (0 off, 1..6 = V1 V2 V3 C1 C2 C3) and leakage 0..1, applied to
+  // every organ part at frame 0 (MIDI CC 81, 83, 87 in the file can change them later). Leakage defaults to the registry value.
+  int vibrato = 0;
+  float leakage = 0.5f;
   double tail_seconds = 1.0;
   float detune_cents = 0.0f;  // test-only: used to produce a deliberately wrong render
 };

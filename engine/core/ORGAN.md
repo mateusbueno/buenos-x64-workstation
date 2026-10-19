@@ -1,4 +1,4 @@
-# Tonewheel organ engine (Stories 2.2, 2.3)
+# Tonewheel organ engine (Stories 2.2, 2.3, 2.4)
 
 `OrganEngine` (`organ_engine.hpp`, `tonewheel_tables.hpp`, type id Organ=2, engine name "tonewheel organ") is a clean-room
 tonewheel organ: one shared wheel generator per part and one voice per key, 73 keys x 9 drawbars sounding at once, never
@@ -119,6 +119,75 @@ seeded from `kClickSeed`, the part's own press counter (so one part's clicks do 
 therefore renders identically every run, while repeated notes differ. The level is read at the contact event (onset: at the press;
 release: at the key-up), so a changed `key_click` applies to the next event.
 
+## Vibrato/chorus scanner (Story 2.4)
+
+Registry ids 114 `vibrato_chorus_on` (bool, CC 81) and 115 `vibrato_chorus_type` (v1, v2, v3, c1, c2, c3; CC 87 added in this
+story, the enum had none: the 7-bit range is spread evenly, index = round(value / 127 x 5)), part scope, performance class. The effective
+setting is `off` when `vibrato_chorus_on` is 0, else the type. Registry defaults: off, type c1.
+
+Public facts used (musical and service-documentation level, no organ source read):
+
+1. The vibrato/chorus unit is a tapped delay line (an LC ladder) of 9 sections with a scanner that sweeps across the taps at about
+   412 revolutions per minute, i.e. 6.87 Hz. The moving read point makes the delay change continuously, which frequency-modulates the
+   signal (vibrato). It is a delay modulation, not an amplitude one.
+2. The three depth settings use 3, 5 and 9 taps of the line (V1/C1, V2/C2, V3/C3): deeper settings sweep a longer stretch of delay.
+3. Vibrato settings (V) pass only the scanned signal. Chorus settings (C) mix the scanned signal with the unscanned one, which adds the
+   slow phasing of a delay-modulated copy against the dry signal.
+
+Design values (named constants in `vibrato_scanner.hpp`; to be refined against recordings in Story 2.13):
+
+| constant | value | meaning |
+|---|---|---|
+| `kSweepHz` | 6.87 Hz | triangle sweep of the read point (one back-and-forth per period) |
+| `kTapSpacingSamples` | 6 (0.125 ms) | delay between taps |
+| tap intervals | 2, 4, 8 | V1/C1, V2/C2, V3/C3 sweep 3, 5, 9 taps: peak-to-peak delay 0.25, 0.5, 1.0 ms |
+| `kChorusWet` | 0.5 | chorus output = 0.5 dry + 0.5 scanned |
+| `kCrossfadeFrames` | 240 (5 ms) | crossfade when the setting changes |
+
+The pitch deviation of a setting follows from the swing: the delay slope is `2 x swing x sweep rate`, so V1 is about +-6 cents, V2 +-12 and
+V3 +-24 (a 6.87 Hz triangle). The read point moves continuously and the line is read with linear interpolation between the two nearest
+samples (the taps define where the sweep starts and ends; reading between samples avoids the comb filtering of blending two taps 6 samples
+apart). Fixed 64-sample delay line, no allocation.
+
+Where it sits. Per part, on the summed organ signal (tones, percussion and key click), after the voice mix and before the soft limit.
+One `VibratoScanner` per part: delay line, sweep phase (a 32-bit accumulator, deterministic) and crossfade belong to the part, so a part
+must stay on one worker. The sweep phase starts at 0 when the engine is created and runs with the part's block time. After the last voice of a part ends the scanner keeps
+running zeros through the delay line for 64 frames, so the delayed tail (up to 48 samples) drains instead of being cut; after that, and
+while a part is disabled (`set_enabled_parts`), the scanner is `skip()`-ed: the sweep time advances, the delay line is cleared, so stale signal
+never returns when a key starts or the part is enabled again. A setting change while the part has no sounding voice applies at once with no
+crossfade (nothing to click; this also makes the frame-0 setup of an offline render exact). Off is bit-exact pass-through.
+
+No click on switching. A change of setting (on/off or type), or a new change in the middle of a crossfade, interpolates the output weights
+of the settings over 240 frames: `start` weights (those in force when the change arrived) to the one-hot target. The weights always sum to
+1, so the output is continuous. Tested on every pair of settings at several sweep phases (largest sample step within 20 % of the dry tone's,
+while a hard switch exceeds 2x), with rapid re-switching, and on a held 73-key chord cycled every 5.3 ms (within 25 % of the steady chord's).
+
+## Leakage (Story 2.4)
+
+Registry id 117 `leakage` (0..1, default 0.5, CC 83, part scope). 0 is off: the code path is not executed, so the output is exactly the
+leakage-free tone.
+
+Public fact used: on a tonewheel generator the pickups of neighbouring wheels pick up a little of each other's tone (magnetic and
+electrical cross-talk), so every sounding note carries faint, fixed, unit-specific contributions of adjacent wheels.
+
+Model: for each drawbar of each sounding key, the wheel that drawbar reads also receives its two neighbours, wheel - 1 and wheel + 1:
+`wheel_signal + leakage x (a x wheel[w-1] + b x wheel[w+1])`, with `a`, `b` from a fixed table, all inside the drawbar gain and the voice
+gate (so the drawbar curve, percussion cancel and key release act on the leakage too). The table has two entries per wheel (91 x 2). It is
+generated at engine construction from `kLeakageSeed` (0x1EAC4A6E5EED2024) with SplitMix64 (the key click generator), drawing in wheel order,
+side 0 then side 1, always one draw per entry: `gain = kLeakageMaxGain x (0.25 + 0.75 r)`, `r` in [0, 1); `kLeakageMaxGain` = 0.02 (-34 dB). The
+two entries that have no neighbour (wheel 1 below, wheel 91 above) are 0. The table is the same on every run, platform and part ("per unit"
+means one fixed pattern for the instrument; a different unit would use another seed); the sum of the table is asserted in the test, so a seed
+or draw-order change fails it. Neighbour leakage is scaled linearly by the parameter; moving it ramps over 5 ms while the part sounds (a change on a part with
+no sounding voice applies at once, which also keeps frame-0 setup of an offline render exact). The percussion tone is not leaked.
+
+Cost: with leakage > 0 each live drawbar of each voice costs two more multiply-adds per frame (about 3x the tone sum); at leakage 0 nothing is
+added. Cost units stay the Story 2.2 placeholders until measured on the board.
+
+Purity test: a single drawbar on a single key at leakage 0 is compared with the synthetic sine `kVoiceScale x sin(2 pi f n / 48000)` of its wheel
+after the 1 ms declick (residual relative to the tone). The achievable residual is the float32 resolution of the output, about -150 dB; the
+tolerance is -100 dB, the same as the null-test goldens (loose enough for libm differences across platforms, tight enough that any leakage at all,
+about -37 dB at 1 and -43 dB at 0.5, fails by 55 dB or more).
+
 ## Voices are never stolen; reservation
 
 `Engine::steal_protected()` (new, default false) is true for the organ. `VoiceArbiter::bind` records it; protected engines
@@ -133,9 +202,9 @@ ahead of every engine floor. With that reservation, a pool full of sample voices
 Placeholders until measured on the dev board: voice 2, generator 48 per part, rotary 24 per part (reserved for Story 2.6).
 `organ_bench` prints host figures labelled "host, not representative".
 
-## Not in Stories 2.2 and 2.3
+## Not in Stories 2.2 to 2.4
 
-Vibrato/chorus scanner, leakage, multi-contact onset, rotary, effects, UI, Live Set loading.
+Multi-contact onset, rotary, effects, UI, Live Set loading.
 
 ## Tests
 
@@ -146,4 +215,10 @@ strings), `rtsan_organ_test` (10,000 blocks including percussion and key click c
 decay constants; harmonic selection by spectrum; normal vs soft level and drawbar lowering; 1' cancelled and its smooth ramp; key click at
 onset and release, broadband, scaled by level, per key, per press, level 0 exact silence; determinism; the CC path through the block loop)
 and the golden `tools/offline-render/tests/organ_percussion/` (MIDI, null-test case, golden WAV; see the offline-render README).
-Because key click defaults to 0.5, tests that look at the bare tones of Story 2.2 set it to 0 first.
+Because key click and leakage default to 0.5, tests that look at the bare tones of Story 2.2 set both to 0 first.
+Story 2.4: `organ_scanner_tests` (registry and CC mapping; constants; off is bit-exact; sweep rate and depth measured on a test tone by I/Q
+demodulation for V1-V3; frequency-modulation sidebands; chorus = half dry + half scanned; no click on any switch, with a hard switch as the
+contrast; engine routing; click-free cycling on a held 73-key chord; parts independent; determinism; leakage 0 purity against a synthetic sine;
+leakage table reproducibility, level and linear scaling by single-bin DFT of the difference render; no click when leakage moves),
+`rtsan_organ_test` (CC 81/87/83 traffic in the main loop plus a 6,000-block phase cycling every scanner setting and leakage on a held
+73-key chord, Linux CI only) and the golden `tools/offline-render/tests/organ_scanner/` (see the offline-render README).

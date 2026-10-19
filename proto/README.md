@@ -32,7 +32,7 @@ Role: the single owner of parameter ids and of the `ws.v1` wire schema (Story 2.
 
 Performance UMP mapping (`engine/core/include/velora/core/param_events.hpp`): MIDI 2.0 assignable controller (message type 4,
 status 0x3), group 0, channel = part, bank = `id >> 7`, index = `id & 0x7F`, 32-bit value normalised over the parameter range.
-MIDI CC numbers map through `cc` (drawbars 1-9 = CC 70-78, rotary speed 79, percussion 80, vibrato/chorus 81, key click 82, leakage 83, percussion harmonic/decay/volume 84/85/86 (value < 64 = first enum entry),
+MIDI CC numbers map through `cc` (drawbars 1-9 = CC 70-78, rotary speed 79, percussion 80, vibrato/chorus 81, key click 82, leakage 83, percussion harmonic/decay/volume 84/85/86 (value < 64 = first enum entry), vibrato/chorus type 87 (the 32-bit range is split evenly over v1..c3: index = round(value/127 * 5) for a 7-bit CC),
 reverb send 91, delay send 94); the CC's channel is the part (0..7).
 
 ## Toolchain

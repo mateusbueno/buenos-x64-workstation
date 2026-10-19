@@ -65,7 +65,7 @@ development_status:
   2-1-parameter-registry-and-control-thread-snapshots-for-engine-s: done
   2-2-tonewheel-generator-and-drawbar-voices-at-full-polyphony: done
   2-3-organ-percussion-and-key-click: done
-  2-4-vibrato-chorus-scanner-and-tonewheel-leakage: backlog
+  2-4-vibrato-chorus-scanner-and-tonewheel-leakage: done
   2-5-multi-contact-onset-hook-in-the-organ: backlog
   2-6-rotary-speaker-in-the-organ-voice-path: backlog
   2-7-fixed-routing-topology-with-insert-chains-sends-master-and-o: backlog

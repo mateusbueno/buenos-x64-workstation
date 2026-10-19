@@ -1,0 +1,7 @@
+# Null-test case for the organ vibrato/chorus scanner and leakage golden render (Story 2.4).
+# -100 dB residual: far below the audible difference between scanner settings (V1 vs V2 lands near -30 dB, a leakage
+# change near -35 dB), loose enough for libm/FMA differences between macOS and Linux builds.
+reference=organ_scanner.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0

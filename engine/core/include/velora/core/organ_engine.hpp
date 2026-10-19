@@ -13,6 +13,10 @@
 //    triggered only by a key pressed while no other key of the part is held; the part-level effects of
 //    percussion (1' cancelled, normal volume lowers the drawbars) are smoothed 5 ms ramps. Key click is a
 //    short noise burst per contact event (onset and release) drawn from a seeded deterministic generator.
+//  * Vibrato/chorus scanner and leakage (Story 2.4, ORGAN.md): the scanner is a per-part tapped delay line
+//    (vibrato_scanner.hpp) applied to the part's summed signal before the soft limit; settings crossfade over
+//    5 ms. Leakage adds, for every drawbar of every sounding key, low-level contributions of the two
+//    neighbouring wheels with a fixed seeded per-wheel table, scaled by the leakage parameter (0 = exactly off).
 //  * Drawbar levels 0..8 arrive as performance parameters (registry ids 100..108) through
 //    Engine::set_part_param at the event's frame; a 5 ms linear ramp starts at exactly that frame.
 #include <array>
@@ -21,6 +25,7 @@
 
 #include "velora/core/engine.hpp"
 #include "velora/core/tonewheel_tables.hpp"
+#include "velora/core/vibrato_scanner.hpp"
 
 namespace velora::core {
 
@@ -53,6 +58,14 @@ class OrganEngine final : public Engine {
   static constexpr float kClickGain = 2.0f;             // onset burst peak scale at level 1
   static constexpr float kClickReleaseRatio = 0.6f;     // release (key opens) burst relative to the onset burst
   static constexpr std::uint64_t kClickSeed = 0x5EED0C71C4B1D001ull;  // fixed: renders are reproducible
+
+  // Leakage (Story 2.4). Each wheel picks up its two neighbours (wheel-1, wheel+1) with a fixed gain drawn at
+  // construction from kLeakageSeed: gain = leakage x kLeakageMaxGain x (kLeakageMinFraction + (1 - kLeakageMinFraction) x r),
+  // r in [0, 1) from the seeded generator. The table does not depend on the part or on any run state.
+  static constexpr std::uint64_t kLeakageSeed = 0x1EAC4A6E5EED2024ull;
+  static constexpr float kLeakageMaxGain = 0.02f;       // -34 dB relative to the leaking wheel at leakage 1
+  static constexpr float kLeakageMinFraction = 0.25f;   // weakest pattern entry = 0.25 x max
+  static constexpr std::uint32_t kLeakRampFrames = 240; // 5 ms ramp when the leakage parameter moves
 
   // Cost units (placeholders, to be measured on the dev board; the host benchmark prints host figures).
   static constexpr std::uint32_t kVoiceCostUnits = 2;
@@ -103,6 +116,17 @@ class OrganEngine final : public Engine {
   // row w-1 is wheel w. Valid after begin_block().
   const float* wheel_block(std::uint32_t part) const noexcept { return &wheels_[part * kWheelStride]; }
   float drawbar_gain(std::uint32_t part, std::uint32_t drawbar) const noexcept { return parts_[part].cur[drawbar]; }
+  // Leakage gain of wheel `wheel` (1..91) from its neighbour `side` (0 = wheel - 1, 1 = wheel + 1) at leakage 1;
+  // 0 at the two ends of the wheel set, which have only one neighbour.
+  float leakage_pattern(std::uint32_t wheel, std::uint32_t side) const noexcept {
+    if (wheel < 1 || wheel > tonewheel::kWheelCount || side > 1) return 0.0f;
+    return leak_pattern_[(wheel - 1) * 2 + side];
+  }
+  // Sweep position (0..1, triangle) of a part's scanner: advances with time whether or not the part sounds.
+  float scanner_sweep_position(std::uint32_t part) const noexcept { return parts_[part].scan.sweep_position(); }
+  // Current (ramped) leakage amount of a part, 0..1, and the scanner setting in force.
+  float leakage_amount(std::uint32_t part) const noexcept { return parts_[part].leak.cur; }
+  ScannerMode scanner_mode(std::uint32_t part) const noexcept { return parts_[part].scan.mode(); }
   // Percussion time constant in seconds for a registry decay value (0 fast, 1 slow).
   static float percussion_tau_seconds(int decay) noexcept { return decay == 0 ? kPercTauFastSeconds : kPercTauSlowSeconds; }
   // Current (ramped) part-level factors: the 1' cancel (1 = 1' sounds, 0 = cancelled) and the drawbar factor.
@@ -135,12 +159,12 @@ class OrganEngine final : public Engine {
   };
   struct Ramp {  // linear 5 ms ramp of one part-level factor
     float cur = 1.0f, tgt = 1.0f, step = 0.0f;
-    std::uint32_t left = 0;
+    std::uint32_t left = 0, length = kPercRampFrames;
     void set(float target) noexcept {
       if (target == tgt) return;
       tgt = target;
-      left = kPercRampFrames;
-      step = (target - cur) / static_cast<float>(kPercRampFrames);
+      left = length;
+      step = (target - cur) / static_cast<float>(length);
     }
     float advance() noexcept {
       if (left > 0) {
@@ -159,8 +183,24 @@ class OrganEngine final : public Engine {
     float key_click = 0.0f;
     std::uint64_t press_count = 0;  // key presses of this part so far: seeds its key clicks (independent of other parts)
     Ramp cancel, lower;  // 1' cancel factor, drawbar-lowering factor
+    // Story 2.4: scanner (per-part state) and leakage amount (5 ms ramp).
+    VibratoScanner scan;
+    bool vc_on = false;
+    int vc_type = 3;
+    Ramp leak{0.0f, 0.0f, 0.0f, 0, kLeakRampFrames};
+    std::uint32_t scan_tail = 0;  // frames of zeros still to run through the scanner after the last voice ended
+    void update_scanner(bool immediate) noexcept {
+      const ScannerMode m = vc_on ? static_cast<ScannerMode>(1 + vc_type) : ScannerMode::kOff;
+      if (immediate) scan.set_mode_immediate(m);  // nothing sounds: no crossfade needed
+      else scan.set_mode(m);
+    }
   };
 
+  bool part_sounding(std::uint32_t part) const noexcept {
+    for (const Voice& v : voices_)
+      if (v.active && v.part == part) return true;
+    return false;
+  }
   void start_click(Voice& v, std::uint32_t which, float level, float scale) noexcept;
   void apply_percussion_targets(Part& p) noexcept;
 
@@ -173,6 +213,7 @@ class OrganEngine final : public Engine {
   std::vector<float> wheels_;              // kPartCount x kWheelCount x kBlockFrames
   std::array<float, tonewheel::kDrawbarCount * kBlockFrames> gains_{};  // scratch: per-frame drawbar gains
   std::array<float, kPartCount * kBlockFrames> mix_{};                  // scratch: per-part mono mix
+  std::array<float, tonewheel::kWheelCount * 2> leak_pattern_{};  // [wheel-1][side], filled at construction
   std::uint32_t enabled_ = 0xFF;
   std::uint32_t block_pos_ = 0, gen_frames_ = 0;
   std::uint64_t clock_ = 0;

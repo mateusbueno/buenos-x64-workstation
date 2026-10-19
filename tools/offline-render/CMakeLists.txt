@@ -110,7 +110,7 @@ set_tests_properties(offline_render_organ_content PROPERTIES FIXTURES_REQUIRED "
 # staccato and legato playing, and key click; the render is deterministic (run twice, byte-equal) and the fresh render
 # null-tests against the committed golden at a very tight tolerance (not byte equality: libm may differ between platforms).
 set(_perc ${CMAKE_CURRENT_SOURCE_DIR}/tests/organ_percussion)
-set(_perc_args --midi ${_perc}/organ_percussion.mid --engine organ --percussion off --key-click 0.4 --tail-seconds 0.3)
+set(_perc_args --midi ${_perc}/organ_percussion.mid --engine organ --percussion off --key-click 0.4 --leakage 0 --tail-seconds 0.3)
 add_test(NAME organ_perc_clean
          COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/perc_a.wav ${_out}/perc_b.wav ${_out}/perc_wrong_click.wav ${_out}/perc_wrong_db.wav)
 set_tests_properties(organ_perc_clean PROPERTIES FIXTURES_SETUP perc_clean)
@@ -127,7 +127,7 @@ set_tests_properties(organ_perc_null_golden PROPERTIES FIXTURES_REQUIRED perc_a 
 # The golden is sensitive to what it covers: a different key click level or a different registration fails the null test.
 add_test(NAME organ_perc_wrong_click
          COMMAND velora-offline-render --midi ${_perc}/organ_percussion.mid --engine organ --percussion off --key-click 0.8
-                 --tail-seconds 0.3 --out ${_out}/perc_wrong_click.wav)
+                 --leakage 0 --tail-seconds 0.3 --out ${_out}/perc_wrong_click.wav)
 add_test(NAME organ_perc_wrong_drawbars
          COMMAND velora-offline-render ${_perc_args} --drawbars 008000001 --out ${_out}/perc_wrong_db.wav)
 set_tests_properties(organ_perc_wrong_click PROPERTIES FIXTURES_REQUIRED perc_clean FIXTURES_SETUP perc_wc)
@@ -154,6 +154,70 @@ add_test(NAME organ_perc_options_need_organ
          COMMAND velora-offline-render --midi ${_perc}/organ_percussion.mid --percussion third --out ${_out}/never.wav)
 set_tests_properties(organ_perc_options_need_organ PROPERTIES PASS_REGULAR_EXPRESSION "need --engine organ")
 
+# Organ vibrato/chorus scanner and leakage (Story 2.4): a committed MIDI file holds a chord while CC 81/87 cycle off, V1, V2, V3,
+# C1, C2, C3, off and CC 83 raises the leakage. Same scheme as the percussion golden: render twice (byte-equal), null-test against
+# the committed golden, and require a different scanner setting or leakage to fail it.
+set(_scan ${CMAKE_CURRENT_SOURCE_DIR}/tests/organ_scanner)
+set(_scan_args --midi ${_scan}/organ_scanner.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2
+               --vibrato off --leakage 0 --tail-seconds 0.3)
+add_test(NAME organ_scan_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/scan_a.wav ${_out}/scan_b.wav ${_out}/scan_wrong_vib.wav ${_out}/scan_wrong_leak.wav)
+set_tests_properties(organ_scan_clean PROPERTIES FIXTURES_SETUP scan_clean)
+add_test(NAME organ_scan_render_a COMMAND velora-offline-render ${_scan_args} --out ${_out}/scan_a.wav)
+add_test(NAME organ_scan_render_b COMMAND velora-offline-render ${_scan_args} --out ${_out}/scan_b.wav)
+set_tests_properties(organ_scan_render_a PROPERTIES FIXTURES_REQUIRED scan_clean FIXTURES_SETUP scan_a)
+set_tests_properties(organ_scan_render_b PROPERTIES FIXTURES_REQUIRED scan_clean FIXTURES_SETUP scan_b)
+add_test(NAME organ_scan_bit_identical
+         COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/scan_a.wav ${_out}/scan_b.wav)
+set_tests_properties(organ_scan_bit_identical PROPERTIES FIXTURES_REQUIRED "scan_a;scan_b")
+add_test(NAME organ_scan_null_golden
+         COMMAND velora-null-test --case ${_scan}/organ_scanner.case --candidate ${_out}/scan_a.wav)
+set_tests_properties(organ_scan_null_golden PROPERTIES FIXTURES_REQUIRED scan_a PASS_REGULAR_EXPRESSION "overall: PASS")
+# The golden is sensitive to what it covers: starting in V3 (the file's controllers change it later, but the first 0.4 s differ)
+# and starting with full leakage both fail the null test.
+add_test(NAME organ_scan_wrong_vibrato
+         COMMAND velora-offline-render --midi ${_scan}/organ_scanner.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2
+                 --vibrato v3 --leakage 0 --tail-seconds 0.3 --out ${_out}/scan_wrong_vib.wav)
+add_test(NAME organ_scan_wrong_leakage
+         COMMAND velora-offline-render --midi ${_scan}/organ_scanner.mid --engine organ --drawbars 888600000 --percussion off --key-click 0.2
+                 --vibrato off --leakage 1 --tail-seconds 0.3 --out ${_out}/scan_wrong_leak.wav)
+set_tests_properties(organ_scan_wrong_vibrato PROPERTIES FIXTURES_REQUIRED scan_clean FIXTURES_SETUP scan_wv)
+set_tests_properties(organ_scan_wrong_leakage PROPERTIES FIXTURES_REQUIRED scan_clean FIXTURES_SETUP scan_wl)
+add_test(NAME organ_scan_wrong_vibrato_fails
+         COMMAND velora-null-test --case ${_scan}/organ_scanner.case --candidate ${_out}/scan_wrong_vib.wav)
+add_test(NAME organ_scan_wrong_leakage_fails
+         COMMAND velora-null-test --case ${_scan}/organ_scanner.case --candidate ${_out}/scan_wrong_leak.wav)
+set_tests_properties(organ_scan_wrong_vibrato_fails PROPERTIES FIXTURES_REQUIRED scan_wv
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+set_tests_properties(organ_scan_wrong_leakage_fails PROPERTIES FIXTURES_REQUIRED scan_wl
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# A file with only CC 81 (no CC 87) switches the scanner on at the registry default type (c1), exactly like --vibrato c1 on the
+# same chord without the controller: the renderer's frame-0 setup must not pick another type.
+add_test(NAME organ_scan_cc81_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/scan_cc81.wav ${_out}/scan_plain_c1.wav)
+set_tests_properties(organ_scan_cc81_clean PROPERTIES FIXTURES_SETUP scan_cc81_clean)
+add_test(NAME organ_scan_cc81_render
+         COMMAND velora-offline-render --midi ${_scan}/organ_cc81.mid --engine organ --key-click 0 --leakage 0 --vibrato off
+                 --tail-seconds 0.2 --out ${_out}/scan_cc81.wav)
+add_test(NAME organ_scan_plain_c1_render
+         COMMAND velora-offline-render --midi ${_scan}/organ_plain.mid --engine organ --key-click 0 --leakage 0 --vibrato c1
+                 --tail-seconds 0.2 --out ${_out}/scan_plain_c1.wav)
+set_tests_properties(organ_scan_cc81_render PROPERTIES FIXTURES_REQUIRED scan_cc81_clean FIXTURES_SETUP scan_cc81_a)
+set_tests_properties(organ_scan_plain_c1_render PROPERTIES FIXTURES_REQUIRED scan_cc81_clean FIXTURES_SETUP scan_cc81_b)
+add_test(NAME organ_scan_cc81_matches_c1
+         COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/scan_cc81.wav ${_out}/scan_plain_c1.wav)
+set_tests_properties(organ_scan_cc81_matches_c1 PROPERTIES FIXTURES_REQUIRED "scan_cc81_a;scan_cc81_b")
+# Option parsing.
+add_test(NAME organ_scan_rejects_bad_vibrato
+         COMMAND velora-offline-render ${_scan_args} --vibrato v4 --out ${_out}/never.wav)
+set_tests_properties(organ_scan_rejects_bad_vibrato PROPERTIES PASS_REGULAR_EXPRESSION "invalid --vibrato")
+add_test(NAME organ_scan_rejects_bad_leakage
+         COMMAND velora-offline-render ${_scan_args} --leakage 1.5 --out ${_out}/never.wav)
+set_tests_properties(organ_scan_rejects_bad_leakage PROPERTIES PASS_REGULAR_EXPRESSION "invalid --leakage")
+add_test(NAME organ_scan_options_need_organ
+         COMMAND velora-offline-render --midi ${_scan}/organ_scanner.mid --vibrato v1 --out ${_out}/never.wav)
+set_tests_properties(organ_scan_options_need_organ PROPERTIES PASS_REGULAR_EXPRESSION "need --engine organ")
+
 # Regenerate the golden: cmake --build build --target update-golden (review the diff before commit).
 add_custom_target(update-golden
   COMMAND velora-offline-render ${_render_args} --out ${_golden}/golden.wav
@@ -161,6 +225,10 @@ add_custom_target(update-golden
 # Same for the organ percussion golden: cmake --build build --target update-organ-percussion-golden
 add_custom_target(update-organ-percussion-golden
   COMMAND velora-offline-render ${_perc_args} --out ${_perc}/organ_percussion.wav
+  DEPENDS velora-offline-render)
+
+add_custom_target(update-organ-scanner-golden
+  COMMAND velora-offline-render ${_scan_args} --out ${_scan}/organ_scanner.wav
   DEPENDS velora-offline-render)
 
 # --- sample engine against the sfizz oracle (Story 1.15) ----------------------------------------------

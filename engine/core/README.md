@@ -130,6 +130,12 @@ pedal-sustained. The deferred release remembers its engine and goes to it at ped
 `dropped_deferred_releases()` if the engine is gone). A note off whose voices were stolen is benign: `stolen_note_offs()` instead of
 `kVoiceNotFound`, as is a pedal-up release of a note that never sounded. Other controllers are still ignored.
 
+## Organ scanner and leakage (Story 2.4)
+
+`VibratoScanner` (`vibrato_scanner.hpp`) is the per-part vibrato/chorus scanner of `OrganEngine` (tapped delay line, 6.87 Hz sweep, V1-V3/C1-C3,
+5 ms crossfade on changes); leakage adds seeded neighbour-wheel contributions. Parameters 114, 115 (CC 81, 87) and 117 (CC 83). Details, public
+facts and design values: `ORGAN.md`. RT-safe by construction (fixed storage, no allocation); covered by `organ_scanner_tests` and `rtsan_organ_test`.
+
 ## Parameters, snapshots and the last-value table (Story 2.1)
 
 The parameter registry (`proto/params.json`, see `proto/README.md`) is generated into `velora/core/params_gen.hpp` (build output):

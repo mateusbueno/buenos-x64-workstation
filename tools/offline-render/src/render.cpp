@@ -74,9 +74,9 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   }
 
   std::unique_ptr<OrganEngine> organ;
-  // Frame-0 setup per organ part: 9 drawbars + 5 percussion/key click parameters. All of it must fit the block loop's
+  // Frame-0 setup per organ part: 9 drawbars + 5 percussion/key click parameters + 3 scanner/leakage parameters. All of it must fit the block loop's
   // pending-event buffer together with the events of the first block (checked after the first block, see below).
-  static_assert(OrganEngine::kPartCount * 14 <= BlockRenderer::kPendingCapacity, "organ setup events must fit the pending buffer");
+  static_assert(OrganEngine::kPartCount * 17 <= BlockRenderer::kPendingCapacity, "organ setup events must fit the pending buffer");
   if (opt.engine == EngineKind::kOrgan) {
     if (opt.drawbars.size() != 9 ||
         std::any_of(opt.drawbars.begin(), opt.drawbars.end(), [](char c) { return c < '0' || c > '8'; })) {
@@ -100,10 +100,13 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
           {params::kPercussionHarmonic, static_cast<double>(opt.percussion_harmonic)},
           {params::kPercussionDecay, static_cast<double>(opt.percussion_decay)},
           {params::kPercussionVolume, static_cast<double>(opt.percussion_volume)},
-          {params::kKeyClick, static_cast<double>(opt.key_click)}};
+          {params::kKeyClick, static_cast<double>(opt.key_click)},
+          {params::kVibratoChorusOn, opt.vibrato > 0 ? 1.0 : 0.0},
+          {params::kVibratoChorusType, opt.vibrato > 0 ? static_cast<double>(opt.vibrato - 1) : static_cast<double>(params::find(params::kVibratoChorusType)->def)},
+          {params::kLeakage, static_cast<double>(opt.leakage)}};
       for (const auto& pv : perc)
         if (!br->submit({make_param_event(*params::find(pv.id), ch, pv.value), 0})) {
-          error = "event queue full while setting percussion and key click";
+          error = "event queue full while setting percussion, key click, scanner and leakage";
           return false;
         }
     }

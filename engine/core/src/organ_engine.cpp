@@ -72,7 +72,20 @@ OrganEngine::OrganEngine()
     p.cancel.cur = p.cancel.tgt;
     p.lower.cur = p.lower.tgt;
     p.cancel.left = p.lower.left = 0;
+    // Scanner and leakage start from the registry defaults (Story 2.4); the scanner starts settled, with no crossfade.
+    p.vc_on = params::find(params::kVibratoChorusOn)->def >= 0.5f;
+    p.vc_type = static_cast<int>(params::find(params::kVibratoChorusType)->def);
+    p.scan.set_mode_immediate(p.vc_on ? static_cast<ScannerMode>(1 + p.vc_type) : ScannerMode::kOff);
+    p.leak.cur = p.leak.tgt = params::find(params::kLeakage)->def;
   }
+  // Leakage pattern: fixed per-wheel, per-neighbour gains from a documented seed (same on every run and platform).
+  std::uint64_t ls = kLeakageSeed;
+  for (std::uint32_t w = 0; w < kW; ++w)
+    for (std::uint32_t side = 0; side < 2; ++side) {
+      const float r = unit_float(splitmix64(ls));  // always drawn, so the table does not shift with the edges
+      const bool exists = side == 0 ? w > 0 : w + 1 < kW;
+      leak_pattern_[w * 2 + side] = exists ? kLeakageMaxGain * (kLeakageMinFraction + (1.0f - kLeakageMinFraction) * r) : 0.0f;
+    }
 }
 
 void OrganEngine::apply_percussion_targets(Part& p) noexcept {
@@ -183,6 +196,25 @@ void OrganEngine::set_part_param(std::uint32_t part, std::uint32_t param_id, flo
       p.perc_volume = std::clamp(static_cast<int>(std::lround(value)), 0, params::kPercussionVolumeCount - 1);
       apply_percussion_targets(p);
       return;
+    case params::kVibratoChorusOn:
+      p.vc_on = value >= 0.5f;
+      p.update_scanner(!part_sounding(part));
+      return;
+    case params::kVibratoChorusType:
+      p.vc_type = std::clamp(static_cast<int>(std::lround(value)), 0, params::kVibratoChorusTypeCount - 1);
+      p.update_scanner(!part_sounding(part));
+      return;
+    case params::kLeakage:
+    {
+      const float target = std::fmin(1.0f, std::fmax(0.0f, value));
+      if (part_sounding(part)) {
+        p.leak.set(target);  // 5 ms ramp so a moving control does not click
+      } else {  // nothing sounds on this part: no ramp needed (also makes the frame-0 setup of a render exact)
+        p.leak.cur = p.leak.tgt = target;
+        p.leak.left = 0;
+      }
+      return;
+    }
     case params::kKeyClick:
       p.key_click = std::fmin(1.0f, std::fmax(0.0f, value));
       return;
@@ -245,7 +277,11 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
 
   for (std::uint32_t part = 0; part < kPartCount; ++part) {
     Part& p = parts_[part];
-    if (!(enabled_ & (1u << part))) continue;
+    if (!(enabled_ & (1u << part))) {
+      p.scan.skip(frames);  // a disabled part keeps its sweep time and has an empty delay line
+      p.scan_tail = 0;
+      continue;
+    }
     // Drawbar gains per frame. Ramps advance whether or not keys are down, so a ramp is the same wherever
     // a note starts inside it.
     // Percussion's part-level effects: the 1' cancel and the drawbar lowering, smoothed like the drawbars.
@@ -255,6 +291,9 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
       cancel_g[f] = p.cancel.advance();
       lower_g[f] = p.lower.advance();
     }
+    const bool leak_live = p.leak.cur != 0.0f || p.leak.tgt != 0.0f;
+    float leak_g[kBlockFrames];
+    for (std::uint32_t f = 0; f < frames; ++f) leak_g[f] = p.leak.advance();
     std::array<bool, kD> live{};
     for (std::uint32_t d = 0; d < kD; ++d) {
       live[d] = (p.cur[d] != 0.0f || p.tgt[d] != 0.0f) && (d != kD - 1 || cancel_live);
@@ -267,8 +306,25 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
         g[f] = d == kD - 1 ? p.cur[d] * lower_g[f] * cancel_g[f] : p.cur[d] * lower_g[f];
       }
     }
-    if (!has_voice[part]) continue;
     float* mix = &mix_[part * kBlockFrames];
+    if (!has_voice[part]) {
+      if (p.scan_tail == 0) {
+        p.scan.skip(frames);  // silent part: the sweep keeps its time, the (empty) delay line stays empty
+        continue;
+      }
+      // The last voice just ended: the scanner's delay line still holds up to 48 samples of signal. Run zeros through
+      // it so that tail drains (is not cut), then skip.
+      std::fill(mix, mix + frames, 0.0f);
+      p.scan.process(mix, mix, frames);
+      p.scan_tail -= std::min(p.scan_tail, frames);
+      for (std::uint32_t f = 0; f < frames; ++f) {
+        const float y = soft_limit(mix[f] * kVoiceScale);
+        left[f] += y;
+        right[f] += y;
+      }
+      continue;
+    }
+    p.scan_tail = VibratoScanner::kMaxDelaySamples + 16;  // > the delay line's reach
     std::fill(mix, mix + frames, 0.0f);
     const float* wheels = &wheels_[part * kWheelStride];
     for (Voice& v : voices_) {
@@ -279,6 +335,18 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
         const float* g = &gains_[d * kBlockFrames];
         const float* wr = wheels + static_cast<std::size_t>(v.wheel[d]) * kBlockFrames + block_pos_;
         for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * wr[f];
+      }
+      if (leak_live) {  // neighbouring wheels leak into each footage's wheel (fixed seeded pattern, scaled by leakage)
+        for (std::uint32_t d = 0; d < kD; ++d) {
+          if (!live[d]) continue;
+          const std::uint32_t w = v.wheel[d];
+          const float a = leak_pattern_[w * 2], b = leak_pattern_[w * 2 + 1];  // 0 at the ends of the wheel set
+          const float* g = &gains_[d * kBlockFrames];
+          const float* row = wheels + static_cast<std::size_t>(w) * kBlockFrames + block_pos_;
+          const float* lo = w > 0 ? row - kBlockFrames : row;
+          const float* hi = w + 1 < kW ? row + kBlockFrames : row;
+          for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * leak_g[f] * (a * lo[f] + b * hi[f]);
+        }
       }
       if (v.perc_env > 0.0f) {  // percussion: the chosen harmonic's wheel under a decaying envelope
         const float* wp = wheels + static_cast<std::size_t>(v.wheel[v.perc_drawbar]) * kBlockFrames + block_pos_;
@@ -311,6 +379,7 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
         }
       }
     }
+    p.scan.process(mix, mix, frames);  // vibrato/chorus on the part's summed signal
     for (std::uint32_t f = 0; f < frames; ++f) {
       const float y = soft_limit(mix[f] * kVoiceScale);
       left[f] += y;

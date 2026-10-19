@@ -29,7 +29,7 @@
     {"id": 112, "name": "percussion_decay", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "enum": "percussion_decay", "default": "fast", "cc": 85},
     {"id": 113, "name": "percussion_volume", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "enum": "percussion_volume", "default": "soft", "cc": 86},
     {"id": 114, "name": "vibrato_chorus_on", "class": "performance", "type": "bool", "scope": "part", "unit": "flag", "min": 0, "max": 1, "default": 0, "cc": 81},
-    {"id": 115, "name": "vibrato_chorus_type", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "enum": "vibrato_chorus_type", "default": "c1"},
+    {"id": 115, "name": "vibrato_chorus_type", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "enum": "vibrato_chorus_type", "default": "c1", "cc": 87},
     {"id": 116, "name": "key_click", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0, "max": 1, "default": 0.5, "cc": 82},
     {"id": 117, "name": "leakage", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0, "max": 1, "default": 0.5, "cc": 83},
     {"id": 200, "name": "rotary_speed", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "enum": "rotary_speed", "default": "slow", "cc": 79},
