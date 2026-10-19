@@ -25,8 +25,11 @@ struct RenderCounters {
 // Allocation-, lock- and block-free.
 class RenderDriver final : public ports::BlockSink {
  public:
-  RenderDriver(core::BlockRenderer& renderer, HostEventQueue& queue, TimeMapperConfig cfg = {}) noexcept
-      : renderer_(renderer), queue_(queue), mapper_(cfg) {}
+  // `control` (optional) is the control thread's own SPSC lane (parameter UMPs from ws.v1), so the MIDI
+  // thread stays the sole producer of `queue`. Both lanes get the same timestamp mapping.
+  RenderDriver(core::BlockRenderer& renderer, HostEventQueue& queue, TimeMapperConfig cfg = {},
+               HostEventQueue* control = nullptr) noexcept
+      : renderer_(renderer), mapper_(cfg), midi_{&queue}, control_{control} {}
 
   void render_block(float* left, float* right, std::uint64_t block_start_ns) noexcept VELORA_NONBLOCKING override;
 
@@ -34,13 +37,18 @@ class RenderDriver final : public ports::BlockSink {
   const TimeMapper& mapper() const noexcept { return mapper_; }
 
  private:
+  struct Lane {
+    HostEventQueue* queue = nullptr;
+    StampedUmp held{};
+    bool has_held = false;
+    bool counted = false;
+  };
+  void drain(Lane& lane, std::uint64_t block_start_ns) noexcept VELORA_NONBLOCKING;
+
   core::BlockRenderer& renderer_;
-  HostEventQueue& queue_;
   TimeMapper mapper_;
   RenderCounters counters_;
-  StampedUmp held_{};
-  bool has_held_ = false;
-  bool held_counted_ = false;
+  Lane midi_, control_;
 };
 
 }  // namespace velora::host

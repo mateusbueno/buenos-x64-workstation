@@ -28,6 +28,13 @@
       "license": "MIT",
       "notice_marker": "## 4. SIMDe",
       "vendored_dir": "formatlib/third_party/simde"
+    },
+    {
+      "name": "protobuf",
+      "version": "system package (3.21+ / Homebrew)",
+      "license": "BSD-3-Clause",
+      "notice_marker": "## 5. Protocol Buffers",
+      "build_dependency": true
     }
   ]
 }

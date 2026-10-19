@@ -129,3 +129,28 @@ pedal is down is not sent to the engine until the pedal goes up (release trigger
 pedal-sustained. The deferred release remembers its engine and goes to it at pedal up (dropped and counted in
 `dropped_deferred_releases()` if the engine is gone). A note off whose voices were stolen is benign: `stolen_note_offs()` instead of
 `kVoiceNotFound`, as is a pedal-up release of a note that never sounded. Other controllers are still ignored.
+
+## Parameters, snapshots and the last-value table (Story 2.1)
+
+The parameter registry (`proto/params.json`, see `proto/README.md`) is generated into `velora/core/params_gen.hpp` (build output):
+`params::ParamDef` table sorted by id (`params::find(id)`, `find_by_cc`), per-id constants (`params::kDrawbar8`), enum value
+constants, `kPartCount` (8), `kInsertSlotCount` (5) and `perf_slot()` (dense index into the last-value table). core has no
+protobuf dependency; the wire format lives in `engine/host`.
+
+- `param_events.hpp` -- a performance parameter change is **one timestamped UMP** (MIDI 2.0 assignable controller, channel = part,
+  bank/index = param id, 32-bit normalised value). `make_param_event`, `decode_param_event`, `cc_to_param_event`. `BlockRenderer`
+  applies them at their frame; unknown ids, structural ids and parts above 7 are refused and counted (`param_events_rejected()`).
+- `LastValueTable` -- RT owns the live value of every performance parameter; one 32-bit atomic per slot, written by RT, read by the
+  control thread (and anyone) without locks.
+- `Snapshot` -- the immutable structural state of one generation: 8 parts (timbre reference, insert chain of up to 5 slots, output),
+  master settings, and the initial performance values (`perf_init`, including send levels). Built only by the control thread
+  (`engine/host`), published with one atomic pointer store (`SnapshotExchange::publish`). RT adopts the newest generation at the start
+  of each block and applies `perf_init` only for slots that changed since the previous generation (so a structural edit does not
+  reset the drawbars a player moved).
+- Generation lifetime (AD-23, epoch/hazard style, lock-free): RT announces the generation it reads (`rt_acquire`, a hazard pointer),
+  and every note that starts while a generation is held takes one reference on it (the ledger, 32 slots). The renderer drops a
+  note's reference when no voice of that (channel, note) is left in any engine. The control thread frees a generation only when
+  it is not current, not held by RT and has zero references (`SnapshotExchange::safe_to_free`), never on RT. If 32 generations are
+  pinned by sounding notes the next structural command is refused with `BUSY`.
+- Tests: `params_tests` (registry, UMP round trip for every performance parameter, initial values only on generation change, held note
+  across a swap); `rtsan_control_test` in `engine/host` covers RT safety (10,000 changes + 100 swaps).

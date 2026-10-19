@@ -762,7 +762,31 @@ static void test_robustness() {
   }
 }
 
+// Contract used by BlockRenderer::reap_generation_refs (AD-23): every kOk start is reported by voice_info with the
+// channel and note it was started for (all layers of a multi-region note), and nothing else is reported.
+static void test_voice_info_reports_started_notes() {
+  TestInstrument ins;
+  ins.region(ins.dc(0.1f), 60, 62);
+  ins.region(ins.dc(0.2f), 60, 60);  // second layer on the same key
+  SampleEngine e(cfg());
+  CHECK(e.set_instrument(ins));
+  CHECK(e.start_voice(5, 60, v16(100)) == EngineStatus::kOk);
+  CHECK(e.start_voice(5, 61, v16(100)) == EngineStatus::kOk);
+  std::uint32_t n60 = 0, n61 = 0, other = 0;
+  VoiceInfo vi;
+  for (std::uint32_t i = 0; i < e.voice_capacity(); ++i) {
+    if (!e.voice_info(i, vi)) continue;
+    if (vi.channel == 5 && vi.note == 60) ++n60;
+    else if (vi.channel == 5 && vi.note == 61) ++n61;
+    else ++other;
+  }
+  CHECK(n60 == 2 && n61 == 1 && other == 0);
+  drain(e);
+  for (std::uint32_t i = 0; i < e.voice_capacity(); ++i) CHECK(!e.voice_info(i, vi));
+}
+
 int main() {
+  test_voice_info_reports_started_notes();
   test_robustness();
   test_region_selection();
   test_round_robin();

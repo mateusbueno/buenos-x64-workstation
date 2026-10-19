@@ -55,7 +55,62 @@ void BlockRenderer::release_deferred(std::uint32_t channel) noexcept {
   }
 }
 
+void BlockRenderer::adopt_generation() noexcept {
+  const Snapshot* next = exchange_.rt_acquire();
+  if (next == held_ || !next) return;
+  // Initial performance values apply only on generation change, and only where they changed. The diff is
+  // against an RT-owned copy of the last applied values: the previous generation is no longer held (the
+  // hazard moved) and the control thread may free it at any moment, so it must not be read here.
+  for (std::size_t i = 0; i < params::kPerfSlotCount; ++i) {
+    if (!applied_valid_ || next->perf_init[i] != applied_init_[i]) last_.store(i, next->perf_init[i]);
+    applied_init_[i] = next->perf_init[i];
+  }
+  applied_valid_ = true;
+  held_ = next;
+}
+
+void BlockRenderer::apply_param(const ParamEvent& ev) noexcept {
+  last_.store(params::perf_slot(*ev.def, ev.part), ev.value);
+  param_applied_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void BlockRenderer::bind_generation(std::uint32_t channel, std::uint32_t note) noexcept {
+  if (!held_) return;
+  std::uint32_t& mask = gen_mask_[(channel & 15u) * 128 + (note & 127u)];
+  const std::uint32_t bit = 1u << (held_->ledger_index % SnapshotExchange::kLedgerSlots);
+  if (mask & bit) return;
+  if (mask == 0) ++ref_keys_;
+  mask |= bit;
+  exchange_.rt_ref(held_->ledger_index);
+}
+
+void BlockRenderer::reap_generation_refs() noexcept {
+  if (ref_keys_ == 0) return;
+  present_.fill(0);
+  for (std::size_t e = 0; e < registry_.size(); ++e) {
+    const Engine* eng = registry_.at(e);
+    VoiceInfo vi;
+    const std::uint32_t cap = eng->voice_capacity();
+    for (std::uint32_t slot = 0; slot < cap; ++slot)
+      if (eng->voice_info(slot, vi)) present_[(vi.channel & 15u) * 128 + (vi.note & 127u)] = 1;
+  }
+  for (std::size_t key = 0; key < gen_mask_.size() && ref_keys_ > 0; ++key) {
+    std::uint32_t& mask = gen_mask_[key];
+    if (mask == 0 || present_[key]) continue;
+    for (std::uint32_t i = 0; i < SnapshotExchange::kLedgerSlots; ++i)
+      if (mask & (1u << i)) exchange_.rt_unref(i);
+    mask = 0;
+    --ref_keys_;
+  }
+}
+
 void BlockRenderer::apply(const Ump& ump) noexcept {
+  if (ump.group() == 0 && ump.is_assignable_controller()) {
+    ParamEvent pe;
+    if (decode_param_event(ump, pe)) apply_param(pe);
+    else param_rejected_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
   if (ump.group() == 0 && ump.is_control_change() && ump.controller_index() == Ump::kControllerSustain) {
     const bool down = ump.controller_value32() >= 0x80000000u;  // MIDI value 64 of 0..127 scaled to 32 bits
     arbiter_.set_sustain(ump.channel(), down);
@@ -78,7 +133,9 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     return;
   }
   if (ump.is_note_on()) {
-    record(engine->start_voice(ump.channel(), ump.note(), ump.velocity16()));
+    const EngineStatus st = engine->start_voice(ump.channel(), ump.note(), ump.velocity16());
+    record(st);
+    if (st == EngineStatus::kOk) bind_generation(ump.channel(), ump.note());
   } else if (stop_now) {
     const EngineStatus st = engine->stop_voice(ump.channel(), ump.note());
     const bool was_stolen = arbiter_.take_stolen_flag(ump.channel(), ump.note());
@@ -95,6 +152,7 @@ void BlockRenderer::render_segment(float* l, float* r, std::uint32_t from, std::
 void BlockRenderer::process_block(float* left, float* right) noexcept {
   if (!left || !right) return;
   for (std::uint32_t i = 0; i < kBlockFrames; ++i) left[i] = right[i] = 0.0f;
+  adopt_generation();
   drain_queue();
 
   std::uint32_t pos = 0;
@@ -115,6 +173,7 @@ void BlockRenderer::process_block(float* left, float* right) noexcept {
     pending_[i].target_frame -= kBlockFrames;
   }
   pending_count_ = remaining;
+  reap_generation_refs();
 }
 
 }  // namespace velora::core

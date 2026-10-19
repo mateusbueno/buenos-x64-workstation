@@ -10,7 +10,8 @@ target_link_libraries(velora_host_macos PUBLIC velora_host
   ${CORE_AUDIO} ${AUDIO_TOOLBOX} ${CORE_MIDI} ${CORE_FOUNDATION})
 
 add_executable(engine-host main.cpp)
-target_link_libraries(engine-host PRIVATE velora_host_macos)
+target_link_libraries(engine-host PRIVATE velora_host_macos velora_control)
+target_compile_definitions(engine-host PRIVATE VELORA_DEV_CONFIG_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../dev/engine-dev.json")
 
 add_executable(coremidi_virtual_test coremidi_virtual_test.cpp)
 target_link_libraries(coremidi_virtual_test PRIVATE velora_host_macos)

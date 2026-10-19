@@ -1,4 +1,9 @@
+include(${CMAKE_SOURCE_DIR}/proto/params.cmake)
+velora_params_output(core VELORA_PARAMS_CORE_HPP)
+
 add_library(velora_core STATIC
+  ${VELORA_PARAMS_CORE_HPP}
+  src/snapshot.cpp
   src/version.cpp
   src/engine_registry.cpp
   src/test_tone_engine.cpp
@@ -6,7 +11,7 @@ add_library(velora_core STATIC
   src/voice_arbiter.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
-target_include_directories(velora_core PUBLIC include)
+target_include_directories(velora_core PUBLIC include ${VELORA_GENERATED_DIR}/core)
 # Dependency rule: core may link only core and ports targets.
 target_link_libraries(velora_core PUBLIC velora_ports)
 
@@ -22,6 +27,10 @@ add_executable(voice_arbiter_tests tests/voice_arbiter_test.cpp)
 target_link_libraries(voice_arbiter_tests PRIVATE velora_core)
 target_compile_definitions(voice_arbiter_tests PRIVATE VELORA_ARBITER_TEST_HOOKS)
 add_test(NAME voice_arbiter_tests COMMAND voice_arbiter_tests)
+
+add_executable(params_tests tests/params_test.cpp)
+target_link_libraries(params_tests PRIVATE velora_core)
+add_test(NAME params_tests COMMAND params_tests)
 
 add_executable(engine_tests tests/engine_test.cpp)
 target_link_libraries(engine_tests PRIVATE velora_core)

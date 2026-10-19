@@ -9,6 +9,7 @@ option(VELORA_RTSAN "Build RealtimeSanitizer tests (needs clang >= 20 with -fsan
 
 enable_testing()
 
+add_subdirectory(proto)
 add_subdirectory(engine/ports)
 add_subdirectory(engine/core)
 add_subdirectory(engine/host)

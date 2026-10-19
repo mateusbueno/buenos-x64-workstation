@@ -1,0 +1,43 @@
+{
+  "parts": [
+    {
+      "part": 0,
+      "timbreRef": 1,
+      "output": "PART_OUTPUT_MAIN",
+      "inserts": [
+        {"type": "INSERT_TYPE_ROTARY", "params": [0.5, 0.5, 0.5, 0.5]},
+        {"type": "INSERT_TYPE_EQ", "params": [0.5, 0.5, 0.5, 0.5]}
+      ],
+      "sendReverb": 0.25,
+      "sendDelay": 0.0
+    },
+    {
+      "part": 1,
+      "timbreRef": 2,
+      "output": "PART_OUTPUT_MAIN",
+      "inserts": [
+        {"type": "INSERT_TYPE_EP_AMP", "params": [0.4, 0.5, 0.5, 0.5]},
+        {"type": "INSERT_TYPE_CHORUS_PHASER", "bypass": true, "params": [0.5, 0.5, 0.5, 0.5]}
+      ],
+      "sendReverb": 0.15,
+      "sendDelay": 0.1
+    },
+    {
+      "part": 2,
+      "timbreRef": 3,
+      "output": "PART_OUTPUT_AUX",
+      "inserts": [{"type": "INSERT_TYPE_COMPRESSOR", "params": [0.5, 0.5, 0.5, 0.5]}]
+    }
+  ],
+  "master": [
+    {"paramId": "PARAM_MASTER_EQ_LOW_GAIN", "value": 0.0},
+    {"paramId": "PARAM_MASTER_COMP_THRESHOLD", "value": -12.0},
+    {"paramId": "PARAM_MASTER_COMP_RATIO", "value": 2.0}
+  ],
+  "performanceInit": [
+    {"paramId": "PARAM_DRAWBAR_16", "part": 0, "value": 8},
+    {"paramId": "PARAM_DRAWBAR_8", "part": 0, "value": 8},
+    {"paramId": "PARAM_DRAWBAR_4", "part": 0, "value": 6},
+    {"paramId": "PARAM_ROTARY_SPEED", "part": 0, "value": 1}
+  ]
+}

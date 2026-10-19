@@ -41,6 +41,50 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
   that fails to decode is left empty and counted (`failed_samples()`), so the engine skips and counts its regions instead of playing
   garbage; an unknown `instrument_key` is `kInstrumentNotFound` and nothing else is substituted. Test: `sample_bundle_loader_test`.
 
+## Control plane (Story 2.1, `velora_control`)
+
+The only place protobuf is used next to the engine. A **control thread** is the sole writer of structural settings; clients (ui,
+panel, Velora Studio) talk to it with `ws.v1` (`proto/ws_v1.proto`) over a Unix domain socket (mode 0600, default
+`/tmp/velora-engine.sock`, `engine-host --socket PATH`).
+
+- `control_plane` -- validates a command against the generated registry, builds a new immutable `core::Snapshot` generation,
+  publishes it with one atomic store and replies `{request_id, revision}`. Any invalid command (unknown id, out of range, part > 7,
+  performance param sent as structural or the reverse, too many insert slots, bad enum, empty command) returns a closed-enum
+  `ErrorCode` and changes nothing: the revision does not move and nothing is published. `SetPerformanceParam` never creates a
+  generation: it becomes one UMP stamped with host time on the control->RT lane (`RenderDriver`'s second SPSC queue, single producer
+  = the control thread); the live value is read back from the lock-free last-value table (`GetPerformanceValues`).
+  Commands: `SetInsertChain`, `SetSendLevels`, `SetPartOutput`, `SetMasterParams` (all-or-nothing), `SetTimbreRef`,
+  `SetPerformanceParam`, `GetState`, `GetPerformanceValues`, `Subscribe`. The Ack of `SetPerformanceParam` means *queued*: RT can
+  still drop the event when its queues overflow (counted: `param_events_rejected()`, `kEventOverflow`). Performance values travel
+  as 32-bit normalised values (floats are quantised to ~2^-32 of the range; int/bool/enum are exact). `SetSendLevels` and
+  `performance_init` apply on a generation change only where the value differs from the previous generation's initial value and
+  never override a live value otherwise. `fill_state`/`fill_live_values` are control-thread only; `revision()`,
+  `live_generations()`, `freed_generations()` are safe from any thread.
+  Events at the same frame: the MIDI lane is submitted before the control lane, so at an identical timestamp the control
+  value lands last (test `test_lane_tie_break_is_midi_first`). Generations are reclaimed here, per AD-23
+  (`reclaim()`): freed once not current, not held by RT and not referenced by any sounding note.
+- `control_server` -- one `poll()` thread: accept, length-prefixed frames (4-byte big-endian + protobuf, <= 65536 bytes),
+  `Hello` handshake first (version must be 1, features are advertised: `params.v1`, `snapshots.v1`, `subscribe.v1`), commands
+  serialized through the plane (concurrent clients get strictly increasing revisions, no lost update), `State` pushed to
+  subscribers after each new generation. Framing violations (frame too large, wrong first message, unsupported version) get an
+  error reply and the connection closes, as does an unparsable *first* frame (before Hello) and a client that has not handshaken
+  within 5 s (`ControlServerLimits::handshake_timeout_ms`); beyond `max_clients` (64) connections are closed right after accept.
+  After the handshake an unparsable frame or an invalid command gets an error reply and the connection survives. `Subscribe(true)`
+  immediately pushes the current `State`. The socket is created 0600 (umask 0177), a path that is not a socket is never touched,
+  and a stale socket is replaced only when connecting to it is refused. A reply above 64 KiB becomes an `INTERNAL` error. A client that falls 4 MiB behind is dropped. A stale socket file is replaced, a live listener is never stolen.
+- `dev_config` + `dev/engine-dev.json` -- the first generation until Live Sets exist (Epic 4): the JSON mapping of the `ws.v1`
+  `State` message (parts 0-7: `timbreRef`, `inserts`, `sendReverb`/`sendDelay`, `output`; `master`; `performanceInit`). It is
+  validated like a command and published as generation 1 **before audio runs**; an invalid file (unknown field, bad enum, out of range,
+  duplicate part) makes `engine-host` print a clear error and exit 1. `engine-host --config PATH` selects another file.
+- `midi_ingest` also turns MIDI CCs the registry maps (drawbars CC 70-78, ...) into performance parameter UMPs (channel = part);
+  CC 64 (sustain) is forwarded unchanged to the renderer's pedal handling, other CCs stay ignored.
+- Tests: `control_tests` (a real UDS client for every row of the story's matrix: handshake, structural commands, every invalid
+  command, performance path via ws.v1 and CC, held note across a swap, 8 concurrent clients, generation exhaustion, socket
+  lifecycle), `control_rt_traffic_test` / `rtsan_control_test` (10,000 parameter changes + 100 swaps beside a rendering RT thread;
+  the latter under RealtimeSanitizer, Docker/Linux clang only).
+- Requires `protoc` + libprotobuf (`brew install protobuf`; `protobuf-compiler libprotobuf-dev`). The library links Homebrew's
+  abseil next to formatlib's vendored abseil only in the `engine-host` binary; the two use different inline namespaces.
+
 ## macOS only (`macos/`, built only when `APPLE`)
 
 - `CoreAudioOutput`: HAL output AudioUnit at 48 kHz stereo float; requests a 64-frame device buffer and reports
@@ -54,6 +98,7 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
 cmake -S . -B build && cmake --build build
 build/engine/host/macos/engine-host                 # runs until q + Enter or Ctrl-C
 build/engine/host/macos/engine-host --duration 2    # headless short run, prints stats and exits 0
+build/engine/host/macos/engine-host --socket /tmp/e.sock --config engine/host/dev/engine-dev.json
 ```
 
 Notes arriving from any MIDI source play the engine test tone. It exits non-zero with a message if there is no output

@@ -1,12 +1,15 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
 #include "velora/core/arena.hpp"
 #include "velora/core/engine.hpp"
 #include "velora/core/engine_registry.hpp"
+#include "velora/core/param_events.hpp"
+#include "velora/core/snapshot.hpp"
 #include "velora/core/spsc_queue.hpp"
 #include "velora/core/test_tone_engine.hpp"
 #include "velora/core/ump.hpp"
@@ -72,6 +75,19 @@ class BlockRenderer {
   std::uint64_t stolen_note_offs() const noexcept { return stolen_note_offs_; }
   std::uint64_t dropped_deferred_releases() const noexcept { return dropped_deferred_; }
 
+  // --- control-plane state (Story 2.1) ------------------------------------------------------------
+  // The control thread publishes structural Snapshots through snapshots() and reads the RT-owned live
+  // performance values from last_values(); both are lock-free. The renderer adopts the newest published
+  // generation at the start of each block and keeps it referenced for every note that started on it
+  // until that note's voices are gone (AD-23), so the control thread can tell when a generation is free.
+  SnapshotExchange& snapshots() noexcept { return exchange_; }
+  const LastValueTable& last_values() const noexcept { return last_; }
+  const Snapshot* held_snapshot() const noexcept { return held_; }  // RT thread only
+  // Performance parameter UMPs applied to / refused by the last-value table (unknown id, structural
+  // class, part out of range). Relaxed counters, readable from any thread.
+  std::uint64_t param_events_applied() const noexcept { return param_applied_.load(std::memory_order_relaxed); }
+  std::uint64_t param_events_rejected() const noexcept { return param_rejected_.load(std::memory_order_relaxed); }
+
   bool ready() const noexcept { return bound_; }
   const EngineRegistry& registry() const noexcept { return registry_; }
   TestToneEngine& test_tone() noexcept { return tone_; }
@@ -83,6 +99,10 @@ class BlockRenderer {
   void render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to) noexcept VELORA_NONBLOCKING;
 
   void release_deferred(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
+  void adopt_generation() noexcept VELORA_NONBLOCKING;
+  void apply_param(const ParamEvent& ev) noexcept VELORA_NONBLOCKING;
+  void bind_generation(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING;
+  void reap_generation_refs() noexcept VELORA_NONBLOCKING;
 
   Arena arena_;
   TestToneEngine tone_;
@@ -98,6 +118,17 @@ class BlockRenderer {
   std::uint64_t stolen_note_offs_ = 0;
   std::uint64_t dropped_deferred_ = 0;
   bool bound_ = false;
+
+  SnapshotExchange exchange_;
+  LastValueTable last_;
+  const Snapshot* held_ = nullptr;
+  std::array<float, params::kPerfSlotCount> applied_init_{};  // RT-owned: perf_init last applied
+  bool applied_valid_ = false;
+  // Per (channel, note): bit i set = this key holds one reference on ledger slot i (a generation).
+  std::array<std::uint32_t, 16 * 128> gen_mask_{};
+  std::array<std::uint8_t, 16 * 128> present_{};  // scratch for reap_generation_refs()
+  std::uint32_t ref_keys_ = 0;                     // keys with a non-zero mask
+  std::atomic<std::uint64_t> param_applied_{0}, param_rejected_{0};
 };
 
 }  // namespace velora::core

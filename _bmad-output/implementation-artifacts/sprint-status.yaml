@@ -61,8 +61,8 @@ development_status:
   1-23-milestone-1-investor-demo-proving-nfr1-nfr4: backlog
   epic-1-retrospective: optional
 
-  epic-2: backlog
-  2-1-parameter-registry-and-control-thread-snapshots-for-engine-s: backlog
+  epic-2: in-progress
+  2-1-parameter-registry-and-control-thread-snapshots-for-engine-s: done
   2-2-tonewheel-generator-and-drawbar-voices-at-full-polyphony: backlog
   2-3-organ-percussion-and-key-click: backlog
   2-4-vibrato-chorus-scanner-and-tonewheel-leakage: backlog

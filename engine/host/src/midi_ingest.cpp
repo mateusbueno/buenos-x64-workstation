@@ -26,6 +26,25 @@ bool normalise_packet(const std::uint32_t* words, std::size_t count, std::size_t
       out = core::make_note_off(group, channel, note, scale_velocity_7_to_16(vel));
     return true;
   }
+  // Control change -> performance parameter UMP (channel = part), only for controllers the registry maps.
+  if (mt == 0x2 && status == core::Ump::kStatusControlChange) {
+    const std::uint32_t v = w0 & 0x7F;
+    const std::uint32_t v32 = v == 0 ? 0 : ((v << 25) | (v << 18) | (v << 11) | (v << 4) | (v >> 3));
+    const core::Ump cc = core::make_control_change(group, channel, (w0 >> 8) & 0x7F, v32);
+    if (cc.controller_index() == core::Ump::kControllerSustain) {  // the pedal goes to the arbiter as before
+      out = cc;
+      return true;
+    }
+    return core::cc_to_param_event(cc, out);
+  }
+  if (mt == core::Ump::kMessageTypeChannelVoice2 && status == core::Ump::kStatusControlChange) {
+    const core::Ump cc{w0, words[1]};
+    if (cc.controller_index() == core::Ump::kControllerSustain) {
+      out = cc;
+      return true;
+    }
+    return core::cc_to_param_event(cc, out);
+  }
   if (mt == core::Ump::kMessageTypeChannelVoice2 &&
       (status == core::Ump::kStatusNoteOn || status == core::Ump::kStatusNoteOff)) {
     out = core::Ump{w0, words[1]};
@@ -41,7 +60,7 @@ void MidiIngest::on_ump(const std::uint32_t* words, std::size_t count, std::uint
     if (normalise_packet(words, count, used, u)) {
       if (queue_.push(StampedUmp{u, host_ns})) {
         last_stamp_ns_.store(host_ns, std::memory_order_relaxed);
-        counters_.notes.fetch_add(1, std::memory_order_relaxed);
+        (u.is_assignable_controller() ? counters_.params : counters_.notes).fetch_add(1, std::memory_order_relaxed);
       } else
         counters_.queue_full.fetch_add(1, std::memory_order_relaxed);
     } else {

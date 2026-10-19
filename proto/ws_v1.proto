@@ -1,0 +1,164 @@
+// ws.v1: the control protocol between the engine's control thread and its clients (ui, panel, Velora
+// Studio) over a Unix domain socket. Framing: each message is a 4-byte big-endian length followed by
+// that many bytes of protobuf (ClientMessage from the client, ServerMessage from the server); the
+// largest frame is 65536 bytes. Rules (AD-2/AD-8): the schema only grows by addition, numbers are never
+// reused, the first message on every connection is Hello, errors carry a code from the closed ErrorCode
+// enum (clients treat an unknown value as an error), and a failed command changes nothing.
+syntax = "proto3";
+
+package ws.v1;
+
+import "ws_v1_params.proto";  // generated from proto/params.json: ParamId, InsertType, PartOutput, ...
+
+// Protocol version spoken by this schema. Hello.version must equal it.
+enum ProtocolVersion {
+  PROTOCOL_VERSION_UNSPECIFIED = 0;
+  PROTOCOL_VERSION_1 = 1;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_UNSUPPORTED_VERSION = 1;  // Hello named a version the server does not speak (connection closes)
+  ERROR_CODE_HANDSHAKE_REQUIRED = 2;   // first message was not Hello (connection closes)
+  ERROR_CODE_MALFORMED_MESSAGE = 3;    // the frame did not parse as a message
+  ERROR_CODE_FRAME_TOO_LARGE = 4;      // length prefix above the limit (framing violation, connection closes)
+  ERROR_CODE_INVALID_COMMAND = 5;      // no command set, unknown command, or a command that is not valid here
+  ERROR_CODE_UNKNOWN_PARAM = 6;        // param_id is not in the registry
+  ERROR_CODE_OUT_OF_RANGE = 7;         // value outside the registry range (or not finite)
+  ERROR_CODE_INVALID_PART = 8;         // part index above the last part
+  ERROR_CODE_WRONG_CLASS = 9;          // a performance parameter sent as structural, or the reverse
+  ERROR_CODE_WRONG_SCOPE = 10;         // parameter does not belong to this command's scope
+  ERROR_CODE_INVALID_SLOT = 11;        // more insert slots than the chain holds
+  ERROR_CODE_UNKNOWN_ENUM_VALUE = 12;  // enum value outside the registry enum
+  ERROR_CODE_BUSY = 13;                // temporarily out of resources (too many unreclaimed generations, RT queue full)
+  ERROR_CODE_INTERNAL = 14;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;                // human-readable, English, not for matching
+  map<string, string> details = 3;   // e.g. param_id, part, limit
+}
+
+// --- handshake ------------------------------------------------------------------------------------
+message Hello {
+  uint32 version = 1;                // = PROTOCOL_VERSION_1
+  repeated string features = 2;      // features the client can use; unknown ones are ignored by the server
+  string client_name = 3;
+}
+
+message HelloAck {
+  uint32 version = 1;
+  repeated string features = 2;      // "params.v1", "snapshots.v1", "subscribe.v1"
+  uint64 revision = 3;               // current snapshot revision
+}
+
+// --- state ----------------------------------------------------------------------------------------
+message ParamValue {
+  ParamId param_id = 1;
+  optional uint32 part = 2;          // part-scope parameters (required in the dev configuration); ignored for master scope
+  float value = 3;
+}
+
+message InsertSlot {
+  InsertType type = 1;
+  bool bypass = 2;
+  repeated float params = 3;         // up to 4 values (registry insert_param_1..4); missing ones keep the default
+}
+
+message PartState {
+  uint32 part = 1;                   // 0..7
+  uint32 timbre_ref = 2;             // opaque timbre reference
+  repeated InsertSlot inserts = 3;   // ordered chain, up to 5 slots
+  PartOutput output = 4;
+  optional float send_reverb = 5;    // initial send levels; also present in State.performance_init
+  optional float send_delay = 6;
+}
+
+// The structural state of one snapshot generation. Also the format of the dev configuration file
+// (engine/host/dev/engine-dev.json, JSON mapping of this message; `revision` is ignored there).
+message State {
+  uint64 revision = 1;
+  repeated PartState parts = 2;          // always all 8 when sent by the server
+  repeated ParamValue master = 3;        // structural master-scope parameters
+  repeated ParamValue performance_init = 4;  // initial values of performance parameters: applied by RT on a generation
+                                             // change only where they differ from the previous generation's, and they
+                                             // never override a live value otherwise
+}
+
+message PerformanceValues {              // live values from the RT last-value table
+  repeated ParamValue values = 1;
+}
+
+// --- commands -------------------------------------------------------------------------------------
+message SetInsertChain {                 // structural; replaces the whole chain of a part
+  uint32 part = 1;
+  repeated InsertSlot slots = 2;
+}
+
+message SetSendLevels {                  // structural; initial send levels carried by the snapshot. RT applies a level on
+                                         // the generation change only when it differs from the previous generation's
+                                         // initial value; otherwise the live value (SetPerformanceParam, CC) is kept
+  uint32 part = 1;
+  float reverb = 2;
+  float delay = 3;
+}
+
+message SetPartOutput {                  // structural
+  uint32 part = 1;
+  PartOutput output = 2;
+}
+
+message SetMasterParams {                // structural; all values or none
+  repeated ParamValue values = 1;
+}
+
+message SetTimbreRef {                   // structural
+  uint32 part = 1;
+  uint32 timbre_ref = 2;
+}
+
+message SetPerformanceParam {            // performance; becomes a timestamped UMP, no new snapshot. The Ack means QUEUED for
+                                         // RT, not applied: RT can still drop the event when its own queues overflow (it is
+                                         // counted, never silent). Values travel as 32-bit normalised over the registry range,
+                                         // so floats are quantised to ~2^-32 of the range; int/bool/enum are exact
+  ParamId param_id = 1;
+  uint32 part = 2;
+  float value = 3;
+}
+
+message GetState {}
+message GetPerformanceValues {}
+message Subscribe {                      // after this, every new revision is pushed as a State message
+  bool enable = 1;
+}
+
+message ClientMessage {
+  uint64 request_id = 1;                 // echoed in the reply; chosen by the client
+  oneof body {
+    Hello hello = 10;
+    SetInsertChain set_insert_chain = 11;
+    SetSendLevels set_send_levels = 12;
+    SetPartOutput set_part_output = 13;
+    SetMasterParams set_master_params = 14;
+    SetTimbreRef set_timbre_ref = 15;
+    SetPerformanceParam set_performance_param = 16;
+    GetState get_state = 17;
+    GetPerformanceValues get_performance_values = 18;
+    Subscribe subscribe = 19;
+  }
+}
+
+message Ack {}
+
+message ServerMessage {
+  uint64 request_id = 1;                 // 0 for pushed messages
+  uint64 revision = 2;                   // snapshot revision after the command (unchanged on error)
+  oneof body {
+    HelloAck hello_ack = 10;
+    Ack ack = 11;
+    Error error = 12;
+    State state = 13;
+    PerformanceValues performance_values = 14;
+  }
+}

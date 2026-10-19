@@ -19,6 +19,9 @@
 #include "coremidi_input.hpp"
 #include "mach_time.hpp"
 #include "velora/core/block_renderer.hpp"
+#include "velora/host/control_plane.hpp"
+#include "velora/host/control_server.hpp"
+#include "velora/host/dev_config.hpp"
 #include "velora/host/midi_ingest.hpp"
 #include "velora/host/render_driver.hpp"
 
@@ -30,6 +33,8 @@ void on_signal(int) { g_quit.store(true); }
 int main(int argc, char** argv) {
   using namespace velora;
   double duration_s = 0;  // 0 = run until q / SIGINT
+  std::string socket_path = "/tmp/velora-engine.sock";
+  std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--duration") && i + 1 < argc) {
       const char* arg = argv[++i];
@@ -39,8 +44,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "engine-host: --duration needs a positive number of seconds\n");
         return 2;
       }
+    } else if (!std::strcmp(argv[i], "--socket") && i + 1 < argc) {
+      socket_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--config") && i + 1 < argc) {
+      config_path = argv[++i];
     } else {
-      std::fprintf(stderr, "usage: engine-host [--duration SECONDS]\n");
+      std::fprintf(stderr, "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json]\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
@@ -49,8 +58,22 @@ int main(int argc, char** argv) {
 
   auto renderer = std::make_unique<core::BlockRenderer>();
   auto queue = std::make_unique<host::HostEventQueue>();
-  host::RenderDriver driver(*renderer, *queue);
+  auto control_queue = std::make_unique<host::ControlEventQueue>();
+  host::RenderDriver driver(*renderer, *queue, {}, control_queue.get());
   host::MidiIngest ingest(*queue);
+
+  // Control plane: the first snapshot generation comes from the committed dev configuration and is
+  // published before audio runs; an invalid file stops the engine here with a clear error.
+  host::ControlPlane plane(renderer->snapshots(), renderer->last_values(), *control_queue,
+                           [] { return host::macos::now_ns(); });
+  {
+    ws::v1::State initial;
+    std::string cerr;
+    if (!host::load_dev_config(config_path, initial, cerr) || !plane.load_initial(initial, cerr)) {
+      std::fprintf(stderr, "engine-host: config: %s\n", cerr.c_str());
+      return 1;
+    }
+  }
 
   host::macos::CoreAudioOutput audio;
   host::macos::CoreMidiInput midi;
@@ -71,6 +94,13 @@ int main(int argc, char** argv) {
               midi.protocol() == kMIDIProtocol_2_0 ? "MIDI 2.0" : "MIDI 1.0 (up-converted)",
               midi.connected_sources(),
               midi.connected_sources() ? "" : " (none yet; new sources are picked up automatically)");
+  host::ControlServer control(plane, socket_path);
+  if (!control.start(err)) {
+    std::fprintf(stderr, "engine-host: control: %s\n", err.c_str());
+    return 1;
+  }
+  std::printf("control: ws.v1 on %s, generation %llu from %s\n", socket_path.c_str(),
+              (unsigned long long)plane.revision(), config_path.c_str());
   if (!audio.start(err)) {
     std::fprintf(stderr, "engine-host: audio: %s\n", err.c_str());
     return 1;
@@ -108,6 +138,7 @@ int main(int argc, char** argv) {
 
   audio.stop();
   midi.close();
+  control.stop();
   const auto& rc = driver.counters();
   const auto& mc = ingest.counters();
   std::printf("-- timing/stats (host, not representative) --\n");
