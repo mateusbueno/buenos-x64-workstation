@@ -13,6 +13,7 @@ struct Ump {
   static constexpr std::uint32_t kStatusNoteOff = 0x8;
   static constexpr std::uint32_t kStatusNoteOn = 0x9;
   static constexpr std::uint32_t kStatusAssignableController = 0x3;  // MIDI 2.0 assignable controller (NRPN)
+  static constexpr std::uint32_t kStatusAssignablePerNoteController = 0x1;  // MIDI 2.0 assignable per-note controller
   static constexpr std::uint32_t kStatusControlChange = 0xB;
   static constexpr std::uint32_t kControllerSustain = 64;
 
@@ -34,6 +35,10 @@ struct Ump {
   }
   constexpr bool is_assignable_controller() const noexcept {
     return message_type() == kMessageTypeChannelVoice2 && status() == kStatusAssignableController;
+  }
+  // MIDI 2.0 assignable per-note controller (status 0x1): word0 [15:8] = note (8 bits on the wire), [7:0] = controller index.
+  constexpr bool is_assignable_per_note_controller() const noexcept {
+    return message_type() == kMessageTypeChannelVoice2 && status() == kStatusAssignablePerNoteController;
   }
   constexpr bool is_note_on() const noexcept {
     return message_type() == kMessageTypeChannelVoice2 && status() == kStatusNoteOn;

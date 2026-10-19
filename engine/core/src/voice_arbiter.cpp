@@ -161,6 +161,14 @@ bool VoiceArbiter::note_off(std::uint32_t channel, std::uint32_t note, std::uint
   return true;
 }
 
+void VoiceArbiter::contact_up(std::uint32_t channel, std::uint32_t note) noexcept {
+  ++serial_;
+  if (note > 127) return;
+  const std::size_t k = (channel & 15u) * 128u + note;
+  key_down_[k] = 0;
+  deferred_[k] = 0;
+}
+
 void VoiceArbiter::set_sustain(std::uint32_t channel, bool down) noexcept { pedal_[channel & 15u] = down ? 1 : 0; }
 
 bool VoiceArbiter::take_stolen_flag(std::uint32_t channel, std::uint32_t note) noexcept {

@@ -18,6 +18,11 @@ struct NoteEvent {
   // (registry `cc`) to performance parameters and drops the rest.
   bool cc = false;
   std::uint8_t value = 0;
+  // Contact event (Story 2.5, only from an --events file): `contact` true means a contact_k transition of key (channel, note):
+  // contact `contact_index`, `closed` true = closing. `on`, `cc` are false.
+  bool contact = false;
+  bool closed = false;
+  std::uint8_t contact_index = 0;
 };
 
 struct SmfResult {

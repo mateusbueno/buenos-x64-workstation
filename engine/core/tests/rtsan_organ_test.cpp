@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "velora/core/block_renderer.hpp"
+#include "velora/core/contact_events.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/param_events.hpp"
 #include "velora/core/params_gen.hpp"
@@ -41,6 +42,10 @@ void run_block(BlockRenderer& br, float* l, float* r, std::uint32_t i) noexcept 
     const std::uint32_t k = (i / 5) % 3;
     if (cc_to_param_event(make_control_change(0, part, kScanCc[k], ((i / 15) % 7) * 0x2492492Fu), ev)) br.submit({ev, 33});
   }
+  if (i % 3 == 1) {  // contact_k traffic (Story 2.5), valid and malformed (index 0..4, open without close, duplicates)
+    const std::uint32_t note = 28 + (i * 5) % 73;
+    br.submit({make_contact_event(0, part, note, (i / 3) % 5, ((i / 15) % 2) == 0), (i * 3) % 64});
+  }
   if (i % 700 == 0) br.submit({make_control_change(0, 0, 64, 0xFFFFFFFFu), 2});  // pedal down
   if (i % 700 == 350) br.submit({make_control_change(0, 0, 64, 0u), 2});         // pedal up
   if (i % 500 == 0)
@@ -63,15 +68,29 @@ void run_scanner_block(BlockRenderer& br, float* l, float* r, std::uint32_t i) n
   br.process_block(l, r);
 }
 
+// Contact traffic (Story 2.5) on part 5: a 73-key sweep where every key's contacts close in order 1, 2, 3 and open 3, 2, 1 across
+// 438-block cycles, with Note On/Off following and a few out-of-order events, at varying in-block offsets.
+void run_contact_block(BlockRenderer& br, float* l, float* r, std::uint32_t i) noexcept [[clang::nonblocking]] {
+  const std::uint32_t part = 5;
+  const std::uint32_t note = 28 + i % 73;
+  const std::uint32_t phase = (i / 73) % 6;           // 0..2 close 1..3, 3..5 open 3..1
+  const std::uint32_t k = phase < 3 ? phase + 1 : 6 - phase;
+  br.submit({make_contact_event(0, part, note, k, phase < 3), (i * 7) % 64});
+  if (phase == 2) br.submit({make_note_on(0, part, note, 30000), (i * 7) % 64});
+  if (phase == 5) br.submit({make_note_off(0, part, note), (i * 7 + 9) % 64});
+  if (i % 11 == 0) br.submit({make_contact_event(0, part, note, 1 + i % 3, i % 2 == 0), (i * 5) % 64});  // out of order
+  br.process_block(l, r);
+}
+
 }  // namespace
 
 int main() {
   auto organ = std::make_unique<OrganEngine>();
   auto br = std::make_unique<BlockRenderer>(256);
   br->bind_engine(*organ);
-  for (std::uint32_t ch = 0; ch < 5; ++ch) br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
+  for (std::uint32_t ch = 0; ch < 6; ++ch) br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
   VoiceArbiter::LiveSetConfig cfg;
-  cfg.organ_rotary_cost = OrganEngine::reservation_cost_units(5);
+  cfg.organ_rotary_cost = OrganEngine::reservation_cost_units(6);
   cfg.budget = cfg.organ_rotary_cost + 256;
   int rc = 0;
   if (br->arbiter().reserve(cfg) != VoiceArbiter::ReserveStatus::kOk) {
@@ -102,10 +121,27 @@ int main() {
     }
   }
   if (!(scan_energy > 0.0)) rc = 1;
+  // Contact phase: part 5 keys follow multi-contact sequences (valid and malformed) for 6,000 blocks.
+  double contact_energy = 0.0;
+  for (std::uint32_t i = 0; i < 6000; ++i) {
+    run_contact_block(*br, l, r, i);
+    for (std::uint32_t k = 0; k < kBlockFrames; ++k) {
+      contact_energy += static_cast<double>(l[k]) * l[k];
+      if (!std::isfinite(l[k])) rc = 1;
+    }
+  }
+  if (!(contact_energy > 0.0) || organ->contact_events_applied() == 0 || organ->contact_events_ignored() == 0 ||
+      br->contact_events_routed() == 0)
+    rc = 1;
+  std::printf("rtsan_organ_test: contact energy=%.3g applied=%llu ignored=%llu\n", contact_energy,
+              (unsigned long long)organ->contact_events_applied(), (unsigned long long)organ->contact_events_ignored());
   std::printf("rtsan_organ_test: energy=%.3g peak=%.3f peak_voices=%u organ_steals=%llu rejected=%llu\n", energy, peak,
               peak_voices, (unsigned long long)br->arbiter().steals(static_cast<std::uint32_t>(EngineTypeId::kOrgan)),
               (unsigned long long)br->param_events_rejected());
-  if (!(energy > 0.0) || peak > 4.0f || peak_voices < 73 ||
+  // Bound: every part's output passes the organ's soft limit, which keeps it strictly below 1.0, and the loop uses kParts parts,
+  // so the sum of the parts is below kParts. (It tracks the part count instead of a fixed number.)
+  constexpr float kParts = 6.0f;
+  if (!(energy > 0.0) || peak > kParts || peak_voices < 73 ||
       br->arbiter().steals(static_cast<std::uint32_t>(EngineTypeId::kOrgan)) != 0)
     rc = 1;
   return rc;

@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "velora/core/block_renderer.hpp"
+#include "velora/core/contact_events.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/param_events.hpp"
@@ -28,14 +29,18 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   // Controllers are an organ-engine feature (its parts are channels 0..7); other renders ignore them entirely.
   const bool organ_render = opt.engine == EngineKind::kOrgan;
   auto control = [organ_render](const NoteEvent& e, Ump& out) {
-    if (!organ_render || e.channel >= OrganEngine::kPartCount) return false;
+    if (!organ_render || e.contact || e.channel >= OrganEngine::kPartCount) return false;
     return cc_to_param_event(
         make_control_change(0, e.channel, e.note, static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127)), out);
   };
   std::uint64_t last = 0;
   for (const NoteEvent& e : events) {
     Ump u;
-    if (!e.cc || control(e, u)) last = std::max(last, e.frame);
+    if (e.contact) {
+      if (organ_render && e.channel < OrganEngine::kPartCount) last = std::max(last, e.frame);  // an organ feature on parts, like controllers
+    } else if (!e.cc || control(e, u)) {
+      last = std::max(last, e.frame);
+    }
   }
   const std::uint64_t total = last + tail;
   if (total > static_cast<std::uint64_t>(kSampleRate) * 3600) {
@@ -84,6 +89,10 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       return false;
     }
     organ = std::make_unique<OrganEngine>();
+    if (!organ->set_contact_count(opt.contact_count)) {
+      error = "invalid contact count (2 or 3)";
+      return false;
+    }
     if (!br->bind_engine(*organ)) {
       error = "cannot bind the organ engine";
       return false;
@@ -126,6 +135,13 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     while (next < events.size() && events[next].frame < end) {
       const NoteEvent& e = events[next++];
       const std::uint32_t off = static_cast<std::uint32_t>(e.frame - b * kBlockFrames);
+      if (e.contact) {
+        if (organ_render && !br->submit({make_contact_event(0, e.channel, e.note, e.contact_index, e.closed), off})) {
+          error = "event queue overflow (too many events in one block)";
+          return false;
+        }
+        continue;
+      }
       if (e.cc) {
         Ump pu;
         if (control(e, pu) && !br->submit({pu, off})) {

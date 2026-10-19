@@ -117,14 +117,27 @@ std::uint32_t OrganEngine::active_voices() const noexcept {
   return n;
 }
 
+OrganEngine::Voice* OrganEngine::held_voice(std::uint32_t channel, std::uint32_t note) noexcept {
+  for (Voice& v : voices_)
+    if (v.active && v.state == VoiceState::kHeld && v.channel == channel && v.note == note) return &v;
+  return nullptr;
+}
+
 EngineStatus OrganEngine::start_voice(std::uint32_t channel, std::uint32_t note, std::uint32_t) noexcept {
   if (channel >= kPartCount || !(enabled_ & (1u << channel))) return EngineStatus::kEngineNotAvailable;
+  // The key is already down (a repeated Note On, or its voice was started by contact 1): nothing to start. No second voice, no
+  // percussion retrigger, no click, and the contact groups keep following their own events.
+  if (held_voice(channel, note)) return EngineStatus::kOk;
+  return spawn_voice(channel, note, false);
+}
+
+// Starts the voice of key (channel, note); the caller checked that the part is enabled and that the key has no held voice.
+// contact_driven: the voice begins silent (every group at 0, no contact closed) and the caller closes contact 1; otherwise this
+// is a Note On voice with every busbar group in at once (the Story 2.2-2.4 behaviour, bit-identical).
+EngineStatus OrganEngine::spawn_voice(std::uint32_t channel, std::uint32_t note, bool contact_driven) noexcept {
   bool other_key_held = false;
-  for (const Voice& v : voices_) {
-    if (!v.active || v.state != VoiceState::kHeld || v.channel != channel) continue;
-    if (v.note == note) return EngineStatus::kOk;  // the key is already down: nothing to start (no retrigger)
-    other_key_held = true;                         // single trigger: another key of the part is down
-  }
+  for (const Voice& v : voices_)
+    if (v.active && v.state == VoiceState::kHeld && v.channel == channel) other_key_held = true;  // single trigger: another key is down
   std::uint32_t slot = acquire_slot(channel, note);
   if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
     // All slots busy: reclaim the oldest releasing voice (a tail), never a held one.
@@ -147,6 +160,15 @@ EngineStatus OrganEngine::start_voice(std::uint32_t channel, std::uint32_t note,
   v.channel = channel;
   v.note = note;
   v.start_time = clock_;
+  v.groups = static_cast<std::uint8_t>(contact_count_);
+  if (contact_driven) {
+    v.closed_mask = 0;
+    v.gate_cur = {0.0f, 0.0f, 0.0f};
+    v.gate_tgt = {0.0f, 0.0f, 0.0f};
+  } else {
+    v.closed_mask = static_cast<std::uint8_t>((1u << contact_count_) - 1u);
+  }
+  contact_released_[channel * 128 + (note & 127u)] = 0;
   for (std::uint32_t d = 0; d < kD; ++d)
     v.wheel[d] = static_cast<std::uint8_t>(tonewheel::drawbar_wheel(static_cast<int>(note), d) - 1);
   const Part& p = parts_[channel];
@@ -165,15 +187,91 @@ EngineStatus OrganEngine::start_voice(std::uint32_t channel, std::uint32_t note,
   return EngineStatus::kOk;
 }
 
+void OrganEngine::set_gate(Voice& v, std::uint32_t group, float target) noexcept {
+  v.gate_tgt[group] = target;
+  v.gate_left[group] = static_cast<std::uint8_t>(kContactRampFrames);  // the ramp starts at the next rendered frame = the event frame
+  v.gate_step[group] = (target - v.gate_cur[group]) / static_cast<float>(kContactRampFrames);
+}
+
+void OrganEngine::release_key(Voice& v) noexcept {
+  v.state = VoiceState::kReleasing;
+  v.closed_mask = 0;
+  contact_released_[v.channel * 128 + (v.note & 127u)] = 1;
+  start_click(v, 1, parts_[v.part].key_click, kClickReleaseRatio);  // the last contact opens: release click
+}
+
 EngineStatus OrganEngine::stop_voice(std::uint32_t channel, std::uint32_t note) noexcept {
   bool found = false;
   for (Voice& v : voices_)
     if (v.active && v.state == VoiceState::kHeld && v.channel == channel && v.note == note) {
       v.state = VoiceState::kReleasing;
+      v.closed_mask = 0;  // the key is up: any group still in follows the voice's 2 ms release together
       found = true;
       start_click(v, 1, parts_[v.part].key_click, kClickReleaseRatio);  // the contact opens: release click
     }
-  return found ? EngineStatus::kOk : EngineStatus::kVoiceNotFound;
+  if (found) return EngineStatus::kOk;
+  // Note Off after the contacts already opened the key (contact_k open of the last contact): benign, repeatable.
+  if (channel < kPartCount && contact_released_[channel * 128 + (note & 127u)]) return EngineStatus::kOk;
+  return EngineStatus::kVoiceNotFound;
+}
+
+std::uint32_t OrganEngine::contact_mask(std::uint32_t channel, std::uint32_t note) const noexcept {
+  for (const Voice& v : voices_)
+    if (v.active && v.state == VoiceState::kHeld && v.channel == channel && v.note == note) return v.closed_mask;
+  return 0;
+}
+
+// contact_k (Story 2.5). Defined behaviour for every sequence (nothing here can crash or loop):
+//  * close of contact 1 with no held voice starts the voice at this frame (percussion and onset click as a Note On would);
+//  * close of contact k > 1 brings group k-1 in, only while contact 1 is closed (i.e. the key has a held voice);
+//  * open of a contact that is closed drops group k-1 and every closed group above it (a key cannot have contact 3 closed with contact 2
+//    open), and the voice ends when no contact is left closed;
+//  * everything else (duplicate close, open of a contact that is not itself closed even if a higher one is, close of k > 1 with no voice, k == 0 or above
+//    contact_count()) changes nothing and is counted in contact_events_ignored().
+EngineStatus OrganEngine::set_contact(std::uint32_t channel, std::uint32_t note, std::uint32_t contact, bool closed,
+                                      ContactEffect& effect) noexcept {
+  effect = ContactEffect::kNone;
+  if (channel >= kPartCount || !(enabled_ & (1u << channel))) return EngineStatus::kEngineNotAvailable;
+  if (note > 127 || contact < 1 || contact > contact_count_) {
+    ++contact_ignored_;
+    return EngineStatus::kOk;
+  }
+  const std::uint32_t bit = 1u << (contact - 1);
+  Voice* v = held_voice(channel, note);
+  if (closed) {
+    if (!v) {
+      if (contact != 1) {  // contact k closed with no contact 1: the key never went down
+        ++contact_ignored_;
+        return EngineStatus::kOk;
+      }
+      const EngineStatus st = spawn_voice(channel, note, true);
+      if (st != EngineStatus::kOk) return st;
+      v = held_voice(channel, note);
+      if (!v) return EngineStatus::kPoolExhausted;  // cannot happen: spawn_voice just made it
+      effect = ContactEffect::kStarted;
+    } else if (v->closed_mask & bit) {  // duplicate close (or a Note On voice: every contact is closed)
+      ++contact_ignored_;
+      return EngineStatus::kOk;
+    }
+    v->closed_mask = static_cast<std::uint8_t>(v->closed_mask | bit);
+    set_gate(*v, contact - 1, 1.0f);
+    ++contact_applied_;
+    return EngineStatus::kOk;
+  }
+  const std::uint32_t above = ~(bit - 1u) & ((1u << kMaxContacts) - 1u);  // this contact and every higher one
+  if (!v || !(v->closed_mask & bit)) {  // open of a contact that is not closed (a higher one may be): ignored
+    ++contact_ignored_;
+    return EngineStatus::kOk;
+  }
+  for (std::uint32_t g = contact - 1; g < kMaxContacts; ++g)
+    if (v->closed_mask & (1u << g)) set_gate(*v, g, 0.0f);
+  v->closed_mask = static_cast<std::uint8_t>(v->closed_mask & ~above);
+  ++contact_applied_;
+  if (v->closed_mask == 0) {
+    release_key(*v);
+    effect = ContactEffect::kReleased;
+  }
+  return EngineStatus::kOk;
 }
 
 void OrganEngine::set_param(std::uint32_t, float) noexcept {}
@@ -330,22 +428,50 @@ void OrganEngine::render_chunk(float* left, float* right, std::uint32_t frames) 
     for (Voice& v : voices_) {
       if (!v.active || v.part != part) continue;
       float tmp[kBlockFrames] = {};
+      // Contact groups (Story 2.5): per group, "in" (gate 1, the plain path), "out" (gate 0, skipped) or ramping (per-frame gate).
+      // A Note On voice never ramps, so its sums are exactly the pre-2.5 ones.
+      float gate_f[kMaxContacts][kBlockFrames];
+      std::array<bool, kMaxContacts> gate_ramp{}, gate_on{};
+      for (std::uint32_t gi = 0; gi < kMaxContacts; ++gi) {
+        gate_on[gi] = v.gate_cur[gi] != 0.0f || v.gate_tgt[gi] != 0.0f;
+        gate_ramp[gi] = v.gate_left[gi] > 0;
+        if (!gate_ramp[gi]) continue;
+        for (std::uint32_t f = 0; f < frames; ++f) {
+          if (v.gate_left[gi] > 0) {
+            v.gate_cur[gi] += v.gate_step[gi];
+            if (--v.gate_left[gi] == 0) v.gate_cur[gi] = v.gate_tgt[gi];
+          }
+          gate_f[gi][f] = v.gate_cur[gi];
+        }
+      }
       for (std::uint32_t d = 0; d < kD; ++d) {
         if (!live[d]) continue;
+        const std::uint32_t gi = contact_group(v.groups, d);
+        if (!gate_on[gi]) continue;
         const float* g = &gains_[d * kBlockFrames];
         const float* wr = wheels + static_cast<std::size_t>(v.wheel[d]) * kBlockFrames + block_pos_;
-        for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * wr[f];
+        if (gate_ramp[gi]) {
+          for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * gate_f[gi][f] * wr[f];
+        } else {
+          for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * wr[f];
+        }
       }
       if (leak_live) {  // neighbouring wheels leak into each footage's wheel (fixed seeded pattern, scaled by leakage)
         for (std::uint32_t d = 0; d < kD; ++d) {
           if (!live[d]) continue;
+          const std::uint32_t gi = contact_group(v.groups, d);
+          if (!gate_on[gi]) continue;
           const std::uint32_t w = v.wheel[d];
           const float a = leak_pattern_[w * 2], b = leak_pattern_[w * 2 + 1];  // 0 at the ends of the wheel set
           const float* g = &gains_[d * kBlockFrames];
           const float* row = wheels + static_cast<std::size_t>(w) * kBlockFrames + block_pos_;
           const float* lo = w > 0 ? row - kBlockFrames : row;
           const float* hi = w + 1 < kW ? row + kBlockFrames : row;
-          for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * leak_g[f] * (a * lo[f] + b * hi[f]);
+          if (gate_ramp[gi]) {
+            for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * gate_f[gi][f] * leak_g[f] * (a * lo[f] + b * hi[f]);
+          } else {
+            for (std::uint32_t f = 0; f < frames; ++f) tmp[f] += g[f] * leak_g[f] * (a * lo[f] + b * hi[f]);
+          }
         }
       }
       if (v.perc_env > 0.0f) {  // percussion: the chosen harmonic's wheel under a decaying envelope
@@ -394,7 +520,7 @@ bool OrganEngine::voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept 
   if (slot >= kVoiceCapacity || !voices_[slot].active) return false;
   const Voice& v = voices_[slot];
   float sum = 0.0f;
-  for (std::uint32_t d = 0; d < kD; ++d) sum += parts_[v.part].cur[d];
+  for (std::uint32_t d = 0; d < kD; ++d) sum += parts_[v.part].cur[d] * v.gate_cur[contact_group(v.groups, d)];
   out.start_time = v.start_time;
   float burst = 0.0f;
   for (const Voice::Burst& b : v.click)

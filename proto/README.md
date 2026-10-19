@@ -35,6 +35,16 @@ status 0x3), group 0, channel = part, bank = `id >> 7`, index = `id & 0x7F`, 32-
 MIDI CC numbers map through `cc` (drawbars 1-9 = CC 70-78, rotary speed 79, percussion 80, vibrato/chorus 81, key click 82, leakage 83, percussion harmonic/decay/volume 84/85/86 (value < 64 = first enum entry), vibrato/chorus type 87 (the 32-bit range is split evenly over v1..c3: index = round(value/127 * 5) for a 7-bit CC),
 reverb send 91, delay send 94); the CC's channel is the part (0..7).
 
+## Key contact events (`contact_k`, Story 2.5)
+
+Not a registry parameter: the multi-contact keybed's per-note vendor controller, defined in `engine/core/include/velora/core/contact_events.hpp`
+and documented in `engine/core/ORGAN.md`. MIDI 2.0 assignable **per-note** controller (message type 4, status 0x1), group 0:
+`word0 = 4<<28 | 1<<20 | channel<<16 | note<<8 | k`, `word1 = 0xFFFFFFFF` (contact k closed) or `0` (open); a value of 0x80000000 and above reads as
+closed. `k` is the contact index, 1..3 (1..2 on a two-contact keybed); the wire accepts 1..8, other per-note controller indices are not `contact_k` and are ignored; `channel` is the part, `note` 0..127. One event per contact
+transition, timestamped like every other UMP; contact 1 closes first on the way down and opens last on the way up, and a Note On
+follows the closures (Note On/Off-only sources simply send no contact events). This is the format the Epic 3 keybed reader emits; it
+is distinct from the performance-parameter events above (status 0x3, not per-note).
+
 ## Toolchain
 
 `protoc` + `libprotobuf` (Homebrew `protobuf` on the Mac; `protobuf-compiler` + `libprotobuf-dev` in the Linux image

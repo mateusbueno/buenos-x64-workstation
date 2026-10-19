@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "events_file.hpp"
 #include "nulltest.hpp"
 #include "render.hpp"
 #include "smf.hpp"
@@ -487,7 +488,82 @@ static void test_null_check_excess() {
   CHECK(null_test(ref, ref, p).pass);
 }
 
+// Story 2.5: the --events text format and contact events through the renderer.
+static void test_events_file() {
+  EventsResult r = parse_events(
+      "# comment\n"
+      "contacts 2   # trailing comment\n"
+      "10ms close 1 60 2\n"
+      "0.125ms open 15 127 255\n"
+      "480f on 0 60\n"
+      "481 off 0 60\n"
+      "0.001ms cc 3 70 8\n"
+      "20 on 2 40 127\n");
+  CHECK(r.ok && r.contact_count == 2 && r.events.size() == 6);
+  if (r.events.size() == 6) {
+    CHECK(r.events[0].frame == 0 && r.events[0].cc && r.events[0].channel == 3 && r.events[0].note == 70 && r.events[0].value == 8);  // 0.001 ms floors to frame 0
+    CHECK(r.events[1].frame == 6 && r.events[1].contact && !r.events[1].closed && r.events[1].channel == 15 &&
+          r.events[1].note == 127 && r.events[1].contact_index == 255);
+    CHECK(r.events[2].frame == 20 && r.events[2].on && r.events[2].velocity16 == 65535);
+    CHECK(r.events[3].frame == 480 && r.events[3].contact && r.events[3].closed && r.events[3].contact_index == 2);  // 10 ms
+    CHECK(r.events[4].frame == 480 && r.events[4].on && r.events[4].velocity16 == (100u * 65535u + 63u) / 127u);  // tie: file order
+    CHECK(r.events[5].frame == 481 && !r.events[5].on && !r.events[5].contact);
+  }
+  const char* bad[] = {"0 close 0 60\n",      "0 close 0 60 256\n", "0 close 16 60 1\n", "0 close 0 128 1\n", "0 bogus 0 60\n",
+                       "banana on 0 60\n",    "-1 on 0 60\n",       "0.1234ms on 0 60\n", "0 on 0 60 0\n",    "0 on 0 60 128\n",
+                       "0 off 0 60 1\n",      "contacts 4\n",       "contacts 1\n",       "contacts 2\ncontacts 3\n", "0\n",
+                       "99999999999999999999 on 0 60\n", "0 cc 0 70\n"};
+  for (const char* b : bad) CHECK(!parse_events(b).ok);
+  EventsResult e = parse_events("\n\n0 close 0 60 x\n");
+  CHECK(!e.ok && e.error.rfind("line 3: ", 0) == 0 && e.events.empty());
+  CHECK(!load_events_file("/nonexistent/none.contacts").ok);
+  // Merge: stable, `a` first on ties.
+  NoteEvent a1, a2, b1;
+  a1.frame = 5; a1.note = 1;
+  a2.frame = 9; a2.note = 2;
+  b1.frame = 5; b1.note = 3;
+  const std::vector<NoteEvent> m = merge_events({a1, a2}, {b1});
+  CHECK(m.size() == 3 && m[0].note == 1 && m[1].note == 3 && m[2].note == 2);
+  // Unsorted inputs are put in frame order first (stable).
+  const std::vector<NoteEvent> m2 = merge_events({a2, a1}, {b1});
+  CHECK(m2.size() == 3 && m2[0].note == 1 && m2[1].note == 3 && m2[2].note == 2);
+}
+
+static void test_contact_events_render() {
+  // A contact 1 closure sounds with no Note On at all, at its frame; the same list on a non-organ engine renders silence.
+  EventsResult r = parse_events("1000 close 0 60 1\n6000 open 0 60 1\n");
+  CHECK(r.ok);
+  RenderOptions o;
+  o.engine = EngineKind::kOrgan;
+  o.drawbars = "008000000";
+  o.key_click = 0.0f;
+  o.leakage = 0.0f;
+  o.tail_seconds = 0.2;
+  WavData a, b;
+  std::string err;
+  CHECK(render_events(r.events, o, a, err));
+  std::size_t first = 0;
+  while (first < a.frames() && a.samples[first * 2] == 0.0f) ++first;
+  CHECK(first == 1000);
+  CHECK(a.frames() >= 6000 + 9600);
+  RenderOptions t;  // test tone engine: contact events are not delivered anywhere
+  t.tail_seconds = 0.1;
+  CHECK(render_events(r.events, t, b, err));
+  bool silent = true;
+  for (float x : b.samples) silent = silent && x == 0.0f;
+  CHECK(silent);
+  // A contact event on a channel that is no organ part neither sounds nor extends the render.
+  EventsResult far = parse_events("1000 close 0 60 1\n480000 close 9 60 1\n");
+  WavData c;
+  CHECK(far.ok && render_events(far.events, o, c, err) && c.frames() < 48000);
+  RenderOptions bad = o;
+  bad.contact_count = 4;
+  CHECK(!render_events(r.events, bad, a, err));
+}
+
 int main() {
+  test_events_file();
+  test_contact_events_render();
   test_pcm16_and_sfizz_decode();
   test_null_check_excess();
   test_smf_more();

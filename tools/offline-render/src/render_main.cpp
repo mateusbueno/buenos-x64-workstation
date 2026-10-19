@@ -2,6 +2,7 @@
 //                       [--tail-seconds S] [--detune-cents C]
 //                       [--engine organ [--drawbars 888000000] [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]
 //                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1]]
+//                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 #include <memory>
 #include <string>
 
+#include "events_file.hpp"
 #include "parse_util.hpp"
 #include "render.hpp"
 #include "velora/format/bundle.hpp"
@@ -18,7 +20,8 @@ using namespace velora::offline;
 
 static int usage() {
   std::fprintf(stderr,
-               "usage: velora-offline-render --midi in.mid --out out.wav [--engine test-tone|sample|organ]\n"
+               "usage: velora-offline-render [--midi in.mid] [--events in.contacts (test only, organ engine)] --out out.wav\n"
+               "       [--engine test-tone|sample|organ]   (at least one of --midi / --events)\n"
                "       [--voices N] [--tail-seconds S] [--detune-cents C (test only)]\n"
                "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
@@ -28,7 +31,7 @@ static int usage() {
 }
 
 int main(int argc, char** argv) {
-  std::string midi, out, engine = "test-tone", bundle_path, instrument_key, interp = "hermite";
+  std::string midi, events_path, out, engine = "test-tone", bundle_path, instrument_key, interp = "hermite";
   bool voices_given = false, sample_opts = false, drawbars_given = false;
   std::string drawbars, percussion;
   bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false;
@@ -42,6 +45,7 @@ int main(int argc, char** argv) {
     };
     const char* v = nullptr;
     if (a == "--midi" && val(v)) midi = v;
+    else if (a == "--events" && val(v)) events_path = v;
     else if (a == "--out" && val(v)) out = v;
     else if (a == "--engine" && val(v)) engine = v;
     else if (a == "--voices" && val(v)) {
@@ -95,9 +99,13 @@ int main(int argc, char** argv) {
       opt.detune_cents = static_cast<float>(c);
     } else return usage();
   }
-  if (midi.empty() || out.empty()) return usage();
+  if ((midi.empty() && events_path.empty()) || out.empty()) return usage();
   if (engine != "test-tone" && engine != "sample" && engine != "organ") {
     std::fprintf(stderr, "error: unknown engine '%s' (test-tone, sample or organ)\n", engine.c_str());
+    return 2;
+  }
+  if (!events_path.empty() && engine != "organ") {
+    std::fprintf(stderr, "error: --events needs --engine organ\n");
     return 2;
   }
   if (drawbars_given && engine != "organ") {
@@ -182,10 +190,24 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: --bundle, --instrument, --seed, --gain-db, --interpolation and --oracle-block-frames need --engine sample\n");
     return 2;
   }
-  SmfResult smf = load_smf_file(midi);
-  if (!smf.ok) {
-    std::fprintf(stderr, "error: %s: %s\n", midi.c_str(), smf.error.c_str());
-    return 1;
+  SmfResult smf;
+  if (!midi.empty()) {
+    smf = load_smf_file(midi);
+    if (!smf.ok) {
+      std::fprintf(stderr, "error: %s: %s\n", midi.c_str(), smf.error.c_str());
+      return 1;
+    }
+  } else {
+    smf.ok = true;
+  }
+  if (!events_path.empty()) {
+    EventsResult ev = load_events_file(events_path);
+    if (!ev.ok) {
+      std::fprintf(stderr, "error: %s: %s\n", events_path.c_str(), ev.error.c_str());
+      return 1;
+    }
+    if (ev.contact_count != 0) opt.contact_count = ev.contact_count;
+    smf.events = merge_events(smf.events, ev.events);
   }
   WavData wav;
   std::string err;

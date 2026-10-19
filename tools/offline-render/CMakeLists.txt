@@ -1,5 +1,6 @@
 add_library(velora_offline STATIC
   src/smf.cpp
+  src/events_file.cpp
   src/wav.cpp
   src/render.cpp
   src/nulltest.cpp)
@@ -218,6 +219,79 @@ add_test(NAME organ_scan_options_need_organ
          COMMAND velora-offline-render --midi ${_scan}/organ_scanner.mid --vibrato v1 --out ${_out}/never.wav)
 set_tests_properties(organ_scan_options_need_organ PROPERTIES PASS_REGULAR_EXPRESSION "need --engine organ")
 
+# Organ multi-contact onset (Story 2.5): a committed contact_k event list (--events, test only) holds fast rolled chords (1 ms between
+# contacts), a slow smear (20 ms), half presses, skipped contacts, malformed traffic, a Note On/Off-only key and percussion triggered
+# by the first contact. Same scheme as the other organ goldens: render twice (byte-equal), null-test against the committed golden,
+# and require wrong settings to fail it.
+set(_cont ${CMAKE_CURRENT_SOURCE_DIR}/tests/organ_contacts)
+set(_cont_args --events ${_cont}/organ_contacts.contacts --engine organ --drawbars 888600000 --percussion off --key-click 0.3
+               --vibrato off --leakage 0 --tail-seconds 0.3)
+add_test(NAME organ_contacts_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/cont_a.wav ${_out}/cont_b.wav ${_out}/cont_wrong_db.wav ${_out}/cont_wrong_click.wav
+                 ${_out}/cont_wrong_count.wav ${_out}/cont_midi_only.wav)
+set_tests_properties(organ_contacts_clean PROPERTIES FIXTURES_SETUP cont_clean)
+add_test(NAME organ_contacts_render_a COMMAND velora-offline-render ${_cont_args} --out ${_out}/cont_a.wav)
+add_test(NAME organ_contacts_render_b COMMAND velora-offline-render ${_cont_args} --out ${_out}/cont_b.wav)
+set_tests_properties(organ_contacts_render_a PROPERTIES FIXTURES_REQUIRED cont_clean FIXTURES_SETUP cont_a)
+set_tests_properties(organ_contacts_render_b PROPERTIES FIXTURES_REQUIRED cont_clean FIXTURES_SETUP cont_b)
+add_test(NAME organ_contacts_bit_identical
+         COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/cont_a.wav ${_out}/cont_b.wav)
+set_tests_properties(organ_contacts_bit_identical PROPERTIES FIXTURES_REQUIRED "cont_a;cont_b")
+add_test(NAME organ_contacts_null_golden
+         COMMAND velora-null-test --case ${_cont}/organ_contacts.case --candidate ${_out}/cont_a.wav)
+set_tests_properties(organ_contacts_null_golden PROPERTIES FIXTURES_REQUIRED cont_a PASS_REGULAR_EXPRESSION "overall: PASS")
+# Sensitive to what it covers: other drawbars, another key click level and a 2-contact keybed (contact 3 becomes malformed and the
+# groups change) all fail the null test.
+add_test(NAME organ_contacts_wrong_drawbars
+         COMMAND velora-offline-render --events ${_cont}/organ_contacts.contacts --engine organ --drawbars 888600001 --percussion off
+                 --key-click 0.3 --vibrato off --leakage 0 --tail-seconds 0.3 --out ${_out}/cont_wrong_db.wav)
+add_test(NAME organ_contacts_wrong_click
+         COMMAND velora-offline-render --events ${_cont}/organ_contacts.contacts --engine organ --drawbars 888600000 --percussion off
+                 --key-click 0.9 --vibrato off --leakage 0 --tail-seconds 0.3 --out ${_out}/cont_wrong_click.wav)
+add_test(NAME organ_contacts_wrong_count
+         COMMAND velora-offline-render --events ${_cont}/organ_contacts_two.contacts --engine organ --drawbars 888600000 --percussion off
+                 --key-click 0.3 --vibrato off --leakage 0 --tail-seconds 0.3 --out ${_out}/cont_wrong_count.wav)
+set_tests_properties(organ_contacts_wrong_drawbars PROPERTIES FIXTURES_REQUIRED cont_clean FIXTURES_SETUP cont_wd)
+set_tests_properties(organ_contacts_wrong_click PROPERTIES FIXTURES_REQUIRED cont_clean FIXTURES_SETUP cont_wc)
+set_tests_properties(organ_contacts_wrong_count PROPERTIES FIXTURES_REQUIRED cont_clean FIXTURES_SETUP cont_wn)
+foreach(_w db click count)
+  string(REPLACE "db" "drawbars" _wname "${_w}")
+  add_test(NAME organ_contacts_wrong_${_wname}_fails
+           COMMAND velora-null-test --case ${_cont}/organ_contacts.case --candidate ${_out}/cont_wrong_${_w}.wav)
+endforeach()
+set_tests_properties(organ_contacts_wrong_drawbars_fails PROPERTIES FIXTURES_REQUIRED cont_wd
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+set_tests_properties(organ_contacts_wrong_click_fails PROPERTIES FIXTURES_REQUIRED cont_wc
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+set_tests_properties(organ_contacts_wrong_count_fails PROPERTIES FIXTURES_REQUIRED cont_wn
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# Option parsing and input errors.
+add_test(NAME organ_contacts_events_need_organ
+         COMMAND velora-offline-render --events ${_cont}/organ_contacts.contacts --out ${_out}/never.wav)
+set_tests_properties(organ_contacts_events_need_organ PROPERTIES PASS_REGULAR_EXPRESSION "--events needs --engine organ")
+add_test(NAME organ_contacts_rejects_bad_events
+         COMMAND velora-offline-render --events ${_cont}/bad.contacts --engine organ --out ${_out}/never.wav)
+set_tests_properties(organ_contacts_rejects_bad_events PROPERTIES PASS_REGULAR_EXPRESSION "bad.contacts: line 3: ")
+add_test(NAME organ_contacts_needs_an_input
+         COMMAND velora-offline-render --engine organ --out ${_out}/never.wav)
+set_tests_properties(organ_contacts_needs_an_input PROPERTIES PASS_REGULAR_EXPRESSION "usage:")
+
+# --midi and --events together: merged by frame, MIDI first on ties. tie.mid ends key 60 at frame 24000, organ_tie.contacts presses it again
+# at that frame. With the rule right (Off, then On) the key still sounds afterwards, so the merged render differs from the MIDI-only one; if
+# the order were reversed (On is a no-op, then Off) the two would be identical and this null test would pass instead of failing.
+add_test(NAME organ_tie_clean COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/tie_both.wav ${_out}/tie_midi.wav)
+set_tests_properties(organ_tie_clean PROPERTIES FIXTURES_SETUP tie_clean)
+add_test(NAME organ_tie_render_both
+         COMMAND velora-offline-render --midi ${_cont}/tie.mid --events ${_cont}/organ_tie.contacts --engine organ --tail-seconds 0.5
+                 --out ${_out}/tie_both.wav)
+add_test(NAME organ_tie_render_midi
+         COMMAND velora-offline-render --midi ${_cont}/tie.mid --engine organ --tail-seconds 0.5 --out ${_out}/tie_midi.wav)
+set_tests_properties(organ_tie_render_both organ_tie_render_midi PROPERTIES FIXTURES_REQUIRED tie_clean FIXTURES_SETUP tie_done)
+add_test(NAME organ_tie_midi_first
+         COMMAND velora-null-test --reference ${_out}/tie_midi.wav --candidate ${_out}/tie_both.wav --tolerance-db -60 --max-offset-frames 0)
+set_tests_properties(organ_tie_midi_first PROPERTIES FIXTURES_REQUIRED tie_done
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+
 # Regenerate the golden: cmake --build build --target update-golden (review the diff before commit).
 add_custom_target(update-golden
   COMMAND velora-offline-render ${_render_args} --out ${_golden}/golden.wav
@@ -225,6 +299,10 @@ add_custom_target(update-golden
 # Same for the organ percussion golden: cmake --build build --target update-organ-percussion-golden
 add_custom_target(update-organ-percussion-golden
   COMMAND velora-offline-render ${_perc_args} --out ${_perc}/organ_percussion.wav
+  DEPENDS velora-offline-render)
+
+add_custom_target(update-organ-contacts-golden
+  COMMAND velora-offline-render ${_cont_args} --out ${_cont}/organ_contacts.wav
   DEPENDS velora-offline-render)
 
 add_custom_target(update-organ-scanner-golden

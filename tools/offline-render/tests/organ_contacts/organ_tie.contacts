@@ -1,0 +1,2 @@
+# a Note On at the same frame as tie.mid's Note Off (480 ticks at 120 bpm = 24000 frames)
+24000f on 0 60 100

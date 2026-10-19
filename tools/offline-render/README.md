@@ -62,6 +62,23 @@ starting scanner setting or leakage to fail it. Regenerate after an intentional 
 `cmake --build build --target update-organ-scanner-golden` and review. The percussion golden now passes `--leakage 0` (leakage did not exist
 when it was made), so it is unchanged.
 
+## Organ multi-contact golden and `--events` (Story 2.5)
+
+`velora-offline-render --events file.contacts` (test only, `--engine organ`; `--midi` becomes optional, and when both are given the events are merged by
+frame, MIDI first on ties) reads a small deterministic text event list, because a Standard MIDI File cannot carry the per-note `contact_k`
+controller. Format (full description in `src/events_file.hpp`): one event per line, `<time> <kind> <args>`, `#` comments, unsorted allowed;
+times are frames (`480` or `480f`) or milliseconds with up to three decimals (`12ms`, `0.125ms`, floored to 48 frames per ms with integer
+arithmetic); kinds `on ch note [vel]`, `off ch note`, `close ch note k`, `open ch note k` (k 0..255, the organ refuses what is out of range),
+`cc ch controller value`; `--midi` events come first on a frame tie (test `organ_tie_midi_first`); a `contacts 2|3` line sets the keybed's contacts per key (default 3). Errors name the file and line and write nothing.
+
+`tests/organ_contacts/` holds `organ_contacts.contacts` (made by `make_events.py`: rolled chords with 1 ms between contacts, a 20 ms smear, half
+presses, a skipped contact, malformed traffic, a Note On/Off-only key, percussion on the first contact), `organ_contacts_two.contacts` (the same
+events for a two-contact keybed), `organ_contacts.wav` (about 2.55 s, 0.98 MB) and `organ_contacts.case` (null test, -100 dB). The render command is
+`velora-offline-render --events organ_contacts.contacts --engine organ --drawbars 888600000 --percussion off --key-click 0.3 --vibrato off --leakage 0 --tail-seconds 0.3`.
+ctest renders twice (`organ_contacts_bit_identical`), null-tests the render against the golden (`organ_contacts_null_golden`) and requires other
+drawbars, another key click level and the two-contact list to fail it. Regenerate after an intentional engine change with
+`cmake --build build --target update-organ-contacts-golden` and review.
+
 ## Golden render
 
 `tests/golden/` holds `golden.mid`, `golden.wav` and `golden.case`. ctest renders twice (byte-equality), null-tests a

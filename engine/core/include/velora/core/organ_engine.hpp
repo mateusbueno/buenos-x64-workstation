@@ -17,6 +17,9 @@
 //    (vibrato_scanner.hpp) applied to the part's summed signal before the soft limit; settings crossfade over
 //    5 ms. Leakage adds, for every drawbar of every sounding key, low-level contributions of the two
 //    neighbouring wheels with a fixed seeded per-wheel table, scaled by the leakage parameter (0 = exactly off).
+//  * Multi-contact onset (Story 2.5, ORGAN.md): contact_k UMP events (contact_events.hpp) start a key voice on contact 1 and
+//    bring each drawbar busbar group in at its contact's frame (a short per-group gain ramp that starts at that frame), and
+//    reverse that as contacts open; a source with only Note On/Off starts and stops all groups together as before.
 //  * Drawbar levels 0..8 arrive as performance parameters (registry ids 100..108) through
 //    Engine::set_part_param at the event's frame; a 5 ms linear ramp starts at exactly that frame.
 #include <array>
@@ -67,6 +70,17 @@ class OrganEngine final : public Engine {
   static constexpr float kLeakageMinFraction = 0.25f;   // weakest pattern entry = 0.25 x max
   static constexpr std::uint32_t kLeakRampFrames = 240; // 5 ms ramp when the leakage parameter moves
 
+  // Multi-contact onset (Story 2.5). The nine busbars are split into contact groups; contact k (1-based) brings group k-1 in.
+  static constexpr std::uint32_t kMaxContacts = 3;
+  static constexpr std::uint32_t kContactRampFrames = 8;  // 167 us linear gain ramp of a group; its first frame is the event frame
+  // Contact groups by drawbar (16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1'): the table is part of the documented behaviour.
+  static constexpr std::array<std::uint8_t, tonewheel::kDrawbarCount> kContactGroups3{0, 0, 0, 1, 1, 1, 2, 2, 2};
+  static constexpr std::array<std::uint8_t, tonewheel::kDrawbarCount> kContactGroups2{0, 0, 0, 0, 1, 1, 1, 1, 1};
+  // Group (0-based) of drawbar `drawbar` (0..8) for a keybed with `contact_count` (2 or 3) contacts per key.
+  static constexpr std::uint32_t contact_group(std::uint32_t contact_count, std::uint32_t drawbar) noexcept {
+    return contact_count == 2 ? kContactGroups2[drawbar % tonewheel::kDrawbarCount] : kContactGroups3[drawbar % tonewheel::kDrawbarCount];
+  }
+
   // Cost units (placeholders, to be measured on the dev board; the host benchmark prints host figures).
   static constexpr std::uint32_t kVoiceCostUnits = 2;
   static constexpr std::uint32_t kGeneratorCostUnits = 48;  // per part
@@ -93,6 +107,25 @@ class OrganEngine final : public Engine {
     for (Voice& v : voices_)
       if (v.active && !(enabled_ & (1u << v.part))) v.active = false;
   }
+
+  // Setup-time: contacts per key of the keybed behind contact_k events (2 or 3, default 3); false and unchanged otherwise.
+  // A voice latches the value when it starts. Note On/Off-only sources are not affected by it.
+  // Refused (false) while any voice is active: a voice latched the old count.
+  bool set_contact_count(std::uint32_t n) noexcept {
+    if (n < 2 || n > kMaxContacts || active_voices() > 0) return false;
+    contact_count_ = n;
+    return true;
+  }
+  std::uint32_t contact_count() const noexcept { return contact_count_; }
+  bool supports_contacts() const noexcept override { return true; }
+  EngineStatus set_contact(std::uint32_t channel, std::uint32_t note, std::uint32_t contact, bool closed,
+                           ContactEffect& effect) noexcept VELORA_NONBLOCKING override;
+  // contact_k events handled / refused as malformed (open without close, duplicate close, close of k > 1 without contact 1, index 0
+  // or above contact_count()). RT thread (or after rendering) only.
+  std::uint64_t contact_events_applied() const noexcept { return contact_applied_; }
+  std::uint64_t contact_events_ignored() const noexcept { return contact_ignored_; }
+  // Bit k-1 set = contact k of the held voice of (channel, note) is closed; 0 when the key has no held voice.
+  std::uint32_t contact_mask(std::uint32_t channel, std::uint32_t note) const noexcept;
 
   EngineStatus start_voice(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16) noexcept
       VELORA_NONBLOCKING override;
@@ -154,6 +187,12 @@ class OrganEngine final : public Engine {
       std::uint64_t rng = 0;  // each burst has its own noise stream, so an earlier burst is unchanged by a later one
     };
     std::array<Burst, 2> click{};
+    // Multi-contact busbar groups (Story 2.5): one linear gain per contact group. A Note On voice has every group at 1 and
+    // never ramps (the render path is then unchanged); a contact-started voice begins at 0 and each closure ramps its group in.
+    std::uint8_t groups = 3;       // contact count latched at the start
+    std::uint8_t closed_mask = 0;  // bit k-1 = contact k closed
+    std::array<float, kMaxContacts> gate_cur{1.0f, 1.0f, 1.0f}, gate_tgt{1.0f, 1.0f, 1.0f}, gate_step{};
+    std::array<std::uint8_t, kMaxContacts> gate_left{};
     std::uint64_t click_rng = 0;
     bool clicking() const noexcept { return click[0].left > 0 || click[1].left > 0; }
   };
@@ -201,6 +240,10 @@ class OrganEngine final : public Engine {
       if (v.active && v.part == part) return true;
     return false;
   }
+  EngineStatus spawn_voice(std::uint32_t channel, std::uint32_t note, bool contact_driven) noexcept;
+  void set_gate(Voice& v, std::uint32_t group, float target) noexcept;
+  void release_key(Voice& v) noexcept;  // the key's last contact opened or Note Off: the voice goes to its release
+  Voice* held_voice(std::uint32_t channel, std::uint32_t note) noexcept;
   void start_click(Voice& v, std::uint32_t which, float level, float scale) noexcept;
   void apply_percussion_targets(Part& p) noexcept;
 
@@ -214,6 +257,9 @@ class OrganEngine final : public Engine {
   std::array<float, tonewheel::kDrawbarCount * kBlockFrames> gains_{};  // scratch: per-frame drawbar gains
   std::array<float, kPartCount * kBlockFrames> mix_{};                  // scratch: per-part mono mix
   std::array<float, tonewheel::kWheelCount * 2> leak_pattern_{};  // [wheel-1][side], filled at construction
+  std::array<std::uint8_t, kPartCount * 128> contact_released_{};  // key whose voice ended by contacts opening: a later Note Off is benign
+  std::uint32_t contact_count_ = 3;
+  std::uint64_t contact_applied_ = 0, contact_ignored_ = 0;
   std::uint32_t enabled_ = 0xFF;
   std::uint32_t block_pos_ = 0, gen_frames_ = 0;
   std::uint64_t clock_ = 0;

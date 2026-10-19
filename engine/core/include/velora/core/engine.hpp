@@ -100,6 +100,26 @@ class Engine {
     (void)value;
   }
 
+  // Key contact events (Story 2.5, contact_events.hpp). An engine that can follow a multi-contact keybed (the tonewheel organ)
+  // returns true from supports_contacts() and handles set_contact(): contact `contact` (1-based) of key (channel, note) changed
+  // to `closed`, at the in-block frame the block loop calls it for (between render segments). Malformed sequences are the
+  // engine's to ignore (and count); the return value is a typed status for real failures only (kPoolExhausted,
+  // kEngineNotAvailable), kOk otherwise. Other engines never see contact events: the block loop counts them as unsupported and
+  // those engines keep starting on Note On.
+  // `effect` reports what the event did to the key: a voice started (the block loop then marks the key down in the arbiter and
+  // binds the snapshot generation), the key's last contact opened (the block loop marks it up), or nothing.
+  enum class ContactEffect : std::uint8_t { kNone, kStarted, kReleased };
+  virtual bool supports_contacts() const noexcept { return false; }
+  virtual EngineStatus set_contact(std::uint32_t channel, std::uint32_t note, std::uint32_t contact, bool closed,
+                                   ContactEffect& effect) noexcept VELORA_NONBLOCKING {
+    (void)channel;
+    (void)note;
+    (void)contact;
+    (void)closed;
+    effect = ContactEffect::kNone;
+    return EngineStatus::kEngineNotAvailable;
+  }
+
   // True for an engine whose voices the arbiter must never choose as steal victims (the tonewheel organ).
   // Its cost is reserved ahead of every engine floor through LiveSetConfig::organ_rotary_cost.
   virtual bool steal_protected() const noexcept { return false; }

@@ -167,3 +167,14 @@ protobuf dependency; the wire format lives in `engine/host`.
 one voice per key summing nine drawbar footages with foldback, 5 ms drawbar ramps started at the event frame via
 `Engine::set_part_param`, `Engine::steal_protected()` plus the organ reservation in `VoiceArbiter`. Clean-room sources of every
 table, the drawbar curve, smoothing and the reservation are in `ORGAN.md`.
+
+## Multi-contact onset (Story 2.5)
+
+`contact_events.hpp` defines the vendor per-note `contact_k` controller (MIDI 2.0 assignable per-note controller, UMP status 0x1: channel,
+note, contact index k in the low byte, closed/open in the 32-bit value) that the Epic 3 keybed reader will emit. `BlockRenderer` routes it
+to the engine serving the channel at its exact in-block frame through the new `Engine::supports_contacts()` / `Engine::set_contact()`; it
+is counted in `contact_events_routed()` / `contact_events_dropped()`, never in `ignored_events()`. `OrganEngine` starts the key voice on
+contact 1 (before any Note On), brings in a busbar group per later contact and takes them out in reverse as contacts open; the contact-to-footage
+table (3-contact and 2-contact variants), the ramps, the defined handling of malformed sequences and the interplay with percussion,
+key click and the arbiter are in `ORGAN.md` ("Multi-contact onset"). Note On/Off-only sources are unchanged. RTSan-covered
+(`rtsan_organ_test`), unit tests in `organ_contact_tests`.

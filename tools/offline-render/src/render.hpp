@@ -36,6 +36,8 @@ struct RenderOptions {
   // every organ part at frame 0 (MIDI CC 81, 83, 87 in the file can change them later). Leakage defaults to the registry value.
   int vibrato = 0;
   float leakage = 0.5f;
+  // Organ engine only (Story 2.5): contacts per key of the keybed behind contact_k events (2 or 3).
+  unsigned contact_count = 3;
   double tail_seconds = 1.0;
   float detune_cents = 0.0f;  // test-only: used to produce a deliberately wrong render
 };

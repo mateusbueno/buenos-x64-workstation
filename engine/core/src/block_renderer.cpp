@@ -2,6 +2,8 @@
 
 #include <cassert>
 
+#include "velora/core/contact_events.hpp"
+
 namespace velora::core {
 
 BlockRenderer::BlockRenderer(std::uint32_t test_tone_voices)
@@ -141,6 +143,10 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     if (!down) release_deferred(ump.channel());
     return;
   }
+  if (ump.group() == 0 && ump.is_assignable_per_note_controller()) {  // contact_k (Story 2.5)
+    apply_contact(ump);
+    return;
+  }
   if (ump.group() != 0 || (!ump.is_note_on() && !ump.is_note_off())) {
     ++ignored_;
     return;
@@ -166,6 +172,49 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     if (st == EngineStatus::kVoiceNotFound && was_stolen) ++stolen_note_offs_;
     else record(st);
   }  // else: the pedal holds the note; it is released on pedal up
+}
+
+// contact_k: routed to the engine that serves the channel, at the event's frame (this runs between render segments). It is
+// never "ignored": an engine without contact support (everything but the organ) or a note field above 127 counts as dropped,
+// everything else as routed. Contact events do not touch the arbiter's key/pedal state (the organ is never stolen and has no
+// sustain pedal; a sustain-pedal Note Off still defers only the Note Off) -- see ORGAN.md.
+void BlockRenderer::apply_contact(const Ump& ump) noexcept {
+  // Only per-note controller indices 1..kMaxWireContact are contact_k; any other per-note controller is an unsupported UMP.
+  const std::uint32_t index = ump.word0 & 0xFFu;
+  if (index < 1 || index > kMaxWireContact) {
+    ++ignored_;
+    return;
+  }
+  ContactEvent ce;
+  if (!decode_contact_event(ump, ce)) {
+    contact_dropped_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  Engine* engine = nullptr;
+  const EngineStatus rs = registry_.resolve(channel_engine_[ce.channel], engine);
+  if (rs != EngineStatus::kOk) {
+    record(rs);
+    contact_dropped_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  if (!engine->supports_contacts()) {
+    contact_dropped_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  Engine::ContactEffect effect = Engine::ContactEffect::kNone;
+  const EngineStatus st = engine->set_contact(ce.channel, ce.note, ce.contact, ce.closed, effect);
+  if (st != EngineStatus::kOk) {  // refused (part not available, no voice slot): not delivered
+    record(st);
+    contact_dropped_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  contact_routed_.fetch_add(1, std::memory_order_relaxed);
+  if (effect == Engine::ContactEffect::kStarted) {  // a voice exists now: the key is down and the voice holds the generation
+    arbiter_.contact_down(ce.channel, ce.note);
+    bind_generation(ce.channel, ce.note);
+  } else if (effect == Engine::ContactEffect::kReleased) {
+    arbiter_.contact_up(ce.channel, ce.note);
+  }
 }
 
 void BlockRenderer::render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to) noexcept {

@@ -1,4 +1,4 @@
-# Tonewheel organ engine (Stories 2.2, 2.3, 2.4)
+# Tonewheel organ engine (Stories 2.2, 2.3, 2.4, 2.5)
 
 `OrganEngine` (`organ_engine.hpp`, `tonewheel_tables.hpp`, type id Organ=2, engine name "tonewheel organ") is a clean-room
 tonewheel organ: one shared wheel generator per part and one voice per key, 73 keys x 9 drawbars sounding at once, never
@@ -188,6 +188,81 @@ after the 1 ms declick (residual relative to the tone). The achievable residual 
 tolerance is -100 dB, the same as the null-test goldens (loose enough for libm differences across platforms, tight enough that any leakage at all,
 about -37 dB at 1 and -43 dB at 0.5, fails by 55 dB or more).
 
+## Multi-contact onset (Story 2.5)
+
+A keybed with several contacts per key reports each contact on its own, and the organ follows them: sound starts on the first
+contact, each later contact brings in more of the registration, and the sound drops out contact by contact as the key rises. A
+source with only Note On/Off (USB, DIN) needs none of this: the hook is optional per source.
+
+**Public fact used** (musical and service-documentation level; no organ source read): a tonewheel console's key closes several
+switches in sequence while it travels, one per drawbar busbar on the real instrument, so a slow or half-pressed key lets the
+registration in step by step and a fast one lets it all in almost at once. How the contacts are ordered across the nine busbars
+is not part of what we rely on; the table below is a design choice, to be refined against recordings in Story 2.13.
+
+**Event format.** `contact_k` is a MIDI 2.0 assignable per-note controller (UMP message type 4, status 0x1, group 0):
+`word0 = 4<<28 | 1<<20 | channel<<16 | note<<8 | k`, `word1 = 0xFFFFFFFF` (closed) or `0` (open; any value >= 0x80000000 reads as
+closed). Channel = organ part, as for Note On. It is `contact_events.hpp` (`make_contact_event`, `decode_contact_event`), the
+format the Epic 3 keybed reader emits (also in `proto/README.md`). One event per contact transition, timestamped like every UMP.
+
+**Contact groups** (explicit table, `OrganEngine::kContactGroups3/2`, tested). Contact k brings in group k-1; the footages are
+16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1':
+
+| keybed | contact 1 | contact 2 | contact 3 |
+|---|---|---|---|
+| 3 contacts per key (default) | 16', 5 1/3', 8' | 4', 2 2/3', 2' | 1 3/5', 1 1/3', 1' |
+| 2 contacts per key (`set_contact_count(2)`) | 16', 5 1/3', 8', 4' | 2 2/3', 2', 1 3/5', 1 1/3', 1' | (index refused) |
+
+The low footages come first and each later contact adds the brighter harmonics, so a slow press brightens. A voice latches the
+contact count when it starts. Percussion and the key click are not busbar groups: percussion is its own tone and the click its own
+burst (below).
+
+**Behaviour.** Everything lands at the event's in-block frame (the block loop applies the event between render segments).
+- *Close of contact 1* with no held voice starts the key's voice at that frame, before any Note On, with every group at 0 and
+  the 1 ms declick gate rising; group 1 ramps in. Voice allocation and the arbiter protection are the Note On's: the voice is
+  identified by (channel, note), never stolen, and a later Note On for the key finds it (`held_voice`) and does nothing.
+- *Close of contact k > 1* ramps group k-1 in, while contact 1 is closed.
+- *Open of contact k*, when k itself is closed, ramps group k-1 and every closed group above it out (a key cannot have contact 3
+  closed with 2 open); an open of a contact that is not closed is ignored even when a higher one is closed (mask 3 and 1 closed,
+  open 2: nothing happens, contact 3 keeps sounding until it opens or contact 1 opens);
+  when no contact is left closed the voice goes to its 2 ms release (reverse order is therefore: 3, then 2, then 1 as they open).
+- *Ramp.* A group's gain moves linearly over `kContactRampFrames` = 8 frames (167 us), the first step on the event's own frame:
+  the first non-zero sample of the group is the sample of its contact event (the unit test proves it with sequences 1, 5 and 20
+  ms apart: render with and without the group's drawbar and the difference is exactly 0.0 before the frame and non-zero on it)
+  and the largest per-sample step is bounded by 1/8 of the tone. A close gives 1/8, 2/8 ... 1 and an open 7/8 ... 0 over the same frames.
+- *Note On/Off only.* A Note On with no held voice starts everything as in Stories 2.2-2.4 (every contact counts as closed, no
+  group ever ramps, the render path is unchanged and the existing goldens are bit-identical); a Note Off releases it as before.
+- *Note On after contacts* (the keybed's normal order): the key already has a held voice, so no second voice, no percussion
+  retrigger, no extra click, no change in timing or groups (tested bit-identical to the same events without the Note On). A Note On
+  arriving after all the key's contacts opened starts an ordinary all-groups voice (the key is pressed again).
+- *Note Off* with contacts still closed releases everything left (the groups follow the voice's 2 ms release together); the contact
+  opens that follow are ignored. *Note Off after the contacts opened the key*: benign and repeatable (kOk, never "voice not found"),
+  until the key starts again; a plain double Note Off on a Note On key still reports voice-not-found as before.
+- *Percussion* fires on the first contact closure instead of the Note On (same single-trigger rule: only when no other key of the
+  part is held), once per press. *Key click*: onset burst at contact 1, release burst when the last contact opens; contacts in between
+  add no click.
+- *Malformed sequences*, each defined, tested, counted in `contact_events_ignored()` and with no effect on the sound: open of a
+  contact that is not closed (or with no voice), duplicate close, close of k > 1 with no voice, k above `contact_count()` (a
+  3-contact event on a 2-contact keybed). On the wire only per-note controller indices 1..8 (`kMaxWireContact`) are `contact_k`; any
+  other index (0, 9..255) is some other per-note controller, is not routed and counts in `ignored_events()` like any unsupported UMP.
+  `make_contact_event` returns the zero event for a contact above 255 instead of aliasing it. `set_contact_count` is refused while a voice
+  is active. A note field above 127 on the wire never reaches the engine (the block loop counts it as
+  dropped; it is not aliased onto another key). Closing contact 3 while 2 never closed is accepted (a lost event for 2 must not mute 3).
+- *Sustain pedal and arbiter.* Contact events ignore the pedal: it defers a Note Off only. A voice started by contacts ends when its
+  last contact opens whatever the pedal does, while a plain Note Off with the pedal down is still deferred to the pedal-up. The
+  arbiter's key bookkeeping follows contacts: contact 1 closing that starts a voice marks the key down (`contact_down`, like a Note On: it
+  also clears a stale deferred release or stolen flag, so a pedal-up cannot cut a voice re-pressed by contacts), the last contact
+  opening marks it up and drops any deferred release (`contact_up`). Voice allocation itself happens in the engine at contact 1 (a
+  voice takes its slot through `acquire_slot`, the same call as a Note On), and the organ is never a steal victim. A contact-started
+  voice binds the snapshot generation exactly when it is created (not on refused or ignored events).
+- *Counters.* `BlockRenderer::contact_events_routed()` (accepted by an engine that follows contacts, malformed ones included; refusals
+  such as a disabled part are dropped, with their typed status) and
+  `contact_events_dropped()` (no taker: an engine without contact support such as the sample engine, which keeps starting on Note On;
+  a note field above 127); a contact event is never counted in `ignored_events()`. A group other than 0 is an unsupported UMP and is
+  ignored like any other.
+
+Gate cost: per voice per chunk three gate ramps (only while one is moving) and one multiply per drawbar-sample in a ramping group;
+a settled voice costs what it did before.
+
 ## Voices are never stolen; reservation
 
 `Engine::steal_protected()` (new, default false) is true for the organ. `VoiceArbiter::bind` records it; protected engines
@@ -202,9 +277,9 @@ ahead of every engine floor. With that reservation, a pool full of sample voices
 Placeholders until measured on the dev board: voice 2, generator 48 per part, rotary 24 per part (reserved for Story 2.6).
 `organ_bench` prints host figures labelled "host, not representative".
 
-## Not in Stories 2.2 to 2.4
+## Not in Stories 2.2 to 2.5
 
-Multi-contact onset, rotary, effects, UI, Live Set loading.
+Rotary, effects, UI, Live Set loading, the keybed reader that emits `contact_k` (Epic 3).
 
 ## Tests
 
@@ -222,3 +297,11 @@ contrast; engine routing; click-free cycling on a held 73-key chord; parts indep
 leakage table reproducibility, level and linear scaling by single-bin DFT of the difference render; no click when leakage moves),
 `rtsan_organ_test` (CC 81/87/83 traffic in the main loop plus a 6,000-block phase cycling every scanner setting and leakage on a held
 73-key chord, Linux CI only) and the golden `tools/offline-render/tests/organ_scanner/` (see the offline-render README).
+
+Story 2.5: `organ_contact_tests` (UMP format and decode; group tables; onset exactness for 3 and 2 contacts at 1, 5 and 20 ms spacing and
+reverse-order release by difference renders; Note On after contacts bit-identical to without it, also with percussion; voice end on
+the last open; Note On/Off-only; idempotent Note Off; Note Off with contacts closed; malformed sequences incl. wire-level ones;
+unsupported engines; percussion on the first contact and single trigger; key click onset and release; slot identity and arbiter
+protection with 73 keys; determinism; click-free ramps; a 6,000-block random soup), `rtsan_organ_test` (contact traffic, valid and
+malformed, in the main loop and a 6,000-block multi-contact phase on 73 keys, Linux CI only) and the golden
+`tools/offline-render/tests/organ_contacts/` rendered from a `--events` list (see the offline-render README).

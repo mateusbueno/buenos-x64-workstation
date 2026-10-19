@@ -73,6 +73,12 @@ class BlockRenderer {
   // Render one block. left/right each hold kBlockFrames floats and are overwritten.
   void process_block(float* left, float* right) noexcept VELORA_NONBLOCKING;
 
+  // contact_k events (Story 2.5, contact_events.hpp) are neither notes nor ignored events: contact_events_routed() counts those
+  // delivered to an engine that follows contacts (the organ; the engine counts the malformed ones it refuses),
+  // contact_events_dropped() those with no taker (an engine without contact support, a note field above 127, no engine).
+  std::uint64_t contact_events_routed() const noexcept { return contact_routed_.load(std::memory_order_relaxed); }
+  std::uint64_t contact_events_dropped() const noexcept { return contact_dropped_.load(std::memory_order_relaxed); }
+
   // Count of occurrences of each typed status since construction (kOk counts successes).
   std::uint64_t status_count(EngineStatus s) const noexcept { return status_counts_[static_cast<std::size_t>(s)]; }
   EngineStatus last_status() const noexcept { return last_status_; }
@@ -101,6 +107,7 @@ class BlockRenderer {
 
  private:
   void apply(const Ump& ump) noexcept VELORA_NONBLOCKING;
+  void apply_contact(const Ump& ump) noexcept VELORA_NONBLOCKING;
   void record(EngineStatus s) noexcept VELORA_NONBLOCKING;
   void drain_queue() noexcept VELORA_NONBLOCKING;
   void render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to) noexcept VELORA_NONBLOCKING;
@@ -138,6 +145,7 @@ class BlockRenderer {
   std::array<std::uint8_t, 16 * 128> present_{};  // scratch for reap_generation_refs()
   std::uint32_t ref_keys_ = 0;                     // keys with a non-zero mask
   std::atomic<std::uint64_t> param_applied_{0}, param_rejected_{0};
+  std::atomic<std::uint64_t> contact_routed_{0}, contact_dropped_{0};
 };
 
 }  // namespace velora::core

@@ -114,6 +114,11 @@ class VoiceArbiter final : public VoiceAllocator {
   // True: the engine should release the note now. False: the pedal holds it (release deferred).
   // `engine_type_id` is remembered for a deferred release so the pedal-up goes to that engine.
   bool note_off(std::uint32_t channel, std::uint32_t note, std::uint32_t engine_type_id) noexcept VELORA_NONBLOCKING;
+  // Key bookkeeping for keys driven by contact_k (Story 2.5): contact 1 closing is a key press (key down, stale deferred release
+  // and stolen flag cleared, exactly like note_on); the last contact opening is a key release that the sustain pedal does not
+  // defer (key up, nothing deferred).
+  void contact_down(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING { note_on(channel, note); }
+  void contact_up(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING;
   void set_sustain(std::uint32_t channel, bool down) noexcept VELORA_NONBLOCKING;
   bool sustain_down(std::uint32_t channel) const noexcept { return pedal_[channel & 15u] != 0; }
   // After the pedal went up: true once per note whose release was deferred (the caller releases it).

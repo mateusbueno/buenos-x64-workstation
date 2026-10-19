@@ -1,0 +1,7 @@
+# Null-test case for the organ multi-contact golden render (Story 2.5).
+# -100 dB residual: far below the audible difference between contact timings (one contact moved by 1 ms lands near -35 dB),
+# loose enough for libm/FMA differences between macOS and Linux builds.
+reference=organ_contacts.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
