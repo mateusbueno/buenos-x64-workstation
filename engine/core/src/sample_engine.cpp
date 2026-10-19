@@ -99,11 +99,13 @@ float SampleEngine::next_random() noexcept {
   return static_cast<float>(r >> 40) * (1.0f / 16777216.0f);
 }
 
-bool SampleEngine::set_instrument(const velora::ports::SampleSource& src) {
-  clear_instrument();
+std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSource& src, std::shared_ptr<const void> owner) const {
+  auto bank = std::make_shared<SampleBank>();
+  bank->owner = std::move(owner);
+  std::vector<SampleBankRegion>& regions = bank->regions;
   const velora::ports::InstrumentView view = src.instrument();
   const float sr = static_cast<float>(cfg_.sample_rate);
-  regions_.reserve(view.regions.size());
+  regions.reserve(view.regions.size());
   for (const auto& d : view.regions) {
     RegionRt r;
     r.d = d;
@@ -130,7 +132,7 @@ bool SampleEngine::set_instrument(const velora::ports::SampleSource& src) {
         r.playable = std::isfinite(rmax) && std::isfinite(rmin) && rmax <= kMaxRatio && rmin >= kMinRatio;
       }
     }
-    if (!r.playable) ++unplayable_regions_;
+    if (!r.playable) ++bank->unplayable_regions;
 
     r.uses_sequence = d.seq_length != 1 || d.seq_position != 1;
 
@@ -171,35 +173,39 @@ bool SampleEngine::set_instrument(const velora::ports::SampleSource& src) {
     r.env_sustain = std::clamp(d.ampeg_sustain / 100.0f, 0.0f, 1.0f);
     r.env_release_rate = seconds_to_exp_rate(d.ampeg_release > 0.0f ? d.ampeg_release : kDefaultRelease, sr);
     r.env_free_running = r.env_sustain <= kFreeRunningSustain;
-    regions_.push_back(r);
+    regions.push_back(r);
   }
 
   // Per-note lookup, regions in table order (a note's regions are visited in that order).
   std::array<std::uint32_t, 128> counts{};
-  for (const auto& r : regions_)
+  for (const auto& r : regions)
     for (unsigned n = r.d.key_lo; n <= std::min<unsigned>(r.d.key_hi, 127); ++n) ++counts[n];
-  note_begin_[0] = 0;
-  for (unsigned n = 0; n < 128; ++n) note_begin_[n + 1] = note_begin_[n] + counts[n];
-  note_list_.assign(note_begin_[128], 0);
+  bank->note_begin[0] = 0;
+  for (unsigned n = 0; n < 128; ++n) bank->note_begin[n + 1] = bank->note_begin[n] + counts[n];
+  bank->note_list.assign(bank->note_begin[128], 0);
   std::array<std::uint32_t, 128> fill{};
-  for (std::uint32_t i = 0; i < regions_.size(); ++i)
-    for (unsigned n = regions_[i].d.key_lo; n <= std::min<unsigned>(regions_[i].d.key_hi, 127); ++n)
-      note_list_[note_begin_[n] + fill[n]++] = i;
+  for (std::uint32_t i = 0; i < regions.size(); ++i)
+    for (unsigned n = regions[i].d.key_lo; n <= std::min<unsigned>(regions[i].d.key_hi, 127); ++n)
+      bank->note_list[bank->note_begin[n] + fill[n]++] = i;
 
-  seq_counter_.assign(regions_.size(), 0);
-  seq_switched_.assign(regions_.size(), 0);
-  for (std::size_t i = 0; i < regions_.size(); ++i) seq_switched_[i] = regions_[i].uses_sequence ? 0 : 1;
+  bank->seq_counter.assign(regions.size(), 0);
+  bank->seq_switched.assign(regions.size(), 0);
+  for (std::size_t i = 0; i < regions.size(); ++i) bank->seq_switched[i] = regions[i].uses_sequence ? 0 : 1;
+  return bank;
+}
+
+bool SampleEngine::set_instrument(const velora::ports::SampleSource& src) {
+  clear_instrument();
+  default_bank_ = prepare(src);
+  unplayable_regions_ = default_bank_->unplayable_regions;
   return true;
 }
 
 void SampleEngine::clear_instrument() {
   for (auto& v : voices_) v = Voice{};
-  regions_.clear();
-  note_list_.clear();
-  note_begin_.fill(0);
-  seq_counter_.clear();
-  seq_switched_.clear();
+  default_bank_.reset();
   last_vel7_.fill(0);
+  last_bank_.fill(nullptr);
   unplayable_regions_ = 0;
   skipped_unplayable_ = 0;
 }
@@ -306,12 +312,12 @@ void SampleEngine::env_fast_release(Env& e) const noexcept {
 
 // --- voices ---------------------------------------------------------------------------------------
 
-bool SampleEngine::start_region(std::uint32_t region, std::uint32_t channel, std::uint32_t note,
+bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, std::uint32_t channel, std::uint32_t note,
                                 std::uint8_t vel7, bool release_trigger) noexcept {
   const std::uint32_t slot = acquire_slot(channel, note);
   if (slot == VoiceAllocator::kNoSlot || slot >= capacity_) return false;
   Voice* v = &voices_[slot];
-  const RegionRt& r = regions_[region];
+  const RegionRt& r = bank.regions[region];
 
   // Pitch: key tracking (100 cents per key) from pitch_keycenter, tune, transpose; single precision.
   float cents = 100.0f * (static_cast<float>(note) - static_cast<float>(r.d.key_center));
@@ -329,6 +335,7 @@ bool SampleEngine::start_region(std::uint32_t region, std::uint32_t channel, std
   v->channel = channel;
   v->note = note;
   v->region = region;
+  v->bank = &bank;
   v->vel7 = vel7;
   v->start_time = clock_;
   v->pos = static_cast<double>(r.d.offset);
@@ -351,30 +358,32 @@ bool SampleEngine::playing_attack_voice(const RegionRt& r, std::uint32_t channel
 
 EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note,
                                        std::uint32_t velocity16) noexcept {
-  if (note > 127 || regions_.empty()) return EngineStatus::kOk;
   channel &= 15u;
+  SampleBank* bank = bank_for(channel);
+  if (note > 127 || !bank || bank->regions.empty()) return EngineStatus::kOk;
   const std::uint32_t v16 = std::min<std::uint32_t>(velocity16, 65535u);
   // 7-bit velocity, as MIDI 1.0 and SFZ define it (the UMP value is rounded to the nearest step).
   std::uint8_t vel7 = static_cast<std::uint8_t>((v16 * 127u + 32767u) / 65535u);
   if (vel7 == 0) vel7 = 1;  // a note on is never velocity 0
   last_vel7_[(channel & 15u) * 128u + note] = vel7;
+  last_bank_[(channel & 15u) * 128u + note] = bank;
   const float rnd = next_random();
 
   bool exhausted = false;
-  for (std::uint32_t i = note_begin_[note]; i < note_begin_[note + 1]; ++i) {
-    const std::uint32_t ri = note_list_[i];
-    const RegionRt& r = regions_[ri];
+  for (std::uint32_t i = bank->note_begin[note]; i < bank->note_begin[note + 1]; ++i) {
+    const std::uint32_t ri = bank->note_list[i];
+    const RegionRt& r = bank->regions[ri];
     // Round robin: every region whose key range holds the note advances its own counter.
-    seq_switched_[ri] = (seq_counter_[ri]++ % r.d.seq_length) == r.d.seq_position - 1 ? 1 : 0;
+    bank->seq_switched[ri] = (bank->seq_counter[ri]++ % r.d.seq_length) == r.d.seq_position - 1 ? 1 : 0;
     if (r.d.trigger != velora::ports::SampleTrigger::kAttack) continue;
-    if (!seq_switched_[ri]) continue;
+    if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
     if (!r.playable) {
       ++skipped_unplayable_;
       continue;
     }
-    if (!start_region(ri, channel, note, vel7, false)) exhausted = true;
+    if (!start_region(*bank, ri, channel, note, vel7, false)) exhausted = true;
   }
   return exhausted ? EngineStatus::kPoolExhausted : EngineStatus::kOk;
 }
@@ -385,7 +394,7 @@ EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note)
   bool found = false;
   for (auto& v : voices_) {
     if (!v.active || v.stolen || v.release_trigger || v.channel != channel || v.note != note || v.key_up) continue;
-    const RegionRt& r = regions_[v.region];
+    const RegionRt& r = v.bank->regions[v.region];
     if (v.env.s >= EnvState::kRelease) continue;  // already releasing
     found = true;
     if (r.d.loop_mode == velora::ports::SampleLoopMode::kOneShot) {
@@ -399,11 +408,14 @@ EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note)
   const float rnd = next_random();
   const std::uint8_t vel7 = last_vel7_[(channel & 15u) * 128u + note];
   bool exhausted = false;
-  for (std::uint32_t i = note_begin_[note]; i < note_begin_[note + 1]; ++i) {
-    const std::uint32_t ri = note_list_[i];
-    const RegionRt& r = regions_[ri];
+  SampleBank* bank = bank_for(channel);
+  const SampleBank* started_on = last_bank_[(channel & 15u) * 128u + note];
+  if (started_on && started_on != bank) bank = nullptr;  // rebound while held: no release-trigger lookup on a bank the note never used
+  for (std::uint32_t i = 0; bank && i < bank->note_begin[note + 1] - bank->note_begin[note]; ++i) {
+    const std::uint32_t ri = bank->note_list[bank->note_begin[note] + i];
+    const RegionRt& r = bank->regions[ri];
     if (r.d.trigger != velora::ports::SampleTrigger::kRelease) continue;
-    if (!seq_switched_[ri]) continue;
+    if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
     if (!playing_attack_voice(r, channel)) continue;
@@ -411,7 +423,7 @@ EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note)
       ++skipped_unplayable_;
       continue;
     }
-    if (start_region(ri, channel, note, vel7, true)) found = true;
+    if (start_region(*bank, ri, channel, note, vel7, true)) found = true;
     else exhausted = true;
   }
   if (exhausted) return EngineStatus::kPoolExhausted;
@@ -437,7 +449,7 @@ void SampleEngine::render_split(float* const* left, float* const* right, std::ui
 }
 
 void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32_t frames) noexcept {
-  const RegionRt& r = regions_[v.region];
+  const RegionRt& r = v.bank->regions[v.region];
   const bool linear = cfg_.interpolation == SampleInterpolation::kLinear;
   const std::int64_t nframes = static_cast<std::int64_t>(r.frames);
   const std::int64_t end_idx = nframes - 2;  // sfizz: positions at or past this index end the sample

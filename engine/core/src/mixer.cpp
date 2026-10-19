@@ -96,8 +96,10 @@ void Mixer::adopt(const Snapshot& s, const LastValueTable* live) noexcept {
   for (std::uint32_t i = 0; i < kParts; ++i) {
     Part& p = parts_[i];
     const PartCfg& cfg = s.parts[i];
-    p.main_target = cfg.output == params::kPartOutputMain ? 1.0f : 0.0f;
-    p.aux_target = cfg.output == params::kPartOutputAux ? 1.0f : 0.0f;
+    // The part fader (Story 4.3, PartCfg::volume, 1 = unity: the pre-4.3 value) scales the feed to the bus the part sits on.
+    const float vol = clamp01(cfg.volume);
+    p.main_target = cfg.output == params::kPartOutputMain ? vol : 0.0f;
+    p.aux_target = cfg.output == params::kPartOutputAux ? vol : 0.0f;
     FxChain* chain = cfg.chain.get();
     // The generation that introduced a chain is not kept alive by it for as long as the chain lives: an entry (or the waiting chain)
     // whose chain this generation still carries moves its reference to this (held, so valid) generation; the older one can be freed.

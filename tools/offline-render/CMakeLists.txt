@@ -3,16 +3,22 @@ add_library(velora_offline STATIC
   src/events_file.cpp
   src/wav.cpp
   src/render.cpp
+  src/render_live_set.cpp
   src/nulltest.cpp)
 target_include_directories(velora_offline PUBLIC src)
 # The sample engine renders from a bundle: the loader lives in engine/host (it links formatlib).
-target_link_libraries(velora_offline PUBLIC velora_core velora_host)
+# Live Set rendering loads the Live Set through the control side (protobuf), the same loader as engine-host.
+target_link_libraries(velora_offline PUBLIC velora_core velora_host velora_control)
 
 add_executable(velora-offline-render src/render_main.cpp)
 target_link_libraries(velora-offline-render PRIVATE velora_offline)
 
 add_executable(velora-null-test src/null_test_main.cpp)
 target_link_libraries(velora-null-test PRIVATE velora_offline)
+
+# --- Live Set golden fixtures (Story 4.3): the generator is built so the committed fixtures can be regenerated on purpose ------
+add_executable(live-set-fixture-gen tests/live_set/make_fixtures.cpp)
+target_link_libraries(live-set-fixture-gen PRIVATE velora_offline)
 
 # --- unit tests --------------------------------------------------------------
 add_executable(offline_render_tests tests/offline_render_tests.cpp)
@@ -296,6 +302,55 @@ foreach(_bad "--delay-time;0.5" "--delay-time;2001" "--delay-time;nan" "--delay-
            COMMAND velora-offline-render ${_render_args} ${_opt} ${_val} --out ${_out}/never.wav)
   set_tests_properties(fx_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid ${_opt}")
 endforeach()
+
+# Live Set load (Story 4.3): layer_split.liveset (bass / piano split at B2 / C3, a pad layered underneath, an octave doubling, silent parts) is loaded by
+# the engine host's LiveSetLoader from the committed libraries in tests/live_set/root and played by layer_split.mid. Same scheme as the other goldens:
+# render twice (byte-equal), null-test against the committed golden at -100 dB, and require a wrong zone boundary or octave to fail it.
+# Regenerate the fixtures (integer synthesis, identical everywhere) with `cmake --build build --target live-set-fixtures`, the golden with update-live-set-golden.
+set(_ls ${CMAKE_CURRENT_SOURCE_DIR}/tests/live_set)
+set(_ls_args --live-set ${_ls}/layer_split.liveset --library-root ${_ls}/root --midi ${_ls}/layer_split.mid --tail-seconds 1.0)
+add_test(NAME live_set_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/live_set_a.wav ${_out}/live_set_b.wav ${_out}/live_set_ws.wav ${_out}/live_set_wo.wav)
+set_tests_properties(live_set_clean PROPERTIES FIXTURES_SETUP live_set_clean)
+add_test(NAME live_set_render_a COMMAND velora-offline-render ${_ls_args} --out ${_out}/live_set_a.wav)
+add_test(NAME live_set_render_b COMMAND velora-offline-render ${_ls_args} --out ${_out}/live_set_b.wav)
+set_tests_properties(live_set_render_a PROPERTIES FIXTURES_REQUIRED live_set_clean FIXTURES_SETUP live_set_a PASS_REGULAR_EXPRESSION "part 5: missing library")
+set_tests_properties(live_set_render_b PROPERTIES FIXTURES_REQUIRED live_set_clean FIXTURES_SETUP live_set_b)
+add_test(NAME live_set_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/live_set_a.wav ${_out}/live_set_b.wav)
+set_tests_properties(live_set_bit_identical PROPERTIES FIXTURES_REQUIRED "live_set_a;live_set_b")
+add_test(NAME live_set_null_golden COMMAND velora-null-test --case ${_ls}/layer_split.case --candidate ${_out}/live_set_a.wav)
+set_tests_properties(live_set_null_golden PROPERTIES FIXTURES_REQUIRED live_set_a PASS_REGULAR_EXPRESSION "overall: PASS")
+foreach(_w split:ws octave:wo)
+  string(REPLACE ":" ";" _wl "${_w}")
+  list(GET _wl 0 _wn)
+  list(GET _wl 1 _wf)
+  add_test(NAME live_set_wrong_${_wn}
+           COMMAND velora-offline-render --live-set ${_ls}/wrong_${_wn}.liveset --library-root ${_ls}/root --midi ${_ls}/layer_split.mid --tail-seconds 1.0
+                   --out ${_out}/live_set_${_wf}.wav)
+  set_tests_properties(live_set_wrong_${_wn} PROPERTIES FIXTURES_REQUIRED live_set_clean FIXTURES_SETUP live_set_${_wf})
+  add_test(NAME live_set_wrong_${_wn}_fails COMMAND velora-null-test --case ${_ls}/layer_split.case --candidate ${_out}/live_set_${_wf}.wav)
+  set_tests_properties(live_set_wrong_${_wn}_fails PROPERTIES FIXTURES_REQUIRED live_set_${_wf}
+                       PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+endforeach()
+# Option and input errors of the Live Set mode.
+add_test(NAME live_set_rejects_missing_library_root
+         COMMAND velora-offline-render --live-set ${_ls}/layer_split.liveset --midi ${_ls}/layer_split.mid --out ${_out}/never.wav)
+set_tests_properties(live_set_rejects_missing_library_root PROPERTIES PASS_REGULAR_EXPRESSION "usage: velora-offline-render")
+add_test(NAME live_set_rejects_engine_options
+         COMMAND velora-offline-render ${_ls_args} --engine organ --out ${_out}/never.wav)
+set_tests_properties(live_set_rejects_engine_options PROPERTIES PASS_REGULAR_EXPRESSION "--live-set cannot be combined")
+add_test(NAME live_set_rejects_missing_file
+         COMMAND velora-offline-render --live-set ${_ls}/nope.liveset --library-root ${_ls}/root --midi ${_ls}/layer_split.mid --out ${_out}/never.wav)
+set_tests_properties(live_set_rejects_missing_file PROPERTIES PASS_REGULAR_EXPRESSION "live set: read failed")
+add_test(NAME live_set_rejects_a_file_that_is_not_a_live_set
+         COMMAND velora-offline-render --live-set ${_ls}/layer_split.mid --library-root ${_ls}/root --midi ${_ls}/layer_split.mid --out ${_out}/never.wav)
+set_tests_properties(live_set_rejects_a_file_that_is_not_a_live_set PROPERTIES PASS_REGULAR_EXPRESSION "live set: (read failed|invalid live set)")
+add_custom_target(live-set-fixtures
+  COMMAND live-set-fixture-gen ${_ls}
+  COMMAND python3 ${_ls}/make_midi.py ${_ls}/layer_split.mid
+  DEPENDS live-set-fixture-gen)
+add_custom_target(update-live-set-golden
+  COMMAND velora-offline-render ${_ls_args} --out ${_ls}/layer_split.wav)
 
 # Option parsing.
 add_test(NAME organ_perc_rejects_bad_percussion

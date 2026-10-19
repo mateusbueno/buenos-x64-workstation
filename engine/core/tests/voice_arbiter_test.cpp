@@ -10,6 +10,7 @@
 
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/sample_engine.hpp"
+#include "velora/core/organ_engine.hpp"
 #include "velora/core/voice_arbiter.hpp"
 #include "velora/ports/sample_source.hpp"
 
@@ -247,6 +248,34 @@ void test_sample_floor_minimum() {
   add_floor(c, kSampleId, 256);
   c.budget = 256ull * se.cost_units_per_voice() - 1;
   CHECK(a.reserve(c) == RS::kFloorsExceedBudget);
+
+  // Story 4.3: a Live Set without a sample part waives the floor, but only a floor of exactly zero.
+  c = VoiceArbiter::LiveSetConfig{};
+  c.budget = 100000;
+  c.waive_sample_floor = true;
+  CHECK(a.reserve(c) == RS::kOk);                       // no sample floor at all, waived
+  CHECK(a.floor_cost(kSampleId) == 0);
+  add_floor(c, kSampleId, 255);
+  CHECK(a.reserve(c) == RS::kSampleFloorTooLow);        // a non-zero floor below 256 is still refused
+  c.floor_count = 0;
+  add_floor(c, kSampleId, 1);
+  CHECK(a.reserve(c) == RS::kSampleFloorTooLow);
+  c.floor_count = 0;
+  add_floor(c, kSampleId, 256);
+  CHECK(a.reserve(c) == RS::kOk);
+  CHECK(a.config().floors[0].voices == 256);            // config() is what the reservation was made with
+
+  // The same for the organ: only an organ reservation of exactly zero is waived.
+  OrganEngine organ;
+  auto br2 = std::make_unique<BlockRenderer>(4);
+  CHECK(br2->bind_engine(organ));
+  VoiceArbiter::LiveSetConfig o;
+  o.budget = 100000;
+  CHECK(br2->arbiter().reserve(o) == RS::kInvalidConfig);  // a bound organ needs its 73 keys reserved
+  o.waive_organ_reservation = true;
+  CHECK(br2->arbiter().reserve(o) == RS::kOk);
+  o.organ_rotary_cost = 1;
+  CHECK(br2->arbiter().reserve(o) == RS::kInvalidConfig);  // non-zero but too small: still refused
 }
 
 // --- steal policy -----------------------------------------------------------------------------------

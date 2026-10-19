@@ -5,7 +5,7 @@
 //   part bus --> insert chain (<= 5 effects, cross-faded when the chain changes) --> post-insert signal
 //   post-insert --> Reverb send bus  (x send_reverb_level x send_reverb_master) --> Reverb (Story 2.10, one instance per output bus) --> Main or Aux
 //   post-insert --> Delay send bus   (x send_delay_level)   --> Delay (Story 2.11, one instance per output bus, x delay_level) --> Main or Aux (the bus of the part)
-//   post-insert --> Main bus or Aux bus (part_output; switched with a short ramp)
+//   post-insert --> Main bus or Aux bus (part_output; switched with a short ramp), scaled by the part fader (PartCfg::volume, Story 4.3; the sends follow it)
 //   line-in (x line_in_level) --> Main bus
 //   Main, Aux --> master section per bus: master EQ, then master compressor (Story 2.8, each with its own bypass), then master_level trim --> outputs
 //

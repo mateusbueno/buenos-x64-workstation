@@ -2,7 +2,7 @@
 
 Role: offline renderer and null-test harness driving `engine/core` without a live audio device.
 
-Dependency rule: may depend on `engine/core`, `engine/ports`, `engine/host` (the bundle loader for the sample engine) and `formatlib`; nothing in `engine/` may depend on it.
+Dependency rule: may depend on `engine/core`, `engine/ports`, `engine/host` (the bundle loader for the sample engine; the Live Set loader and protobuf for `--live-set`) and `formatlib`; nothing in `engine/` may depend on it.
 
 ## Tools
 
@@ -159,3 +159,10 @@ Goldens (`tests/fx_delay_ms/`, `tests/fx_delay_sync/`, 2.25 s each): the golden 
 `--delay-sync on --delay-note 1/8d --tempo 100 --tempo-change 0.5:140 --delay-feedback 0.55 --delay-level 0.8 --delay-damping 0.3` (tempo-synced, the tempo changing during the render). ctest renders each twice (`fx_delay_*_bit_identical`), null-tests it at -100 dB (`fx_delay_*_null_golden`, with `check_excess`)
 and requires a wrong time, feedback, return level, damping, ping-pong, send level or sync setting (milliseconds golden) and a wrong note value, initial tempo, tempo-change value, tempo-change time, a missing tempo change or sync off (synced golden) to fail (`fx_delay_*_wrong_*_fails`). Regenerate after an
 intentional change with `cmake --build build --target update-delay-goldens` and review. `offline_routing_tests` (`test_delay`) also null-tests Main and Aux against a stand-alone `DelaySend` fed with the part's dry render x send (-110 dB), in milliseconds mode and tempo-synced with two tempo changes, and shows that a tempo change is ignored while sync is off.
+
+## Live Set rendering and golden (Story 4.3)
+
+`velora-offline-render --live-set FILE --library-root DIR --midi in.mid --out out.wav [--seed N] [--tail-seconds S]` loads a Live Set through the engine host's `LiveSetLoader` (the same code path as `engine-host --live-set`) into a fresh block renderer with the sample engine and the organ bound (`render_live_set.cpp`), and renders the MIDI through it. `DIR` is the library root (`<DIR>/lib/<library_id>/current`). The Live Set decides engines, routing and instruments, so no other engine, instrument, routing or organ option may be combined with it. Every note on or off in the MIDI file, on any channel, is a keyboard event fanned out to the parts by zone (`engine/core/README.md`); CC 64 is the sustain pedal for every part; registry-mapped CCs address the part that is their channel; contact events are not used. The report prints each part's state (ready, empty timbre, missing library, engine not available) and the router's drop counters. A Live Set that does not load exits 1 and writes nothing.
+
+`tests/live_set/` holds the golden: `layer_split.liveset` (bass up to B2 = 47, piano from C3 = 48, a pad layered under the whole keyboard an octave down on the Aux bus, the piano doubled an octave up from C5, and four silent parts: keyboard off, missing library, FM, empty timbre), `root/` (three tiny libraries in the resolver's layout, `lib/<library_id>/current -> <bundle_id>/bundle.vlb`), `layer_split.mid` (made by `make_midi.py`: the notes on both sides of the split and exactly at the boundary, a chord across it, the doubling zone and a key whose doubling is out of range, a second keyboard channel, the sustain pedal) and `layer_split.wav` with `layer_split.case`. Tests `live_set_*`: two renders are bit-identical, the fresh render null-tests against the golden at -100 dB (`check_excess`), a Live Set with the split moved by one key (`wrong_split.liveset`) or the pad octave changed (`wrong_octave.liveset`) fails the null test, and bad option combinations and unreadable Live Sets are refused. The fixtures are made with integer arithmetic only (no libm) by `live-set-fixture-gen`; regenerate them on purpose with `cmake --build build --target live-set-fixtures`, then the golden with `cmake --build build --target update-live-set-golden` (review the diff).
+

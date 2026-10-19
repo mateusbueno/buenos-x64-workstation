@@ -68,6 +68,11 @@ class VoiceArbiter final : public VoiceAllocator {
     std::array<EngineFloor, kMaxEngines> floors{};
     std::uint32_t floor_count = 0;
     std::uint32_t steal_ramp_frames = kStealRampFrames;
+    // Live Set load (Story 4.3): a Live Set with no sample part has a sample floor of zero, and one with no organ part reserves nothing for
+    // the organ, even though the engines stay bound. These flags waive the "bound sample engine needs a floor of at least 256" and "bound
+    // organ needs 73 keys' cost" checks, and only when the floor / the organ reservation really is zero. Default false: unchanged behaviour.
+    bool waive_sample_floor = false;
+    bool waive_organ_reservation = false;
   };
 
   enum class ReserveStatus : std::uint8_t {
@@ -112,6 +117,9 @@ class VoiceArbiter final : public VoiceAllocator {
   void clear_reservation() noexcept;  // back to the unreserved mode
   bool reserved() const noexcept { return reserved_; }
   const Reservation& reservation() const noexcept { return res_; }
+  // The configuration the active reservation was made with (meaningful while reserved()): the Live Set loader snapshots it before it
+  // reserves, so a load that fails later can put back exactly what was there.
+  const LiveSetConfig& config() const noexcept { return cfg_; }
   std::uint64_t floor_cost(std::uint32_t engine_type_id) const noexcept;
 
   // --- event side (serial phase) ---------------------------------------------------------------
@@ -129,6 +137,14 @@ class VoiceArbiter final : public VoiceAllocator {
   // After the pedal went up: true once per note whose release was deferred (the caller releases it).
   bool take_deferred_release(std::uint32_t channel, std::uint32_t note, std::uint32_t& engine_type_id) noexcept
       VELORA_NONBLOCKING;
+  // Whether a note off of (channel, note) is deferred by the pedal, and for which engine, without consuming it (Story 4.3).
+  bool deferred_release_type(std::uint32_t channel, std::uint32_t note, std::uint32_t& engine_type_id) const noexcept VELORA_NONBLOCKING {
+    if (note > 127) return false;
+    const std::size_t k = (channel & 15u) * 128u + note;
+    if (!deferred_[k]) return false;
+    engine_type_id = deferred_type_[k];
+    return true;
+  }
   // True once after the voices of (channel, note) were (partly) stolen and before its next note on:
   // a later note off finding nothing to release is then benign, not an error.
   bool take_stolen_flag(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING;
@@ -185,6 +201,7 @@ class VoiceArbiter final : public VoiceAllocator {
   std::vector<std::uint32_t> victims_;  // scratch: (engine << 24 | slot) of tentative victims
 
   bool reserved_ = false;
+  LiveSetConfig cfg_{};
   Reservation res_{};
   std::uint32_t ramp_ = kStealRampFrames;
 

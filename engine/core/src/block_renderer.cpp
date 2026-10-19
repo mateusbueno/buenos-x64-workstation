@@ -63,6 +63,11 @@ void BlockRenderer::adopt_generation() noexcept {
   // Initial performance values apply only on generation change, and only where they changed. The diff is
   // against an RT-owned copy of the last applied values: the previous generation is no longer held (the
   // hazard moved) and the control thread may free it at any moment, so it must not be read here.
+  // A Live Set generation maps each part to its engine and instrument first, so the changed values below reach the right engine.
+  std::array<bool, params::kPartCount> remapped{};
+  if (in_live_set_ && !next->live_set) leave_live_set(remapped);
+  router_.configure(*next);
+  if (next->live_set) adopt_live_set_parts(*next, remapped);
   std::array<bool, params::kPerfSlotCount> changed{};
   for (std::size_t i = 0; i < params::kPerfSlotCount; ++i) {
     changed[i] = !applied_valid_ || next->perf_init[i] != applied_init_[i];
@@ -77,9 +82,46 @@ void BlockRenderer::adopt_generation() noexcept {
       if (changed[slot]) forward_part_param(d, p, next->perf_init[slot]);
     }
   }
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p)  // a part that moved to another engine gets the live values it never saw
+    if (remapped[p]) sync_part_params(p);
   applied_valid_ = true;
   held_ = next;
   mixer_.adopt(*next, &last_);  // part outputs, master level and the insert chains (the generation is held: safe to read)
+}
+
+// The block loop goes from a Live Set generation to a plain one: the notes the router still holds are released (with the engine and pitch they
+// went to), the sample engine forgets its per-part banks (they belong to generations that may be freed) and every channel gets the default
+// engine again.
+void BlockRenderer::leave_live_set(std::array<bool, params::kPartCount>& remapped) noexcept {
+  router_.release_all([this](std::uint32_t part, std::uint32_t pitch, std::uint32_t engine) { apply_part_note(part, pitch, 0, false, engine); });
+  for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->clear_part_sample_banks();
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    if (channel_engine_[p] != legacy_engine_[p]) remapped[p] = true;
+    channel_engine_[p] = legacy_engine_[p];
+  }
+  in_live_set_ = false;
+}
+
+void BlockRenderer::adopt_live_set_parts(const Snapshot& s, std::array<bool, params::kPartCount>& remapped) noexcept {
+  if (!in_live_set_) {
+    legacy_engine_ = channel_engine_;
+    in_live_set_ = true;
+  }
+  Engine* sample = nullptr;
+  const bool has_sample = registry_.resolve(static_cast<std::uint32_t>(EngineTypeId::kSample), sample) == EngineStatus::kOk;
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    const PartCfg& c = s.parts[p];
+    // A part that does not sound maps to no engine (type 0 is unknown to the registry): silence, never a substitute.
+    const std::uint32_t type = c.state == PartState::kReady ? c.engine_type : 0u;
+    if (channel_engine_[p] != type) {
+      channel_engine_[p] = type;
+      remapped[p] = true;
+    }
+    if (has_sample) {
+      const bool is_sample = type == static_cast<std::uint32_t>(EngineTypeId::kSample);
+      sample->set_part_sample_bank(p, is_sample ? c.sample_bank.get() : nullptr);
+    }
+  }
 }
 
 void BlockRenderer::forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept {
@@ -140,6 +182,10 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
   }
   if (ump.group() == 0 && ump.is_control_change() && ump.controller_index() == Ump::kControllerSustain) {
     const bool down = ump.controller_value32() >= 0x80000000u;  // MIDI value 64 of 0..127 scaled to 32 bits
+    if (router_.active()) {
+      apply_keyboard_sustain(down);
+      return;
+    }
     arbiter_.set_sustain(ump.channel(), down);
     if (!down) release_deferred(ump.channel());
     return;
@@ -152,27 +198,80 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     ++ignored_;
     return;
   }
-  // The arbiter's key/pedal state follows the events even when no engine serves the channel.
-  const std::uint32_t type_id = channel_engine_[ump.channel()];
+  if (router_.active()) {
+    apply_keyboard_note(ump);
+    return;
+  }
+  apply_part_note(ump.channel(), ump.note(), ump.velocity16(), ump.is_note_on(), channel_engine_[ump.channel()]);
+}
+
+// The note path of one (channel, engine): the arbiter's key/pedal state follows the events even when no engine serves the channel.
+void BlockRenderer::apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on,
+                                    std::uint32_t type_id) noexcept {
+  if (on && router_.active()) {
+    // A part can change engine between generations. A voice the pedal still holds on the OLD engine for this very (part, note) would lose
+    // its deferred release when the new note on resets the key (one deferred slot per key): let it go now.
+    std::uint32_t held_type = 0;
+    if (arbiter_.deferred_release_type(channel, note, held_type) && held_type != type_id && arbiter_.take_deferred_release(channel, note, held_type)) {
+      Engine* old_engine = nullptr;
+      if (registry_.resolve(held_type, old_engine) == EngineStatus::kOk) {
+        old_engine->stop_voice(channel, note);
+        arbiter_.take_stolen_flag(channel, note);
+      } else {
+        ++dropped_deferred_;
+      }
+    }
+  }
   bool stop_now = true;
-  if (ump.is_note_on()) arbiter_.note_on(ump.channel(), ump.note());
-  else stop_now = arbiter_.note_off(ump.channel(), ump.note(), type_id);
+  if (on) arbiter_.note_on(channel, note);
+  else stop_now = arbiter_.note_off(channel, note, type_id);
   Engine* engine = nullptr;
   const EngineStatus rs = registry_.resolve(type_id, engine);
   if (rs != EngineStatus::kOk) {
     record(rs);  // silence: nothing is rendered for this request
     return;
   }
-  if (ump.is_note_on()) {
-    const EngineStatus st = engine->start_voice(ump.channel(), ump.note(), ump.velocity16());
+  if (on) {
+    const EngineStatus st = engine->start_voice(channel, note, velocity16);
     record(st);
-    if (st == EngineStatus::kOk) bind_generation(ump.channel(), ump.note());
+    // In a Live Set the voices hold their bank by raw pointer, so any voice that started (even if a later region found no slot) binds the generation.
+    if (st == EngineStatus::kOk || router_.active()) bind_generation(channel, note);
   } else if (stop_now) {
-    const EngineStatus st = engine->stop_voice(ump.channel(), ump.note());
-    const bool was_stolen = arbiter_.take_stolen_flag(ump.channel(), ump.note());
+    const EngineStatus st = engine->stop_voice(channel, note);
+    const bool was_stolen = arbiter_.take_stolen_flag(channel, note);
     if (st == EngineStatus::kVoiceNotFound && was_stolen) ++stolen_note_offs_;
     else record(st);
+    // A release-trigger voice may have started on the part's CURRENT instrument, which this key's generation does not hold: bind it too.
+    if (router_.active()) bind_generation(channel, note);
   }  // else: the pedal holds the note; it is released on pedal up
+}
+
+// Live Set keyboard path: fan the note out by zone (the key as played), or release exactly the parts that got the note on.
+void BlockRenderer::apply_keyboard_note(const Ump& ump) noexcept {
+  PartRouter::Fanout fan;
+  if (ump.is_note_on()) {
+    router_.note_on(ump.channel(), ump.note(), fan);
+    for (std::uint32_t i = 0; i < fan.count; ++i) {
+      const PartRouter::Target& t = fan.t[i];
+      if (t.release_first) apply_part_note(t.part, t.old_pitch, 0, false, t.old_engine);  // a re-struck key lets its earlier note go first
+      apply_part_note(t.part, t.pitch, ump.velocity16(), true, t.engine);
+    }
+  } else {
+    router_.note_off(ump.channel(), ump.note(), fan);
+    for (std::uint32_t i = 0; i < fan.count; ++i) apply_part_note(fan.t[i].part, fan.t[i].pitch, ump.velocity16(), false, fan.t[i].engine);
+  }
+}
+
+// Sustain pedal in a Live Set: down reaches the parts with the keyboard on, up reaches every part (and lets its deferred releases go).
+void BlockRenderer::apply_keyboard_sustain(bool down) noexcept {
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    if (down) {
+      if (router_.pedal_down_target(p)) arbiter_.set_sustain(p, true);
+    } else {
+      arbiter_.set_sustain(p, false);
+      release_deferred(p);
+    }
+  }
 }
 
 // contact_k: routed to the engine that serves the channel, at the event's frame (this runs between render segments). It is

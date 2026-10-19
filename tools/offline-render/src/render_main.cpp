@@ -10,6 +10,7 @@
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
+//                       [--live-set FILE --library-root DIR [--seed N] [--tail-seconds S]]   (Live Set mode, Story 4.3: --midi, --out; no other engine option)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,7 @@
 #include "events_file.hpp"
 #include "parse_util.hpp"
 #include "render.hpp"
+#include "render_live_set.hpp"
 #include "velora/format/bundle.hpp"
 #include "velora/host/sample_bundle_loader.hpp"
 
@@ -42,7 +44,9 @@ static int usage() {
                "                     [--delay-feedback 0..0.95] [--delay-level 0..1] [--delay-damping 0..1] [--delay-pingpong 0..1]\n"
                "                     [--tempo 20..300] [--tempo-change SECONDS:BPM] (repeatable)\n"
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
-               "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
+               "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n"
+               "       Live Set: --live-set FILE --library-root DIR --midi in.mid --out out.wav [--seed N] [--tail-seconds S]\n"
+               "                 (every note on any channel is fanned out to the Live Set's parts by zone; no other engine option)\n");
   return 2;
 }
 
@@ -54,7 +58,8 @@ int main(int argc, char** argv) {
   RenderOptions opt;
   bool master_eq_seen = false, master_comp_seen = false, reverb_seen = false, reverb_time_seen = false, reverb_level_seen = false, rev_master_seen = false;
   bool delay_seen[7] = {false, false, false, false, false, false, false}, tempo_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
-  std::string line_in_path, aux_out_path;
+  std::string line_in_path, aux_out_path, live_set_path, library_root;
+  bool seed_given = false;
   WavData line_in_wav, aux_wav;
   // "P:rest" -> part index 0..7 and the text after the colon.
   auto split_part = [](const std::string& arg, std::uint32_t& part, std::string& rest) {
@@ -328,7 +333,9 @@ int main(int argc, char** argv) {
     } else if (a == "--aux-out" && val(v)) {
       aux_out_path = v;
       opt.routing.enabled = true;
-    } else if (a == "--bundle" && val(v)) bundle_path = v;
+    } else if (a == "--live-set" && val(v)) live_set_path = v;
+    else if (a == "--library-root" && val(v)) library_root = v;
+    else if (a == "--bundle" && val(v)) bundle_path = v;
     else if (a == "--instrument" && val(v)) instrument_key = v;
     else if (a == "--interpolation" && val(v)) { interp = v; sample_opts = true; }
     else if (a == "--oracle-block-frames" && val(v)) {
@@ -346,6 +353,7 @@ int main(int argc, char** argv) {
       std::uint64_t n = 0;
       if (!parse_uint(v, UINT64_MAX, n)) { std::fprintf(stderr, "error: invalid --seed\n"); return 2; }
       opt.seed = n;
+      seed_given = true;
     } else if (a == "--tail-seconds" && val(v)) {
       if (!parse_double(v, 0.0, 600.0, opt.tail_seconds)) { std::fprintf(stderr, "error: invalid --tail-seconds\n"); return 2; }
     } else if (a == "--detune-cents" && val(v)) {
@@ -353,6 +361,47 @@ int main(int argc, char** argv) {
       if (!parse_double(v, -4800.0, 4800.0, c)) { std::fprintf(stderr, "error: invalid --detune-cents\n"); return 2; }
       opt.detune_cents = static_cast<float>(c);
     } else return usage();
+  }
+  if (!live_set_path.empty() || !library_root.empty()) {
+    // Live Set mode (Story 4.3): the Live Set decides the engines, the routing and the instruments.
+    if (live_set_path.empty() || library_root.empty() || midi.empty() || out.empty()) return usage();
+    if (engine != "test-tone" || !events_path.empty() || !bundle_path.empty() || !instrument_key.empty() || drawbars_given || percussion_given ||
+        key_click_given || vibrato_given || leakage_given || rotary_given || voices_given || opt.routing.enabled ||
+        interp != "hermite" || opt.gain_db != 0.0f || opt.oracle_block_frames != 0 ||
+        opt.detune_cents != 0.0f) {
+      std::fprintf(stderr, "error: --live-set cannot be combined with engine, instrument, routing or organ options (only --seed and --tail-seconds)\n");
+      return 2;
+    }
+    SmfResult lsmf = load_smf_file(midi);
+    if (!lsmf.ok) {
+      std::fprintf(stderr, "error: %s: %s\n", midi.c_str(), lsmf.error.c_str());
+      return 1;
+    }
+    LiveSetRenderOptions lo;
+    lo.live_set_path = live_set_path;
+    lo.library_root = library_root;
+    lo.tail_seconds = opt.tail_seconds;
+    if (seed_given) lo.seed = opt.seed;
+    WavData lwav;
+    LiveSetRenderReport lrep;
+    std::string lerr;
+    if (!render_live_set(lsmf.events, lo, lwav, lerr, &lrep)) {
+      std::fprintf(stderr, "error: %s\n", lerr.c_str());
+      return 1;
+    }
+    if (!write_wav(out, lwav, lerr)) {
+      std::fprintf(stderr, "error: %s\n", lerr.c_str());
+      return 1;
+    }
+    static const char* const kStates[] = {"ready", "empty timbre", "missing library", "engine not available"};
+    for (std::size_t i = 0; i < lrep.part_states.size(); ++i)
+      std::printf("part %zu: %s\n", i, kStates[static_cast<std::size_t>(lrep.part_states[i])]);
+    std::printf("live set: %llu pool exhausted, %llu notes dropped out of range, %llu keys no part took\n",
+                static_cast<unsigned long long>(lrep.pool_exhausted), static_cast<unsigned long long>(lrep.dropped_out_of_range),
+                static_cast<unsigned long long>(lrep.unzoned_keys));
+    std::printf("rendered %zu events -> %s (%llu frames, 48000 Hz, 2 ch, float32)\n", lsmf.events.size(), out.c_str(),
+                static_cast<unsigned long long>(lwav.frames()));
+    return 0;
   }
   if ((midi.empty() && events_path.empty()) || out.empty()) return usage();
   if (engine != "test-tone" && engine != "sample" && engine != "organ") {

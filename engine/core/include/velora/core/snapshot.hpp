@@ -19,6 +19,7 @@
 #include "velora/core/fx.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/rt.hpp"
+#include "velora/core/sample_bank.hpp"
 
 namespace velora::core {
 
@@ -28,8 +29,28 @@ struct InsertSlotCfg {
   std::array<float, params::kInsertParamCount> params = kDefaultInsertParams;
 };
 
+// Why a Live Set part sounds or not (Story 4.3). Only kReady parts receive notes; every other state is silence, never a substitute.
+enum class PartState : std::uint8_t {
+  kReady = 0,           // the part sounds
+  kEmptyTimbre,         // a sample part with no timbre reference
+  kMissingLibrary,      // the timbre's library or instrument could not be resolved
+  kEngineNotAvailable,  // reserved engine type (FM, VA) or unknown type with no compiled engine
+};
+
 struct PartCfg {
   std::uint32_t timbre_ref = 0;  // opaque id (resolved by the librarian in a later story)
+  // --- Live Set part model (Story 4.3). Used by the block loop only when Snapshot::live_set is true; the defaults make a part
+  // that is a plain channel (the pre-4.3 behaviour). ---
+  std::uint8_t low_key = 0, high_key = 127;  // zone, tested against the key AS PLAYED (before octave / transpose)
+  std::int8_t octave = 0;                    // -4..4, applied to the pitch only
+  std::int8_t transpose = 0;                 // -12..12 semitones, applied to the pitch only
+  std::uint8_t keyboard_on = 1;              // 0 = the part receives no new notes (what it already sounds keeps releasing)
+  PartState state = PartState::kReady;
+  std::uint32_t engine_type = 0;             // core::EngineTypeId value of the part's engine (0 = none)
+  float volume = 1.0f;                       // 0..1 part fader, linear; scales the part's Main/Aux feed (post insert chain, sends follow it)
+  // The part's instrument for the sample engine (nullptr: not a sample part, or silent). Shared by every generation that
+  // carries it: the pointer is the identity (RT rebinds only when it changes); the bank dies with the last generation that holds it.
+  std::shared_ptr<SampleBank> sample_bank;
   std::uint8_t output = 0;       // registry enum part_output (main/aux)
   std::uint8_t insert_count = 0;
   std::array<InsertSlotCfg, params::kInsertSlotCount> inserts{};
@@ -46,6 +67,9 @@ struct Snapshot {
   std::uint32_t ledger_index = 0;  // assigned by the control thread, < SnapshotExchange::kLedgerSlots
   std::uint64_t revision = 0;      // strictly increasing, 1 = first generation
   std::array<PartCfg, params::kPartCount> parts{};
+  // True for a generation built from a Live Set (Story 4.3): the block loop then fans keyboard notes out to the parts by zone
+  // (PartRouter) and maps each part to the engine and instrument of its PartCfg. False = the plain channel==part addressing.
+  bool live_set = false;
   std::array<float, params::kMasterParams> master{};  // structural master-scope parameters, by master_index
   // Initial performance values (send levels, drawbars, ...), indexed by last-value slot. RT applies a slot
   // only when it differs from the previous generation's, i.e. on generation change, never otherwise.

@@ -21,9 +21,14 @@
 #include "mach_time.hpp"
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/mixer.hpp"
+#include "velora/core/organ_engine.hpp"
+#include "velora/core/sample_engine.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
 #include "velora/host/dev_config.hpp"
+#include "velora/host/fs_port.hpp"
+#include "velora/host/library_resolver.hpp"
+#include "velora/host/live_set_loader.hpp"
 #include "velora/host/midi_ingest.hpp"
 #include "velora/host/render_driver.hpp"
 
@@ -38,6 +43,7 @@ int main(int argc, char** argv) {
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false;
+  std::string live_set_path, library_root;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--duration") && i + 1 < argc) {
       const char* arg = argv[++i];
@@ -53,10 +59,20 @@ int main(int argc, char** argv) {
       config_path = argv[++i];
     } else if (!std::strcmp(argv[i], "--line-in")) {
       want_line_in = true;
+    } else if (!std::strcmp(argv[i], "--live-set") && i + 1 < argc) {
+      live_set_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--library-root") && i + 1 < argc) {
+      library_root = argv[++i];
     } else {
-      std::fprintf(stderr, "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in]\n");
+      std::fprintf(stderr,
+                   "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in]\n"
+                   "                   [--live-set FILE --library-root DIR]   (load a Live Set at start; its parts play from the keyboard by zone)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
+  }
+  if (live_set_path.empty() != library_root.empty()) {
+    std::fprintf(stderr, "engine-host: --live-set and --library-root go together\n");
+    return 2;
   }
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
@@ -71,7 +87,8 @@ int main(int argc, char** argv) {
   // published before audio runs; an invalid file stops the engine here with a clear error.
   host::ControlPlane plane(renderer->snapshots(), renderer->last_values(), *control_queue,
                            [] { return host::macos::now_ns(); });
-  {
+  // With --live-set the Live Set is the first generation (below); the dev configuration is not published first.
+  if (live_set_path.empty()) {
     ws::v1::State initial;
     std::string cerr;
     if (!host::load_dev_config(config_path, initial, cerr) || !plane.load_initial(initial, cerr)) {
@@ -80,11 +97,39 @@ int main(int argc, char** argv) {
     }
   }
 
-  // FX budget (Story 2.7): reserved for the effects FIRST, before voices; the control plane refuses a command that would exceed it.
-  // The reservation is the flat worst case (the plane's budget) rather than fill_fx_costs() of the initial snapshot: the arbiter
-  // reservation is static for the run while commands may raise the FX cost up to that budget, so a smaller reservation would
-  // let voices occupy budget the control plane still promises to the effects.
-  {
+  // The sample engine and the organ are bound only for a Live Set (the dev configuration plays the test tone).
+  core::SampleEngine::Config sample_cfg;
+  sample_cfg.max_voices = 340;  // the 256 voice floor plus the 64 voice fade headroom, with slack
+  core::SampleEngine sample(sample_cfg);
+  core::OrganEngine organ;
+  host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);
+  host::RamHeadProvider heads;
+  std::atomic<bool> audio_running{false};  // set once the audio stream starts; the loader refuses to run while it is true
+  if (!live_set_path.empty()) {
+    if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ)) {
+      std::fprintf(stderr, "engine-host: cannot bind the sample engine and the organ\n");
+      return 1;
+    }
+    // Story 4.3: the Live Set is the first generation and reserves the voice pool for the whole Live Set (FX, organ,
+    // sample floor) before audio runs. A Live Set that cannot be loaded stops the engine here with the reason; nothing is half loaded.
+    host::LiveSetLoaderOptions lopt;
+    lopt.is_rendering = [&audio_running] { return audio_running.load(); };
+    host::LiveSetLoader loader(*renderer, plane, resolver, heads, &sample, lopt);
+    const host::LiveSetLoadResult loaded = loader.load_file(live_set_path);
+    if (!loaded.ok()) {
+      std::fprintf(stderr, "engine-host: live set %s: %s%s%s\n", live_set_path.c_str(), host::to_string(loaded.status),
+                   loaded.detail.empty() ? "" : " ", loaded.detail.c_str());
+      return 1;
+    }
+    for (std::size_t p = 0; p < loaded.parts.size(); ++p)
+      std::printf("live set part %zu: %s\n", p, host::to_string(loaded.parts[p].state));
+    std::printf("live set: %s -> generation %llu, %zu bytes of samples resident\n", live_set_path.c_str(),
+                (unsigned long long)loaded.revision, loaded.resident_bytes);
+  } else {
+    // FX budget (Story 2.7): reserved for the effects FIRST, before voices; the control plane refuses a command that would exceed it.
+    // The reservation is the flat worst case (the plane's budget) rather than fill_fx_costs() of the initial snapshot: the arbiter
+    // reservation is static for the run while commands may raise the FX cost up to that budget, so a smaller reservation would
+    // let voices occupy budget the control plane still promises to the effects.
     core::VoiceArbiter::LiveSetConfig reservation;
     reservation.budget = 1u << 20;
     reservation.fx_cost = plane.fx_budget();
@@ -130,7 +175,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::printf("control: ws.v1 on %s, generation %llu from %s\n", socket_path.c_str(),
-              (unsigned long long)plane.revision(), config_path.c_str());
+              (unsigned long long)plane.revision(), live_set_path.empty() ? config_path.c_str() : live_set_path.c_str());
   // Optional line-in (mixed into the master only, at the line_in_level parameter): if there is no input device or no permission
   // the engine still starts and the line-in stays silent.
   if (want_line_in) {
@@ -142,6 +187,7 @@ int main(int argc, char** argv) {
       std::printf("line-in: unavailable (%s); continuing with a silent line-in\n", lerr.c_str());
     }
   }
+  audio_running.store(true);  // after this the voice pool is no longer ours to reserve
   if (!audio.start(err)) {
     std::fprintf(stderr, "engine-host: audio: %s\n", err.c_str());
     return 1;

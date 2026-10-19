@@ -82,10 +82,12 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
     floors += fc[k];
   }
   for (std::size_t i = 0; i < count_; ++i)  // a bound protected engine needs its real cost reserved
-    if (protected_[i] && cfg.organ_rotary_cost < static_cast<std::uint64_t>(cost_[i]) * kMinProtectedVoices)
+    if (protected_[i] && cfg.organ_rotary_cost < static_cast<std::uint64_t>(cost_[i]) * kMinProtectedVoices &&
+        !(cfg.waive_organ_reservation && cfg.organ_rotary_cost == 0))
       return ReserveStatus::kInvalidConfig;
   const int sample = index_of_type(static_cast<std::uint32_t>(EngineTypeId::kSample));
-  if (sample >= 0 && fv[static_cast<std::size_t>(sample)] < min_sample_floor_)
+  if (sample >= 0 && fv[static_cast<std::size_t>(sample)] < min_sample_floor_ &&
+      !(cfg.waive_sample_floor && fv[static_cast<std::size_t>(sample)] == 0))
     return ReserveStatus::kSampleFloorTooLow;
 
   // Reservation order: FX, organ+rotary, floors.
@@ -107,6 +109,7 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
     if (protected_[i]) fc[i] = cfg.organ_rotary_cost;
   floor_cost_ = fc;
   ramp_ = cfg.steal_ramp_frames;
+  cfg_ = cfg;
   reserved_ = true;
   reset_state();
   return ReserveStatus::kOk;

@@ -1,0 +1,9 @@
+# Null-test case for the Live Set golden (Story 4.3): layer_split.liveset (bass / piano split at B2 = 47 / C3 = 48, a pad layered underneath on the
+# Aux bus an octave down, the piano doubled an octave up from C5, a part with the keyboard off, a missing library, an FM part and an empty
+# timbre) played by layer_split.mid through the three committed libraries in root/. -100 dB residual: far below the audible effect of a zone
+# or an octave, loose enough for libm/FMA differences between macOS and Linux builds. check_excess: a tail in one file only fails as well.
+reference=layer_split.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
+check_excess=1

@@ -42,6 +42,7 @@ struct VoiceInfo {
 };
 
 class Engine;
+struct SampleBank;
 
 // The only way an engine obtains a voice slot once a pool arbiter is attached (AD-7, AD-22).
 class VoiceAllocator {
@@ -126,6 +127,16 @@ class Engine {
     effect = ContactEffect::kNone;
     return EngineStatus::kEngineNotAvailable;
   }
+
+  // Per-part instrument (Story 4.3): the block loop hands a part's prepared sample bank (or nullptr = silent) to the engine at a
+  // generation change, between render segments. Only the sample engine uses it; the default ignores it.
+  virtual void set_part_sample_bank(std::uint32_t part, SampleBank* bank) noexcept VELORA_NONBLOCKING {
+    (void)part;
+    (void)bank;
+  }
+
+  // Forgets every per-part binding made with set_part_sample_bank() (the block loop leaves a Live Set generation).
+  virtual void clear_part_sample_banks() noexcept VELORA_NONBLOCKING {}
 
   // True for an engine whose voices the arbiter must never choose as steal victims (the tonewheel organ).
   // Its cost is reserved ahead of every engine floor through LiveSetConfig::organ_rotary_cost.

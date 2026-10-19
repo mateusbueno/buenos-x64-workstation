@@ -296,6 +296,29 @@ bool ControlPlane::commit(const core::Snapshot& work, ControlFail& f) {
   return true;
 }
 
+ControlPlane::PublishStatus ControlPlane::can_publish(const core::Snapshot& work) {
+  const std::uint64_t cost = core::fx_cost_units(work);
+  if (cost > fx_budget() && (!current_ || cost > fx_cost_.load(std::memory_order_acquire))) return PublishStatus::kFxBudgetExceeded;
+  constexpr std::uint32_t kAll = core::SnapshotExchange::kLedgerSlots >= 32 ? 0xFFFFFFFFu : ((1u << core::SnapshotExchange::kLedgerSlots) - 1);
+  if (ledger_used_ == kAll) reclaim();
+  return ledger_used_ == kAll ? PublishStatus::kBusy : PublishStatus::kOk;
+}
+
+ControlPlane::PublishStatus ControlPlane::publish_snapshot(const core::Snapshot& work, std::string& detail) {
+  if (fault_set_) {
+    fault_set_ = false;
+    detail = "injected publish fault";
+    return fault_;
+  }
+  Fail f;
+  if (commit(work, f)) return PublishStatus::kOk;
+  detail = f.message;
+  for (const auto& kv : f.details) detail += " [" + kv.first + "=" + kv.second + "]";
+  if (f.code == ws::v1::ERROR_CODE_FX_BUDGET_EXCEEDED) return PublishStatus::kFxBudgetExceeded;
+  if (f.code == ws::v1::ERROR_CODE_BUSY) return PublishStatus::kBusy;
+  return PublishStatus::kInternal;
+}
+
 std::size_t ControlPlane::reclaim() {
   std::size_t n = 0;
   for (std::size_t i = 0; i < generations_.size();) {

@@ -72,6 +72,10 @@ add_executable(routing_tests tests/routing_test.cpp)
 target_link_libraries(routing_tests PRIVATE velora_core)
 add_test(NAME routing_tests COMMAND routing_tests)
 
+add_executable(part_router_tests tests/part_router_test.cpp)
+target_link_libraries(part_router_tests PRIVATE velora_core)
+add_test(NAME part_router_tests COMMAND part_router_tests)
+
 add_executable(eq_compressor_tests tests/eq_compressor_test.cpp)
 target_link_libraries(eq_compressor_tests PRIVATE velora_core)
 add_test(NAME eq_compressor_tests COMMAND eq_compressor_tests)
@@ -109,6 +113,13 @@ add_executable(routing_traffic_test tests/rtsan_routing_test.cpp)
 target_link_libraries(routing_traffic_test PRIVATE velora_core)
 add_test(NAME routing_traffic_test COMMAND routing_traffic_test)
 set_tests_properties(routing_traffic_test PROPERTIES TIMEOUT 120)
+
+# The part router traffic (10,000 blocks of keyboard traffic with the zone model changing every 3 blocks, determinism) without the sanitizer, so
+# macOS runs its logic too; the RTSan build of the same file is below.
+add_executable(part_router_traffic_test tests/rtsan_part_router_test.cpp)
+target_link_libraries(part_router_traffic_test PRIVATE velora_core)
+add_test(NAME part_router_traffic_test COMMAND part_router_traffic_test)
+set_tests_properties(part_router_traffic_test PROPERTIES TIMEOUT 300)
 
 # The cost benchmarks assert the declared cost units, which only means something on optimised code: they link a bench-private copy of the core sources built
 # with -O3 -DNDEBUG (and are compiled -O2 themselves), so the assertions run in every configuration, the default unoptimised builds included.
@@ -188,6 +199,12 @@ if(VELORA_RTSAN)
     target_link_options(rtsan_routing_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_routing_test COMMAND rtsan_routing_test)
     set_tests_properties(rtsan_routing_test PROPERTIES TIMEOUT 120)
+    add_executable(rtsan_part_router_test tests/rtsan_part_router_test.cpp)
+    target_link_libraries(rtsan_part_router_test PRIVATE velora_core)
+    target_compile_options(rtsan_part_router_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_part_router_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_part_router_test COMMAND rtsan_part_router_test)
+    set_tests_properties(rtsan_part_router_test PROPERTIES TIMEOUT 300)
     add_test(NAME rtsan_safe_test COMMAND rtsan_safe_test)
     # The deliberately RT-unsafe test must be aborted by RTSan: expected failure.
     add_test(NAME rtsan_unsafe_test COMMAND rtsan_unsafe_test)

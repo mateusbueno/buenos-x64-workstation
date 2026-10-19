@@ -42,6 +42,18 @@ class ControlPlane {
   // it as generation 1. Call once, before audio runs. On failure nothing is published and `err` says why.
   bool load_initial(const ws::v1::State& config, std::string& err);
 
+  // Live Set load (Story 4.3): publishes a complete, prepared snapshot (built by LiveSetLoader from a Live Set) as the next generation,
+  // replacing the structural state. Unlike load_initial() it also works after the first generation. Control thread only. The same
+  // FX budget rule as every structural command applies (a snapshot that raises the cost above the budget is refused).
+  // can_publish() says, without changing anything, whether publish_snapshot() would succeed right now (it may free generations
+  // nobody reads any more to make room): the loader calls it before it touches the voice arbiter, so a refused load leaves
+  // everything as it was.
+  enum class PublishStatus : std::uint8_t { kOk = 0, kFxBudgetExceeded, kBusy, kInternal };
+  PublishStatus can_publish(const core::Snapshot& work);
+  PublishStatus publish_snapshot(const core::Snapshot& work, std::string& detail);
+  // Test hook: the next publish_snapshot() returns `status` without committing anything (one shot), to exercise a late failure.
+  void inject_publish_fault_for_tests(PublishStatus status) noexcept { fault_ = status; fault_set_ = true; }
+
   // Executes one command (anything but Hello, which the server owns). `changed` is set when a new
   // generation was published. The reply carries request_id and the current revision.
   ws::v1::ServerMessage handle(const ws::v1::ClientMessage& msg, bool& changed);
@@ -71,6 +83,8 @@ class ControlPlane {
 
  private:
   bool commit(const core::Snapshot& work, ControlFail& fail);
+  PublishStatus fault_ = PublishStatus::kOk;
+  bool fault_set_ = false;
 
   core::SnapshotExchange& exchange_;
   const core::LastValueTable& live_;

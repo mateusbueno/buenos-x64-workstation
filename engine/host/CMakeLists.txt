@@ -41,7 +41,8 @@ add_library(velora_control STATIC
   src/control_plane.cpp
   src/control_server.cpp
   src/dev_config.cpp
-  src/live_set_store.cpp)
+  src/live_set_store.cpp
+  src/live_set_loader.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -65,6 +66,13 @@ target_compile_definitions(live_set_tests PRIVATE
   VELORA_LIVESET_CORPUS_DIR="${VELORA_LIVESET_CORPUS_DIR}" VELORA_LIVESET_GOLDEN_DIR="${VELORA_LIVESET_GOLDEN_DIR}")
 add_test(NAME live_set_tests COMMAND live_set_tests)
 set_tests_properties(live_set_tests PROPERTIES TIMEOUT 120)
+
+# Live Set load (Story 4.3): resolve, resident instruments, one generation, reservation, all-or-nothing publication.
+add_executable(live_set_loader_tests tests/live_set_loader_test.cpp)
+target_link_libraries(live_set_loader_tests PRIVATE velora_control)
+target_compile_definitions(live_set_loader_tests PRIVATE VELORA_LIVESET_CORPUS_DIR="${VELORA_LIVESET_CORPUS_DIR}")
+add_test(NAME live_set_loader_tests COMMAND live_set_loader_tests)
+set_tests_properties(live_set_loader_tests PROPERTIES TIMEOUT 120)
 
 # Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
 #   cmake --build build --target live_set_corpus_regen

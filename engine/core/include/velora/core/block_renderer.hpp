@@ -10,6 +10,7 @@
 #include "velora/core/engine_registry.hpp"
 #include "velora/core/mixer.hpp"
 #include "velora/core/param_events.hpp"
+#include "velora/core/part_router.hpp"
 #include "velora/core/snapshot.hpp"
 #include "velora/core/spsc_queue.hpp"
 #include "velora/core/test_tone_engine.hpp"
@@ -123,6 +124,14 @@ class BlockRenderer {
   // the block, so a change takes effect at the next block) keeps this one API. Any thread.
   float tempo_bpm() const noexcept;
 
+  // --- Live Set routing (Story 4.3) ----------------------------------------------------------------------------
+  // In a generation built from a Live Set (Snapshot::live_set) the keyboard's note on / note off / sustain are fanned out to the parts
+  // by zone (PartRouter, see part_router.hpp for the keyboard-channel convention and the note-off rules) and each part is mapped to the
+  // engine and instrument of its PartCfg at the generation change. The counters live in router().
+  const PartRouter& router() const noexcept { return router_; }
+  // Parts a Live Set generation left silent (missing library, engine not available) receive no notes; notes that no part took are
+  // counted in router().unzoned_keys().
+
   bool ready() const noexcept { return bound_; }
   const EngineRegistry& registry() const noexcept { return registry_; }
   TestToneEngine& test_tone() noexcept { return tone_; }
@@ -130,6 +139,13 @@ class BlockRenderer {
  private:
   void apply(const Ump& ump) noexcept VELORA_NONBLOCKING;
   void apply_contact(const Ump& ump) noexcept VELORA_NONBLOCKING;
+  // One note on / off for engine `type_id` on UMP channel `channel` (= the part in a Live Set generation): arbiter bookkeeping, engine
+  // call, status counting. The body of the pre-4.3 note path.
+  void apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on, std::uint32_t type_id) noexcept VELORA_NONBLOCKING;
+  void apply_keyboard_note(const Ump& ump) noexcept VELORA_NONBLOCKING;
+  void apply_keyboard_sustain(bool down) noexcept VELORA_NONBLOCKING;
+  void leave_live_set(std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
+  void adopt_live_set_parts(const Snapshot& s, std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
   void record(EngineStatus s) noexcept VELORA_NONBLOCKING;
   void drain_queue() noexcept VELORA_NONBLOCKING;
   void render_segment(float* l, float* r, std::uint32_t from, std::uint32_t to, bool routed) noexcept VELORA_NONBLOCKING;
@@ -137,7 +153,7 @@ class BlockRenderer {
   void release_deferred(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
   void adopt_generation() noexcept VELORA_NONBLOCKING;
   void forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept VELORA_NONBLOCKING;
-  void sync_part_params(std::uint32_t channel) noexcept;
+  void sync_part_params(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
   void apply_param(const ParamEvent& ev) noexcept VELORA_NONBLOCKING;
   void bind_generation(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING;
   void reap_generation_refs() noexcept VELORA_NONBLOCKING;
@@ -150,6 +166,8 @@ class BlockRenderer {
   std::array<TimedUmp, kPendingCapacity> pending_{};  // sorted by target_frame, stable
   std::size_t pending_count_ = 0;
   std::array<std::uint32_t, 16> channel_engine_{};
+  std::array<std::uint32_t, 16> legacy_engine_{};  // channel_engine_ as it was before the first Live Set generation (restored when one is left)
+  bool in_live_set_ = false;
   std::array<std::uint64_t, static_cast<std::size_t>(EngineStatus::kCount)> status_counts_{};
   EngineStatus last_status_ = EngineStatus::kOk;
   std::uint64_t ignored_ = 0;
@@ -157,6 +175,7 @@ class BlockRenderer {
   std::uint64_t dropped_deferred_ = 0;
   bool bound_ = false;
 
+  PartRouter router_;
   SnapshotExchange exchange_;
   Mixer mixer_{exchange_};
   LastValueTable last_;
