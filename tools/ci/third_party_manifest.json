@@ -25,5 +25,42 @@
       "license": "MIT",
       "notice_marker": "## 4. SIMDe"
     }
+  ],
+  "sfizz_files": [
+    "CCMap.h",
+    "Config.h",
+    "Defaults.cpp",
+    "Defaults.h",
+    "LFOCommon.h",
+    "LFOCommon.hpp",
+    "LFODescription.h",
+    "MathHelpers.h",
+    "Opcode.cpp",
+    "Opcode.h",
+    "OpcodeCleanup.cpp",
+    "OpcodeCleanup.re",
+    "Range.h",
+    "SIMDConfig.h",
+    "SIMDHelpers.h",
+    "SfzFilter.h",
+    "SfzHelpers.h",
+    "modulations/ModId.h",
+    "modulations/ModKey.h",
+    "modulations/ModKeyHash.h",
+    "parser/Parser.cpp",
+    "parser/Parser.h",
+    "parser/ParserListener.h",
+    "parser/ParserPrivate.cpp",
+    "parser/ParserPrivate.h",
+    "parser/ParserPrivate.hpp",
+    "simd/HelpersScalar.h",
+    "utility/Debug.h",
+    "utility/LeakDetector.h",
+    "utility/Macros.h",
+    "utility/NumericId.h",
+    "utility/StringViewHelpers.h"
+  ],
+  "vendor_dirs": [
+    "formatlib/third_party/sfizz"
   ]
 }

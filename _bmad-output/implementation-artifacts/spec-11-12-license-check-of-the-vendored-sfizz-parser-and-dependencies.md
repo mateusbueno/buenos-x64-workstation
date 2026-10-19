@@ -19,7 +19,7 @@ review_loop_iteration: 0
 
 ## Implementation Notes
 
-- Closure computed from sfizz 1.2.3 (31 files); simde IS required (MathHelpers.h), abseil and ghc::filesystem too. No copyleft found.
+- Closure computed from sfizz 1.2.3 (32 files); simde IS required (MathHelpers.h), abseil and ghc::filesystem too. No copyleft found.
 - Added `_bmad-output/business/11-12-sfizz-license-check.md`, `THIRD_PARTY_NOTICES.md`, `tools/ci/check_third_party_notices.py` (+ manifest), wired into ci.yml and docker-check.sh.
 - About-screen and image install of the notices belong to the stories building those surfaces.
 
@@ -27,5 +27,11 @@ review_loop_iteration: 0
 
 - medium (patched): regex missed `sfizz_parser`; now substring match, comments stripped, `tests/` exempt at any depth, files closed, self-tests added.
 - medium (patched): `OpcodeCleanup.re` missing from table; added. Notices header/H1, SIMDe holders, Abseil change-notice wording fixed.
-- low (rejected/deferred): manifest does not list the 31 files and cannot compare the vendored tree (no vendored tree exists until Story 1.13); abseil file-level list added to the doc as a 1.13 vendoring condition.
+- low (rejected/deferred): manifest did not list the files and cannot compare the vendored tree (no vendored tree exists until Story 1.13); abseil file-level list added to the doc as a 1.13 vendoring condition.
 - low (rejected): CI step naming, CC0 text, non-CMake build files; no such files exist yet.
+
+## Code Review (2026-10-19)
+
+- decision A applied: gate flags only sfizz dependency/link/fetch commands (CMake statements, multi-line aware); `sfizz_parser`/`sfizz::parser` allowed.
+- patched: top-level-only `tools`/`build` exemption, `tests` at any depth; utf-8; 32-file count; verdict wording; sign-off pending; shipped notices header cleaned; self-test expanded (no bare assert).
+- deferred items actioned: non-CMake build files scanned; manifest now carries file list and pins, checked against the table, notices headings and `vendor_dirs`. Image/About install tracked in deferred-work.md.

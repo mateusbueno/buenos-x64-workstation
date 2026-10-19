@@ -1,7 +1,6 @@
 # Third-Party Notices
 
-This product includes the following third-party software. Full license check: `_bmad-output/business/11-12-sfizz-license-check.md`.
-The names of the third-party authors are not used to endorse or promote this product.
+This product includes the following third-party software.
 
 ## 1. sfizz 1.2.3 (SFZ parser, vendored into formatlib) — BSD-2-Clause
 

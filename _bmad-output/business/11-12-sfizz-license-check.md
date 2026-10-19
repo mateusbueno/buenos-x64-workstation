@@ -7,13 +7,13 @@
 
 ## Verdict
 
-No GPL/LGPL/AGPL or other copyleft code is in the vendored set. All components are BSD-2-Clause, MIT or Apache-2.0 (plus CC0 for two simde headers). Obligations are attribution/notice only; all are met by `THIRD_PARTY_NOTICES.md` (shipped in the image and shown in Velora Studio's About — see Follow-ups). BSD-2-Clause has no endorsement clause, but the product still must not use sfizz or contributor names to imply endorsement; THIRD_PARTY_NOTICES.md says so.
+No GPL/LGPL/AGPL or other copyleft code is in the vendored set. All components are BSD-2-Clause, MIT or Apache-2.0 (plus CC0 for two simde headers). Obligations are attribution/notice only; are met by the content of `THIRD_PARTY_NOTICES.md`; installing it in the image and showing it in Velora Studio's About is tracked as a follow-up (see below) and is not done yet. BSD-2-Clause has no endorsement clause, but the product still must not use sfizz or contributor names to imply endorsement; THIRD_PARTY_NOTICES.md says so.
 
 ## Dependency table
 
 | Component | Version / pin | License | Copyright holder | Obligations met |
 |---|---|---|---|---|
-| sfizz parser (31 files below) | 1.2.3 / `4e70dc0b` | BSD-2-Clause | sfizz contributors (AUTHORS.md; maintainer Paul Ferrand) | yes — notice in NOTICES §1 (source retains copyright + conditions; binary reproduces them) |
+| sfizz parser (32 files below) | 1.2.3 / `4e70dc0b` | BSD-2-Clause | sfizz contributors (AUTHORS.md; maintainer Paul Ferrand) | yes — notice in NOTICES §1 (source retains copyright + conditions; binary reproduces them) |
 | abseil-cpp (`absl/strings`, `container` flat_hash_map/set, `types` optional/span, `meta`, `memory`, `algorithm` and their internal deps: `base`, `hash`, `numeric`) | submodule `c2435f83` | Apache-2.0 | The Abseil Authors (Google LLC) | yes — NOTICES §2; license text shipped; repo has no `NOTICE` file (404 at pin); modified files must carry change notices |
 | ghc::filesystem (`ghc/fs_std.hpp`, `ghc/filesystem.hpp`) | submodule `8a2edd6d` | MIT | Steffen Schümann, 2018 | yes — NOTICES §3 |
 | SIMDe (`simde/simde-features.h`, `simde/x86/sse.h` and their includes) | submodule `2bf459d4` | MIT (`hedley.h`, `debug-trap.h` are CC0-1.0) | Evan Nemerson and SIMDe contributors | yes — NOTICES §4 |
@@ -21,7 +21,7 @@ No GPL/LGPL/AGPL or other copyleft code is in the vendored set. All components a
 
 ### Excluded on purpose (never vendored)
 
-st_audiofile and its dr_libs/wavpack/libaiff code, the sfizz synth/renderer, fmidi, jsl, cxxopts, atomic_queue, cephes, threadpool, cmake/ and clients. sfizz as CI reference renderer is **test-only** (Story 1.15/1.9) and must never be linked into a shipped target; `tools/ci/check_third_party_notices.py` fails the build if a shipped CMake target references sfizz.
+st_audiofile and its dr_libs/wavpack/libaiff code, the sfizz synth/renderer, fmidi, jsl, cxxopts, atomic_queue, cephes, threadpool, cmake/ and clients. sfizz as CI reference renderer is **test-only** (Story 1.15/1.9) and must never be linked into a shipped target; `tools/ci/check_third_party_notices.py` fails the build if a shipped build file (CMake dependency/link/fetch commands, `.gitmodules`, Dockerfiles, `.mk`, meson) references sfizz other than its parser; this is a text-level check, not a resolved link graph.
 
 ### Files in the sfizz closure
 
@@ -66,10 +66,11 @@ Note: `Defaults.cpp` lacks a per-file SPDX header; upstream `LICENSE` (BSD-2-Cla
 
 1. Story 1.13: vendor only the files above; keep this table in sync; consider replacing ghc::filesystem with `std::filesystem` (C++20) to drop one dependency.
 2. Velora Studio About screen and the image's `/usr/share/licenses` copy of `THIRD_PARTY_NOTICES.md` are wired in the stories that build those surfaces; this story supplies the content.
-3. Re-run the check whenever Story 1.13 changes the vendored set (the CI script enforces the manifest ↔ notices link).
+3. Re-run the check whenever Story 1.13 changes the vendored set. The CI script verifies the manifest file list against the table above, notice headings against pinned versions, and any file under `vendor_dirs` against the list.
+4. Open item (AC2, first Then): install `THIRD_PARTY_NOTICES.md` in the image and show it in Velora Studio's About. Tracked in `deferred-work.md`.
 
 ## Vendoring conditions for Story 1.13
 
 - Vendor files unmodified with their per-file SPDX/copyright headers intact (BSD-2 source redistribution); record any modification in the file header.
 - Abseil is vendored as the minimal closure of the headers listed in the table row; the file-level abseil list is produced when 1.13 vendors it and added here before merge.
-- Sign-off: founder review, 2026-10-18. This is an engineering license inventory, not legal advice; confirm with counsel before v1 launch if desired.
+- Sign-off: pending founder confirmation. This is an engineering license inventory, not legal advice; confirm with counsel before v1 launch if desired.
