@@ -1,0 +1,7 @@
+# Null-test case for the eq golden render (Story 2.8): the golden test-tone MIDI through an insert eq on part 0 and the master eq.
+# -100 dB residual: far below the audible effect of the settings (the plain render nulls against this golden at about -10 dB or worse),
+# loose enough for libm/FMA differences between macOS and Linux builds.
+reference=fx_eq.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0

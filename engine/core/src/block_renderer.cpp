@@ -278,7 +278,7 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
     ++consumed;
   }
   render_segment(left, right, pos, kBlockFrames, routed);
-  if (routed) mixer_.finish(out);  // chains, sends, Main/Aux, line-in, master
+  if (routed) mixer_.finish(out, last_);  // chains, sends, Main/Aux, line-in, master
 
   // Drop applied events, carry the rest into the next block.
   const std::size_t remaining = pending_count_ - consumed;

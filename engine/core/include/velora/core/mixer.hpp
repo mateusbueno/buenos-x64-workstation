@@ -7,7 +7,7 @@
 //   post-insert --> Delay send bus   (x send_delay_level)   --> Delay return  (placeholder, unity) --> Main
 //   post-insert --> Main bus or Aux bus (part_output; switched with a short ramp)
 //   line-in (x line_in_level) --> Main bus
-//   Main, Aux --> master section (master EQ, compressor: placeholders until Story 2.8; master_level trim) --> outputs
+//   Main, Aux --> master section per bus: master EQ, then master compressor (Story 2.8, each with its own bypass), then master_level trim --> outputs
 //
 // RT discipline: nothing here allocates, locks or blocks. Effect instances and chains are built off the RT thread by the control
 // thread (fx.hpp, build_chain()) and arrive with the snapshot generation; a chain change creates a new "chain entry" that fades in
@@ -18,12 +18,20 @@
 //
 // When the routing is trivial (all parts to Main at unity, no effect in any chain, sends at 0, line-in at 0, master at 0 dB)
 // the Mixer is "inactive": the block loop renders the engines straight into the Main output exactly as before this story,
-// so such renders are bit-identical to the pre-2.7 goldens.
+// so such renders are bit-identical to the pre-2.7 goldens. The master EQ and compressor count as trivial when they cannot change
+// the signal: bypassed (cross-fade finished) or at identity settings (EQ 0 dB on every band, compressor ratio 1 and makeup 0 dB).
+//
+// Master section (Story 2.8): the master_eq_* / master_comp_* registry values of the adopted snapshot drive one EqEffect and one
+// CompressorEffect per output bus (the same settings on Main and Aux, separate state). master_eq_bypass / master_comp_bypass cross-fade
+// (a flag value >= 0.5 bypasses, anything else -- 0, 0 < v < 0.5, NaN -- does not) the stage out and in over kFadeFrames (dry/wet mix, no click); a stage that is fully bypassed does not run and its state is cleared.
+// The compressors' gain reductions (and those of the insert compressors) are published into the LastValueTable once per block.
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 
+#include "velora/core/compressor.hpp"
+#include "velora/core/eq.hpp"
 #include "velora/core/fx.hpp"
 #include "velora/core/snapshot.hpp"
 #include "velora/core/voice_arbiter.hpp"
@@ -61,11 +69,11 @@ class Mixer {
   void adopt(const Snapshot& s) noexcept VELORA_NONBLOCKING;
   // Once per block, before the voices render: updates level targets from the live values. True = routed block (render into the
   // part buses, then finish()); false = trivial routing, render straight into Main and do not call finish().
-  bool begin_block(const LastValueTable& live) noexcept VELORA_NONBLOCKING;
+  bool begin_block(LastValueTable& live) noexcept VELORA_NONBLOCKING;
   // Channel c of an engine's render_split() output (c = 0..15; channel c and c + 8 share a part bus), at frame `offset` of the block.
   void part_sinks(std::uint32_t offset, float** left, float** right) noexcept VELORA_NONBLOCKING;
   // After the voices rendered a routed block: chains, sends, Main/Aux, line-in, master; adds the result to `out`.
-  void finish(const OutputBuses& out) noexcept VELORA_NONBLOCKING;
+  void finish(const OutputBuses& out, LastValueTable& live) noexcept VELORA_NONBLOCKING;
 
   // --- introspection (RT thread or after rendering) -------------------------------------------------------
   bool routed() const noexcept { return routed_; }
@@ -148,9 +156,19 @@ class Mixer {
   bool instant_levels_ = true;  // level targets apply without a ramp (before and in the block of the first adopted generation)
   std::int16_t send_rev_perf_ = -1, send_dly_perf_ = -1, line_slot_ = -1;  // -1: not in the registry (the level stays 0)
 
-  // Placeholders of the fixed topology (DSP in Stories 2.8, 2.10, 2.11), owned by the mixer, built at construction.
+  // Placeholders of the sends (DSP in Stories 2.10, 2.11), owned by the mixer, built at construction.
   std::array<std::unique_ptr<Effect>, kOutputBusCount> reverb_send_, delay_send_;
-  std::array<std::unique_ptr<Effect>, kOutputBusCount> master_eq_, master_comp_;
+  // The master section (Story 2.8): one EQ and one compressor per output bus, bypass cross-fades (wet = 1 active, 0 bypassed).
+  std::array<EqEffect, kOutputBusCount> master_eq_;
+  std::array<CompressorEffect, kOutputBusCount> master_comp_;
+  std::array<Ramp, kOutputBusCount> eq_wet_, comp_wet_;
+  std::array<bool, kOutputBusCount> eq_off_{}, comp_off_{};  // the stage was reset while bypassed
+  std::array<std::int16_t, 11> master_idx_{};                // registry master_index of the master_eq_* / master_comp_* ids
+  bool gr_nonzero_ = false;                                  // some gain-reduction slot holds a non-zero value
+
+  void run_stage(Effect& fx, Ramp& wet, bool& off, StereoBlock& b) noexcept VELORA_NONBLOCKING;
+  bool master_trivial() const noexcept VELORA_NONBLOCKING;
+  void publish_gain_reduction(LastValueTable& live) noexcept VELORA_NONBLOCKING;
 
   alignas(16) std::array<float, kParts * kFrames> bus_l_{}, bus_r_{};
 };

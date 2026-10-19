@@ -427,3 +427,69 @@ target_compile_definitions(sample_demo_null_test PRIVATE
 add_dependencies(sample_demo_null_test velora-offline-render velora-null-test)
 add_test(NAME sample_demo_null_test COMMAND sample_demo_null_test)
 set_tests_properties(sample_demo_null_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# EQ and compressor as inserts and in the master section (Story 2.8): the golden test-tone MIDI through an insert effect on part 0 and the
+# master effect. One golden per effect, same scheme as the other goldens: render twice (byte-equal), null-test against the committed golden at
+# -100 dB, and require different settings (insert or master) to fail it.
+foreach(_fx eq compressor)
+  set(_d ${CMAKE_CURRENT_SOURCE_DIR}/tests/fx_${_fx})
+  if(_fx STREQUAL "eq")
+    set(_fx_args --inserts 0:eq@0.9/0.2/0.6/0.8 --master-eq -4:5:2500:3)
+    set(_fx_wrong_insert --inserts 0:eq@0.9/0.2/0.6/0.7 --master-eq -4:5:2500:3)
+    set(_fx_wrong_master --inserts 0:eq@0.9/0.2/0.6/0.8 --master-eq -4:5:2500:4)
+  else()
+    set(_fx_args --inserts 0:compressor@0.2/0.6/0.3/0.4/0.15 --master-comp -30:3:5:150:2)
+    set(_fx_wrong_insert --inserts 0:compressor@0.2/0.6/0.3/0.4/0.2 --master-comp -30:3:5:150:2)
+    set(_fx_wrong_master --inserts 0:compressor@0.2/0.6/0.3/0.4/0.15 --master-comp -30:3:5:150:3)
+  endif()
+  add_test(NAME fx_${_fx}_clean
+           COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/fx_${_fx}_a.wav ${_out}/fx_${_fx}_b.wav ${_out}/fx_${_fx}_wi.wav ${_out}/fx_${_fx}_wm.wav)
+  set_tests_properties(fx_${_fx}_clean PROPERTIES FIXTURES_SETUP fx_${_fx}_clean)
+  add_test(NAME fx_${_fx}_render_a COMMAND velora-offline-render ${_render_args} ${_fx_args} --out ${_out}/fx_${_fx}_a.wav)
+  add_test(NAME fx_${_fx}_render_b COMMAND velora-offline-render ${_render_args} ${_fx_args} --out ${_out}/fx_${_fx}_b.wav)
+  set_tests_properties(fx_${_fx}_render_a PROPERTIES FIXTURES_REQUIRED fx_${_fx}_clean FIXTURES_SETUP fx_${_fx}_a)
+  set_tests_properties(fx_${_fx}_render_b PROPERTIES FIXTURES_REQUIRED fx_${_fx}_clean FIXTURES_SETUP fx_${_fx}_b)
+  add_test(NAME fx_${_fx}_bit_identical
+           COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/fx_${_fx}_a.wav ${_out}/fx_${_fx}_b.wav)
+  set_tests_properties(fx_${_fx}_bit_identical PROPERTIES FIXTURES_REQUIRED "fx_${_fx}_a;fx_${_fx}_b")
+  add_test(NAME fx_${_fx}_null_golden
+           COMMAND velora-null-test --case ${_d}/fx_${_fx}.case --candidate ${_out}/fx_${_fx}_a.wav)
+  set_tests_properties(fx_${_fx}_null_golden PROPERTIES FIXTURES_REQUIRED fx_${_fx}_a PASS_REGULAR_EXPRESSION "overall: PASS")
+  add_test(NAME fx_${_fx}_wrong_insert COMMAND velora-offline-render ${_render_args} ${_fx_wrong_insert} --out ${_out}/fx_${_fx}_wi.wav)
+  add_test(NAME fx_${_fx}_wrong_master COMMAND velora-offline-render ${_render_args} ${_fx_wrong_master} --out ${_out}/fx_${_fx}_wm.wav)
+  set_tests_properties(fx_${_fx}_wrong_insert PROPERTIES FIXTURES_REQUIRED fx_${_fx}_clean FIXTURES_SETUP fx_${_fx}_wi)
+  set_tests_properties(fx_${_fx}_wrong_master PROPERTIES FIXTURES_REQUIRED fx_${_fx}_clean FIXTURES_SETUP fx_${_fx}_wm)
+  add_test(NAME fx_${_fx}_wrong_insert_fails
+           COMMAND velora-null-test --case ${_d}/fx_${_fx}.case --candidate ${_out}/fx_${_fx}_wi.wav)
+  add_test(NAME fx_${_fx}_wrong_master_fails
+           COMMAND velora-null-test --case ${_d}/fx_${_fx}.case --candidate ${_out}/fx_${_fx}_wm.wav)
+  set_tests_properties(fx_${_fx}_wrong_insert_fails PROPERTIES FIXTURES_REQUIRED fx_${_fx}_wi
+                       PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+  set_tests_properties(fx_${_fx}_wrong_master_fails PROPERTIES FIXTURES_REQUIRED fx_${_fx}_wm
+                       PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+endforeach()
+add_test(NAME fx_rejects_duplicate_master_eq
+         COMMAND velora-offline-render ${_render_args} --master-eq 0:0:1000:0 --master-eq 1:0:1000:0 --out ${_out}/never.wav)
+add_test(NAME fx_rejects_duplicate_master_comp
+         COMMAND velora-offline-render ${_render_args} --master-comp -12:1:10:100:0 --master-comp -12:2:10:100:0 --out ${_out}/never.wav)
+set_tests_properties(fx_rejects_duplicate_master_eq PROPERTIES PASS_REGULAR_EXPRESSION "duplicate --master-eq")
+set_tests_properties(fx_rejects_duplicate_master_comp PROPERTIES PASS_REGULAR_EXPRESSION "duplicate --master-comp")
+foreach(_bad "--master-eq;nan:0:1000:0" "--master-comp;-12:inf:10:100:0")
+  list(GET _bad 0 _opt)
+  list(GET _bad 1 _val)
+  string(MAKE_C_IDENTIFIER "${_opt}_${_val}" _id)
+  add_test(NAME fx_rejects_${_id}
+           COMMAND velora-offline-render ${_render_args} ${_opt} ${_val} --out ${_out}/never.wav)
+  set_tests_properties(fx_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid ${_opt}")
+endforeach()
+# Option parsing.
+foreach(_bad "--master-eq;0:0:1000" "--master-eq;16:0:1000:0" "--master-eq;0:0:100:0" "--master-eq;0:0:1000:0:1"
+             "--master-comp;-12:1:10:100" "--master-comp;-70:1:10:100:0" "--master-comp;-12:0.5:10:100:0" "--master-comp;-12:1:10:100:25"
+             "--inserts;0:eq@1.5" "--inserts;0:eq@0.1/0.1/0.1/0.1/0.1/0.1" "--inserts;0:eq@")
+  list(GET _bad 0 _opt)
+  list(GET _bad 1 _val)
+  string(MAKE_C_IDENTIFIER "${_opt}_${_val}" _id)
+  add_test(NAME fx_rejects_${_id}
+           COMMAND velora-offline-render ${_render_args} ${_opt} ${_val} --out ${_out}/never.wav)
+  set_tests_properties(fx_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid ${_opt}" WILL_FAIL FALSE)
+endforeach()

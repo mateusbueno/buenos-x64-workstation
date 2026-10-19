@@ -113,12 +113,27 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       for (std::size_t i = 0; i < ro.inserts[p].size(); ++i) {
         pc.inserts[i].type = ro.inserts[p][i].type;
         pc.inserts[i].bypass = ro.inserts[p][i].bypass ? 1 : 0;
+        if (ro.inserts[p][i].has_params) pc.inserts[i].params = ro.inserts[p][i].params;
       }
       routing_snapshot->perf_init[params::perf_slot(*params::find(params::kSendReverbLevel), p)] = ro.send_reverb[p];
       routing_snapshot->perf_init[params::perf_slot(*params::find(params::kSendDelayLevel), p)] = ro.send_delay[p];
     }
     routing_snapshot->perf_init[params::perf_slot(*params::find(params::kLineInLevel), 0)] = ro.line_in_level;
-    routing_snapshot->master[static_cast<std::size_t>(params::find(params::kMasterLevel)->master_index)] = ro.master_level_db;
+    auto set_master = [&](std::uint16_t id, float v) {
+      routing_snapshot->master[static_cast<std::size_t>(params::find(id)->master_index)] = v;
+    };
+    set_master(params::kMasterLevel, ro.master_level_db);
+    set_master(params::kMasterEqLowGain, ro.master_eq.low_db);
+    set_master(params::kMasterEqMidGain, ro.master_eq.mid_db);
+    set_master(params::kMasterEqMidFreq, ro.master_eq.mid_hz);
+    set_master(params::kMasterEqHighGain, ro.master_eq.high_db);
+    set_master(params::kMasterEqBypass, ro.master_eq.bypass ? 1.0f : 0.0f);
+    set_master(params::kMasterCompThreshold, ro.master_comp.threshold_db);
+    set_master(params::kMasterCompRatio, ro.master_comp.ratio);
+    set_master(params::kMasterCompAttack, ro.master_comp.attack_ms);
+    set_master(params::kMasterCompRelease, ro.master_comp.release_ms);
+    set_master(params::kMasterCompMakeup, ro.master_comp.makeup_db);
+    set_master(params::kMasterCompBypass, ro.master_comp.bypass ? 1.0f : 0.0f);
     build_chains(*routing_snapshot);
     br->snapshots().publish(routing_snapshot.get());
   }

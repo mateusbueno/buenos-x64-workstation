@@ -439,8 +439,8 @@ static void test_invalid_commands() {
     m.mutable_set_insert_chain()->mutable_slots(0)->set_type(static_cast<ws::v1::InsertType>(42));
     expect(m, ws::v1::ERROR_CODE_UNKNOWN_ENUM_VALUE, "insert type 42");
     m = chain(0, {ws::v1::INSERT_TYPE_EQ});
-    for (int i = 0; i < 4; ++i) m.mutable_set_insert_chain()->mutable_slots(0)->add_params(0.5f);
-    expect(m, ws::v1::ERROR_CODE_INVALID_SLOT, "5 insert params");
+    for (int i = 0; i < 6; ++i) m.mutable_set_insert_chain()->mutable_slots(0)->add_params(0.5f);  // Story 2.8: 5 params exist, 6+ are refused
+    expect(m, ws::v1::ERROR_CODE_INVALID_SLOT, "6 insert params");
     m = chain(0, {ws::v1::INSERT_TYPE_EQ});
     m.mutable_set_insert_chain()->mutable_slots(0)->set_params(0, 2.0f);
     expect(m, ws::v1::ERROR_CODE_OUT_OF_RANGE, "insert param 2.0");
@@ -634,8 +634,8 @@ static void test_fx_chain_and_budget() {
   ws::v1::State st_after;
   rig.plane.fill_state(&st_after);
   CHECK(st_before.SerializeAsString() == st_after.SerializeAsString());
-  // a replacement of equal or lower cost fits (two EQ instances cost less than EQ + compressor)
-  r = rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_EQ, false}}), changed);
+  // a replacement of equal or lower cost fits (two compressor instances cost less than EQ + compressor)
+  r = rig.plane.handle(chain_slots(1, {{ws::v1::INSERT_TYPE_COMPRESSOR, false}, {ws::v1::INSERT_TYPE_COMPRESSOR, false}}), changed);
   CHECK(changed && r.has_ack());
   // removing effects always fits; then the heavier one does too
   r = rig.plane.handle(chain_slots(1, {}), changed);
@@ -660,6 +660,80 @@ static void test_fx_chain_and_budget() {
 
 // The effect instances live exactly as long as the generations that hold them: a held note keeps the old generation (and its
 // instances); the cross-fade keeps the generation RT still processes through.
+// --- Story 2.8: compressor gain reduction is published by the engine and read through GetPerformanceValues ------------------------------
+static void test_gain_reduction_published() {
+  Rig rig;
+  CHECK(rig.load("{}"));
+  bool changed = false;
+  ws::v1::ClientMessage m = chain_slots(0, {{ws::v1::INSERT_TYPE_EQ, false}, {ws::v1::INSERT_TYPE_COMPRESSOR, false}});
+  auto* cs = m.mutable_set_insert_chain()->mutable_slots(1);
+  cs->clear_params();
+  for (float v : {0.0f, 0.3f, 0.0f, 0.5f, 0.0f}) cs->add_params(v);  // threshold -60 dB, ratio 2.5:1, attack 0.1 ms, release 100 ms, makeup 0
+  CHECK(rig.plane.handle(m, changed).has_ack() && changed);
+  ws::v1::ClientMessage mm;
+  mm.set_request_id(++g_rid);
+  auto* mp = mm.mutable_set_master_params();
+  auto* v = mp->add_values(); v->set_param_id(ws::v1::PARAM_MASTER_COMP_THRESHOLD); v->set_value(-60.0f);
+  v = mp->add_values(); v->set_param_id(ws::v1::PARAM_MASTER_COMP_RATIO); v->set_value(10.0f);
+  v = mp->add_values(); v->set_param_id(ws::v1::PARAM_MASTER_COMP_BYPASS); v->set_value(0.0f);
+  v = mp->add_values(); v->set_param_id(ws::v1::PARAM_MASTER_EQ_BYPASS); v->set_value(1.0f);
+  CHECK(rig.plane.handle(mm, changed).has_ack() && changed);
+  const std::uint32_t on[] = {0x2000'0000u | (0x9u << 20) | (0u << 16) | (60u << 8) | 100u};
+  rig.ingest.on_ump(on, 1, rig.now());
+  rig.step(60);
+  ws::v1::ServerMessage r = rig.plane.handle(get_live(), changed);
+  CHECK(r.has_performance_values());
+  float insert_gr = -1, main_gr = -1, aux_gr = -1;
+  int inserts = 0, masters = 0;
+  for (const auto& g : r.performance_values().gain_reductions()) {
+    if (g.scope() == ws::v1::GAIN_REDUCTION_SCOPE_INSERT) {
+      ++inserts;
+      CHECK(g.part() == 0 && g.slot() == 1);
+      insert_gr = g.gain_reduction_db();
+    } else {
+      ++masters;
+      (g.scope() == ws::v1::GAIN_REDUCTION_SCOPE_MASTER_MAIN ? main_gr : aux_gr) = g.gain_reduction_db();
+    }
+  }
+  CHECK(inserts == 1 && masters == 2);  // only the slot that holds a compressor, and the two master buses
+  CHECK(insert_gr > 3.0f && main_gr > 3.0f && aux_gr == 0.0f);
+  CHECK(rig.br->last_values().load_gain_reduction(core::LastValueTable::gr_insert_slot(0, 1)) == insert_gr);
+  // the value is live engine state, not a snapshot field: it falls back to 0 when the note is gone and the reduction releases
+  const std::uint32_t off[] = {0x2000'0000u | (0x8u << 20) | (0u << 16) | (60u << 8)};
+  rig.ingest.on_ump(off, 1, rig.now());
+  rig.step(3000);
+  r = rig.plane.handle(get_live(), changed);
+  for (const auto& g : r.performance_values().gain_reductions()) CHECK(g.gain_reduction_db() < 0.5f);
+}
+
+// --- Story 2.8: the 5th insert param (compressor makeup) travels through SetInsertChain, the state and the applied gain -----------------
+static void test_fifth_insert_param() {
+  auto run = [](float makeup_norm, ws::v1::State* state) {
+    Rig rig;
+    CHECK(rig.load("{}"));
+    bool changed = false;
+    ws::v1::ClientMessage m = chain_slots(0, {{ws::v1::INSERT_TYPE_COMPRESSOR, false}});
+    auto* cs = m.mutable_set_insert_chain()->mutable_slots(0);
+    cs->clear_params();
+    for (float v : {1.0f, 0.0f, 0.5f, 0.5f, makeup_norm}) cs->add_params(v);  // threshold 0 dB, ratio 1:1: only the makeup acts
+    CHECK(rig.plane.handle(m, changed).has_ack() && changed);
+    if (state) rig.plane.fill_state(state);
+    const std::uint32_t on[] = {0x2000'0000u | (0x9u << 20) | (0u << 16) | (60u << 8) | 100u};
+    rig.ingest.on_ump(on, 1, rig.now());
+    float peak = 0.0f;
+    for (int i = 0; i < 40; ++i) {
+      rig.step(1);
+      for (int k = 0; k < 64; ++k) peak = std::max(peak, std::fabs(rig.l[k]));
+    }
+    return peak;
+  };
+  ws::v1::State st;
+  const float plain = run(0.0f, nullptr), boosted = run(0.5f, &st);  // 0.5 -> 12 dB
+  CHECK(st.parts(0).inserts_size() == 1 && st.parts(0).inserts(0).params_size() == 5);
+  CHECK(st.parts(0).inserts(0).params_size() == 5 && std::fabs(st.parts(0).inserts(0).params(4) - 0.5f) < 1e-6f);
+  CHECK(plain > 0.001f && std::fabs(boosted / plain - 3.981f) < 0.05f);
+}
+
 static void test_effect_lifetime_across_generations() {
   Rig rig;
   CHECK(rig.load("{}"));
@@ -1140,6 +1214,8 @@ int main() {
   test_performance_path();
   test_held_note_across_swap();
   test_fx_chain_and_budget();
+  test_gain_reduction_published();
+  test_fifth_insert_param();
   test_effect_lifetime_across_generations();
   test_chain_identity_and_budget_lowering();
   test_master_level_and_line_in_through_control();

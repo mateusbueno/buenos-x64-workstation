@@ -25,8 +25,18 @@ Mixer::Mixer(SnapshotExchange& exchange) : exchange_(exchange) {
   for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
     reverb_send_[b] = std::make_unique<PassThroughEffect>(EffectType::kNone, kReverbSendCost);
     delay_send_[b] = std::make_unique<PassThroughEffect>(EffectType::kNone, kDelaySendCost);
-    master_eq_[b] = std::make_unique<PassThroughEffect>(EffectType::kEq, kMasterEqCost);
-    master_comp_[b] = std::make_unique<PassThroughEffect>(EffectType::kCompressor, kMasterCompCost);
+    eq_wet_[b].cur = eq_wet_[b].tgt = 1.0f;
+    comp_wet_[b].cur = comp_wet_[b].tgt = 1.0f;
+    master_eq_[b].prepare(kEqSampleRate, kFxBlockFrames);
+    master_comp_[b].prepare(kEqSampleRate, kFxBlockFrames);
+  }
+  static constexpr std::uint16_t kIds[11] = {params::kMasterEqLowGain,    params::kMasterEqMidGain,     params::kMasterEqMidFreq,
+                                             params::kMasterEqHighGain,   params::kMasterEqBypass,      params::kMasterCompThreshold,
+                                             params::kMasterCompRatio,    params::kMasterCompAttack,    params::kMasterCompRelease,
+                                             params::kMasterCompMakeup,   params::kMasterCompBypass};
+  for (std::size_t i = 0; i < master_idx_.size(); ++i) {
+    const params::ParamDef* d = params::find(kIds[i]);
+    master_idx_[i] = d ? d->master_index : static_cast<std::int16_t>(-1);
   }
 }
 
@@ -108,10 +118,29 @@ void Mixer::adopt(const Snapshot& s) noexcept {
   float db = 0.0f;
   if (master_level_index_ >= 0) db = s.master[static_cast<std::size_t>(master_level_index_)];
   master_target_ = db == 0.0f ? 1.0f : std::pow(10.0f, db * 0.05f);
+  // Master EQ and compressor: the registry values of this generation (defaults when the registry lacks one).
+  auto mv = [&](std::size_t i, float dflt) {
+    return master_idx_[i] >= 0 ? s.master[static_cast<std::size_t>(master_idx_[i])] : dflt;
+  };
+  for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
+    master_eq_[b].set_physical(mv(0, 0.0f), mv(1, 0.0f), mv(2, 1000.0f), mv(3, 0.0f), /*instant=*/first);
+    master_comp_[b].set_physical(mv(5, -12.0f), mv(6, 1.0f), mv(7, 10.0f), mv(8, 100.0f), mv(9, 0.0f), /*instant=*/first);
+    eq_wet_[b].retarget(mv(4, 0.0f) >= 0.5f ? 0.0f : 1.0f, first ? 0 : kFadeFrames);  // flag: >= 0.5 bypasses; NaN and < 0.5 do not
+    comp_wet_[b].retarget(mv(10, 0.0f) >= 0.5f ? 0.0f : 1.0f, first ? 0 : kFadeFrames);
+  }
   primed_ = true;
 }
 
-bool Mixer::begin_block(const LastValueTable& live) noexcept {
+bool Mixer::master_trivial() const noexcept VELORA_NONBLOCKING {
+  for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
+    const bool eq_ok = eq_wet_[b].steady(0.0f) || (eq_wet_[b].steady(1.0f) && master_eq_[b].is_identity());
+    const bool comp_ok = comp_wet_[b].steady(0.0f) || (comp_wet_[b].steady(1.0f) && master_comp_[b].is_identity());
+    if (!eq_ok || !comp_ok) return false;
+  }
+  return true;
+}
+
+bool Mixer::begin_block(LastValueTable& live) noexcept {
   const std::uint32_t ramp = instant_levels_ ? 0 : kLevelRampFrames;
   const std::uint32_t fade = instant_levels_ ? 0 : kFadeFrames;
   bool trivial = true;
@@ -126,15 +155,21 @@ bool Mixer::begin_block(const LastValueTable& live) noexcept {
   }
   master_g_.retarget(master_target_, ramp);
   if (line_slot_ >= 0) line_g_.retarget(clamp01(live.load(static_cast<std::size_t>(line_slot_))), ramp);
-  trivial = trivial && master_g_.steady(1.0f) && line_g_.steady(0.0f);  // (master effects are placeholders: no influence yet)
+  trivial = trivial && master_g_.steady(1.0f) && line_g_.steady(0.0f) && master_trivial();
   instant_levels_ = !primed_;
   routed_ = !trivial;
   if (routed_) {
     bus_l_.fill(0.0f);
     bus_r_.fill(0.0f);
-  } else if (ports::LineInSource* li = line_in_.load(std::memory_order_acquire)) {  // keep the source in step with the block clock
-    float dl[kN], dr[kN];
-    li->read_block(dl, dr, kN);
+  } else {
+    if (gr_nonzero_) {  // nothing runs any more: no compressor reduces gain
+      for (std::size_t i = 0; i < LastValueTable::kGainReductionSlots; ++i) live.store_gain_reduction(i, 0.0f);
+      gr_nonzero_ = false;
+    }
+    if (ports::LineInSource* li = line_in_.load(std::memory_order_acquire)) {  // keep the source in step with the block clock
+      float dl[kN], dr[kN];
+      li->read_block(dl, dr, kN);
+    }
   }
   return routed_;
 }
@@ -147,7 +182,56 @@ void Mixer::part_sinks(std::uint32_t offset, float** left, float** right) noexce
   }
 }
 
-void Mixer::finish(const OutputBuses& out) noexcept {
+void Mixer::run_stage(Effect& fx, Ramp& wet, bool& off, StereoBlock& b) noexcept VELORA_NONBLOCKING {
+  if (wet.steady(0.0f)) {  // bypassed: does not run; the state is cleared once so it starts clean when it comes back
+    if (!off) {
+      fx.reset();
+      off = true;
+    }
+    return;
+  }
+  off = false;
+  if (wet.steady(1.0f)) {
+    fx.process(b);
+    return;
+  }
+  float wl[kN], wr[kN];  // cross-fade between bypassed and active
+  std::copy(b.left, b.left + kN, wl);
+  std::copy(b.right, b.right + kN, wr);
+  StereoBlock wb{wl, wr, kN};
+  fx.process(wb);
+  for (std::uint32_t f = 0; f < kN; ++f) {
+    const float w = wet.next();
+    b.left[f] += w * (wl[f] - b.left[f]);
+    b.right[f] += w * (wr[f] - b.right[f]);
+  }
+}
+
+void Mixer::publish_gain_reduction(LastValueTable& live) noexcept VELORA_NONBLOCKING {
+  bool any = false;
+  for (std::uint32_t i = 0; i < kParts; ++i) {
+    const Part& p = parts_[i];
+    for (std::uint32_t s = 0; s < params::kInsertSlotCount; ++s) {
+      float gr = 0.0f;  // the largest reduction of any chain still audible in this slot (a chain fading out counts until it is gone)
+      for (std::uint32_t k = 0; k < p.count; ++k) {
+        const FxChain* chain = p.entries[k].chain;
+        if (!chain || s >= chain->slot_count()) continue;
+        const FxChain::Slot& sl = chain->slot(s);
+        if (sl.effect && !sl.bypass) gr = std::max(gr, sl.effect->gain_reduction_db());
+      }
+      any = any || gr != 0.0f;
+      live.store_gain_reduction(LastValueTable::gr_insert_slot(i, s), gr);
+    }
+  }
+  for (std::uint32_t b = 0; b < kOutputBusCount; ++b) {
+    const float gr = comp_wet_[b].steady(0.0f) ? 0.0f : master_comp_[b].gain_reduction_db();
+    any = any || gr != 0.0f;
+    live.store_gain_reduction(LastValueTable::gr_master_slot(b), gr);
+  }
+  gr_nonzero_ = any;
+}
+
+void Mixer::finish(const OutputBuses& out, LastValueTable& live) noexcept {
   // [0] = Main, [1] = Aux. The sends of a part are returned to the bus the part sits on.
   float bus_l[2][kN] = {}, bus_r[2][kN] = {}, rev_l[2][kN] = {}, rev_r[2][kN] = {}, dly_l[2][kN] = {}, dly_r[2][kN] = {};
 
@@ -237,12 +321,13 @@ void Mixer::finish(const OutputBuses& out) noexcept {
     for (std::uint32_t f = 0; f < kN; ++f) line_g_.next();
   }
 
-  // Master section: EQ and compressor per bus (placeholders until Story 2.8), then the master level.
+  // Master section: EQ, then compressor, per bus (each with its own bypass cross-fade), then the master level.
   StereoBlock mb{bus_l[0], bus_r[0], kN}, ab{bus_l[1], bus_r[1], kN};
-  master_eq_[0]->process(mb);
-  master_comp_[0]->process(mb);
-  master_eq_[1]->process(ab);
-  master_comp_[1]->process(ab);
+  run_stage(master_eq_[0], eq_wet_[0], eq_off_[0], mb);
+  run_stage(master_comp_[0], comp_wet_[0], comp_off_[0], mb);
+  run_stage(master_eq_[1], eq_wet_[1], eq_off_[1], ab);
+  run_stage(master_comp_[1], comp_wet_[1], comp_off_[1], ab);
+  publish_gain_reduction(live);
   for (std::uint32_t f = 0; f < kN; ++f) {
     const float g = master_g_.next();
     out.main_left[f] += g * bus_l[0][f];

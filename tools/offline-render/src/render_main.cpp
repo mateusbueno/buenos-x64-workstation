@@ -2,7 +2,8 @@
 //                       [--tail-seconds S] [--detune-cents C]
 //                       [--engine organ [--drawbars 888000000] [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]
 //                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]]
-//                       [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[!][,type[!]...]] [--master-level DB]
+//                       [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[@p1/p2/..][!][,...]] [--master-level DB]
+//                       [--master-eq LOW:MID:MIDHZ:HIGH[!]] [--master-comp THRESH:RATIO:ATTACK:RELEASE:MAKEUP[!]]   (Story 2.8)
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
@@ -30,7 +31,9 @@ static int usage() {
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
                "                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]\n"
                "       routing (parts = channels 0..7): [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[!],...]\n"
-               "                     (type: rotary chorus_phaser ep_amp eq compressor, '!' = bypassed) [--master-level DB]\n"
+               "                     (type: rotary chorus_phaser ep_amp eq compressor, '@p1/p2/..' = normalised params, '!' = bypassed)\n"
+               "                     [--master-level DB] [--master-eq LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]]\n"
+               "                     [--master-comp THRESHOLD_DB:RATIO:ATTACK_MS:RELEASE_MS:MAKEUP_DB[!]]\n"
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n");
   return 2;
@@ -42,6 +45,7 @@ int main(int argc, char** argv) {
   std::string drawbars, percussion;
   bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false, rotary_given = false;
   RenderOptions opt;
+  bool master_eq_seen = false, master_comp_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
   std::string line_in_path, aux_out_path;
   WavData line_in_wav, aux_wav;
   // "P:rest" -> part index 0..7 and the text after the colon.
@@ -134,6 +138,23 @@ int main(int argc, char** argv) {
         RoutingOptions::Insert in;
         if (!w.empty() && w.back() == '!') { in.bypass = true; w.pop_back(); }
         static const char* const kTypes[] = {"none", "rotary", "chorus_phaser", "ep_amp", "eq", "compressor"};
+        const std::size_t at = w.find('@');  // type@p1/p2/..: normalised insert params 1..5 (0..1), missing ones keep the defaults
+        if (at != std::string::npos) {
+          std::string pl = w.substr(at + 1);
+          w.resize(at);
+          std::size_t q = 0;
+          std::size_t n = 0;
+          while (good && q <= pl.size()) {
+            std::size_t slash = pl.find('/', q);
+            if (slash == std::string::npos) slash = pl.size();
+            double pv = 0;
+            if (n >= in.params.size() || !parse_double(pl.substr(q, slash - q), 0.0, 1.0, pv)) { good = false; break; }
+            in.params[n++] = static_cast<float>(pv);
+            q = slash + 1;
+          }
+          in.has_params = true;
+          if (!good) break;
+        }
         int t = -1;
         for (int k = 0; k < 6; ++k)
           if (w == kTypes[k]) t = k;
@@ -143,7 +164,7 @@ int main(int argc, char** argv) {
         pos = comma + 1;
       }
       if (!good) {
-        std::fprintf(stderr, "error: invalid --inserts (P:type[!],... with at most 5 of none rotary chorus_phaser ep_amp eq compressor)\n");
+        std::fprintf(stderr, "error: invalid --inserts (P:type[@p1/p2/..][!],... with at most 5 of none rotary chorus_phaser ep_amp eq compressor, params 0..1)\n");
         return 2;
       }
       opt.routing.inserts[part] = list;
@@ -152,6 +173,61 @@ int main(int argc, char** argv) {
       double db = 0;
       if (!parse_double(v, -60.0, 12.0, db)) { std::fprintf(stderr, "error: invalid --master-level (-60..12 dB)\n"); return 2; }
       opt.routing.master_level_db = static_cast<float>(db);
+      opt.routing.enabled = true;
+    } else if (a == "--master-eq" && val(v)) {  // LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]   (! = bypassed)
+      if (master_eq_seen) { std::fprintf(stderr, "error: duplicate --master-eq\n"); return 2; }
+      master_eq_seen = true;
+      std::string w = v;
+      RoutingOptions::MasterEq me;
+      if (!w.empty() && w.back() == '!') { me.bypass = true; w.pop_back(); }
+      double x[4] = {0, 0, 0, 0};
+      std::size_t q = 0;
+      bool good = true;
+      for (int k = 0; k < 4 && good; ++k) {
+        std::size_t colon = w.find(':', q);
+        if (colon == std::string::npos) colon = w.size();
+        if ((k < 3 && colon == w.size()) || (k == 3 && colon != w.size())) { good = false; break; }
+        static const double lo[4] = {-15, -15, 200, -15}, hi[4] = {15, 15, 8000, 15};
+        good = parse_double(w.substr(q, colon - q), lo[k], hi[k], x[k]);
+        q = colon + 1;
+      }
+      if (!good) {
+        std::fprintf(stderr, "error: invalid --master-eq (LOW_DB:MID_DB:MID_HZ:HIGH_DB[!], gains -15..15, mid 200..8000 Hz)\n");
+        return 2;
+      }
+      me.low_db = static_cast<float>(x[0]);
+      me.mid_db = static_cast<float>(x[1]);
+      me.mid_hz = static_cast<float>(x[2]);
+      me.high_db = static_cast<float>(x[3]);
+      opt.routing.master_eq = me;
+      opt.routing.enabled = true;
+    } else if (a == "--master-comp" && val(v)) {  // THRESHOLD_DB:RATIO:ATTACK_MS:RELEASE_MS:MAKEUP_DB[!]
+      if (master_comp_seen) { std::fprintf(stderr, "error: duplicate --master-comp\n"); return 2; }
+      master_comp_seen = true;
+      std::string w = v;
+      RoutingOptions::MasterComp mc;
+      if (!w.empty() && w.back() == '!') { mc.bypass = true; w.pop_back(); }
+      double x[5] = {0, 0, 0, 0, 0};
+      std::size_t q = 0;
+      bool good = true;
+      static const double lo[5] = {-60, 1, 0.1, 10, 0}, hi[5] = {0, 20, 100, 1000, 24};
+      for (int k = 0; k < 5 && good; ++k) {
+        std::size_t colon = w.find(':', q);
+        if (colon == std::string::npos) colon = w.size();
+        if ((k < 4 && colon == w.size()) || (k == 4 && colon != w.size())) { good = false; break; }
+        good = parse_double(w.substr(q, colon - q), lo[k], hi[k], x[k]);
+        q = colon + 1;
+      }
+      if (!good) {
+        std::fprintf(stderr, "error: invalid --master-comp (THRESHOLD_DB:RATIO:ATTACK_MS:RELEASE_MS:MAKEUP_DB[!], -60..0, 1..20, 0.1..100, 10..1000, 0..24)\n");
+        return 2;
+      }
+      mc.threshold_db = static_cast<float>(x[0]);
+      mc.ratio = static_cast<float>(x[1]);
+      mc.attack_ms = static_cast<float>(x[2]);
+      mc.release_ms = static_cast<float>(x[3]);
+      mc.makeup_db = static_cast<float>(x[4]);
+      opt.routing.master_comp = mc;
       opt.routing.enabled = true;
     } else if (a == "--line-in" && val(v)) {
       line_in_path = v;

@@ -64,7 +64,7 @@ message ParamValue {
 message InsertSlot {
   InsertType type = 1;
   bool bypass = 2;
-  repeated float params = 3;         // up to 4 values (registry insert_param_1..4); missing ones keep the default
+  repeated float params = 3;         // up to 5 values (registry insert_param_1..5; the 5th is the compressor makeup, Story 2.8); missing ones keep the default
 }
 
 message PartState {
@@ -87,8 +87,24 @@ message State {
                                              // never override a live value otherwise
 }
 
+// The gain reduction a compressor applied in its last block (Story 2.8), published by the engine; read-only state, not a parameter.
+enum GainReductionScope {
+  GAIN_REDUCTION_SCOPE_INSERT = 0;       // the compressor in insert slot `slot` of part `part`
+  GAIN_REDUCTION_SCOPE_MASTER_MAIN = 1;  // the master compressor of the Main bus (part and slot are 0)
+  GAIN_REDUCTION_SCOPE_MASTER_AUX = 2;   // the master compressor of the Aux bus
+}
+
+message GainReduction {
+  GainReductionScope scope = 1;
+  uint32 part = 2;                       // 0..7 (insert scope)
+  uint32 slot = 3;                       // 0..4 (insert scope)
+  float gain_reduction_db = 4;           // >= 0; 0 = not reducing, bypassed or no signal above threshold
+}
+
 message PerformanceValues {              // live values from the RT last-value table
   repeated ParamValue values = 1;
+  repeated GainReduction gain_reductions = 2;  // one per insert slot that holds a compressor in the current snapshot, plus the two
+                                               // master compressors (Main, Aux); additive, older clients ignore it
 }
 
 // --- commands -------------------------------------------------------------------------------------

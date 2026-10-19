@@ -25,7 +25,7 @@ namespace velora::core {
 struct InsertSlotCfg {
   std::uint8_t type = 0;    // registry enum insert_type (0 = none)
   std::uint8_t bypass = 0;
-  std::array<float, params::kInsertParamCount> params{0.5f, 0.5f, 0.5f, 0.5f};
+  std::array<float, params::kInsertParamCount> params = kDefaultInsertParams;
 };
 
 struct PartCfg {
@@ -76,8 +76,26 @@ class LastValueTable {
     return std::bit_cast<float>(v_[slot].load(std::memory_order_acquire));
   }
 
+  // Compressor gain reduction in dB (>= 0) per compressor instance (Story 2.8), published by RT (the Mixer, once per block) and read
+  // lock-free by the control thread (ws.v1 GetPerformanceValues). Not a parameter: read-only engine state. Slots: one per part insert
+  // slot (part * kInsertSlotCount + slot), then the master compressor of Main and Aux. 0 when the slot holds no compressor or it is bypassed.
+  static constexpr std::size_t kGainReductionSlots = params::kPartCount * params::kInsertSlotCount + kOutputBusCount;
+  static constexpr std::size_t gr_insert_slot(std::uint32_t part, std::uint32_t slot) noexcept {
+    return static_cast<std::size_t>(part) * params::kInsertSlotCount + slot;
+  }
+  static constexpr std::size_t gr_master_slot(std::uint32_t bus) noexcept {
+    return static_cast<std::size_t>(params::kPartCount) * params::kInsertSlotCount + bus;
+  }
+  void store_gain_reduction(std::size_t slot, float db) noexcept VELORA_NONBLOCKING {
+    gr_[slot].store(std::bit_cast<std::uint32_t>(db), std::memory_order_release);
+  }
+  float load_gain_reduction(std::size_t slot) const noexcept VELORA_NONBLOCKING {
+    return std::bit_cast<float>(gr_[slot].load(std::memory_order_acquire));
+  }
+
  private:
   std::array<std::atomic<std::uint32_t>, params::kPerfSlotCount> v_;
+  std::array<std::atomic<std::uint32_t>, kGainReductionSlots> gr_;
 };
 
 // Publication point between the control thread and the RT side.

@@ -12,6 +12,8 @@ add_library(velora_core STATIC
   src/rotary_speaker.cpp
   src/voice_arbiter.cpp
   src/fx.cpp
+  src/eq.cpp
+  src/compressor.cpp
   src/mixer.cpp
   src/block_renderer.cpp)
 add_library(velora::core ALIAS velora_core)
@@ -64,6 +66,10 @@ add_test(NAME rotary_tests COMMAND rotary_tests)
 add_executable(routing_tests tests/routing_test.cpp)
 target_link_libraries(routing_tests PRIVATE velora_core)
 add_test(NAME routing_tests COMMAND routing_tests)
+
+add_executable(eq_compressor_tests tests/eq_compressor_test.cpp)
+target_link_libraries(eq_compressor_tests PRIVATE velora_core)
+add_test(NAME eq_compressor_tests COMMAND eq_compressor_tests)
 
 # The routing traffic (10,000 blocks, chain changes every 3 blocks, determinism) without the sanitizer, so macOS runs its logic too;
 # the RTSan build of the same file is below.

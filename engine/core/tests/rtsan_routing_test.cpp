@@ -1,5 +1,7 @@
-// Story 2.7: 10,000 blocks of note traffic through the routing topology with insert-chain changes every few blocks (new generations
+// Story 2.7 / 2.8: 10,000 blocks of note traffic through the routing topology with insert-chain changes every few blocks (new generations
 // carrying freshly built effect instances), send / line-in level changes and part output switches, inside a nonblocking function.
+// Story 2.8 adds EQ and compressor traffic: insert parameters, master EQ / compressor values and both master bypass flags cycle with
+// every generation, the line-in level moves the compressor input level, and the published gain reductions are checked.
 // The control side (building snapshots and effect instances, freeing generations) runs outside it, as on the control thread. Built
 // twice: with RealtimeSanitizer (rtsan_routing_test, clang >= 20) and without (routing_traffic_test, everywhere) -- the second also
 // proves determinism: two runs give bit-identical output.
@@ -70,10 +72,27 @@ struct Control {
     for (std::uint32_t i = 0; i < p.insert_count; ++i) {
       p.inserts[i].type = static_cast<std::uint8_t>(1 + (k / 6 + i) % 5);  // reorder
       p.inserts[i].bypass = ((k + i) % 4 == 0) ? 1 : 0;                    // bypass
+      // Story 2.8: EQ / compressor settings cycle through their whole range (threshold, ratio, attack, release, makeup; LOW, MID, MID FREQ, HIGH)
+      for (std::uint32_t q = 0; q < p.inserts[i].params.size(); ++q)
+        p.inserts[i].params[q] = static_cast<float>((k * 7 + i * 3 + q * 5) % 11) / 10.0f;
     }
     p.chain = build_chain(p);
     p.output = static_cast<std::uint8_t>((k / 7) % 2);                     // Main / Aux switches
     cur.master[static_cast<std::size_t>(params::find(params::kMasterLevel)->master_index)] = -3.0f * static_cast<float>(k % 3);
+    // The master section: EQ gains and frequency, compressor threshold / ratio / times / makeup, and both bypass flags change with every generation.
+    auto setm = [&](std::uint16_t id, float v) { cur.master[static_cast<std::size_t>(params::find(id)->master_index)] = v; };
+    const float u = static_cast<float>(k % 13) / 12.0f;
+    setm(params::kMasterEqLowGain, -15.0f + 30.0f * u);
+    setm(params::kMasterEqMidGain, 15.0f - 30.0f * u);
+    setm(params::kMasterEqMidFreq, 200.0f + 7800.0f * static_cast<float>((k * 5) % 9) / 8.0f);
+    setm(params::kMasterEqHighGain, k % 4 == 0 ? 0.0f : -15.0f + 30.0f * static_cast<float>((k * 3) % 7) / 6.0f);
+    setm(params::kMasterEqBypass, k % 5 == 1 ? 1.0f : 0.0f);
+    setm(params::kMasterCompThreshold, -60.0f + 60.0f * u);
+    setm(params::kMasterCompRatio, k % 6 == 0 ? 1.0f : 1.0f + 19.0f * static_cast<float>((k * 7) % 10) / 9.0f);
+    setm(params::kMasterCompAttack, 0.1f + 99.9f * static_cast<float>((k * 3) % 8) / 7.0f);
+    setm(params::kMasterCompRelease, 10.0f + 990.0f * static_cast<float>((k * 5) % 6) / 5.0f);
+    setm(params::kMasterCompMakeup, k % 3 == 0 ? 0.0f : 24.0f * static_cast<float>(k % 5) / 4.0f);
+    setm(params::kMasterCompBypass, k % 7 == 2 ? 1.0f : 0.0f);
     reclaim();
     std::uint32_t idx = 0;
     while (idx < SnapshotExchange::kLedgerSlots && used(idx)) ++idx;
@@ -106,13 +125,18 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& chains_published) {
   Control ctl(br->snapshots());
   ctl.publish_variant(0);
   std::uint64_t hash = 1469598103934665603ull;
-  bool finite = true;
-  float peak = 0.0f;
+  bool finite = true, gr_ok = true;
+  float peak = 0.0f, max_gr = 0.0f;
   float l[kBlockFrames], r[kBlockFrames], al[kBlockFrames], ar[kBlockFrames];
   for (std::uint32_t i = 0; i < kBlocks; ++i) {
     if (i % kChainEvery == 0) ctl.publish_variant(1 + i / kChainEvery);
     if (i % 17 == 0) ctl.reclaim();
     run_block(*br, OutputBuses{l, r, al, ar}, i);
+    for (std::size_t g = 0; g < LastValueTable::kGainReductionSlots; ++g) {  // published compressor gain reduction: finite, >= 0, sometimes working
+      const float gr = br->last_values().load_gain_reduction(g);
+      gr_ok = gr_ok && std::isfinite(gr) && gr >= 0.0f && gr < 120.0f;
+      max_gr = std::max(max_gr, gr);
+    }
     for (std::uint32_t f = 0; f < kBlockFrames; ++f) {
       for (float v : {l[f], r[f], al[f], ar[f]}) {
         finite = finite && std::isfinite(v);
@@ -133,6 +157,7 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& chains_published) {
   bool ok = true;
   if (!br->mixer().chains_settled()) { std::printf("FAIL: chains did not settle\n"); ok = false; }
   if (!finite) { std::printf("FAIL: non-finite output\n"); ok = false; }
+  if (!gr_ok || !(max_gr > 1.0f)) { std::printf("FAIL: gain reduction invalid or never published (max %g dB)\n", static_cast<double>(max_gr)); ok = false; }
   if (!(peak > 0.01f)) { std::printf("FAIL: output is (nearly) silent, peak %g\n", static_cast<double>(peak)); ok = false; }
   return ok;
 }

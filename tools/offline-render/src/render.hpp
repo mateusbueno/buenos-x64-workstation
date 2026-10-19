@@ -18,12 +18,28 @@ struct RoutingOptions {
   struct Insert {
     std::uint8_t type = 0;  // registry insert_type
     bool bypass = false;
+    // The normalised insert parameters (registry insert_param_1..5); unset = the registry defaults. The EQ default is transparent;
+    // the compressor default works on the signal (set insert_param_2 = 0 for ratio 1:1).
+    bool has_params = false;
+    std::array<float, 5> params{0.5f, 0.5f, 0.5f, 0.5f, 0.0f};
+  };
+  // Master section (Story 2.8), physical units of the master_eq_* / master_comp_* registry parameters. Defaults = registry defaults
+  // (EQ flat; compressor ratio 1:1, no makeup: exactly transparent).
+  struct MasterEq {
+    float low_db = 0.0f, mid_db = 0.0f, mid_hz = 1000.0f, high_db = 0.0f;
+    bool bypass = false;
+  };
+  struct MasterComp {
+    float threshold_db = -12.0f, ratio = 1.0f, attack_ms = 10.0f, release_ms = 100.0f, makeup_db = 0.0f;
+    bool bypass = false;
   };
   bool enabled = false;                               // any routing option given
   std::array<std::uint8_t, 8> output{};               // registry part_output per part: 0 main (default), 1 aux
   std::array<float, 8> send_reverb{}, send_delay{};   // 0..1 per part
   std::array<std::vector<Insert>, 8> inserts;         // up to 5 per part
   float master_level_db = 0.0f;
+  MasterEq master_eq;
+  MasterComp master_comp;
   float line_in_level = 0.0f;                         // 0..1
   const WavData* line_in = nullptr;                   // stereo or mono, 48 kHz (borrowed); read once, silent after its end
 };

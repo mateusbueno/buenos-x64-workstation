@@ -348,6 +348,25 @@ void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
       pv->set_value(live_.load(p::perf_slot(d, part)));
     }
   }
+  // Compressor gain reduction (Story 2.8): the insert slots that hold a compressor in the current generation, then the master ones.
+  if (current_) {
+    for (std::uint32_t part = 0; part < p::kPartCount; ++part) {
+      const core::PartCfg& pc = current_->parts[part];
+      for (std::uint32_t slot = 0; slot < pc.insert_count && slot < p::kInsertSlotCount; ++slot) {
+        if (pc.inserts[slot].type != p::kInsertTypeCompressor) continue;
+        ws::v1::GainReduction* g = out->add_gain_reductions();
+        g->set_scope(ws::v1::GAIN_REDUCTION_SCOPE_INSERT);
+        g->set_part(part);
+        g->set_slot(slot);
+        g->set_gain_reduction_db(live_.load_gain_reduction(core::LastValueTable::gr_insert_slot(part, slot)));
+      }
+    }
+  }
+  for (std::uint32_t bus = 0; bus < core::kOutputBusCount; ++bus) {
+    ws::v1::GainReduction* g = out->add_gain_reductions();
+    g->set_scope(bus == 0 ? ws::v1::GAIN_REDUCTION_SCOPE_MASTER_MAIN : ws::v1::GAIN_REDUCTION_SCOPE_MASTER_AUX);
+    g->set_gain_reduction_db(live_.load_gain_reduction(core::LastValueTable::gr_master_slot(bus)));
+  }
 }
 
 ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, bool& changed) {

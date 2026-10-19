@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "nulltest.hpp"
+#include "velora/core/compressor.hpp"
+#include "velora/core/eq.hpp"
 #include "render.hpp"
 #include "wav.hpp"
 
@@ -145,10 +147,115 @@ static void test_assignment_sends_master() {
         RoutingOptions::Insert in;
         in.type = static_cast<std::uint8_t>((part + i) % 6);
         in.bypass = (i == 3);
+        if (in.type == 5) {  // compressor: ratio 1:1, no makeup = transparent (Story 2.8)
+          in.has_params = true;
+          in.params[1] = 0.0f;
+        }
         o.routing.inserts[part].push_back(in);
       }
     const WavData w = render(all, o);
     CHECK(max_diff(w, base) < 2e-6);
+  }
+}
+
+// Story 2.8: master EQ and compressor (in that order, each with its own bypass) and the insert EQ / compressor in the offline renderer.
+// Expected signals are the parts rendered alone with the pre-2.7 path, put through the same DSP classes block by block (64 frames) in the test.
+template <typename F>
+static WavData through(const WavData& in, F&& fn) {
+  WavData out = in;
+  const std::size_t frames = in.samples.size() / 2;
+  for (std::size_t o = 0; o < frames; o += 64) {
+    const std::uint32_t n = static_cast<std::uint32_t>(std::min<std::size_t>(64, frames - o));
+    float l[64], r[64];
+    for (std::uint32_t i = 0; i < n; ++i) {
+      l[i] = in.samples[2 * (o + i)];
+      r[i] = in.samples[2 * (o + i) + 1];
+    }
+    velora::core::StereoBlock b{l, r, n};
+    fn(b);
+    for (std::uint32_t i = 0; i < n; ++i) {
+      out.samples[2 * (o + i)] = l[i];
+      out.samples[2 * (o + i) + 1] = r[i];
+    }
+  }
+  return out;
+}
+
+static void test_master_and_insert_effects() {
+  const auto ev = notes({{0, 60}, {1, 64}, {2, 67}});
+  const WavData base = render(ev, RenderOptions{});
+  CHECK(peak(base) > 0.01);
+
+  // Defaults (EQ flat, compressor ratio 1:1 without makeup) and any bypassed settings: the signal of the plain render
+  {
+    RenderOptions o;
+    o.routing.enabled = true;
+    CHECK(max_diff(render(ev, o), base) < 2e-6);
+    o.routing.master_eq = {9, -9, 500, 6, true};
+    o.routing.master_comp = {-50, 20, 1, 50, 12, true};
+    CHECK(max_diff(render(ev, o), base) < 2e-6);
+  }
+  // Master EQ alone, master compressor alone, both (EQ first)
+  {
+    RenderOptions o;
+    o.routing.enabled = true;
+    o.routing.master_eq = {-4, 5, 2500, 3, false};
+    const WavData eq = render(ev, o);
+    velora::core::EqEffect ref_eq;
+    ref_eq.set_physical(-4, 5, 2500, 3, true);
+    const WavData want_eq = through(base, [&](velora::core::StereoBlock& b) { ref_eq.process(b); });
+    CHECK(max_diff(eq, want_eq) < 2e-6 && max_diff(eq, base) > 1e-3);
+
+    RenderOptions c;
+    c.routing.enabled = true;
+    c.routing.master_comp = {-30, 3, 5, 150, 2, false};
+    const WavData comp = render(ev, c);
+    velora::core::CompressorEffect ref_comp;
+    ref_comp.set_physical(-30, 3, 5, 150, 2, true);
+    const WavData want_comp = through(base, [&](velora::core::StereoBlock& b) { ref_comp.process(b); });
+    CHECK(max_diff(comp, want_comp) < 2e-6 && max_diff(comp, base) > 1e-3);
+
+    o.routing.master_comp = c.routing.master_comp;
+    const WavData both = render(ev, o);
+    velora::core::EqEffect e2;
+    velora::core::CompressorEffect c2;
+    e2.set_physical(-4, 5, 2500, 3, true);
+    c2.set_physical(-30, 3, 5, 150, 2, true);
+    const WavData want_both = through(base, [&](velora::core::StereoBlock& b) { e2.process(b); c2.process(b); });
+    CHECK(max_diff(both, want_both) < 2e-6);
+    // each stage has its own bypass: bypassing the EQ leaves the compressor alone and vice versa
+    RenderOptions only_comp = o;
+    only_comp.routing.master_eq.bypass = true;
+    CHECK(max_diff(render(ev, only_comp), want_comp) < 2e-6);
+    RenderOptions only_eq = o;
+    only_eq.routing.master_comp.bypass = true;
+    CHECK(max_diff(render(ev, only_eq), want_eq) < 2e-6);
+  }
+  // Insert EQ / compressor on part 0: the other parts are untouched (Main = fx(part 0) + parts 1, 2)
+  {
+    const WavData p0 = render(notes({{0, 60}}), RenderOptions{}), p12 = render(notes({{1, 64}, {2, 67}}), RenderOptions{});
+    RenderOptions o;
+    o.routing.enabled = true;
+    RoutingOptions::Insert e, c;
+    e.type = 4;
+    e.has_params = true;
+    e.params = {0.9f, 0.2f, 0.6f, 0.8f, 0.0f};
+    c.type = 5;
+    c.has_params = true;
+    c.params = {0.2f, 0.6f, 0.3f, 0.4f, 0.15f};
+    o.routing.inserts[0] = {e, c};
+    const WavData got = render(ev, o);
+    velora::core::EqEffect ie;
+    velora::core::CompressorEffect ic;
+    ie.set_params(e.params);
+    ic.set_params(c.params);
+    WavData fx0 = through(p0, [&](velora::core::StereoBlock& b) { ie.process(b); ic.process(b); });
+    const WavData want = mix({{1.0f, &fx0}, {1.0f, &p12}});
+    CHECK(max_diff(got, want) < 2e-6 && max_diff(got, base) > 1e-3);
+    // a bypassed slot does nothing
+    o.routing.inserts[0][0].bypass = true;
+    o.routing.inserts[0][1].bypass = true;
+    CHECK(max_diff(render(ev, o), base) < 2e-6);
   }
 }
 
@@ -260,6 +367,7 @@ static void test_cli() {
 int main() {
   test_assignment_sends_master();
   test_line_in();
+  test_master_and_insert_effects();
   test_channel_limit();
 #ifdef OFFLINE_RENDER_EXE
   test_cli();

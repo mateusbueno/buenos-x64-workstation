@@ -42,7 +42,11 @@ static void test_registry() {
   CHECK(find(kInsertType)->cls == Class::kStructural && find(kMasterEqLowGain)->scope == Scope::kMaster);
   CHECK(find_by_cc(70) == find(kDrawbar16));
   CHECK(find_by_cc(64) == nullptr);
-  CHECK(kPartCount == 8 && kInsertSlotCount == 5);
+  CHECK(kPartCount == 8 && kInsertSlotCount == 5 && kInsertParamCount == 5);
+  CHECK(find(kMasterEqBypass) && find(kMasterEqBypass)->cls == Class::kStructural && find(kMasterEqBypass)->scope == Scope::kMaster &&
+        find(kMasterEqBypass)->type == Type::kBool && find(kMasterEqBypass)->def == 0.0);
+  CHECK(find(kMasterCompBypass) && find(kMasterCompBypass)->master_index >= 0 && find(kMasterCompBypass)->def == 0.0);
+  CHECK(find(kInsertParam5) && find(kInsertParam5)->id == kInsertParam1 + 4);
 }
 
 static void test_event_mapping() {

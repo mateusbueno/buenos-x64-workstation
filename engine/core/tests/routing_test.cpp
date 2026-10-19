@@ -311,7 +311,11 @@ void test_default_path_bit_exact() {
   Snapshot s = Snapshot::defaults();
   for (std::uint32_t p = 0; p < 4; ++p) {
     s.parts[p].insert_count = 5;
-    for (std::uint32_t i = 0; i < 5; ++i) s.parts[p].inserts[i].type = static_cast<std::uint8_t>(1 + (p + i) % 5);
+    for (std::uint32_t i = 0; i < 5; ++i) {
+      s.parts[p].inserts[i].type = static_cast<std::uint8_t>(1 + (p + i) % 5);
+      // EQ at the default (0 dB) is exactly transparent; the compressor needs ratio 1 and no makeup to be (Story 2.8).
+      s.parts[p].inserts[i].params[1] = s.parts[p].inserts[i].type == params::kInsertTypeCompressor ? 0.0f : 0.5f;
+    }
   }
   build_chains(s);
   rig.publish(s);
@@ -799,7 +803,9 @@ void test_effect_factory() {
     for (int i = 0; i < 64; ++i) l[i] = r[i] = 0.01f * static_cast<float>(i);
     StereoBlock b{l, r, 64};
     fx->process(b);
-    CHECK(l[63] == 0.01f * 63.0f && r[10] == 0.01f * 10.0f);  // placeholders pass the signal through
+    // placeholders and the EQ at its default (0 dB on every band) pass the signal through bit for bit; the compressor at its default
+    // setting (threshold -30 dB, ratio 4.5:1) works on it (Story 2.8: the real DSP is tested in eq_compressor_tests)
+    if (t != params::kInsertTypeCompressor) CHECK(l[63] == 0.01f * 63.0f && r[10] == 0.01f * 10.0f);
   }
   const std::int64_t n0 = Effect::live_instances();
   { auto fx = make_effect(EffectType::kEq); CHECK(Effect::live_instances() == n0 + 1); }

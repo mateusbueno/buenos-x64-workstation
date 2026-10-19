@@ -200,7 +200,7 @@ part bus --> insert chain (<= 5 slots) --> post-insert signal
   --> Reverb send (x send_reverb_level) --> Reverb return (placeholder, unity) --> the same bus (Main or Aux) as the part
   --> Delay  send (x send_delay_level)  --> Delay return  (placeholder, unity) --> the same bus as the part
 line-in (x line_in_level) --> Main only
-Main, Aux --> master section per bus (EQ, compressor: placeholders until 2.8; master_level trim) --> outputs
+Main, Aux --> master section per bus (master EQ, then master compressor, each with its own bypass; Story 2.8; then the master_level trim) --> outputs
 ```
 
 Decisions: a part's send returns go to the bus the part sits on, so an Aux part's reverb never leaks into Main. The Mixer keeps one send accumulator and one send placeholder per output bus; the real
@@ -220,9 +220,10 @@ inactive and the engines render into the output exactly as before this story: th
 Any non-trivial routing switches to the part-bus path (sums in part order, so the audio differs from the direct sum only by float rounding, ~1e-7).
 
 **Effects (`fx.hpp`).** `Effect` (`type()`, `cost_units()`, `prepare()`, `reset()`, `set_params()` and the RT `process(StereoBlock&)`), `make_effect()` (control thread only; the only factory,
-types are the registry `insert_type` list: no plugin loading) and `FxChain` (<= 5 slots, bypass flag each). Every type is a `PassThroughEffect` placeholder until Stories 2.8-2.11; the rotary insert is a
+types are the registry `insert_type` list: no plugin loading) and `FxChain` (<= 5 slots, bypass flag each). The EQ and the compressor are real DSP since Story 2.8 (below); the chorus/phaser, EP amp and rotary inserts are `PassThroughEffect` placeholders until Stories 2.9-2.11; the rotary insert is a
 pass-through too (the organ's built-in rotary stage, Story 2.6, is unchanged; the insert becomes a `RotarySpeaker` in Story 2.9). Declared costs (`effect_cost_units()`, `kReverbSendCost`, `kDelaySendCost`,
-`kMasterEqCost`, `kMasterCompCost`) are placeholders until measured on the board (2.12).
+`kMasterEqCost`, `kMasterCompCost`) are placeholders until measured on the board (2.12); the EQ (16 units, three active bands, ~1.0 us per block on the dev Mac) and the compressor (8 units, ~0.5 us per block with signal above the
+threshold) were re-based on host measurements in Story 2.8 (`eq_compressor_tests` prints them). Raising the EQ from 6 to 16 units raises `kFixedFxCost` by 20 and each EQ insert by 10, so a Live Set that fitted a tight FX budget before can now be refused with `FX_BUDGET_EXCEEDED`.
 
 **Chain changes.** The control thread builds the part's `FxChain` (new, prepared instances) when it builds the snapshot generation (`build_chain()`; `PartCfg::chain`, shared by generations that do not touch the part,
 so an unchanged chain keeps its instances and RT does not cross-fade). RT adopts the generation, starts the new chain fading in linearly over 240 frames (5 ms) while the old one fades out (weights always sum to 1: no dip, no
@@ -240,3 +241,54 @@ Tests: `routing_tests` (bus summation, Main/Aux, sends, master level, line-in to
 generation lifetime of the instances with a held note, FX budget and reservation order, default path bit-exact), `routing_traffic_test` / `rtsan_routing_test` (10,000 blocks with a chain change every 3 blocks,
 part output switches, send and line-in changes; allocation-free under RTSan, deterministic: two runs hash equal), an organ per-part split check inside `routing_tests`; offline null tests in `tools/offline-render`
 (`offline_routing_tests`); control plane tests in `engine/host` (`control_tests`).
+
+## EQ and compressor, inserts and master section (Story 2.8)
+
+`eq.hpp`/`eq.cpp` (`EqEffect`) and `compressor.hpp`/`compressor.cpp` (`CompressorEffect`) are the real `eq` and `compressor` effects: `make_effect()` returns them, and the Mixer owns one of each per output bus (Main, Aux) as the
+master section. Fixed storage, no allocation in `process()`, stereo-linked where it matters (the EQ filters the channels independently with the same coefficients, the compressor detects on `max(|L|, |R|)`).
+
+**Parameter mapping (the one table).** Insert parameters are the normalised registry params `insert_param_1..5` (id 302-306, 0..1; `insert_param_5` is new in Story 2.8, default 0); the master section uses the physical
+`master_*` registry parameters (units in the registry). The four EQ controls are the encoder functions LOW, MID, MID FREQ, HIGH of the panel.
+
+| effect | insert param | physical mapping | master registry param (id, unit) |
+|---|---|---|---|
+| EQ | 1 LOW | low shelf gain, -15..+15 dB linear (0.5 = 0 dB) | `master_eq_low_gain` (500, dB) |
+| EQ | 2 MID | mid peak gain, -15..+15 dB linear (0.5 = 0 dB) | `master_eq_mid_gain` (501, dB) |
+| EQ | 3 MID FREQ | mid frequency, 200..8000 Hz logarithmic (0.5 = 1265 Hz) | `master_eq_mid_freq` (502, Hz; default 1000) |
+| EQ | 4 HIGH | high shelf gain, -15..+15 dB linear (0.5 = 0 dB) | `master_eq_high_gain` (503, dB) |
+| EQ | - | master bypass | `master_eq_bypass` (504, flag, new) |
+| compressor | 1 THRESHOLD | -60..0 dB linear (0.5 = -30 dB) | `master_comp_threshold` (510, dB; default -12) |
+| compressor | 2 RATIO | 1..20 : 1, `20^p` (0 = 1:1, 0.5 = 4.5:1) | `master_comp_ratio` (511, ratio; default 1) |
+| compressor | 3 ATTACK | 0.1..100 ms logarithmic (0.5 = 3.2 ms) | `master_comp_attack` (512, ms; default 10) |
+| compressor | 4 RELEASE | 10..1000 ms logarithmic (0.5 = 100 ms) | `master_comp_release` (513, ms; default 100) |
+| compressor | 5 MAKEUP | 0..24 dB linear (default 0 = 0 dB) | `master_comp_makeup` (514, dB; default 0) |
+| compressor | - | master bypass | `master_comp_bypass` (515, flag, new) |
+
+The ids are unchanged; `insert_param_5`, `master_eq_bypass` and `master_comp_bypass` are additive (structural, registry defaults 0). The registry defaults of the master section are exactly transparent (EQ 0 dB, compressor ratio 1 with no makeup).
+The default insert parameters (0.5, 0.5, 0.5, 0.5, 0) make an EQ flat (transparent) and a compressor work (-30 dB, 4.5:1).
+
+**EQ DSP.** Low shelf at 100 Hz, mid peak (Q = 1) at the Mid freq, high shelf at 4 kHz, designed at the fixed 48 kHz, transposed direct form II in double precision. The shelves are the public RBJ Audio-EQ-Cookbook biquads (S = 1,
+bilinear, pre-warped at the corner); the peak is the analog RBJ prototype realised with M. Vicanek's matched-magnitude design (the RBJ bilinear peak is pulled down far above a high centre, up to 2.8 dB at 8 kHz). The targets are approached by a
+one-pole per block (about 10 ms) and the coefficients are recomputed once per block while something moves. A band at exactly 0 dB is skipped and its state cleared, so a flat EQ is bit-exact transparent.
+**Design curve** = the magnitude of the ANALOG RBJ prototype `H(s)` (s normalised to the corner / centre frequency) at the real frequency. `eq_compressor_tests` compares the biquads with it, from the coefficients and with sine measurements through
+`process()`, over 20 Hz..20 kHz (20, 31.5, 63, 100, 125, 250, 500 Hz, 1, 2, 3, 4, 6, 8, 10, 12, 16, 20 kHz) for gains +-15 and +-6 dB and the mid frequencies 200, 500, 1000, 2000, 3000, 4000, 6000, 8000 Hz, with no restricted range:
+within +-0.5 dB up to 16 kHz and within 1 dB at 20 kHz (0.42 x fs); the shelves stay within 0.29 dB everywhere.
+Defaults differ on purpose in one place: the insert MID FREQ value 0.5 is the geometric middle of 200..8000 Hz (1265 Hz), the master default `master_eq_mid_freq` is 1000 Hz (both are pinned by a test; the EQ is flat at either).
+
+**Compressor DSP.** Feed-forward, per sample: peak detector `x = max(|L|, |R|)`, `x_dB`, hard-knee static curve (`target = -(x_dB - threshold) (1 - 1/ratio)` above the threshold), then a log-domain branching one-pole smoother on the
+gain change `g` (attack coefficient when more reduction is needed, release otherwise; `c = exp(-1/(t fs))`), output `in * 10^((g + makeup)/20)`. Attack and release are time constants: with the input stepped to a level that needs a final reduction
+G, `GR(t) = G (1 - e^(-t/attack))` and the release falls to `1/e` of its start after `release` ms, i.e. the times are the 63.2 % / 36.8 % points; the unit test measures both on a DC step within 10 % (it finds < 1 %).
+Makeup ramps linearly over a block when it changes; threshold, ratio, attack and release apply at once (the gain smoother makes any jump click-free). Ratio 1 with makeup 0 dB and a settled reduction of 0 is the identity: bit-exact, not processed.
+Non-finite input samples are ignored by the detector and the EQ states, so a NaN cannot poison them.
+
+**Master section.** After the send returns and the line-in, per bus: master EQ, then master compressor, then the `master_level` trim. The `master_*` values of the adopted snapshot drive both buses (same settings, separate state);
+a structural change reaches RT with the next generation and the EQ/compressor smoothing makes it click-free. `master_eq_bypass` / `master_comp_bypass` cross-fade the stage out and in over 240 frames (5 ms; dry/wet mix, no click);
+a fully bypassed stage does not run and its state is cleared (a bypass flag value >= 0.5 bypasses; 0, anything below 0.5 and NaN do not). A bypassed insert slot is reset by its chain so stale state cannot step in when it is un-bypassed. A stage that is bypassed or at identity settings counts as trivial: with nothing else routed the Mixer stays inactive and the render is bit-identical to the default path.
+
+**Gain reduction.** Each compressor stores its last-block reduction (dB, >= 0, `Effect::gain_reduction_db()`). The Mixer copies it once per block into the RT last-value table (`LastValueTable::load_gain_reduction(slot)`;
+`gr_insert_slot(part, slot)`, `gr_master_slot(bus)`; the largest value of the chains still audible in the slot, a chain fading out included; 0 for a bypassed or empty slot, and zeros while the routing is trivial). The control thread reads it lock-free: `ws.v1` `GetPerformanceValues` returns, additively,
+`PerformanceValues.gain_reductions` (`GainReduction{scope, part, slot, gain_reduction_db}`) for every insert slot that holds a compressor in the current snapshot and for the two master compressors.
+
+Tests: `eq_compressor_tests` (mapping, design curve, sine sweep, identity, smoothing step bound, static curve, attack/release times, stereo link, makeup, master order EQ -> compressor against a reference, master and insert bypass cross-fade step
+bound and exact return, identity bit-exact, published gain reduction, host cost print), `routing_traffic_test` / `rtsan_routing_test` (insert and master EQ/compressor settings and both bypass flags change with every generation for 10,000 blocks, gain reduction checked), `control_tests`
+(gain reduction over ws.v1), offline null tests in `tools/offline-render` (`fx_eq_*`, `fx_compressor_*` goldens; `offline_routing_tests`).

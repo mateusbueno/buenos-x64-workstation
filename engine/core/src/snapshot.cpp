@@ -54,6 +54,7 @@ std::uint64_t fx_cost_units(const Snapshot& s) noexcept {
 
 LastValueTable::LastValueTable() noexcept {
   for (auto& a : v_) a.store(0, std::memory_order_relaxed);
+  for (auto& a : gr_) a.store(0, std::memory_order_relaxed);
   for (const params::ParamDef& d : params::kParams) {
     if (d.cls != params::Class::kPerformance) continue;
     const float def = static_cast<float>(d.def);
