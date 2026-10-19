@@ -113,8 +113,38 @@ class VoiceArbiter final : public VoiceAllocator {
   // (and in clear_reservation()) the event state (key/pedal/deferred note offs), the serial and all
   // counters are reset; voices that are already sounding keep sounding and are simply no longer tracked
   // as held/pedal-sustained until new events arrive.
+  // Quiesced only: no audio may render while this runs.
   ReserveStatus reserve(const LiveSetConfig& cfg) noexcept;
+
+  // --- seamless handover (Story 4.5) ----------------------------------------------------------------------
+  // reserve() split in two so a Live Set can be switched while audio renders. prepare_reservation() is the validate-and-compute
+  // half: it checks `cfg` exactly as reserve() does (same ReserveStatus, same order) and fills `out`, and changes NOTHING in the
+  // arbiter, so any thread may run it while the RT thread renders (it reads only what bind() fixed: the engine table, capacities
+  // and costs). commit_prepared() is the cheap half, run by the RT plane in the serial phase when it adopts the generation that
+  // carries `out` (bounded copy of plain data, no allocation, lock or blocking): it installs the new budget, floors and steal
+  // ramp and leaves the event state alone (held keys, pedal, deferred releases, the note serial, counters).
+  //
+  // Accounting rule for the overlap. The voices that sound at the commit keep their engine slots and are counted exactly as before,
+  // by the slot scan (live voices at their engine's cost, fading ones as fading); nothing is released, restarted, double counted
+  // or forgotten. From the commit on, the NEW budget, FX/organ reservation and floors judge every admission: an old voice is a
+  // voice of its engine like any other, so it counts against that engine's new floor (an engine whose new floor is zero, because
+  // the new Live Set has no part of that type, sees its old voices as shared usage) and against the new shared remainder, until it
+  // is silent. If the old voices alone exceed the new budget, new notes that need room steal by the usual victim order (releasing
+  // tails first, then held, ...), exactly as under one reservation; nothing is cut at the swap itself. The new floors and the
+  // organ protection apply to NEW notes only: a voice is protected or a victim by its engine's rules at the moment of each steal.
+  struct PreparedReservation {
+    bool valid = false;
+    LiveSetConfig cfg{};
+    Reservation res{};
+    std::array<std::uint64_t, kMaxEngines> floor_cost{};
+    std::uint32_t ramp = kStealRampFrames;
+  };
+  ReserveStatus prepare_reservation(const LiveSetConfig& cfg, PreparedReservation& out) const noexcept;
+  void commit_prepared(const PreparedReservation& prepared) noexcept VELORA_NONBLOCKING;
   void clear_reservation() noexcept;  // back to the unreserved mode
+  // reserved() / reservation() / config() / floor_cost() are plain reads of state that commit_prepared() rewrites on the RT thread: they are
+  // QUIESCED-ONLY diagnostics (set-up, the quiesced load, tests between renders). Once audio renders and Live Sets are switched seamlessly,
+  // read the reservation from the published Snapshot (Snapshot::reservation) instead; a read concurrent with a commit can be torn.
   bool reserved() const noexcept { return reserved_; }
   const Reservation& reservation() const noexcept { return res_; }
   // The configuration the active reservation was made with (meaningful while reserved()): the Live Set loader snapshots it before it

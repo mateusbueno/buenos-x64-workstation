@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -40,6 +41,11 @@ class ControlServer {
   bool start(std::string& err);
   void stop();  // joins the thread and removes the socket file
   const std::string& path() const noexcept { return path_; }
+
+  // The control tick (Story 4.5): `f` runs on the server thread on every iteration of its poll loop (at least every 20 ms), after the clients
+  // were served and before generations are reclaimed. When it returns true the current State is pushed to the subscribers (the Live Set
+  // switcher uses it to publish the loading status and to commit a finished background load). Set it before start().
+  void set_tick(std::function<bool()> f) { tick_ = std::move(f); }
 
   std::uint64_t accepted() const noexcept { return accepted_.load(std::memory_order_relaxed); }
   std::uint64_t dropped_slow() const noexcept { return dropped_slow_.load(std::memory_order_relaxed); }
@@ -69,6 +75,7 @@ class ControlServer {
   std::thread thread_;
   std::atomic<bool> stop_{false};
   std::vector<Client> clients_;
+  std::function<bool()> tick_;
   std::atomic<std::uint64_t> accepted_{0}, frames_in_{0}, dropped_slow_{0};
 };
 

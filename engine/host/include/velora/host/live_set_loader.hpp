@@ -16,15 +16,19 @@
 // prepared bank (core::SampleBank). The Live Set's master list and tempo become the generation's master / tempo values. Scenes and the
 // ASSIGN map are NOT part of the generation (scenes are recalled by SceneController, Story 4.4; ASSIGN is Story 4.10).
 //
-// Threading: control thread only (it allocates and reads files). The voice arbiter's reservation is applied with VoiceArbiter::reserve(),
-// which by contract runs while the audio callback is not rendering: load a Live Set at start-up, or between renders in tests. Rendering
-// while a load is in flight is for Story 4.5 (background load + seamless handover); until then the swap point is the caller's quiet moment.
+// Threading: load() / load_file() are control thread only (they allocate and read files). The voice arbiter's reservation is applied with
+// VoiceArbiter::reserve(), which by contract runs while the audio callback is not rendering: load a Live Set at start-up, or between renders
+// in tests. Story 4.5 splits the load in two halves so a Live Set can be switched while audio renders (see LiveSetSwitcher): stage() does all
+// the slow work (resolve, bring heads resident, build the generation and the reservation config) and touches neither the plane nor the
+// arbiter, so it may run on a background worker thread; commit_seamless() runs on the control thread, prepares the reservation (validation
+// and costs) and publishes the generation with it, and RT commits the reservation when it adopts the generation (Snapshot::reservation).
 //
 // Heads and streaming (Stories 1.16 / 1.17, board work) are not in this story. The seam is HeadProvider: it turns a resolved instrument
 // into a RESIDENT instrument. RamHeadProvider (the Mac path, and the only one here) decodes every sample whole into RAM through
 // sample_bundle_loader. A head-and-stream provider will implement the same interface and return the instrument with its heads resident;
 // the loader never looks past "resident or not".
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -44,19 +48,29 @@
 
 namespace velora::host {
 
-// Brings a resolved instrument resident. Implementations may be slow (file I/O): control / I-O threads only.
+// Brings a resolved instrument resident. Implementations may be slow (file I/O): control / I-O threads only (never RT). A provider is used by
+// ONE thread at a time (the control thread for load(), the switcher's worker for a background load).
 class HeadProvider {
  public:
   virtual ~HeadProvider() = default;
   // kOk with `out` set (every sample of the instrument resident), or a typed failure with `out` untouched.
   virtual LoadStatus load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) = 0;
+  // Story 4.5: the same, cancellable and with progress (see LoadHooks). A cancelled load returns kCancelled with `out` untouched and nothing
+  // left resident. The default calls load() after one cancel check and reports the finished size once; slow providers override it and
+  // check the hooks between reads.
+  virtual LoadStatus load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks);
+  // Story 4.5: how many bytes load() will make resident, from the bundle index only (no sample data read), so a target that cannot fit
+  // the head budget is refused before anything is loaded. The default is instrument_head_bytes().
+  virtual std::uint64_t estimate_bytes(const ResolveResult& resolved) const;
 };
 
 // The Mac path: whole instruments in RAM (load_instrument_by_index). A sample that fails to decode makes the load fail (kBundleInconsistent):
-// a part with holes in its instrument is not "resident".
+// a part with holes in its instrument is not "resident". The returned instrument keeps the opened bundle (its file descriptor, the BundleLease)
+// alive: the lease is released when the last generation that holds the instrument is freed.
 class RamHeadProvider final : public HeadProvider {
  public:
   LoadStatus load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) override;
+  LoadStatus load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) override;
 };
 
 enum class LiveSetLoadStatus : std::uint8_t {
@@ -70,6 +84,8 @@ enum class LiveSetLoadStatus : std::uint8_t {
   kNotQuiesced,           // the audio callback is rendering (LiveSetLoaderOptions::is_rendering): nothing was touched
   kBusy,                  // no free snapshot ledger slot (too many generations still referenced by sounding voices): nothing published
   kInternal,
+  kHeadBudgetExceeded,    // Story 4.5: the target's heads do not fit StageControl::head_budget_bytes (see head_bytes / head_budget): nothing loaded or kept
+  kCancelled,             // Story 4.5: StageControl::cancel was set; everything made resident so far was released
 };
 const char* to_string(LiveSetLoadStatus s);
 
@@ -91,6 +107,8 @@ struct LiveSetLoadResult {
   core::VoiceArbiter::ReserveStatus reserve_status = core::VoiceArbiter::ReserveStatus::kOk;  // kArbiterRejected
   std::uint64_t revision = 0;                        // kOk: the generation published
   std::size_t resident_bytes = 0;                    // kOk: total PCM resident
+  std::uint64_t head_bytes = 0;                      // kHeadBudgetExceeded: the bytes the target needs (the estimate, or what was loaded when the guard tripped)
+  std::uint64_t head_budget = 0;                     // kHeadBudgetExceeded: the budget
   std::string detail;
   bool ok() const { return status == LiveSetLoadStatus::kOk; }
 };
@@ -111,6 +129,26 @@ struct LiveSetLoaderOptions {
   SceneController* scenes = nullptr;
 };
 
+// What stage() can be told (Story 4.5). All optional.
+struct StageProgress {
+  std::uint64_t bytes_done = 0, bytes_total = 0;  // decoded PCM made resident so far / the target's total (shared instruments once)
+  std::uint32_t instruments_done = 0, instruments_total = 0;
+};
+struct StageControl {
+  const std::atomic<bool>* cancel = nullptr;  // set from any thread: the stage stops (kCancelled) at the next check and frees what it loaded
+  std::uint64_t head_budget_bytes = 0;        // 0 = unlimited; else a target needing more is refused early (kHeadBudgetExceeded) and guarded while loading
+  std::function<void(const StageProgress&)> progress;  // on the staging thread, after the sizes are known and then after every chunk of samples
+};
+
+// A Live Set made ready for publication: every instrument resident, the generation built, the reservation config computed. Produced by
+// stage(), consumed by commit_seamless(). Holds the resident heads until it is committed or destroyed (destroying it frees them).
+struct StagedLiveSet {
+  liveset::lsp::LiveSet live_set;
+  core::Snapshot snapshot;                        // complete except scene_source, reservation, ledger index and revision (set at commit)
+  core::VoiceArbiter::LiveSetConfig reservation;  // the Live Set's voice-pool configuration
+  LiveSetLoadResult result;                       // status kOk, the per-part reports and resident_bytes
+};
+
 class LiveSetLoader {
  public:
   // `sample` (optional): the sample engine bound to `renderer`, whose configuration the per-part banks are prepared for. Without it a
@@ -123,15 +161,34 @@ class LiveSetLoader {
   // Reads, validates and loads the Live Set file at `path`.
   LiveSetLoadResult load_file(const std::string& path);
 
+  // --- seamless switching (Story 4.5) ---------------------------------------------------------------------------------------------
+  // stage(): validates `live_set`, resolves every part's timbre, estimates the heads from bundle index metadata (refusing early when they
+  // exceed ctl.head_budget_bytes), brings every instrument resident (cancellable, with progress, guarded against the budget), builds the
+  // generation and the reservation configuration. Changes nothing of the engine: no plane, arbiter or scene controller access. Thread-safe
+  // against the control and RT threads, so it can run on a worker thread; it must not run concurrently with another stage() or load() on
+  // the same loader (the HeadProvider is used by one thread at a time). On success `out` holds the staged Live Set and the status is kOk.
+  LiveSetLoadResult stage(const liveset::lsp::LiveSet& live_set, const StageControl& ctl, std::unique_ptr<StagedLiveSet>& out) const;
+  // Control thread only, audio MAY be rendering. Prepares the reservation (VoiceArbiter::prepare_reservation: nothing in the arbiter
+  // changes), checks the FX budget and the ledger, and publishes the staged generation carrying the reservation; RT applies it when it
+  // adopts the generation. All or nothing: on any failure nothing is published and the current generation keeps playing untouched.
+  // `staged` is left intact on failure (the caller may retry, e.g. after kBusy) and may be destroyed after a success (the generation shares
+  // the banks and effect chains; the staged copy only drops its references).
+  LiveSetLoadResult commit_seamless(StagedLiveSet& staged);
+  // Id and name of the Live Set whose generation was published last (by load() or commit_seamless()); empty before the first.
+  const std::string& loaded_id() const { return loaded_id_; }
+  const std::string& loaded_name() const { return loaded_name_; }
+
   const LiveSetLoaderOptions& options() const { return options_; }
 
  private:
+  LiveSetLoadResult commit_quiesced(StagedLiveSet& staged, SceneController::LoadScope& scope);
   core::BlockRenderer& renderer_;
   ControlPlane& plane_;
   const LibraryResolver& resolver_;
   HeadProvider& heads_;
   const core::SampleEngine* sample_;
   LiveSetLoaderOptions options_;
+  std::string loaded_id_, loaded_name_;
 };
 
 }  // namespace velora::host

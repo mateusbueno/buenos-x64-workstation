@@ -68,11 +68,25 @@ void BlockRenderer::adopt_generation() noexcept {
   if (in_live_set_ && !next->live_set) leave_live_set(remapped);
   router_.configure(*next);
   if (next->live_set) adopt_live_set_parts(*next, remapped);
+  // Seamless Live Set switch (Story 4.5): the reservation prepared by the control thread takes effect at this very generation. Sounding
+  // voices keep their slots and costs (VoiceArbiter::commit_prepared documents the accounting); the keyboard-pedal state is not reset.
+  const bool live_set_switch = next->reservation_epoch != 0 && next->reservation_epoch != applied_reservation_epoch_;
+  if (live_set_switch) {
+    arbiter_.commit_prepared(next->reservation);
+    applied_reservation_epoch_ = next->reservation_epoch;
+    // The pedal is a keyboard event, not a part event: a pedal that is physically down when the new Live Set takes over must also hold the
+    // new notes of the parts that listen to the keyboard (their pedal flag may have been unset under the old part layout).
+    if (next->live_set && keyboard_pedal_down_)
+      for (std::uint32_t p = 0; p < params::kPartCount; ++p)
+        if (router_.pedal_down_target(p)) arbiter_.set_sustain(p, true);
+  }
   std::array<bool, params::kPerfSlotCount> changed{};
   // A scene recall (new program_generation) also re-applies the slots it stores, once, whatever the previous generation held.
   const bool program_change = applied_valid_ && next->program_generation != applied_program_generation_;
   for (std::size_t i = 0; i < params::kPerfSlotCount; ++i) {
-    changed[i] = !applied_valid_ || next->perf_init[i] != applied_init_[i] || (program_change && next->perf_force[i] != 0);
+    // A Live Set switch is a program change: every performance slot takes the new Live Set's initial value, so a knob the player moved live
+    // under the old Live Set never leaks into the new one (scene recalls keep their own forced-slot mechanism).
+    changed[i] = !applied_valid_ || live_set_switch || next->perf_init[i] != applied_init_[i] || (program_change && next->perf_force[i] != 0);
     if (changed[i]) last_.store(i, next->perf_init[i]);
     applied_init_[i] = next->perf_init[i];
   }
@@ -103,6 +117,7 @@ void BlockRenderer::leave_live_set(std::array<bool, params::kPartCount>& remappe
     channel_engine_[p] = legacy_engine_[p];
   }
   in_live_set_ = false;
+  keyboard_pedal_down_ = false;  // the plain path owns the pedal again (its own events set it)
 }
 
 void BlockRenderer::adopt_live_set_parts(const Snapshot& s, std::array<bool, params::kPartCount>& remapped) noexcept {
@@ -189,6 +204,7 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
       apply_keyboard_sustain(down);
       return;
     }
+    keyboard_pedal_down_ = down;  // kept in step on every pedal path, so a switch sees the physical pedal
     arbiter_.set_sustain(ump.channel(), down);
     if (!down) release_deferred(ump.channel());
     return;
@@ -267,6 +283,7 @@ void BlockRenderer::apply_keyboard_note(const Ump& ump) noexcept {
 
 // Sustain pedal in a Live Set: down reaches the parts with the keyboard on, up reaches every part (and lets its deferred releases go).
 void BlockRenderer::apply_keyboard_sustain(bool down) noexcept {
+  keyboard_pedal_down_ = down;
   for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
     if (down) {
       if (router_.pedal_down_target(p)) arbiter_.set_sustain(p, true);

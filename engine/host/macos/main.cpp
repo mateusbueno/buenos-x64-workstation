@@ -14,6 +14,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "coreaudio_line_in.hpp"
 #include "coreaudio_output.hpp"
@@ -29,6 +30,7 @@
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/live_set_loader.hpp"
+#include "velora/host/live_set_switcher.hpp"
 #include "velora/host/midi_ingest.hpp"
 #include "velora/host/render_driver.hpp"
 #include "velora/host/scene_controller.hpp"
@@ -40,11 +42,12 @@ void on_signal(int) { g_quit.store(true); }
 
 int main(int argc, char** argv) {
   using namespace velora;
+  std::setvbuf(stdout, nullptr, _IOLBF, 0);  // progress lines reach a log file or a pipe as they happen (the smoke tests read them)
   double duration_s = 0;  // 0 = run until q / SIGINT
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
-  bool want_line_in = false;
-  std::string live_set_path, library_root;
+  bool want_line_in = false, no_audio = false;
+  std::string live_set_path, library_root, live_set_dir;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--duration") && i + 1 < argc) {
       const char* arg = argv[++i];
@@ -60,20 +63,50 @@ int main(int argc, char** argv) {
       config_path = argv[++i];
     } else if (!std::strcmp(argv[i], "--line-in")) {
       want_line_in = true;
+    } else if (!std::strcmp(argv[i], "--no-audio")) {
+      no_audio = true;  // dev/test only: control plane, switcher and server without CoreAudio / CoreMIDI (the render driver never runs)
     } else if (!std::strcmp(argv[i], "--live-set") && i + 1 < argc) {
       live_set_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--live-set-dir") && i + 1 < argc) {
+      live_set_dir = argv[++i];
     } else if (!std::strcmp(argv[i], "--library-root") && i + 1 < argc) {
       library_root = argv[++i];
     } else {
       std::fprintf(stderr,
-                   "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in]\n"
-                   "                   [--live-set FILE --library-root DIR]   (load a Live Set at start; its parts play from the keyboard by zone)\n");
+                   "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in] [--no-audio (dev/test only)]\n"
+                   "                   [--live-set FILE --library-root DIR]   (load a Live Set at start; its parts play from the keyboard by zone)\n"
+                   "                   [--live-set-dir DIR --library-root DIR]   (the Live Sets of a directory (<id>.liveset) that ws.v1 JumpToLiveSet can switch to,\n"
+                   "                                                              seamlessly, loading in the background; without --live-set the first by name loads at start)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
-  if (live_set_path.empty() != library_root.empty()) {
-    std::fprintf(stderr, "engine-host: --live-set and --library-root go together\n");
+  if ((live_set_path.empty() && live_set_dir.empty()) != library_root.empty()) {
+    std::fprintf(stderr, "engine-host: --live-set / --live-set-dir and --library-root go together\n");
     return 2;
+  }
+  // Story 4.5: the Live Sets that can be switched to. Listing the directory reads each file; invalid ones are reported and left out.
+  std::vector<host::CatalogEntry> catalog;
+  if (!live_set_dir.empty()) {
+    std::vector<std::string> problems;
+    catalog = host::scan_live_set_dir(live_set_dir, host::liveset::kV1PartCount, &problems);
+    for (const std::string& pr : problems) std::fprintf(stderr, "engine-host: live set directory: skipped %s\n", pr.c_str());
+    std::printf("live set directory %s: %zu Live Set(s)\n", live_set_dir.c_str(), catalog.size());
+    if (!live_set_path.empty()) {  // the Live Set we start with is always one a jump can come back to
+      host::CatalogEntry e;
+      std::string cerr2;
+      if (host::catalog_entry_for_file(live_set_path, host::liveset::kV1PartCount, e, cerr2)) {
+        bool known = false;
+        for (const host::CatalogEntry& c : catalog) known = known || c.id == e.id;
+        if (!known) catalog.push_back(std::move(e));
+      }
+    }
+    if (live_set_path.empty()) {
+      if (catalog.empty()) {
+        std::fprintf(stderr, "engine-host: %s holds no Live Set to start with\n", live_set_dir.c_str());
+        return 1;
+      }
+      live_set_path = catalog.front().path;  // the first by name
+    }
   }
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
@@ -106,6 +139,8 @@ int main(int argc, char** argv) {
   host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);
   host::RamHeadProvider heads;
   std::unique_ptr<host::SceneController> scenes;  // Story 4.4: ws.v1 RecallScene / NextScene / PreviousScene; destroyed before the plane
+  std::unique_ptr<host::LiveSetLoader> loader;     // kept for the run: the switcher commits through it
+  std::unique_ptr<host::LiveSetSwitcher> switcher; // Story 4.5: ws.v1 JumpToLiveSet / CancelLoad; destroyed before the loader and the plane
   std::atomic<bool> audio_running{false};  // set once the audio stream starts; the loader refuses to run while it is true
   if (!live_set_path.empty()) {
     if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ)) {
@@ -118,8 +153,8 @@ int main(int argc, char** argv) {
     lopt.is_rendering = [&audio_running] { return audio_running.load(); };
     scenes = std::make_unique<host::SceneController>(plane);
     lopt.scenes = scenes.get();
-    host::LiveSetLoader loader(*renderer, plane, resolver, heads, &sample, lopt);
-    const host::LiveSetLoadResult loaded = loader.load_file(live_set_path);
+    loader = std::make_unique<host::LiveSetLoader>(*renderer, plane, resolver, heads, &sample, lopt);
+    const host::LiveSetLoadResult loaded = loader->load_file(live_set_path);
     if (!loaded.ok()) {
       std::fprintf(stderr, "engine-host: live set %s: %s%s%s\n", live_set_path.c_str(), host::to_string(loaded.status),
                    loaded.detail.empty() ? "" : " ", loaded.detail.c_str());
@@ -129,6 +164,12 @@ int main(int argc, char** argv) {
       std::printf("live set part %zu: %s\n", p, host::to_string(loaded.parts[p].state));
     std::printf("live set: %s -> generation %llu, %zu bytes of samples resident\n", live_set_path.c_str(),
                 (unsigned long long)loaded.revision, loaded.resident_bytes);
+    {
+      // After audio starts the voice pool is switched without stopping: the reservation is applied by the RT thread with the new generation.
+      host::SwitcherOptions sopt;
+      switcher = std::make_unique<host::LiveSetSwitcher>(*loader, plane, sopt);
+      switcher->set_catalog(catalog);
+    }
   } else {
     // FX budget (Story 2.7): reserved for the effects FIRST, before voices; the control plane refuses a command that would exceed it.
     // The reservation is the flat worst case (the plane's budget) rather than fill_fx_costs() of the initial snapshot: the arbiter
@@ -157,23 +198,31 @@ int main(int argc, char** argv) {
   } line_in_guard{*renderer, audio};
   host::macos::CoreMidiInput midi;
   std::string err;
-  if (!audio.open(core::kSampleRate, core::kBlockFrames, driver, err)) {
-    std::fprintf(stderr, "engine-host: audio: %s\n", err.c_str());
-    return 1;
+  if (no_audio) {
+    std::printf("audio and midi: off (--no-audio, dev/test only)\n");
+  } else {
+    if (!audio.open(core::kSampleRate, core::kBlockFrames, driver, err)) {
+      std::fprintf(stderr, "engine-host: audio: %s\n", err.c_str());
+      return 1;
+    }
+    const auto info = audio.info();
+    std::printf("audio: %u Hz, device buffer %u frames (requested %u)%s\n", info.sample_rate,
+                info.buffer_frames, core::kBlockFrames,
+                info.buffer_frames == core::kBlockFrames ? "" : " [closest the device granted]");
+    if (!midi.open(ingest, err)) {
+      std::fprintf(stderr, "engine-host: midi: %s\n", err.c_str());
+      return 1;
+    }
+    std::printf("midi: %s UMP input, %zu source(s) connected%s\n",
+                midi.protocol() == kMIDIProtocol_2_0 ? "MIDI 2.0" : "MIDI 1.0 (up-converted)",
+                midi.connected_sources(),
+                midi.connected_sources() ? "" : " (none yet; new sources are picked up automatically)");
   }
-  const auto info = audio.info();
-  std::printf("audio: %u Hz, device buffer %u frames (requested %u)%s\n", info.sample_rate,
-              info.buffer_frames, core::kBlockFrames,
-              info.buffer_frames == core::kBlockFrames ? "" : " [closest the device granted]");
-  if (!midi.open(ingest, err)) {
-    std::fprintf(stderr, "engine-host: midi: %s\n", err.c_str());
-    return 1;
-  }
-  std::printf("midi: %s UMP input, %zu source(s) connected%s\n",
-              midi.protocol() == kMIDIProtocol_2_0 ? "MIDI 2.0" : "MIDI 1.0 (up-converted)",
-              midi.connected_sources(),
-              midi.connected_sources() ? "" : " (none yet; new sources are picked up automatically)");
   host::ControlServer control(plane, socket_path);
+  if (switcher) {
+    host::LiveSetSwitcher* sw = switcher.get();
+    control.set_tick([sw] { return sw->tick(); });  // the control tick: loading status at least once per second, commit of a finished load
+  }
   if (!control.start(err)) {
     std::fprintf(stderr, "engine-host: control: %s\n", err.c_str());
     return 1;
@@ -182,7 +231,7 @@ int main(int argc, char** argv) {
               (unsigned long long)plane.revision(), live_set_path.empty() ? config_path.c_str() : live_set_path.c_str());
   // Optional line-in (mixed into the master only, at the line_in_level parameter): if there is no input device or no permission
   // the engine still starts and the line-in stays silent.
-  if (want_line_in) {
+  if (want_line_in && !no_audio) {
     std::string lerr;
     if (line_in.open(core::kSampleRate, lerr) && line_in.start(lerr)) {
       renderer->set_line_in(&line_in);
@@ -192,7 +241,7 @@ int main(int argc, char** argv) {
     }
   }
   audio_running.store(true);  // after this the voice pool is no longer ours to reserve
-  if (!audio.start(err)) {
+  if (!no_audio && !audio.start(err)) {
     std::fprintf(stderr, "engine-host: audio: %s\n", err.c_str());
     return 1;
   }
@@ -219,7 +268,7 @@ int main(int argc, char** argv) {
       }
     }
     const auto now = std::chrono::steady_clock::now();
-    if (now - last_scan > std::chrono::milliseconds(500)) {
+    if (!no_audio && now - last_scan > std::chrono::milliseconds(500)) {
       last_scan = now;
       const std::size_t added = midi.rescan();
       if (added) std::printf("midi: %zu new source(s) connected\n", added);
@@ -232,6 +281,7 @@ int main(int argc, char** argv) {
   line_in.stop();
   midi.close();
   control.stop();
+  switcher.reset();  // cancels a load in progress and joins its worker
   const auto& rc = driver.counters();
   const auto& mc = ingest.counters();
   std::printf("-- timing/stats (host, not representative) --\n");
@@ -244,7 +294,7 @@ int main(int argc, char** argv) {
               (unsigned long long)mc.queue_full.load(), (unsigned long long)rc.renderer_rejected.load());
   std::printf("scheduling delay %.1f ms fixed (host, not representative)\n",
               driver.mapper().config().delay_ns / 1e6);
-  if (duration_s > 0 && audio.callbacks() == 0) {
+  if (!no_audio && duration_s > 0 && audio.callbacks() == 0) {
     std::fprintf(stderr, "engine-host: audio path never ran (0 callbacks)\n");
     return 1;
   }

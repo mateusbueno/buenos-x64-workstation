@@ -51,6 +51,29 @@ void VoiceArbiter::unbind_last() noexcept {
 }
 
 VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noexcept {
+  PreparedReservation prep;
+  const ReserveStatus st = prepare_reservation(cfg, prep);
+  if (st != ReserveStatus::kOk) return st;
+  res_ = prep.res;
+  floor_cost_ = prep.floor_cost;
+  ramp_ = prep.ramp;
+  cfg_ = prep.cfg;
+  reserved_ = true;
+  reset_state();
+  return ReserveStatus::kOk;
+}
+
+void VoiceArbiter::commit_prepared(const PreparedReservation& prep) noexcept {
+  if (!prep.valid) return;
+  res_ = prep.res;
+  floor_cost_ = prep.floor_cost;
+  ramp_ = prep.ramp;
+  cfg_ = prep.cfg;
+  reserved_ = true;  // event state (keys, pedal, deferred releases, serial, counters) is deliberately left alone
+}
+
+VoiceArbiter::ReserveStatus VoiceArbiter::prepare_reservation(const LiveSetConfig& cfg, PreparedReservation& out) const noexcept {
+  out.valid = false;
   if (cfg.floor_count > kMaxEngines || cfg.steal_ramp_frames == 0 || cfg.steal_ramp_frames > kMaxStealRampFrames ||
       cfg.fx_instance_count > LiveSetConfig::kMaxFxInstances)
     return ReserveStatus::kInvalidConfig;
@@ -98,20 +121,20 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
   rem -= cfg.organ_rotary_cost;
   if (floors > rem) return ReserveStatus::kFloorsExceedBudget;
 
-  // Commit (nothing above has modified state).
-  res_.budget = cfg.budget;
-  res_.fx = fx_total;
-  res_.organ_rotary = cfg.organ_rotary_cost;
-  res_.floors = floors;
-  res_.voice_budget = rem;
-  res_.shared = rem - floors;
+  // Everything checked; nothing above has modified state. Fill the result.
+  out.res = Reservation{};
+  out.res.budget = cfg.budget;
+  out.res.fx = fx_total;
+  out.res.organ_rotary = cfg.organ_rotary_cost;
+  out.res.floors = floors;
+  out.res.voice_budget = rem;
+  out.res.shared = rem - floors;
   for (std::size_t i = 0; i < count_; ++i)  // protected engines draw on the organ reservation first
     if (protected_[i]) fc[i] = cfg.organ_rotary_cost;
-  floor_cost_ = fc;
-  ramp_ = cfg.steal_ramp_frames;
-  cfg_ = cfg;
-  reserved_ = true;
-  reset_state();
+  out.floor_cost = fc;
+  out.ramp = cfg.steal_ramp_frames;
+  out.cfg = cfg;
+  out.valid = true;
   return ReserveStatus::kOk;
 }
 

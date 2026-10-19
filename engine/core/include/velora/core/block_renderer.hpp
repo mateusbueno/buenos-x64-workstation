@@ -183,6 +183,8 @@ class BlockRenderer {
   std::array<float, params::kPerfSlotCount> applied_init_{};  // RT-owned: perf_init last applied
   bool applied_valid_ = false;
   std::uint64_t applied_program_generation_ = 0;  // RT-owned: the program_generation last adopted (Story 4.4)
+  std::uint64_t applied_reservation_epoch_ = 0;   // RT-owned: the Snapshot::reservation_epoch last committed to the arbiter (Story 4.5)
+  bool keyboard_pedal_down_ = false;              // RT-owned: the last keyboard sustain (CC 64) state seen in a Live Set generation
   // Per (channel, note): bit i set = this key holds one reference on ledger slot i (a generation).
   std::array<std::uint32_t, 16 * 128> gen_mask_{};
   std::array<std::uint8_t, 16 * 128> present_{};  // scratch for reap_generation_refs()

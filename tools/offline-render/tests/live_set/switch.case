@@ -1,0 +1,11 @@
+# Null-test case for the seamless switch golden (Story 4.5): switch/switch_a.liveset (bass / piano split, a long-release pad on the Aux bus) played by
+# switch.mid with a switch to switch/switch_b.liveset at 3.0 s (--switch-at, --switch-load-blocks 100: the new Live Set takes over ~0.13 s later).
+# A piano key is held across the swap, a pad note is releasing, two notes are sustained by the pedal and released on Live Set B's watch; Live Set B adds
+# an organ above C4 and moves zones, octaves and outputs. Nothing may be cut and the new notes must sound as B's.
+# -100 dB residual: far below the audible effect of a swap, loose enough for libm/FMA differences between macOS and Linux builds (the organ).
+# check_excess: a tail in one file only fails as well.
+reference=switch.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
+check_excess=1

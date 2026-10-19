@@ -27,6 +27,7 @@
 // Real-time: configure(), note_on() and note_off() never allocate, lock or block.
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 
 #include "velora/core/params_gen.hpp"
@@ -67,7 +68,14 @@ class PartRouter {
       r.keyboard_on = c.keyboard_on != 0;
       r.sounds = c.state == PartState::kReady && c.engine_type != 0;
       r.engine = c.engine_type;
+      // Story 4.5: the instrument a key sounded on is part of its identity. When a part's bank (or engine) changes, as it does at a Live Set
+      // switch, keys struck from now on get a new tag, so they never share a reference count with a key still held on the old bank.
+      const auto bank = reinterpret_cast<std::uintptr_t>(c.sample_bank.get());
+      if (configured_ && (bank != r.bank || c.engine_type != r.tag_engine)) r.tag = static_cast<std::uint8_t>((r.tag + 1) & (kTags - 1));
+      r.bank = bank;
+      r.tag_engine = c.engine_type;
     }
+    configured_ = true;
   }
   bool active() const noexcept { return active_; }
 
@@ -92,15 +100,16 @@ class PartRouter {
       t.old_pitch = tr[p].pitch;
       t.old_engine = tr[p].engine;
       const bool tracked = tr[p].pitch != kNoPitch;
-      if (!tracked || tr[p].pitch != t.pitch || tr[p].engine != r.engine) {
+      if (!tracked || tr[p].pitch != t.pitch || tr[p].engine != r.engine || tr[p].tag != r.tag) {
         if (tracked) {  // the earlier note of this key on this part lets go of its pitch; the voice is released when no other key holds it
-          const std::uint16_t left = --ref(p, tr[p].pitch, tr[p].engine);
+          const std::uint16_t left = --ref(p, tr[p].pitch, tr[p].engine, tr[p].tag);
           t.release_first = left == 0;
         }
-        ++ref(p, t.pitch, r.engine);
+        ++ref(p, t.pitch, r.engine, r.tag);
       }
       tr[p].pitch = t.pitch;
       tr[p].engine = r.engine;
+      tr[p].tag = r.tag;
       fanned_.fetch_add(1, std::memory_order_relaxed);
     }
     if (out.count == 0) unzoned_keys_.fetch_add(1, std::memory_order_relaxed);
@@ -115,7 +124,7 @@ class PartRouter {
       if (tr[p].pitch == kNoPitch) continue;
       had = true;
       // Several keys (or keyboard sources) can hold the same (part, pitch): the part's note off goes out when the last of them lets go.
-      const std::uint16_t left = --ref(p, tr[p].pitch, tr[p].engine);
+      const std::uint16_t left = --ref(p, tr[p].pitch, tr[p].engine, tr[p].tag);
       if (left == 0) {
         Target& t = out.t[out.count++];
         t.part = static_cast<std::uint8_t>(p);
@@ -134,7 +143,7 @@ class PartRouter {
     for (auto& k : track_)
       for (std::uint32_t p = 0; p < kParts; ++p) {
         if (k[p].pitch == kNoPitch) continue;
-        if (--ref(p, k[p].pitch, k[p].engine) == 0) f(p, static_cast<std::uint32_t>(k[p].pitch), k[p].engine);
+        if (--ref(p, k[p].pitch, k[p].engine, k[p].tag) == 0) f(p, static_cast<std::uint32_t>(k[p].pitch), k[p].engine);
         k[p] = Track{};
       }
   }
@@ -169,19 +178,27 @@ class PartRouter {
     bool keyboard_on = true;
     bool sounds = false;
     std::uint32_t engine = 0;
+    std::uintptr_t bank = 0;
+    std::uint32_t tag_engine = 0;
+    std::uint8_t tag = 0;
   };
   struct Track {
     std::uint8_t pitch = kNoPitch;
     std::uint32_t engine = 0;
+    std::uint8_t tag = 0;
   };
+  bool configured_ = false;
+  static constexpr std::uint32_t kTags = 4;  // bank generations told apart per part; a key held across 4 bank changes could alias an older tag
   bool active_ = false;
   std::array<Part, kParts> part_{};
   std::array<std::array<Track, kParts>, 16 * 128> track_{};
   // Keys holding each (part, pitch, engine): the engine is part of the identity, since a voice on another engine is another voice.
   static constexpr std::uint32_t kEngineSlots = 5;  // Sample, Organ, FM, VA, anything else
   static constexpr std::uint32_t engine_slot(std::uint32_t id) noexcept { return id >= 1 && id <= 4 ? id - 1 : 4; }
-  std::uint16_t& ref(std::uint32_t part, std::uint32_t pitch, std::uint32_t engine) noexcept { return refs_[part][pitch][engine_slot(engine)]; }
-  std::array<std::array<std::array<std::uint16_t, kEngineSlots>, 128>, kParts> refs_{};
+  std::uint16_t& ref(std::uint32_t part, std::uint32_t pitch, std::uint32_t engine, std::uint32_t tag) noexcept {
+    return refs_[part][pitch][engine_slot(engine)][tag & (kTags - 1)];
+  }
+  std::array<std::array<std::array<std::array<std::uint16_t, kTags>, kEngineSlots>, 128>, kParts> refs_{};
   std::atomic<std::uint64_t> fanned_{0}, dropped_out_of_range_{0}, unzoned_keys_{0}, orphan_note_offs_{0};
 };
 

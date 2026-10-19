@@ -182,6 +182,7 @@ void ControlServer::run() {
         ++it;
       }
     }
+    if (tick_ && tick_()) broadcast_state();
     plane_.reclaim();
   }
 }

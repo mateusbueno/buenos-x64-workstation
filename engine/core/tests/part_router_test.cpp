@@ -915,8 +915,49 @@ void test_pedal_up_after_keyboard_off() {
 
 }  // namespace
 
+
+// Story 4.5: two keys on the same (part, pitch, engine) but on different banks (one struck under the old Live Set, one under the new) do not
+// share a reference count: each key's release fires on its own, in either order.
+void test_ref_across_banks() {
+  for (int order = 0; order < 2; ++order) {
+    PartRouter router;
+    Snapshot s = Snapshot::defaults();
+    s.live_set = true;
+    s.parts[0].engine_type = 1;
+    s.parts[0].state = PartState::kReady;
+    s.parts[0].sample_bank = std::make_shared<SampleBank>();
+    router.configure(s);
+    PartRouter::Fanout f;
+    router.note_on(0, 60, f);  // K1 on the old bank
+    s.parts[0].sample_bank = std::make_shared<SampleBank>();
+    router.configure(s);       // the new Live Set
+    router.note_on(1, 60, f);  // K2, same part, pitch and engine, new bank
+    CHECK(f.count == 1);
+    router.note_off(order ? 1 : 0, 60, f);
+    CHECK(f.count == 1 && f.t[0].pitch == 60);  // its own release fires at once
+    router.note_off(order ? 0 : 1, 60, f);
+    CHECK(f.count == 1 && f.t[0].pitch == 60);
+    CHECK(router.held_keys() == 0);
+  }
+  // The same key struck again under the new bank releases the old-bank note first.
+  PartRouter router;
+  Snapshot s = Snapshot::defaults();
+  s.live_set = true;
+  s.parts[0].engine_type = 1;
+  s.parts[0].state = PartState::kReady;
+  s.parts[0].sample_bank = std::make_shared<SampleBank>();
+  router.configure(s);
+  PartRouter::Fanout f;
+  router.note_on(0, 60, f);
+  s.parts[0].sample_bank = std::make_shared<SampleBank>();
+  router.configure(s);
+  router.note_on(0, 60, f);
+  CHECK(f.count == 1 && f.t[0].release_first && f.t[0].old_pitch == 60);
+}
+
 int main() {
   test_router_unit();
+  test_ref_across_banks();
   test_layer();
   test_split_b2_c3();
   test_zone_uses_played_key();

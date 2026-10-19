@@ -35,6 +35,11 @@ enum ErrorCode {
   ERROR_CODE_FX_BUDGET_EXCEEDED = 15;  // the insert chains, sends and master would cost more than the FX budget reserved by the arbiter (nothing changes)
   ERROR_CODE_NO_SUCH_SCENE = 16;       // RecallScene named a scene the loaded Live Set does not have (details: index, scene_count; nothing changes)
   ERROR_CODE_NO_LIVE_SET = 17;         // a scene command while no Live Set is loaded (nothing changes)
+  ERROR_CODE_HEAD_BUDGET_EXCEEDED = 18;  // Story 4.5: the target Live Set's heads do not fit the head budget; the current Live Set keeps playing (details: head_bytes, head_budget)
+  ERROR_CODE_LOAD_CANCELLED = 19;      // Story 4.5: a load was cancelled (CancelLoad, or superseded by another jump). INFORMATIONAL: never a failure to show the player
+  ERROR_CODE_NO_SUCH_LIVE_SET = 20;    // Story 4.5: JumpToLiveSet named an id the engine does not list (details: id); nothing changes
+  ERROR_CODE_LIVE_SET_LOAD_FAILED = 21;  // Story 4.5: the target could not be loaded and the current Live Set keeps playing (details: reason = read_failed |
+                                         // invalid_live_set | part_count_unsupported | instrument_load_failed | arbiter_rejected | fx_budget_exceeded | busy | internal)
 }
 
 message Error {
@@ -90,6 +95,33 @@ message State {
   bool live_set_loaded = 5;              // Story 4.4: the current generation was built from a Live Set (additive)
   int32 current_scene = 6;               // the scene last recalled from the loaded Live Set; -1 = none (also without a Live Set)
   uint32 scene_count = 7;                // scenes in the loaded Live Set (0 without one)
+  LoadingStatus loading = 8;             // Story 4.5: the state of the Live Set switch (background load); additive
+  string live_set_id = 9;                // Story 4.5: id of the Live Set that sounds (the one last published by the engine), "" when none
+  string live_set_name = 10;
+}
+
+// Story 4.5: seamless Live Set switching. The state of the (single) background load. It is part of State and is pushed to subscribers whenever it
+// changes and at least once per second while a load runs (the engine's control tick). `status_seq` increases with every publication.
+enum LoadingState {
+  LOADING_STATE_IDLE = 0;      // nothing has been requested yet, or the load was cancelled (see last_error: informational LOAD_CANCELLED)
+  LOADING_STATE_LOADING = 1;   // the target's heads are being made resident; the current Live Set keeps playing and answering the keys
+  LOADING_STATE_READY = 2;     // the last jump finished: the target is the Live Set that sounds
+  LOADING_STATE_FAILED = 3;    // the last jump failed (last_error says why); the previous Live Set keeps playing
+}
+message LoadingStatus {
+  LoadingState state = 1;
+  bool loading = 2;                          // state == LOADING
+  string target_id = 3;                      // the Live Set being loaded (or last requested)
+  string target_name = 4;
+  float estimated_remaining_seconds = 5;     // >= 0 and finite; 0 unless loading. Rate based (smoothed) on the bytes made resident so far
+  float progress = 6;                        // 0..1, bytes resident / bytes of the target
+  ErrorCode last_error = 7;                  // ERROR_CODE_UNSPECIFIED = none
+  bool last_error_informational = 8;         // true for LOAD_CANCELLED: not an error to show
+  string last_error_detail = 9;
+  uint64 status_seq = 10;
+  uint32 cancelled_loads = 11;               // loads cancelled or superseded since the engine started
+  uint64 bytes_loaded = 12;
+  uint64 bytes_total = 13;
 }
 
 // The gain reduction a compressor applied in its last block (Story 2.8), published by the engine; read-only state, not a parameter.
@@ -169,6 +201,31 @@ message SceneReply {
   int32 current_scene = 2;               // after the command; -1 = none
 }
 
+// Live Set switching (Story 4.5). JumpToLiveSet returns at once: JumpReply says whether the load started (ACCEPTED), the target already sounds
+// (ALREADY_LOADED, a no-op) or is already being loaded (ALREADY_LOADING, a no-op). A jump while another target loads cancels that load (its
+// partial heads are freed) and starts the new one. Errors: NO_SUCH_LIVE_SET (unknown id, nothing changes). Everything that goes wrong while
+// loading (budget, unreadable or invalid file, an instrument that cannot be made resident, the voice pool, ...) is reported in State.loading
+// (state FAILED + last_error) and the current Live Set keeps playing. CancelLoad cancels the load in progress, if any (CancelLoadReply.cancelled).
+message JumpToLiveSet {
+  string id = 1;                         // Live Set id (UUIDv4 string)
+}
+enum JumpResult {
+  JUMP_RESULT_UNSPECIFIED = 0;
+  JUMP_RESULT_ACCEPTED = 1;
+  JUMP_RESULT_ALREADY_LOADED = 2;
+  JUMP_RESULT_ALREADY_LOADING = 3;
+}
+message JumpReply {
+  JumpResult result = 1;
+  string target_id = 2;
+  string target_name = 3;
+  bool superseded_previous = 4;          // another load was cancelled to start this one
+}
+message CancelLoad {}
+message CancelLoadReply {
+  bool cancelled = 1;                    // false: no load was in progress
+}
+
 message GetState {}
 message GetPerformanceValues {}
 message Subscribe {                      // after this, every new revision is pushed as a State message
@@ -191,6 +248,8 @@ message ClientMessage {
     RecallScene recall_scene = 20;       // Story 4.4
     NextScene next_scene = 21;
     PreviousScene previous_scene = 22;
+    JumpToLiveSet jump_to_live_set = 23;  // Story 4.5
+    CancelLoad cancel_load = 24;
   }
 }
 
@@ -206,5 +265,7 @@ message ServerMessage {
     State state = 13;
     PerformanceValues performance_values = 14;
     SceneReply scene_reply = 15;         // Story 4.4
+    JumpReply jump_reply = 16;           // Story 4.5
+    CancelLoadReply cancel_load_reply = 17;
   }
 }

@@ -375,6 +375,7 @@ bool ControlPlane::load_initial(const ws::v1::State& config, std::string& err) {
 
 void ControlPlane::fill_state(ws::v1::State* out) const {
   if (current_) fill_from(*current_, out);
+  if (switch_handler_) switch_handler_->fill_status(out);
 }
 
 void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
@@ -419,7 +420,34 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   bool ok = false;
   using B = ws::v1::ClientMessage;
   const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;
-  if (scene_cmd) {
+  const bool switch_cmd = msg.body_case() == B::kJumpToLiveSet || msg.body_case() == B::kCancelLoad;
+  if (switch_cmd) {
+    // Live Set switching (Story 4.5): the switcher owns the work; a jump returns at once, the load runs on its worker.
+    if (!switch_handler_ || !current_) {
+      fail(f, ws::v1::ERROR_CODE_NO_LIVE_SET, "no Live Set catalog is available");
+    } else if (msg.body_case() == B::kCancelLoad) {
+      const SwitchOutcome o = switch_handler_->cancel();
+      reply.mutable_cancel_load_reply()->set_cancelled(o.cancelled);
+      ok = true;
+      changed = o.cancelled;  // the loading status changed: subscribers get a State push
+    } else {
+      const SwitchOutcome o = switch_handler_->jump(msg.jump_to_live_set().id());
+      if (o.result == SwitchOutcome::Result::kUnknownLiveSet) {
+        f.details["id"] = msg.jump_to_live_set().id();
+        fail(f, ws::v1::ERROR_CODE_NO_SUCH_LIVE_SET, "unknown Live Set id");
+      } else {
+        ws::v1::JumpReply* jr = reply.mutable_jump_reply();
+        jr->set_result(o.result == SwitchOutcome::Result::kAccepted ? ws::v1::JUMP_RESULT_ACCEPTED
+                       : o.result == SwitchOutcome::Result::kAlreadyLoaded ? ws::v1::JUMP_RESULT_ALREADY_LOADED
+                                                                            : ws::v1::JUMP_RESULT_ALREADY_LOADING);
+        jr->set_target_id(o.target_id);
+        jr->set_target_name(o.target_name);
+        jr->set_superseded_previous(o.superseded_previous);
+        ok = true;
+        changed = o.result == SwitchOutcome::Result::kAccepted || o.superseded_previous;  // a no-op pushes nothing
+      }
+    }
+  } else if (scene_cmd) {
     // Scene commands (Story 4.4) never need a copy of the snapshot here: the handler builds its own.
     const SceneHandler::Op op = msg.body_case() == B::kRecallScene ? SceneHandler::Op::kRecall
                                 : msg.body_case() == B::kNextScene ? SceneHandler::Op::kNext
@@ -530,6 +558,8 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kRecallScene:
       case B::kNextScene:
       case B::kPreviousScene:
+      case B::kJumpToLiveSet:
+      case B::kCancelLoad:
         break;  // handled before the snapshot is copied
       case B::kHello:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "handshake already done on this connection");

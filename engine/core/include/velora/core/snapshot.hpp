@@ -20,6 +20,7 @@
 #include "velora/core/params_gen.hpp"
 #include "velora/core/rt.hpp"
 #include "velora/core/sample_bank.hpp"
+#include "velora/core/voice_arbiter.hpp"
 
 namespace velora::core {
 
@@ -87,6 +88,14 @@ struct Snapshot {
   std::int32_t scene_index = -1;
   std::uint32_t scene_count = 0;
   std::uint64_t scene_source = 0;
+
+  // Seamless Live Set switch (Story 4.5, AD-22). The control thread prepares the voice-pool reservation of the Live Set this generation
+  // was built from (VoiceArbiter::prepare_reservation: validation and costs, may allocate) and carries it here. RT applies it in the
+  // serial phase when it adopts a generation whose `reservation_epoch` it has not applied yet (VoiceArbiter::commit_prepared: a bounded
+  // copy, no allocation), so the swap and the new floors / budget take effect at the same block. 0 = this generation carries none (every
+  // generation but a seamless switch); later generations copied from a switch generation carry the same epoch and apply nothing again.
+  std::uint64_t reservation_epoch = 0;
+  VoiceArbiter::PreparedReservation reservation{};
 
   // Every field at its registry default.
   static Snapshot defaults() noexcept;

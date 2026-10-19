@@ -944,6 +944,148 @@ void test_below_floor_always_granted() {
   CHECK(below > 200 && steals_seen > 100 && a.steals() > 100);
 }
 
+// --- seamless handover: prepare_reservation / commit_prepared (Story 4.5) -------------------------------------------------
+
+void test_prepare_commit_handover() {
+  using Prep = VoiceArbiter::PreparedReservation;
+  auto br = std::make_unique<BlockRenderer>(80);
+  FakeEngine fm(EngineTypeId::kFm, 4, 80);
+  CHECK(br->bind_engine(fm));
+  br->set_channel_engine(1, kFmId);
+  auto& a = br->arbiter();
+
+  // prepare_reservation answers exactly what reserve() answers, for every refusal, and changes nothing in the arbiter.
+  auto c = cfg(100);
+  c.fx_cost = 10;
+  c.organ_rotary_cost = 20;
+  add_floor(c, kFmId, 3);
+  add_floor(c, kToneId, 5);
+  Prep pr;
+  CHECK(a.prepare_reservation(c, pr) == RS::kOk && pr.valid);
+  CHECK(!a.reserved() && a.reservation().budget == 0);  // prepare changed nothing
+  CHECK(a.reserve(c) == RS::kOk);
+  CHECK(pr.res.budget == a.reservation().budget && pr.res.fx == a.reservation().fx && pr.res.organ_rotary == a.reservation().organ_rotary &&
+        pr.res.floors == a.reservation().floors && pr.res.voice_budget == a.reservation().voice_budget && pr.res.shared == a.reservation().shared);
+  CHECK(pr.floor_cost[1] == a.floor_cost(kFmId) && a.floor_cost(kFmId) == 12);
+  CHECK(pr.ramp == a.steal_ramp_frames());
+  struct Bad { VoiceArbiter::LiveSetConfig c; RS want; };
+  std::vector<Bad> bads;
+  { auto b = cfg(100); b.fx_cost = 101; bads.push_back({b, RS::kFxExceedsBudget}); }
+  { auto b = cfg(100); b.fx_cost = 60; b.organ_rotary_cost = 41; bads.push_back({b, RS::kOrganExceedsBudget}); }
+  { auto b = cfg(100); b.fx_cost = 60; b.organ_rotary_cost = 30; add_floor(b, kFmId, 3); bads.push_back({b, RS::kFloorsExceedBudget}); }
+  { auto b = cfg(100); add_floor(b, kFmId, 17); bads.push_back({b, RS::kFloorExceedsCapacity}); }
+  { auto b = cfg(100); add_floor(b, 77, 1); bads.push_back({b, RS::kUnknownEngine}); }
+  { auto b = cfg(100); add_floor(b, kFmId, 1); add_floor(b, kFmId, 1); bads.push_back({b, RS::kInvalidConfig}); }
+  { auto b = cfg(100); b.steal_ramp_frames = 0; bads.push_back({b, RS::kInvalidConfig}); }
+  const std::uint64_t shared_before = a.reservation().shared;
+  for (const Bad& b : bads) {
+    Prep px;
+    px.valid = true;
+    CHECK(a.prepare_reservation(b.c, px) == b.want && !px.valid);
+    CHECK(a.reserve(b.c) == b.want);
+  }
+  CHECK(a.reservation().shared == shared_before);
+
+  // The handover keeps the event state and the sounding voices. Reservation A: budget 100, fm floor 0 (all shared).
+  a.clear_reservation();
+  auto ca = cfg(40);
+  CHECK(a.reserve(ca) == RS::kOk);
+  on(*br, 1, 60, 60000);
+  on(*br, 1, 62, 60000);
+  on(*br, 1, 64, 60000);
+  br->submit({make_control_change(0, 1, 64, 0xFFFFFFFFu), 0});  // pedal down on channel 1
+  render(*br, 2);
+  off(*br, 1, 62);  // deferred by the pedal: pedal-sustained
+  on(*br, 1, 66, 60000);
+  render(*br, 1);
+  off(*br, 1, 66);
+  render(*br, 1);
+  CHECK(fm.active() == 4);
+  const VoiceArbiter::Usage before = a.usage();
+  // B: a different budget and a floor for the fm engine.
+  auto cb = cfg(60);
+  add_floor(cb, kFmId, 3);
+  Prep pb;
+  CHECK(a.prepare_reservation(cb, pb) == RS::kOk);
+  a.commit_prepared(pb);  // what RT does when it adopts the generation
+  CHECK(a.reservation().budget == 60 && a.floor_cost(kFmId) == 12 && a.reservation().floors == 12);
+  const VoiceArbiter::Usage after = a.usage();
+  CHECK(after.live_cost == before.live_cost && after.fading_cost == before.fading_cost && fm.active() == 4);  // nothing lost, nothing doubled
+  CHECK(a.steals() == 0);
+  // The pedal and the held/deferred keys are still known: pedal up releases the deferred note (62) exactly once, 64 stays held.
+  br->submit({make_control_change(0, 1, 64, 0u), 0});
+  render(*br, 1);
+  render(*br, 2);
+  CHECK(!fm.note_alive(1, 62));
+  CHECK(fm.note_alive(1, 64) && fm.note_alive(1, 60));
+  // With reserve() the same transition resets the event state (the quiesced behaviour, unchanged).
+  br->submit({make_control_change(0, 1, 64, 0xFFFFFFFFu), 0});
+  render(*br, 1);
+  off(*br, 1, 64);  // deferred
+  render(*br, 1);
+  CHECK(a.reserve(cb) == RS::kOk);
+  br->submit({make_control_change(0, 1, 64, 0u), 0});
+  render(*br, 2);
+  // (the pedal-up after reserve() found no deferred release to make: the note stays sounding, as documented for reserve())
+  CHECK(fm.note_alive(1, 64));
+
+  // Over-budget overlap: old voices alone exceed the new budget; nothing is cut at the commit, new notes steal by the usual order.
+  auto br2 = std::make_unique<BlockRenderer>(80);
+  FakeEngine fm2(EngineTypeId::kFm, 4, 80);
+  CHECK(br2->bind_engine(fm2));
+  br2->set_channel_engine(1, kFmId);
+  CHECK(br2->arbiter().reserve(cfg(40)) == RS::kOk);
+  for (std::uint32_t n = 60; n < 66; ++n) on(*br2, 1, n, 60000 + n);
+  render(*br2, 2);
+  off(*br2, 1, 60);  // releasing (100 frames)
+  render(*br2, 1);
+  CHECK(fm2.active() == 6);
+  Prep tiny;
+  CHECK(br2->arbiter().prepare_reservation(cfg(8), tiny) == RS::kOk);
+  br2->arbiter().commit_prepared(tiny);
+  CHECK(fm2.active() == 6 && br2->arbiter().steals() == 0);  // the swap itself cuts nothing
+  on(*br2, 1, 80, 60000);
+  render(*br2, 1);
+  CHECK(br2->arbiter().steals() >= 1 && !fm2.note_alive(1, 60));  // the releasing tail goes first
+
+  // A held organ voice (protected, never a victim) survives a commit whose organ reservation is zero: it stays accounted (against the shared
+  // remainder now) and is never stolen; and an FM floor that goes from non-zero to zero keeps its old voices accounted too.
+  {
+    auto br3 = std::make_unique<BlockRenderer>(80);
+    OrganEngine organ3;
+    FakeEngine fm3(EngineTypeId::kFm, 2, 80);
+    CHECK(br3->bind_engine(organ3) && br3->bind_engine(fm3));
+    br3->set_channel_engine(1, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
+    br3->set_channel_engine(2, kFmId);
+    auto& a3 = br3->arbiter();
+    auto ca3 = cfg(100000);
+    ca3.organ_rotary_cost = static_cast<std::uint64_t>(organ3.cost_units_per_voice()) * 73;
+    add_floor(ca3, kFmId, 3);
+    CHECK(a3.reserve(ca3) == RS::kOk);
+    on(*br3, 1, 60, 60000);
+    on(*br3, 2, 50, 60000);
+    on(*br3, 2, 52, 60000);
+    render(*br3, 4);
+    CHECK(organ3.active_voices() >= 1 && fm3.active() == 2);
+    const std::uint32_t organ_id = static_cast<std::uint32_t>(EngineTypeId::kOrgan);
+    const VoiceArbiter::Usage uo = a3.usage(organ_id), uf = a3.usage(kFmId);
+    auto cb3 = cfg(12);  // tiny shared remainder, no organ reservation, no FM floor
+    cb3.waive_organ_reservation = true;
+    Prep p3;
+    CHECK(a3.prepare_reservation(cb3, p3) == RS::kOk);
+    a3.commit_prepared(p3);
+    CHECK(a3.reservation().organ_rotary == 0 && a3.floor_cost(kFmId) == 0);
+    CHECK(a3.usage(organ_id).live_cost == uo.live_cost && a3.usage(kFmId).live_cost == uf.live_cost && fm3.active() == 2);
+    const std::uint32_t organ_before = organ3.active_voices();
+    for (std::uint32_t i = 0; i < 30; ++i) {  // pressure from the tone engine
+      on(*br3, 0, 40 + i, 60000);
+      render(*br3, 1);
+    }
+    CHECK(a3.steals(organ_id) == 0 && organ3.active_voices() >= organ_before);  // the protected voice is never a victim
+  }
+  CHECK(fm2.note_alive(1, 80));
+}
+
 }  // namespace
 
 int main() {
@@ -970,6 +1112,7 @@ int main() {
   test_sample_slot_reuse_after_steal();
   test_note_off_during_ramp();
   test_below_floor_always_granted();
+  test_prepare_commit_handover();
   if (g_fail) {
     std::printf("voice_arbiter_tests: %d FAILED\n", g_fail);
     return 1;

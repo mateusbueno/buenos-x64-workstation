@@ -1,6 +1,6 @@
 // Smoke test of the real engine-host wiring (Story 4.4): start `engine-host --live-set ... --library-root ... --socket ...` in a subprocess and
 // recall a scene over ws.v1. Removing the SceneController from engine-host's Live Set path makes the recall answer NO_LIVE_SET and fails this test.
-// Exit 77 (skipped) when engine-host cannot open an audio or MIDI device.
+// It runs engine-host with --no-audio, so it never skips for lack of a device.
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
     ::dup2(fd, 2);
     const int devnull = ::open("/dev/null", O_RDONLY);
     ::dup2(devnull, 0);
-    ::execl(argv[1], argv[1], "--duration", "20", "--live-set", argv[2], "--library-root", argv[3], "--socket", sock.c_str(), (char*)nullptr);
+    ::execl(argv[1], argv[1], "--no-audio", "--duration", "20", "--live-set", argv[2], "--library-root", argv[3], "--socket", sock.c_str(), (char*)nullptr);
     _exit(127);
   }
   auto slurp = [&] {

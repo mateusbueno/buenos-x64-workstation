@@ -2,6 +2,7 @@
 //   OUT_DIR/root/lib/<library_id>/<bundle_id>/bundle.vlb + OUT_DIR/root/lib/<library_id>/current -> <bundle_id>   (three tiny libraries)
 //   OUT_DIR/layer_split.liveset, wrong_split.liveset, wrong_octave.liveset                                       (the Live Set and two wrong variants)
 //   OUT_DIR/scenes.liveset                                                                                       (Story 4.4: the same libraries, an organ part and three scenes)
+//   OUT_DIR/switch/switch_a.liveset, switch_b.liveset                                                            (Story 4.5: two Live Sets to switch between, the same libraries)
 // Everything is integer arithmetic (no libm), so the files are identical on every platform. Regenerate only on purpose:
 //   cmake --build build --target live-set-fixtures   (then review the diff, then re-render the golden: update-live-set-golden)
 #include <sys/stat.h>
@@ -226,6 +227,70 @@ int main(int argc, char** argv) {
     if (ls::serialize(s, bytes) != ls::Status::kOk) return 1;
     std::ofstream f(out + "/scenes.liveset", std::ios::binary | std::ios::trunc);
     f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  }
+
+  // Story 4.5: two Live Sets for the seamless switch golden (switch_a -> switch_b). A: bass / piano split at B2 / C3 with a long-release pad layered
+  // an octave down on the Aux bus. B: the pad on the whole keyboard (Main), the piano an octave down above C3 with reverb, the bass an octave up
+  // below C4 and an organ above C4 -- different zones, octaves, outputs and engines, and B reserves the pool for an organ where A does not.
+  {
+    if (!mkdir_p(out + "/switch")) return 1;
+    auto make = [&](const char* id, const char* name) {
+      lsp::LiveSet s = ls::make_default_live_set(id, name, 8);
+      s.set_tempo(120.0f);
+      return s;
+    };
+    auto timbre = [](lsp::LiveSet& s, int p, const std::string& lib, const char* key) {
+      s.mutable_parts(p)->mutable_timbre()->set_library_id(lib);
+      s.mutable_parts(p)->mutable_timbre()->set_instrument_key(key);
+    };
+    lsp::LiveSet a = make("a5d1e7b2-4c3f-4e8a-9b60-1f2c3d4e5f60", "Switch A");
+    timbre(a, 0, bass, "bass/electric.sfz");
+    a.mutable_parts(0)->set_high_key(47);
+    a.mutable_parts(0)->set_volume(0.9f);
+    timbre(a, 1, piano, "piano/grand.sfz");
+    a.mutable_parts(1)->set_low_key(48);
+    a.mutable_parts(1)->set_volume(0.8f);
+    a.mutable_parts(1)->set_send_reverb(0.25f);
+    timbre(a, 2, pad, "pad/strings.sfz");
+    a.mutable_parts(2)->set_octave(-1);
+    a.mutable_parts(2)->set_volume(0.5f);
+    a.mutable_parts(2)->set_output(ws::v1::PART_OUTPUT_AUX);
+    lsp::LiveSet b = make("b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71", "Switch B");
+    timbre(b, 0, pad, "pad/strings.sfz");
+    b.mutable_parts(0)->set_volume(0.6f);
+    timbre(b, 1, piano, "piano/grand.sfz");
+    b.mutable_parts(1)->set_low_key(48);
+    b.mutable_parts(1)->set_octave(-1);
+    b.mutable_parts(1)->set_volume(0.7f);
+    b.mutable_parts(1)->set_send_reverb(0.4f);
+    timbre(b, 2, bass, "bass/electric.sfz");
+    b.mutable_parts(2)->set_high_key(59);
+    b.mutable_parts(2)->set_octave(1);
+    b.mutable_parts(2)->set_volume(0.8f);
+    lsp::Part* organ = b.mutable_parts(3);
+    organ->mutable_engine()->set_engine_type_id(2);
+    organ->set_low_key(60);
+    organ->set_volume(0.4f);
+    auto add_param = [](google::protobuf::RepeatedPtrField<lsp::ParamEntry>* l, std::uint32_t id, float v) {
+      lsp::ParamEntry* e = l->Add();
+      e->set_param_id(id);
+      e->set_value(v);
+    };
+    add_param(organ->mutable_engine()->mutable_params(), 100, 8);  // drawbar_16
+    add_param(organ->mutable_engine()->mutable_params(), 102, 6);  // drawbar_8
+    for (lsp::LiveSet* s : {&a, &b}) {
+      if (!ls::validate(*s, 8).ok()) {
+        std::fprintf(stderr, "a switch fixture Live Set is not valid\n");
+        return 1;
+      }
+    }
+    const std::pair<const char*, lsp::LiveSet*> files[] = {{"switch_a.liveset", &a}, {"switch_b.liveset", &b}};
+    for (const auto& fl : files) {
+      std::string bytes;
+      if (ls::serialize(*fl.second, bytes) != ls::Status::kOk) return 1;
+      std::ofstream f(out + "/switch/" + fl.first, std::ios::binary | std::ios::trunc);
+      f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
   }
   return 0;
 }

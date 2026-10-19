@@ -349,6 +349,7 @@ add_custom_target(live-set-fixtures
   COMMAND live-set-fixture-gen ${_ls}
   COMMAND python3 ${_ls}/make_midi.py ${_ls}/layer_split.mid
   COMMAND python3 ${_ls}/make_scenes_midi.py ${_ls}/scenes.mid
+  COMMAND python3 ${_ls}/make_switch_midi.py ${_ls}/switch.mid
   DEPENDS live-set-fixture-gen)
 add_custom_target(update-live-set-golden
   COMMAND velora-offline-render ${_ls_args} --out ${_ls}/layer_split.wav)
@@ -409,6 +410,76 @@ add_test(NAME scenes_rejects_without_live_set
 set_tests_properties(scenes_rejects_without_live_set PROPERTIES PASS_REGULAR_EXPRESSION "--scene-at needs --live-set")
 add_custom_target(update-scenes-golden
   COMMAND velora-offline-render ${_sc_args} ${_sc_good} --out ${_ls}/scenes.wav)
+
+# Seamless Live Set switch (Story 4.5): switch/switch_a.liveset rendered with a switch to switch/switch_b.liveset at 3.0 s while notes are held, releasing and
+# pedal-sustained across the swap (the background load is simulated as 100 blocks, so the render is deterministic). Render twice (byte-equal), null-test
+# against the committed golden at -100 dB, and require a render with no switch, a switch at the wrong time and a different simulated load time to fail it.
+# Regenerate the fixtures with live-set-fixtures, the golden with update-switch-golden.
+set(_sw_args --live-set ${_ls}/switch/switch_a.liveset --library-root ${_ls}/root --midi ${_ls}/switch.mid --tail-seconds 1.5)
+set(_sw_good --switch-at 3.0:${_ls}/switch/switch_b.liveset --switch-load-blocks 100)
+add_test(NAME switch_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/switch_a.wav ${_out}/switch_b.wav ${_out}/switch_none.wav ${_out}/switch_late.wav ${_out}/switch_slow.wav)
+set_tests_properties(switch_clean PROPERTIES FIXTURES_SETUP switch_clean)
+add_test(NAME switch_render_a COMMAND velora-offline-render ${_sw_args} ${_sw_good} --out ${_out}/switch_a.wav)
+add_test(NAME switch_render_b COMMAND velora-offline-render ${_sw_args} ${_sw_good} --out ${_out}/switch_b.wav)
+set_tests_properties(switch_render_a PROPERTIES FIXTURES_REQUIRED switch_clean FIXTURES_SETUP switch_a PASS_REGULAR_EXPRESSION "1 live set switch")
+set_tests_properties(switch_render_b PROPERTIES FIXTURES_REQUIRED switch_clean FIXTURES_SETUP switch_b)
+add_test(NAME switch_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/switch_a.wav ${_out}/switch_b.wav)
+set_tests_properties(switch_bit_identical PROPERTIES FIXTURES_REQUIRED "switch_a;switch_b")
+add_test(NAME switch_null_golden COMMAND velora-null-test --case ${_ls}/switch.case --candidate ${_out}/switch_a.wav)
+set_tests_properties(switch_null_golden PROPERTIES FIXTURES_REQUIRED switch_a PASS_REGULAR_EXPRESSION "overall: PASS")
+add_test(NAME switch_no_switch COMMAND velora-offline-render ${_sw_args} --out ${_out}/switch_none.wav)
+set_tests_properties(switch_no_switch PROPERTIES FIXTURES_REQUIRED switch_clean FIXTURES_SETUP switch_none)
+add_test(NAME switch_no_switch_fails COMMAND velora-null-test --case ${_ls}/switch.case --candidate ${_out}/switch_none.wav)
+set_tests_properties(switch_no_switch_fails PROPERTIES FIXTURES_REQUIRED switch_none PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+add_test(NAME switch_wrong_time
+         COMMAND velora-offline-render ${_sw_args} --switch-at 3.6:${_ls}/switch/switch_b.liveset --switch-load-blocks 100 --out ${_out}/switch_late.wav)
+set_tests_properties(switch_wrong_time PROPERTIES FIXTURES_REQUIRED switch_clean FIXTURES_SETUP switch_late)
+add_test(NAME switch_wrong_time_fails COMMAND velora-null-test --case ${_ls}/switch.case --candidate ${_out}/switch_late.wav)
+set_tests_properties(switch_wrong_time_fails PROPERTIES FIXTURES_REQUIRED switch_late PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+add_test(NAME switch_wrong_load_time
+         COMMAND velora-offline-render ${_sw_args} --switch-at 3.0:${_ls}/switch/switch_b.liveset --switch-load-blocks 700 --out ${_out}/switch_slow.wav)
+set_tests_properties(switch_wrong_load_time PROPERTIES FIXTURES_REQUIRED switch_clean FIXTURES_SETUP switch_slow)
+add_test(NAME switch_wrong_load_time_fails COMMAND velora-null-test --case ${_ls}/switch.case --candidate ${_out}/switch_slow.wav)
+set_tests_properties(switch_wrong_load_time_fails PROPERTIES FIXTURES_REQUIRED switch_slow PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+# Option and input errors of --switch-at / --switch-load-blocks.
+foreach(_bad "nope" "1" ":x.liveset" "x:x.liveset" "-1:x.liveset" "4000:x.liveset" "nan:x.liveset" "1:")
+  string(MAKE_C_IDENTIFIER "switch_at_${_bad}" _id)
+  add_test(NAME switch_rejects_${_id}
+           COMMAND velora-offline-render ${_sw_args} --switch-at ${_bad} --out ${_out}/never.wav)
+  set_tests_properties(switch_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid --switch-at")
+endforeach()
+foreach(_bad "x" "-1" "1.5" "2000000")
+  string(MAKE_C_IDENTIFIER "switch_load_${_bad}" _id)
+  add_test(NAME switch_rejects_load_blocks_${_id}
+           COMMAND velora-offline-render ${_sw_args} ${_sw_good} --switch-load-blocks ${_bad} --out ${_out}/never.wav)
+  set_tests_properties(switch_rejects_load_blocks_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid --switch-load-blocks")
+endforeach()
+add_test(NAME switch_rejects_missing_file
+         COMMAND velora-offline-render ${_sw_args} --switch-at 1.0:${_ls}/switch/nope.liveset --out ${_out}/never.wav)
+set_tests_properties(switch_rejects_missing_file PROPERTIES PASS_REGULAR_EXPRESSION "--switch-at: .*nope.liveset")
+add_test(NAME switch_rejects_after_the_end
+         COMMAND velora-offline-render ${_sw_args} --switch-at 100:${_ls}/switch/switch_b.liveset --out ${_out}/never.wav)
+set_tests_properties(switch_rejects_after_the_end PROPERTIES PASS_REGULAR_EXPRESSION "after the end of the render")
+add_test(NAME switch_rejects_unfinished_load
+         COMMAND velora-offline-render ${_sw_args} --switch-at 6.0:${_ls}/switch/switch_b.liveset --switch-load-blocks 100000 --out ${_out}/never.wav)
+set_tests_properties(switch_rejects_unfinished_load PROPERTIES PASS_REGULAR_EXPRESSION "did not complete before the end")
+add_test(NAME switch_rejects_superseded_switch
+         COMMAND velora-offline-render ${_sw_args} --switch-at 3.0:${_ls}/switch/switch_b.liveset --switch-at 3.01:${_ls}/switch/switch_a.liveset
+                 --switch-load-blocks 100 --out ${_out}/never.wav)
+set_tests_properties(switch_rejects_superseded_switch PROPERTIES PASS_REGULAR_EXPRESSION "switch superseded before completion")
+add_test(NAME switch_rejects_same_block_switches
+         COMMAND velora-offline-render ${_sw_args} --switch-at 3.0:${_ls}/switch/switch_b.liveset --switch-at 3.0001:${_ls}/switch/switch_a.liveset
+                 --switch-load-blocks 0 --out ${_out}/never.wav)
+set_tests_properties(switch_rejects_same_block_switches PROPERTIES PASS_REGULAR_EXPRESSION "switch superseded before completion")
+add_test(NAME switch_rejects_without_live_set
+         COMMAND velora-offline-render ${_render_args} --switch-at 1.0:${_ls}/switch/switch_b.liveset --out ${_out}/never.wav)
+set_tests_properties(switch_rejects_without_live_set PROPERTIES PASS_REGULAR_EXPRESSION "--switch-at and --switch-load-blocks need --live-set")
+add_test(NAME switch_rejects_load_blocks_alone
+         COMMAND velora-offline-render ${_sw_args} --switch-load-blocks 5 --out ${_out}/never.wav)
+set_tests_properties(switch_rejects_load_blocks_alone PROPERTIES PASS_REGULAR_EXPRESSION "--switch-load-blocks needs --switch-at")
+add_custom_target(update-switch-golden
+  COMMAND velora-offline-render ${_sw_args} ${_sw_good} --out ${_ls}/switch.wav)
 
 # Option parsing.
 add_test(NAME organ_perc_rejects_bad_percussion

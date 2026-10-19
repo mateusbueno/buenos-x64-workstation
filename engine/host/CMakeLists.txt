@@ -43,7 +43,8 @@ add_library(velora_control STATIC
   src/dev_config.cpp
   src/live_set_store.cpp
   src/live_set_loader.cpp
-  src/scene_controller.cpp)
+  src/scene_controller.cpp
+  src/live_set_switcher.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -86,6 +87,18 @@ add_executable(scene_rt_traffic_test tests/rtsan_scene_test.cpp)
 target_link_libraries(scene_rt_traffic_test PRIVATE velora_control)
 add_test(NAME scene_rt_traffic_test COMMAND scene_rt_traffic_test)
 set_tests_properties(scene_rt_traffic_test PROPERTIES TIMEOUT 300)
+
+# Seamless Live Set switching (Story 4.5): background load, cancellation, head budget, loading status cadence, notes across the swap, reservation handover, ws.v1.
+add_executable(live_set_switcher_tests tests/live_set_switcher_test.cpp)
+target_link_libraries(live_set_switcher_tests PRIVATE velora_control)
+add_test(NAME live_set_switcher_tests COMMAND live_set_switcher_tests)
+set_tests_properties(live_set_switcher_tests PROPERTIES TIMEOUT 300)
+
+# The same switch storms beside a rendering RT thread without the sanitizer (macOS runs the logic); the RTSan build of it is below.
+add_executable(switch_rt_traffic_test tests/rtsan_switch_test.cpp)
+target_link_libraries(switch_rt_traffic_test PRIVATE velora_control)
+add_test(NAME switch_rt_traffic_test COMMAND switch_rt_traffic_test)
+set_tests_properties(switch_rt_traffic_test PROPERTIES TIMEOUT 300)
 
 # Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
 #   cmake --build build --target live_set_corpus_regen
@@ -145,6 +158,13 @@ if(VELORA_RTSAN AND VELORA_HAVE_RTSAN)
   target_link_options(rtsan_scene_test PRIVATE -fsanitize=realtime)
   add_test(NAME rtsan_scene_test COMMAND rtsan_scene_test)
   set_tests_properties(rtsan_scene_test PROPERTIES TIMEOUT 300)
+
+  add_executable(rtsan_switch_test tests/rtsan_switch_test.cpp)
+  target_link_libraries(rtsan_switch_test PRIVATE velora_control)
+  target_compile_options(rtsan_switch_test PRIVATE -fsanitize=realtime -g)
+  target_link_options(rtsan_switch_test PRIVATE -fsanitize=realtime)
+  add_test(NAME rtsan_switch_test COMMAND rtsan_switch_test)
+  set_tests_properties(rtsan_switch_test PROPERTIES TIMEOUT 300)
 endif()
 
 if(APPLE)

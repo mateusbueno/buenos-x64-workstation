@@ -10,7 +10,8 @@
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
-//                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--seed N] [--tail-seconds S]]   (Live Set mode, Story 4.3: --midi, --out; no other engine option)
+//                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N] [--seed N] [--tail-seconds S]]
+//                         (Live Set mode, Story 4.3: --midi, --out; no other engine option; --switch-at is Story 4.5)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,6 +47,7 @@ static int usage() {
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n"
                "       Live Set: --live-set FILE --library-root DIR --midi in.mid --out out.wav [--scene-at SECONDS:INDEX]... [--seed N] [--tail-seconds S]\n"
+               "                 [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N]   (seamless switch to another Live Set; the background load is simulated as N blocks)\n"
                "                 (every note on any channel is fanned out to the Live Set's parts by zone; no other engine option)\n");
   return 2;
 }
@@ -61,6 +63,9 @@ int main(int argc, char** argv) {
   std::string line_in_path, aux_out_path, live_set_path, library_root;
   bool seed_given = false;
   std::vector<SceneRecallAt> scene_recalls;
+  std::vector<SwitchAt> switches;
+  std::uint64_t switch_load_blocks = 0;
+  bool switch_load_blocks_given = false;
   WavData line_in_wav, aux_wav;
   // "P:rest" -> part index 0..7 and the text after the colon.
   auto split_part = [](const std::string& arg, std::uint32_t& part, std::string& rest) {
@@ -348,6 +353,25 @@ int main(int argc, char** argv) {
       rc.frame = static_cast<std::uint64_t>(std::llround(secs * 48000.0));
       rc.index = static_cast<std::uint32_t>(idx);
       scene_recalls.push_back(rc);
+    } else if (a == "--switch-at" && val(v)) {
+      // SECONDS:LIVESET_FILE -- Live Set mode: switch seamlessly to that Live Set at that time (repeatable).
+      const std::string sv = v;
+      const std::size_t colon = sv.find(':');
+      double secs = 0;
+      if (colon == std::string::npos || colon + 1 >= sv.size() || !parse_double(sv.substr(0, colon), 0.0, 3600.0, secs)) {
+        std::fprintf(stderr, "error: invalid --switch-at '%s' (SECONDS:LIVESET_FILE with SECONDS 0..3600)\n", sv.c_str());
+        return 2;
+      }
+      SwitchAt sw;
+      sw.frame = static_cast<std::uint64_t>(std::llround(secs * 48000.0));
+      sw.live_set_path = sv.substr(colon + 1);
+      switches.push_back(std::move(sw));
+    } else if (a == "--switch-load-blocks" && val(v)) {
+      if (!parse_uint(v, 1000000, switch_load_blocks)) {
+        std::fprintf(stderr, "error: invalid --switch-load-blocks '%s' (a whole number of 64-frame blocks, 0..1000000)\n", v);
+        return 2;
+      }
+      switch_load_blocks_given = true;
     } else if (a == "--live-set" && val(v)) live_set_path = v;
     else if (a == "--library-root" && val(v)) library_root = v;
     else if (a == "--bundle" && val(v)) bundle_path = v;
@@ -381,6 +405,14 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: --scene-at needs --live-set\n");
     return 2;
   }
+  if ((!switches.empty() || switch_load_blocks_given) && live_set_path.empty()) {
+    std::fprintf(stderr, "error: --switch-at and --switch-load-blocks need --live-set\n");
+    return 2;
+  }
+  if (switch_load_blocks_given && switches.empty()) {
+    std::fprintf(stderr, "error: --switch-load-blocks needs --switch-at\n");
+    return 2;
+  }
   if (!live_set_path.empty() || !library_root.empty()) {
     // Live Set mode (Story 4.3): the Live Set decides the engines, the routing and the instruments.
     if (live_set_path.empty() || library_root.empty() || midi.empty() || out.empty()) return usage();
@@ -402,6 +434,8 @@ int main(int argc, char** argv) {
     lo.tail_seconds = opt.tail_seconds;
     if (seed_given) lo.seed = opt.seed;
     lo.scene_recalls = scene_recalls;
+    lo.switches = switches;
+    lo.switch_load_blocks = static_cast<std::uint32_t>(switch_load_blocks);
     WavData lwav;
     LiveSetRenderReport lrep;
     std::string lerr;
@@ -420,6 +454,7 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(lrep.pool_exhausted), static_cast<unsigned long long>(lrep.dropped_out_of_range),
                 static_cast<unsigned long long>(lrep.unzoned_keys));
     if (!scene_recalls.empty()) std::printf("live set: %llu scene recall(s)\n", static_cast<unsigned long long>(lrep.scenes_recalled));
+    if (!switches.empty()) std::printf("live set: %llu live set switch(es)\n", static_cast<unsigned long long>(lrep.switches_published));
     std::printf("rendered %zu events -> %s (%llu frames, 48000 Hz, 2 ch, float32)\n", lsmf.events.size(), out.c_str(),
                 static_cast<unsigned long long>(lwav.frames()));
     return 0;

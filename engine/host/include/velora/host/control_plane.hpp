@@ -56,6 +56,24 @@ class SceneHandler {
   virtual SceneOutcome run(Op op, std::uint32_t index) = 0;
 };
 
+// Live Set switching (Story 4.5). The plane parses JumpToLiveSet / CancelLoad and puts the loading status into State; the work (catalog,
+// background load, publication) is the LiveSetSwitcher's, reached through this seam so the plane does not depend on it. Control thread only.
+struct SwitchOutcome {
+  enum class Result : std::uint8_t { kAccepted = 0, kAlreadyLoaded, kAlreadyLoading, kUnknownLiveSet };
+  Result result = Result::kUnknownLiveSet;
+  std::string target_id, target_name;
+  bool superseded_previous = false;  // a load in progress was cancelled to start this one
+  bool cancelled = false;            // CancelLoad: a load was in progress and is cancelled
+};
+class SwitchHandler {
+ public:
+  virtual ~SwitchHandler() = default;
+  virtual SwitchOutcome jump(const std::string& id) = 0;
+  virtual SwitchOutcome cancel() = 0;
+  // Fills State.loading, State.live_set_id and State.live_set_name.
+  virtual void fill_status(ws::v1::State* out) const = 0;
+};
+
 class ControlPlane {
  public:
   using Clock = std::function<std::uint64_t()>;  // host time in ns, the same clock the MIDI adapter stamps with
@@ -89,6 +107,10 @@ class ControlPlane {
   const core::Snapshot* current_snapshot() const noexcept { return current_; }
   // A program_generation number that was never handed out before (Snapshot::program_generation, AD-2); control thread only.
   std::uint64_t next_program_generation() noexcept { return ++program_generation_; }
+  // Live Set switching (Story 4.5): the LiveSetSwitcher registers itself here (and unregisters in its destructor). Control thread only.
+  void set_switch_handler(SwitchHandler* h) noexcept { switch_handler_ = h; }
+  // A reservation epoch that was never handed out before (Snapshot::reservation_epoch); control thread only.
+  std::uint64_t next_reservation_epoch() noexcept { return ++reservation_epoch_; }
   // The generation RT announced it is reading (hazard pointer), nullptr before RT ran. Control thread only: it is the only thread that frees
   // generations, so the pointee stays valid for the duration of the call.
   const core::Snapshot* rt_held_snapshot() const noexcept { return exchange_.rt_held(); }
@@ -131,7 +153,9 @@ class ControlPlane {
   Clock clock_;
   const core::Snapshot* current_ = nullptr;
   SceneHandler* scene_handler_ = nullptr;
+  SwitchHandler* switch_handler_ = nullptr;
   std::uint64_t program_generation_ = 0;
+  std::uint64_t reservation_epoch_ = 0;
   std::vector<core::Snapshot*> generations_;  // everything not yet freed, oldest first
   std::uint32_t ledger_used_ = 0;             // bit i = ledger slot i in use
   std::atomic<std::uint64_t> revision_{0};

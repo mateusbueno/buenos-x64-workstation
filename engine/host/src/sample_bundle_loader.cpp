@@ -16,6 +16,7 @@ const char* to_string(LoadStatus s) {
     case LoadStatus::kInstrumentNotFound: return "instrument not found";
     case LoadStatus::kInstrumentIndex: return "instrument index out of range";
     case LoadStatus::kBundleInconsistent: return "instrument samples outside the bundle";
+    case LoadStatus::kCancelled: return "cancelled";
   }
   return "?";
 }
@@ -76,7 +77,7 @@ bool pcm_to_float(const fmt::PcmFormat& f, std::span<const std::int32_t> in, std
 }
 
 struct BundleInstrumentLoader {
-  static LoadResult load(const fmt::BundleReader& bundle, std::size_t index) {
+  static LoadResult load(const fmt::BundleReader& bundle, std::size_t index, const LoadHooks* hooks) {
     LoadResult res;
     const auto instruments = bundle.instruments();
     if (index >= instruments.size()) return res;
@@ -94,7 +95,17 @@ struct BundleInstrumentLoader {
 
     const auto samples = bundle.samples();
     std::vector<std::int32_t> tmp;
+    // The hooks run between chunks; false = stop. Everything resident so far dies with `out` (RAII), so a cancelled load leaves nothing.
+    auto proceed = [&](std::uint64_t bytes) {
+      if (!hooks) return true;
+      if (hooks->cancel && hooks->cancel->load(std::memory_order_acquire)) return false;
+      return !(hooks->progress && bytes != 0 && !hooks->progress(bytes));
+    };
     for (std::size_t s = 0; s < info.sample_count; ++s) {
+      if (!proceed(0)) {
+        res.status = LoadStatus::kCancelled;
+        return res;
+      }
       const fmt::SampleInfo& si = samples[info.first_sample + s];
       ports::SamplePcm& pcm = out->pcm_[s];  // stays empty (frames == 0) on failure
       const std::size_t ch = si.format.channels;
@@ -105,8 +116,19 @@ struct BundleInstrumentLoader {
       }
       try {
         tmp.assign(static_cast<std::size_t>(frames) * ch, 0);
-        if (bundle.read_frames(info.first_sample + s, 0, frames, tmp) != fmt::Error::kNone ||
-            !pcm_to_float(si.format, tmp, frames, out->data_[s])) {
+        bool read_ok = true;
+        for (std::uint64_t at = 0; at < frames && read_ok;) {  // chunked, so a cancel is seen within one chunk
+          const std::uint64_t n = std::min<std::uint64_t>(kLoadChunkFrames, frames - at);
+          read_ok = bundle.read_frames(info.first_sample + s, at, n, std::span<std::int32_t>(tmp).subspan(static_cast<std::size_t>(at) * ch, static_cast<std::size_t>(n) * ch)) ==
+                    fmt::Error::kNone;
+          at += n;
+          if (read_ok && !proceed(n * ch * sizeof(float))) {
+            out->data_[s] = std::vector<float>();
+            res.status = LoadStatus::kCancelled;
+            return res;
+          }
+        }
+        if (!read_ok || !pcm_to_float(si.format, tmp, frames, out->data_[s])) {
           out->data_[s].clear();
           ++out->failed_samples_;
           continue;
@@ -132,14 +154,30 @@ struct BundleInstrumentLoader {
   }
 };
 
-LoadResult load_instrument_by_index(const fmt::BundleReader& bundle, std::size_t index) {
-  return BundleInstrumentLoader::load(bundle, index);
+LoadResult load_instrument_by_index(const fmt::BundleReader& bundle, std::size_t index, const LoadHooks* hooks) {
+  return BundleInstrumentLoader::load(bundle, index, hooks);
+}
+
+std::uint64_t instrument_head_bytes(const fmt::BundleReader& bundle, std::size_t index) {
+  const auto instruments = bundle.instruments();
+  if (index >= instruments.size()) return 0;
+  const fmt::InstrumentInfo& info = instruments[index];
+  const auto samples = bundle.samples();
+  if (info.first_sample > samples.size() || info.sample_count > samples.size() - info.first_sample) return 0;
+  std::uint64_t bytes = 0;
+  for (std::size_t s = 0; s < info.sample_count; ++s) {
+    const fmt::SampleInfo& si = samples[info.first_sample + s];
+    const std::size_t ch = si.format.channels;
+    if (si.frame_count == 0 || (ch != 1 && ch != 2) || si.frame_count > (std::uint64_t{1} << 31)) continue;  // the loader leaves these empty
+    bytes += si.frame_count * ch * sizeof(float);
+  }
+  return bytes;
 }
 
 LoadResult load_instrument(const fmt::BundleReader& bundle, std::string_view key) {
   const auto instruments = bundle.instruments();
   for (std::size_t i = 0; i < instruments.size(); ++i)
-    if (instruments[i].key == key) return BundleInstrumentLoader::load(bundle, i);
+    if (instruments[i].key == key) return BundleInstrumentLoader::load(bundle, i, nullptr);
   LoadResult res;
   res.status = LoadStatus::kInstrumentNotFound;
   return res;

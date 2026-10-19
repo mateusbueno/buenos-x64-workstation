@@ -12,6 +12,7 @@
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/live_set_loader.hpp"
+#include "velora/host/live_set_switcher.hpp"
 #include "velora/host/scene_controller.hpp"
 
 namespace velora::offline {
@@ -57,6 +58,29 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
     for (const host::PartLoadReport& p : loaded.parts) report->part_states.push_back(p.state);
   }
 
+  // Seamless switches (Story 4.5): the switcher runs without its worker thread (the stage runs inside jump_to) and holds the commit for the
+  // simulated load time, so the render stays deterministic. Every target file is read up front: an unreadable one is an error before any rendering.
+  std::vector<SwitchAt> switches = opt.switches;
+  std::stable_sort(switches.begin(), switches.end(), [](const SwitchAt& a, const SwitchAt& b) { return a.frame < b.frame; });
+  std::unique_ptr<host::LiveSetSwitcher> switcher;
+  std::vector<std::string> switch_ids(switches.size());
+  if (!switches.empty()) {
+    host::SwitcherOptions so;
+    so.background_thread = false;
+    so.hold_ticks = opt.switch_load_blocks;
+    switcher = std::make_unique<host::LiveSetSwitcher>(loader, plane, so);
+    for (std::size_t i = 0; i < switches.size(); ++i) {
+      host::CatalogEntry e;
+      std::string cerr;
+      if (!host::catalog_entry_for_file(switches[i].live_set_path, opt.part_count, e, cerr)) {
+        error = "--switch-at: " + cerr;
+        return false;
+      }
+      switch_ids[i] = e.id;
+      switcher->add_to_catalog(std::move(e));
+    }
+  }
+
   // Controllers: sustain goes through as it is; the registry-mapped ones become parameter events of the part that is their channel.
   auto control = [](const NoteEvent& e, Ump& u) {
     const std::uint32_t v32 = static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127);
@@ -92,7 +116,7 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
               (scenes.scene_count() == 1 ? "" : "s") + ")";
       return false;
     }
-  std::size_t next_recall = 0;
+  std::size_t next_recall = 0, next_switch = 0;
   std::uint64_t recalled = 0;
   float l[kBlockFrames], r[kBlockFrames];
   std::size_t next = 0;
@@ -107,6 +131,23 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
       }
       if (o.published) ++recalled;
       ++next_recall;
+    }
+    // Live Set switches: the jump is made between blocks at the block that holds its time; the commit follows after the simulated load time.
+    while (next_switch < switches.size() && switches[next_switch].frame < (b + 1) * kBlockFrames) {
+      const host::SwitchOutcome jo = switcher->jump_to(switch_ids[next_switch]);
+      if (jo.superseded_previous) {  // two switches closer together than the simulated load: the first would be silently cancelled
+        error = "switch superseded before completion: --switch-at " + switches[next_switch].live_set_path +
+                " arrived while the previous switch was still loading (raise the time between them or lower --switch-load-blocks)";
+        return false;
+      }
+      ++next_switch;
+    }
+    if (switcher) {
+      switcher->tick();
+      if (switcher->status().state == host::SwitchState::kFailed) {
+        error = std::string("switch: ") + host::to_string(switcher->status().last_error) + " (" + switcher->status().last_error_detail + ")";
+        return false;
+      }
     }
     const std::uint64_t end = (b + 1) * kBlockFrames;
     while (next < events.size() && events[next].frame < end) {
@@ -130,6 +171,7 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
       error = "event buffer overflow (too many events in one block)";
       return false;
     }
+    if (switcher) plane.reclaim();  // free the generations nobody plays any more, as the control server's tick does
     float* dst = &out.samples[static_cast<std::size_t>(b * kBlockFrames * 2)];
     for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
       dst[2 * i] = l[i];
@@ -140,12 +182,21 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
     error = "--scene-at time is after the end of the render (last note plus tail, rounded up to a 64-frame block)";
     return false;
   }
+  if (next_switch < switches.size()) {
+    error = "--switch-at time is after the end of the render (last note plus tail, rounded up to a 64-frame block)";
+    return false;
+  }
+  if (switcher && switcher->loading()) {
+    error = "--switch-at: the switch did not complete before the end of the render (--switch-load-blocks is longer than the rest of the render)";
+    return false;
+  }
   if (report) {
+    report->switches_published = switcher ? switcher->switches_published() : 0;
     report->pool_exhausted = br->status_count(EngineStatus::kPoolExhausted);
     report->dropped_out_of_range = br->router().dropped_out_of_range();
     report->unzoned_keys = br->router().unzoned_keys();
     report->scenes_recalled = recalled;
-    report->generations_published = recalled;
+    report->generations_published = recalled + report->switches_published;
   }
   return true;
 }
