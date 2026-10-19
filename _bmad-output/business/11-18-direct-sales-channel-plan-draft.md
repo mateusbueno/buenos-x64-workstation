@@ -109,7 +109,7 @@ Context: new brand trust is the main barrier (survey Q21, epics.md:6583; the sur
 | Warranty start date (invoice date vs delivery date) | ____ | lawyer to confirm |
 
 ### 3.2 RMA process
-Required steps (epics.md:6586): contact, diagnosis, pickup, repair or swap, SoM-swap re-provisioning per AR33 (factory provisioning station links serial to SoM ID and re-provisions on SoM swap, epics.md:372).
+Required steps (epics.md:6585): contact, diagnosis, pickup, repair or swap, SoM-swap re-provisioning per AR33 (factory provisioning station links serial to SoM ID and re-provisions on SoM swap, epics.md:372).
 
 | Step | Who | Target time | Tool / record |
 |---|---|---|---|
