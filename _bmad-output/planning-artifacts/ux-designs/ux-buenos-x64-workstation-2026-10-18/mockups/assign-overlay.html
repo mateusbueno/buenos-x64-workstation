@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — ASSIGN Overlay</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#ecebe8;font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#151515}
+.wrap{max-width:1180px;margin:auto;padding:28px 16px 60px}
+h1{font-size:22px;font-weight:500;margin:0 0 6px}
+h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#4d4d4d;margin:38px 0 6px}
+h3{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:14px 0 4px;font-weight:600}
+p{color:#4d4d4d;max-width:900px;margin:0 0 12px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media (max-width:760px){.pair{grid-template-columns:1fr}}
+figure{margin:0}
+figcaption{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:0 0 4px 2px}
+.frame{background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab);padding:10px;border-radius:12px}
+.scr{aspect-ratio:1024/600;width:100%;border-radius:6px;overflow:hidden;position:relative;container-type:inline-size;font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif;background:var(--bg);color:var(--text)}
+.s{--u:calc(100cqw/1024);position:absolute;inset:0;display:grid;grid-template-rows:calc(56*var(--u)) calc(118*var(--u)) calc(72*var(--u)) calc(298*var(--u)) calc(56*var(--u))}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:calc(12*var(--u));padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(15*var(--u));letter-spacing:.12em;text-transform:uppercase;min-width:0}
+.bar .ctx{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.bar .r{display:flex;align-items:center;gap:calc(18*var(--u));flex:none}
+.bar .md{font-size:calc(20*var(--u));font-weight:700;letter-spacing:.06em;color:var(--muted);white-space:nowrap}
+.bar .md.on{color:var(--accent);border-bottom:calc(2*var(--u)) solid var(--accent);line-height:1.2}
+.bar .tp{font-size:calc(20*var(--u));color:var(--text)}
+.hero{display:flex;align-items:center;justify-content:space-between;gap:calc(16*var(--u));padding:0 calc(22*var(--u));border-bottom:calc(1*var(--u)) solid var(--line);min-width:0}
+.hero .hl{min-width:0;display:flex;flex-direction:column}
+.hero small{font-size:calc(15*var(--u));letter-spacing:.25em;color:var(--muted);text-transform:uppercase}
+.hero b{font-weight:400;font-size:calc(53*var(--u));line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hero .nx{display:flex;flex-direction:column;align-items:flex-end;flex:none;max-width:45%;min-width:0}
+.hero .nx span{font-size:calc(24*var(--u));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.hero .nx i{font-style:normal;font-size:calc(14*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.scn{display:grid;grid-template-columns:repeat(8,1fr);gap:calc(10*var(--u));padding:calc(8*var(--u)) calc(22*var(--u))}
+.scn div{border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(8*var(--u));background:var(--surface);padding:0 calc(10*var(--u));display:flex;flex-direction:column;justify-content:center;min-width:0;overflow:hidden}
+.scn b{font-weight:400;font-size:calc(16*var(--u));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scn small{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scn .cur{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.scn .cur small{color:var(--on-accent)}
+.scn .emp{background:transparent;border-style:dashed;color:var(--muted);font-size:calc(16*var(--u));align-items:flex-start}
+.area{padding:calc(8*var(--u)) calc(22*var(--u)) calc(10*var(--u));min-height:0;display:flex}
+.ov{flex:1;min-height:0;background:var(--raised);border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(8*var(--u));padding:calc(10*var(--u)) calc(12*var(--u)) calc(12*var(--u));display:flex;flex-direction:column;gap:calc(8*var(--u))}
+.ovh{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ks{flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:calc(8*var(--u))}
+.k{background:var(--surface);border-radius:calc(8*var(--u));border:calc(3*var(--u)) solid transparent;padding:calc(6*var(--u)) calc(12*var(--u));display:flex;flex-direction:column;gap:calc(2*var(--u));min-width:0;min-height:calc(56*var(--u));overflow:hidden}
+.k .kl{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.k .kn{font-size:calc(16*var(--u));line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+.k .v{margin-top:auto;font-size:calc(24*var(--u));line-height:1.1;font-variant-numeric:tabular-nums}
+.k.t{background:var(--raised);border-color:var(--accent)}
+.k.t .kl{color:var(--accent)}
+.k.na .kn{color:var(--muted)}
+.stat{display:flex;align-items:center;gap:calc(24*var(--u));padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(14*var(--u));letter-spacing:.06em;text-transform:uppercase}
+.notes{background:#fff;border:1px solid #d6d4cf;border-radius:8px;padding:10px 14px 10px 30px;font-size:13px;color:#3d3d3d;margin:10px 0}
+.notes li{margin:4px 0}
+table{border-collapse:collapse;background:#fff;font-size:13px;color:#3d3d3d;margin:8px 0;width:100%}
+td,th{border:1px solid #d6d4cf;padding:6px 9px;text-align:left;vertical-align:top}
+th{background:#f4f3f0;font-weight:600}
+.t-stage{--bg:#0b0d0c;--surface:#151917;--raised:#202622;--line:#2b322e;--line-strong:#5a6860;--text:#e7ebe8;--muted:#88938c;--accent:#9fbaa8;--on-accent:#0b0d0c;--warn:#cdb86c;}
+.t-studio{--bg:#f2f4f2;--surface:#e3e8e4;--raised:#ffffff;--line:#cbd4cd;--line-strong:#728a77;--text:#131714;--muted:#5a635c;--accent:#466853;--on-accent:#f2f4f2;--warn:#725f1e;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Velora 73: ASSIGN Overlay</h1>
+<p>Shown over the Performance part area when an encoder is turned while the PART / ALL / ASSIGN toggle is on ASSIGN. A raised card (<code>{components.assign-overlay}</code>, <code>{rounded.md}</code>) lists K1–K8 in <code>{typography.meta-caps}</code> with the assigned parameter name under each in <code>{typography.tile-label}</code> (16 px, up to two lines, never clipped to one) and the current value. The turned knob's slot (K2 here) is raised with a 3 px accent border and an accent K label, so it is never marked by colour alone. The Top Bar, the Live Set Hero and the Scene strip stay visible and unchanged; only the part area is covered. Drawn at 1024 × 600 (Top Bar 56 · Hero 118 · Scene strip 72 · Part area 298 · Status 56) in the Stage and Studio themes, then with every label lengthened by 40% with accented capitals and user content replaced by <code>ÁÇÊÕÑ Ação</code>.</p>
+<ul class="notes">
+<li><b>Informational only.</b> The overlay has no controls and takes no focus; sound is never blocked and playing keys sounds as normal. Slots are not touch targets.</li>
+<li><b>Timing.</b> It stays for 3 s and restarts on each turn (EXPERIENCE › Timings), then the Part Strips return. Under reduced motion it appears and leaves in place.</li>
+<li><b>Precedence.</b> It covers the part area and takes precedence over a Notice Toast, which waits until the overlay closes. It never covers the Hero or the Scene strip.</li>
+<li><b>Unassigned.</b> A slot with no mapping reads "Not assigned" in muted text (K8); turning that knob highlights its slot and does nothing else.</li>
+<li><b>Per Live Set.</b> The map belongs to the active Live Set; the heading says so. Velora Studio edits it in the Part Editor.</li>
+<li><b>Names.</b> Parameter names are system strings and lengthen in translation; they wrap to two lines and then end with an ellipsis. Live Set and scene names are user content and ellipsize at the end.</li>
+</ul>
+<h2>Stage and Studio</h2>
+<div class="pair"><figure><figcaption>Stage theme · K2 turned</figcaption><div class="frame"><div class="scr t-stage" role="group" aria-label="ASSIGN Overlay, Stage theme"><div class="s">
+<div class="bar"><span class="ctx">SETLIST · Wedding Ana &amp; Pedro · 3 / 12</span><span class="r"><span class="md">MIXER</span><span class="md">PARTS</span><span class="md on">KNOBS ASSIGN</span><span class="tp">♩ 72</span></span></div>
+<div class="hero"><div class="hl"><small>LIVE SET 03</small><b>Perfect</b></div><div class="nx"><small>NEXT</small><span>Thinking Out Loud</span><i>● READY</i></div></div>
+<div class="scn"><div class=""><b>1 Intro</b><small>piano</small></div><div class="cur"><b>2 Verse</b><small>piano + pad</small></div><div class=""><b>3 Chorus</b><small>+ strings</small></div><div class=""><b>4 Bridge</b><small>organ</small></div><div class=""><b>5 Final</b><small>tutti</small></div><div class="emp">6</div><div class="emp">7</div><div class="emp">8</div></div>
+<div class="area"><div class="ov" role="status" aria-label="ASSIGN Overlay: K1 to K8"><div class="ovh"><span>ASSIGN · KNOBS (THIS LIVE SET)</span></div><div class="ks"><div class="k"><span class="kl">K1</span><span class="kn">Filter cutoff</span><span class="v">62</span></div><div class="k t"><span class="kl">K2</span><span class="kn">Reverb send</span><span class="v">35</span></div><div class="k"><span class="kl">K3</span><span class="kn">Drawbar 16′</span><span class="v">8</span></div><div class="k"><span class="kl">K4</span><span class="kn">Attack time</span><span class="v">14</span></div><div class="k"><span class="kl">K5</span><span class="kn">Chorus depth</span><span class="v">41</span></div><div class="k"><span class="kl">K6</span><span class="kn">Part 2 volume</span><span class="v">78</span></div><div class="k"><span class="kl">K7</span><span class="kn">Rotary speed</span><span class="v">Slow</span></div><div class="k na"><span class="kl">K8</span><span class="kn">Not assigned</span></div></div></div></div>
+<div class="stat"><span>VOICES 142 / 256</span><span>● STREAMING OK</span></div>
+</div></div></div></figure><figure><figcaption>Studio theme · K2 turned</figcaption><div class="frame"><div class="scr t-studio" role="group" aria-label="ASSIGN Overlay, Studio theme"><div class="s">
+<div class="bar"><span class="ctx">SETLIST · Wedding Ana &amp; Pedro · 3 / 12</span><span class="r"><span class="md">MIXER</span><span class="md">PARTS</span><span class="md on">KNOBS ASSIGN</span><span class="tp">♩ 72</span></span></div>
+<div class="hero"><div class="hl"><small>LIVE SET 03</small><b>Perfect</b></div><div class="nx"><small>NEXT</small><span>Thinking Out Loud</span><i>● READY</i></div></div>
+<div class="scn"><div class=""><b>1 Intro</b><small>piano</small></div><div class="cur"><b>2 Verse</b><small>piano + pad</small></div><div class=""><b>3 Chorus</b><small>+ strings</small></div><div class=""><b>4 Bridge</b><small>organ</small></div><div class=""><b>5 Final</b><small>tutti</small></div><div class="emp">6</div><div class="emp">7</div><div class="emp">8</div></div>
+<div class="area"><div class="ov" role="status" aria-label="ASSIGN Overlay: K1 to K8"><div class="ovh"><span>ASSIGN · KNOBS (THIS LIVE SET)</span></div><div class="ks"><div class="k"><span class="kl">K1</span><span class="kn">Filter cutoff</span><span class="v">62</span></div><div class="k t"><span class="kl">K2</span><span class="kn">Reverb send</span><span class="v">35</span></div><div class="k"><span class="kl">K3</span><span class="kn">Drawbar 16′</span><span class="v">8</span></div><div class="k"><span class="kl">K4</span><span class="kn">Attack time</span><span class="v">14</span></div><div class="k"><span class="kl">K5</span><span class="kn">Chorus depth</span><span class="v">41</span></div><div class="k"><span class="kl">K6</span><span class="kn">Part 2 volume</span><span class="v">78</span></div><div class="k"><span class="kl">K7</span><span class="kn">Rotary speed</span><span class="v">Slow</span></div><div class="k na"><span class="kl">K8</span><span class="kn">Not assigned</span></div></div></div></div>
+<div class="stat"><span>VOICES 142 / 256</span><span>● STREAMING OK</span></div>
+</div></div></div></figure></div>
+<h2>Pseudo-localization +40% with ÁÇÊÕÑ Ação</h2>
+<div class="pair"><figure><figcaption>Stage theme · +40%</figcaption><div class="frame"><div class="scr t-stage" role="group" aria-label="ASSIGN Overlay, Stage theme, pseudo-localized"><div class="s">
+<div class="bar"><span class="ctx">SETLIST · ÁÇÊÕÑ Ação · 3 / 12</span><span class="r"><span class="md">MIXER</span><span class="md">PARTS</span><span class="md on">KNOBS ÁSSÍGÑ ÁÇ</span><span class="tp">♩ 72</span></span></div>
+<div class="hero"><div class="hl"><small>LIVE SET 03</small><b>ÁÇÊÕÑ Ação</b></div><div class="nx"><small>NEXT</small><span>ÁÇÊÕÑ Ação Próxima</span><i>● Réády ÁÇ</i></div></div>
+<div class="scn"><div class=""><b>1 ÁÇÊÕÑ</b><small>pí ÁÇÊ</small></div><div class="cur"><b>2 Ação</b><small>pí + pád ÁÇ</small></div><div class=""><b>3 ÁÇÊÕÑ Ação</b><small>+ strí ÁÇÊ</small></div><div class=""><b>4 Bríggé</b><small>õrgáñ ÁÇ</small></div><div class=""><b>5 Fínál ÁÇ</b><small>tútti ÁÇ</small></div><div class="emp">6</div><div class="emp">7</div><div class="emp">8</div></div>
+<div class="area"><div class="ov" role="status" aria-label="ASSIGN Overlay: K1 to K8"><div class="ovh"><span>ÁSSÍGÑ · KNOBS (THÍS LÍVE SET) ÁÇ</span></div><div class="ks"><div class="k"><span class="kl">K1</span><span class="kn">Fíltêr çútõff ÁÇÊ</span><span class="v">62</span></div><div class="k t"><span class="kl">K2</span><span class="kn">Rêvêrb sênd ÁÇÊÕ</span><span class="v">35</span></div><div class="k"><span class="kl">K3</span><span class="kn">Drãwbár 16′ ÁÇÊÕÑ</span><span class="v">8</span></div><div class="k"><span class="kl">K4</span><span class="kn">Áttáçk tímê ÁÇÊ</span><span class="v">14</span></div><div class="k"><span class="kl">K5</span><span class="kn">Chõrús dêpth ÁÇÊÕ</span><span class="v">41</span></div><div class="k"><span class="kl">K6</span><span class="kn">Párt 2 vólúmê ÁÇÊÕÑ</span><span class="v">78</span></div><div class="k"><span class="kl">K7</span><span class="kn">Rõtárý spêêd ÁÇÊÕ</span><span class="v">Slow</span></div><div class="k na"><span class="kl">K8</span><span class="kn">Ñõt áássígñêd ÁÇÊ</span></div></div></div></div>
+<div class="stat"><span>VOICES 142 / 256</span><span>● STREAMING OK</span></div>
+</div></div></div></figure><figure><figcaption>Studio theme · +40%</figcaption><div class="frame"><div class="scr t-studio" role="group" aria-label="ASSIGN Overlay, Studio theme, pseudo-localized"><div class="s">
+<div class="bar"><span class="ctx">SETLIST · ÁÇÊÕÑ Ação · 3 / 12</span><span class="r"><span class="md">MIXER</span><span class="md">PARTS</span><span class="md on">KNOBS ÁSSÍGÑ ÁÇ</span><span class="tp">♩ 72</span></span></div>
+<div class="hero"><div class="hl"><small>LIVE SET 03</small><b>ÁÇÊÕÑ Ação</b></div><div class="nx"><small>NEXT</small><span>ÁÇÊÕÑ Ação Próxima</span><i>● Réády ÁÇ</i></div></div>
+<div class="scn"><div class=""><b>1 ÁÇÊÕÑ</b><small>pí ÁÇÊ</small></div><div class="cur"><b>2 Ação</b><small>pí + pád ÁÇ</small></div><div class=""><b>3 ÁÇÊÕÑ Ação</b><small>+ strí ÁÇÊ</small></div><div class=""><b>4 Bríggé</b><small>õrgáñ ÁÇ</small></div><div class=""><b>5 Fínál ÁÇ</b><small>tútti ÁÇ</small></div><div class="emp">6</div><div class="emp">7</div><div class="emp">8</div></div>
+<div class="area"><div class="ov" role="status" aria-label="ASSIGN Overlay: K1 to K8"><div class="ovh"><span>ÁSSÍGÑ · KNOBS (THÍS LÍVE SET) ÁÇ</span></div><div class="ks"><div class="k"><span class="kl">K1</span><span class="kn">Fíltêr çútõff ÁÇÊ</span><span class="v">62</span></div><div class="k t"><span class="kl">K2</span><span class="kn">Rêvêrb sênd ÁÇÊÕ</span><span class="v">35</span></div><div class="k"><span class="kl">K3</span><span class="kn">Drãwbár 16′ ÁÇÊÕÑ</span><span class="v">8</span></div><div class="k"><span class="kl">K4</span><span class="kn">Áttáçk tímê ÁÇÊ</span><span class="v">14</span></div><div class="k"><span class="kl">K5</span><span class="kn">Chõrús dêpth ÁÇÊÕ</span><span class="v">41</span></div><div class="k"><span class="kl">K6</span><span class="kn">Párt 2 vólúmê ÁÇÊÕÑ</span><span class="v">78</span></div><div class="k"><span class="kl">K7</span><span class="kn">Rõtárý spêêd ÁÇÊÕ</span><span class="v">Slow</span></div><div class="k na"><span class="kl">K8</span><span class="kn">Ñõt áássígñêd ÁÇÊ</span></div></div></div></div>
+<div class="stat"><span>VOICES 142 / 256</span><span>● STREAMING OK</span></div>
+</div></div></div></figure></div>
+<h2>Review notes</h2>
+<table>
+<tr><th>Pair</th><th>Stage</th><th>Studio</th></tr>
+<tr><td>text on raised / surface (names, values)</td><td>12.81 / 14.74</td><td>18.10 / 14.59</td></tr>
+<tr><td>muted on surface (K labels, sub-labels)</td><td>5.58</td><td>5.02</td></tr>
+<tr><td>muted on raised (heading, turned slot)</td><td>4.85</td><td>6.22</td></tr>
+<tr><td>accent K label on raised (turned slot)</td><td>7.39</td><td>6.24</td></tr>
+<tr><td>accent turned-slot border on surface</td><td>8.50</td><td>5.03</td></tr>
+<tr><td>on-accent on current scene tile</td><td>9.34</td><td>5.64</td></tr>
+</table>
+<p>The rendered-page check of every text node (≥ 4.5:1) and every border that carries meaning (≥ 3:1) was run on the rendered page for this file (no text pair below 4.5:1, no meaningful border below 3:1, every slot at least 56 px); the card edge (line-strong on raised) is decorative. No part-surface mockup is needed as backdrop: the overlay covers the whole part area, so nothing behind it is shown.</p>
+</div>
+</body>
+</html>

@@ -383,7 +383,7 @@ Source conventions: the SPEC (`SPEC.md` + companions) stands in for the PRD, so 
 **MCU firmware**
 
 - AR40 (AD-16, HW-§3–6): Keybed MCU firmware: keys only, ≥10 kHz scan, ≥1 MHz tick per contact change, raw contact times, aftertouch if present, ≤200 µs to wire.
-- AR41 (AD-16, HW-§4–5): Panel MCU firmware: encoders (relative), VALUE push as BUTTON, faders/wheels/pedals ≥10-bit, debounced buttons, SoC-driven LEDs, pedal polarity detection.
+- AR41 (AD-16, HW-§4–5): Panel MCU firmware: encoders (relative), VALUE push as BUTTON, faders/wheels/pedals 12-bit (MCU-ID-MAP; ≥10 bits minimum), debounced buttons, SoC-driven LEDs, pedal polarity detection.
 - AR42 (HW-§5): Versioned frame protocol (sync 0xA5, version, type, len, seq, tick, payload, CRC-16/CCITT; HELLO, KEY_CONTACT, AFTERTOUCH, CONTROL, BUTTON, LED_SET, TIME_SYNC, ENTER_BOOTLOADER); software team publishes the control and LED ID maps.
 - AR43 (AD-16, HW-§6): Immutable dual-bank bootloaders on both MCUs; sysd reflashes over the link (or BOOT/RESET GPIO) at boot on version mismatch only; no external field flashing.
 
@@ -2192,7 +2192,7 @@ So that the panel controls the instrument without jumps, misses or double presse
 
 **Given** the 9 faders, 2 wheels and 3 pedal inputs
 **When** they move
-**Then** each is sampled at ≥10 bits, filtered and reported on change at ≥500 Hz with a deadband that suppresses idle jitter
+**Then** each is sampled at 12 bits (MCU-ID-MAP; never below 10 bits), filtered and reported on change at ≥500 Hz with a deadband that suppresses idle jitter
 
 **Given** every button including the VALUE push switch
 **When** it is pressed and released
@@ -2200,7 +2200,7 @@ So that the panel controls the instrument without jumps, misses or double presse
 
 **Given** power-up with pedals plugged in
 **When** the MCU starts
-**Then** it detects each pedal's polarity (normally open / normally closed, and continuous pedal direction) and reports it in `HELLO` or a `CONTROL` status message
+**Then** it detects each pedal's polarity (normally open / normally closed, and continuous pedal direction) and reports it in `HELLO`
 
 ### Story 3.9: Panel MCU firmware — SoC-driven LEDs
 
@@ -6446,7 +6446,7 @@ So that the closed product ships no code whose license forbids it.
 
 **Given** the license table
 **When** attribution obligations are collected
-**Then** the required BSD/MIT notices are added to the product's third-party notices file shipped in the image and shown in Velora Studio's About
+**Then** the required BSD/MIT notices are added to the product's third-party notices file shipped in the image and shown in Velora Studio's About (content delivered in `THIRD_PARTY_NOTICES.md`; the image build and the Studio About screen must install and display it)
 **And** sfizz used as the reference renderer in CI remains test-only and never linked into a shipped target (checked against the build license manifest)
 
 ### Story 11.13: Hammond M-solo drawbar CC/NRPN numbers for automated organ A/B
