@@ -73,7 +73,7 @@ Note: `Defaults.cpp` lacks a per-file SPDX header; upstream `LICENSE` (BSD-2-Cla
 
 - Vendor files unmodified with their per-file SPDX/copyright headers intact (BSD-2 source redistribution); record any modification in the file header.
 - Abseil is vendored as the minimal closure of the headers listed in the table row; the file-level abseil list is produced when 1.13 vendors it and added here before merge.
-- Sign-off: pending founder confirmation. This is an engineering license inventory, not legal advice; confirm with counsel before v1 launch if desired.
+- Sign-off: confirmed by the founder (Mateus Bueno), 2026-10-19. This is an engineering license inventory, not legal advice; confirm with counsel before v1 launch if desired.
 
 ## Story 1.13 vendoring record (file-level lists)
 
