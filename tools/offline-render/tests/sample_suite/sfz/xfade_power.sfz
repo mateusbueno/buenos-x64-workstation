@@ -1,0 +1,9 @@
+<control>
+default_path=samples/
+<global> loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05 xf_cccurve=power
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 xfout_locc1=0 xfout_hicc1=100
+<region> sample=loop2.wav lokey=60 hikey=60 pitch_keycenter=60 xfin_locc1=30 xfin_hicc1=127
+<region> sample=loop.wav lokey=64 hikey=64 pitch_keycenter=64 xfin_locc11=0 xfin_hicc11=90
+<region> sample=loop2.wav lokey=64 hikey=64 pitch_keycenter=64 xfout_locc11=60 xfout_hicc11=126
+<region> sample=loop.wav lokey=67 hikey=67 pitch_keycenter=67 xfin_locc1=20 xfin_hicc1=60 xfout_locc11=70 xfout_hicc11=120
+<region> sample=loop2.wav lokey=72 hikey=72 pitch_keycenter=72 xfin_locc1=40 xfin_hicc1=80

@@ -1,5 +1,8 @@
 // Env-gated null test of the sample engine against sfizz on REAL libraries (Story 1.15): the Salamander
 // Grand Piano and a VSCO2 instrument cannot be committed, so this runs only where they and the oracle exist.
+// Story 5.2 adds a second probe, midi/demo_features.mid (a keyswitch ladder over C0..B2, then a chord under mod wheel and expression sweeps),
+// rendered for every library as well: this is where a Karoryfer instrument (keyswitches, CC crossfades, filters) is null-tested against sfizz.
+// The Karoryfer libraries are not in the repository and not available on every machine: without VELORA_SFZ_DEMO_DIR the test skips.
 //
 //   VELORA_SFZ_DEMO_DIR=~/libs ctest --test-dir build -R sample_demo_null --output-on-failure
 //
@@ -85,12 +88,15 @@ int main() {
   }
   if (files.size() > max_sfz) files.resize(max_sfz);
 
-  const std::string midi = std::string(SUITE_DIR) + "/midi/demo_probe.mid";
+  struct Probe { const char* name; const char* tail; };
+  const Probe probes[] = {{"demo_probe", "2.0"}, {"demo_features", "2.0"}};  // notes over the keyboard; Story 5.2 keyswitches + controllers
   int failures = 0, n = 0;
-  for (const auto& sfz : files) {
+  for (const auto& sfz : files)
+    for (const Probe& probe : probes) {
+    const std::string midi = std::string(SUITE_DIR) + "/midi/" + probe.name + ".mid";
     const std::string work = std::string(OFFLINE_TEST_DIR) + "/sample_demo/" + std::to_string(n++);
     std::system(("rm -rf " + q(work) + " && mkdir -p " + q(work + "/root")).c_str());
-    std::printf("== %s\n", sfz.c_str());
+    std::printf("== %s (%s)\n", sfz.c_str(), probe.name);
     if (!shell_safe(sfz.string())) {
       std::printf("  FAIL path contains characters that are not allowed in shell command lines\n");
       ++failures;
@@ -116,7 +122,7 @@ int main() {
     }
     const std::string key = sfz.filename().string();  // the librarian default base is the sfz's own directory
     if (run(q(RENDER_EXE) + " --midi " + q(midi) + " --out " + q(cand) + " --engine sample --bundle " +
-                q(imp.bundle_dir + "/bundle.vlb") + " --instrument " + q(key) + " --gain-db -7.35 --oracle-block-frames 64 --tail-seconds 2.0",
+                q(imp.bundle_dir + "/bundle.vlb") + " --instrument " + q(key) + " --gain-db -7.35 --oracle-block-frames 64 --tail-seconds " + probe.tail,
             out, work + "/render.log") != 0) {
       std::printf("  FAIL engine render:\n%s\n", out.c_str());
       ++failures;
@@ -129,6 +135,6 @@ int main() {
     std::printf("%s", out.c_str());
     if (rc != 0) ++failures;
   }
-  std::printf("%s: %d of %zu libraries failed\n", failures ? "FAIL" : "PASS", failures, files.size());
+  std::printf("%s: %d of %zu renders failed (%zu libraries x %zu probes)\n", failures ? "FAIL" : "PASS", failures, files.size() * 2, files.size(), std::size(probes));
   return failures ? 1 : 0;
 }

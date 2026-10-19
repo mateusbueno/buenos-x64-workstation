@@ -1,9 +1,10 @@
 // Null test of the sample engine against committed sfizz renders (Story 1.15), through the shipped tools:
 //   librarian import (in process)  ->  velora-offline-render --engine sample  ->  velora-null-test --case
-// Usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp]
+// Usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip]
 //   no flag     the render must pass the case's null test (tolerance in golden/<case>.case)
-//   --negative  a deliberately wrong render (1 dB gain error / the other interpolation) must FAIL the
-//               same null test on residual, proving the test can fail
+//   --negative  a deliberately wrong render (1 dB gain error / the other interpolation / the Story 5.2 opcodes
+//               stripped from the SFZ: keyswitches, CC crossfades and filters) must FAIL the same null test
+//               on residual, proving the test can fail
 //   cli-errors  as the case name: exercises the sample-engine argument errors of velora-offline-render
 // Needs no sfizz: the goldens are committed. Regenerating them needs tools/oracle (see its README).
 #include <sys/stat.h>
@@ -11,8 +12,10 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 
 #include "velora/librarian/import.hpp"
@@ -49,6 +52,43 @@ static long counter(const std::string& out, const std::string& label) {
   while (b > 0 && out[b - 1] >= '0' && out[b - 1] <= '9') --b;
   if (b == at) return -1;
   return std::strtol(out.substr(b, at - b).c_str(), nullptr, 10);
+}
+
+// The SFZ text without any Story 5.2 opcode (sw_*, xfin_*/xfout_*, xf_cccurve, fil_type, cutoff, resonance): opcodes are the
+// whitespace separated key=value words, headers and comments stay as they are.
+static std::string strip_story52(const std::string& sfz, int& stripped) {
+  auto drop = [](const std::string& w) {
+    const std::string key = w.substr(0, w.find('='));
+    return w.find('=') != std::string::npos &&
+           (key.rfind("sw_", 0) == 0 || key.rfind("xfin_", 0) == 0 || key.rfind("xfout_", 0) == 0 || key == "xf_cccurve" ||
+            key == "fil_type" || key == "cutoff" || key == "resonance");
+  };
+  std::string out;
+  std::istringstream in(sfz);
+  std::string line;
+  stripped = 0;
+  while (std::getline(in, line)) {
+    if (line.rfind("//", 0) == 0) {  // comments stay as they are
+      out += line + "\n";
+      continue;
+    }
+    // Split into words and the whitespace between them, keep every separator, drop the dropped words with the blanks that led to them.
+    std::size_t i = 0;
+    while (i < line.size()) {
+      const std::size_t ws = i;
+      while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i]))) ++i;
+      const std::size_t wb = i;
+      while (i < line.size() && !std::isspace(static_cast<unsigned char>(line[i]))) ++i;
+      const std::string blanks = line.substr(ws, wb - ws), word = line.substr(wb, i - wb);
+      if (!word.empty() && drop(word)) {
+        ++stripped;
+        continue;
+      }
+      out += blanks + word;
+    }
+    out += "\n";
+  }
+  return out;
 }
 
 static void mkdirs(const std::string& p) {
@@ -108,8 +148,9 @@ int main(int argc, char** argv) {
   const std::string interp = argv[2];
   std::string negative;
   if (argc > 3) {
-    if (argc != 5 || std::string(argv[3]) != "--negative" || (std::string(argv[4]) != "gain" && std::string(argv[4]) != "interp")) {
-      std::fprintf(stderr, "usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp]\n");
+    if (argc != 5 || std::string(argv[3]) != "--negative" ||
+        (std::string(argv[4]) != "gain" && std::string(argv[4]) != "interp" && std::string(argv[4]) != "strip")) {
+      std::fprintf(stderr, "usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip]\n");
       return 2;
     }
     negative = argv[4];
@@ -121,6 +162,24 @@ int main(int argc, char** argv) {
   opt.base_dir = std::string(SUITE_DIR) + "/sfz";
   opt.root = work + "/root";
   mkdirs(opt.root);
+  if (negative == "strip") {  // the same instrument without keyswitches, crossfades and filters (samples still resolve through base_dir)
+    std::ifstream in(opt.sfz_path);
+    int stripped = 0;
+    std::string text = strip_story52(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), stripped);
+    if (stripped == 0) {  // a negative that strips nothing would fail (or pass) for the wrong reason
+      std::printf("FAIL: --negative strip removed no Story 5.2 opcode from %s\n", opt.sfz_path.c_str());
+      return 2;
+    }
+    mkdirs(work + "/stripped");
+    // The importer keeps samples inside the SFZ's directory: the stripped file gets its own copy of the samples.
+    if (std::system(("cp -R " + q(std::string(SUITE_DIR) + "/sfz/samples") + " " + q(work + "/stripped/")).c_str()) != 0) {
+      std::printf("FAIL: cannot copy the samples for the stripped instrument\n");
+      return 2;
+    }
+    opt.sfz_path = work + "/stripped/" + name + ".sfz";
+    opt.base_dir = work + "/stripped";
+    std::ofstream(opt.sfz_path) << text;
+  }
   const auto res = velora::librarian::import_sfz(opt);
   if (!res.ok()) {
     std::printf("import failed:\n");

@@ -31,8 +31,16 @@ enum class SampleInterpolation : std::uint8_t {
 // Cost units one active voice consumes. A test-tone voice is 1 unit; a sample voice is 1 unit of
 // envelope/gain/pan work plus one unit per interpolation tap (stereo samples read two channels but
 // share the weights). Relative figures to be calibrated on the board (Stories 1.18/1.19).
-constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q) noexcept {
-  return q == SampleInterpolation::kLinear ? 3u : 5u;
+//
+// Story 5.2: an engine declared with `Config::extended_voices` budgets every voice as a worst case that may run a per-voice filter
+// (a biquad in double per channel: kSampleFilterCostUnits) and a smoothed CC crossfade (kSampleCrossfadeCostUnits) on top of the plain voice. The
+// declaration is per engine and fixed at construction (the arbiter refuses a cost that changes after bind()), so the default
+// engine keeps the Story 1.15 figures (3 / 5) and every existing floor and budget. The extra figures come from
+// `sample_bench` (tests/sample_bench.cpp, -O3 host figures, see engine/core/README.md); still to be calibrated on the board.
+inline constexpr std::uint32_t kSampleFilterCostUnits = 2;
+inline constexpr std::uint32_t kSampleCrossfadeCostUnits = 1;
+constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q, bool extended = false) noexcept {
+  return (q == SampleInterpolation::kLinear ? 3u : 5u) + (extended ? kSampleFilterCostUnits + kSampleCrossfadeCostUnits : 0u);
 }
 
 class SampleEngine final : public Engine {
@@ -54,6 +62,10 @@ class SampleEngine final : public Engine {
     // engine's frame clock), the engine reproduces that hold so the null residual measures the
     // engine and not sfizz's stutter. See engine/core/README.md and tools/oracle/README.md.
     std::uint32_t oracle_block_frames = 0;
+    // Story 5.2: declare the worst-case voice cost of filtered, crossfaded voices (see sample_voice_cost_units). Off = the plain
+    // cost; instruments that use filters or CC crossfades still play, and every such voice that starts on an undeclared engine is
+    // counted in undeclared_extended_voices() so the under-budgeting is visible.
+    bool extended_voices = false;
   };
 
   explicit SampleEngine(const Config& cfg);
@@ -76,23 +88,30 @@ class SampleEngine final : public Engine {
   // generation ledger does, AD-23). The seam for heads/streaming (Stories 1.16/1.17) is the SampleSource behind the bank.
   std::shared_ptr<SampleBank> prepare(const velora::ports::SampleSource& src, std::shared_ptr<const void> owner = nullptr) const;
   const Config& config() const noexcept { return cfg_; }
-  void set_part_sample_bank(std::uint32_t part, SampleBank* bank) noexcept VELORA_NONBLOCKING override {
-    if (part >= part_bank_.size()) return;
-    part_bank_[part] = bank;
-    part_bound_[part] = true;
-  }
+  // Binding a part to a bank it is not already bound to resets the part's keyswitch state to the bank's sw_default (Story 5.2); the
+  // block loop calls this at every Live Set generation, so re-binding the same bank changes nothing.
+  void set_part_sample_bank(std::uint32_t part, SampleBank* bank) noexcept VELORA_NONBLOCKING override;
   // Forget every per-part binding (parts play the default instrument again). Real-time safe.
-  void clear_part_banks() noexcept {
-    part_bank_.fill(nullptr);
-    part_bound_.fill(false);
-  }
+  void clear_part_banks() noexcept;
   void clear_part_sample_banks() noexcept VELORA_NONBLOCKING override { clear_part_banks(); }
+
+  // Story 5.2 (see engine/core/README.md "Keyswitches, CC crossfades and filters").
+  // Controllers: the part's CcState, 128 values in CC units (0..127, fractional for MIDI 2.0 resolution). Sample engine defaults are
+  // sfizz's: 0 everywhere except CC7 = 100, CC10 = 63.5, CC11 = 127. Delivered by the block loop, RT-owned, lock-free.
+  bool set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
+  float part_cc(std::uint32_t part, std::uint32_t cc) const noexcept { return cc_[part & 15u][cc & 127u]; }
+  void key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING override;
+  void reset_play_state() noexcept VELORA_NONBLOCKING override;
+  // The part's current "last keyswitch" (sw_last state), -1 = none yet.
+  int part_last_keyswitch(std::uint32_t part) const noexcept { return ks_[part & 15u].last; }
+  bool part_key_held(std::uint32_t part, std::uint32_t key) const noexcept { return key < 128 && ks_[part & 15u].is_held(static_cast<int>(key)); }
+  int part_previous_note(std::uint32_t part) const noexcept { return ks_[part & 15u].prev; }
 
   // Deterministic RNG for lorand/hirand: one draw per note on and per note off.
   void set_seed(std::uint64_t seed) noexcept;
 
   EngineTypeId type_id() const noexcept override { return EngineTypeId::kSample; }
-  std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation); }
+  std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation, cfg_.extended_voices); }
   std::uint32_t voice_capacity() const noexcept override { return capacity_; }
 
   // Starts a voice per matching region. Voice slots come from the pool arbiter when one is attached
@@ -115,6 +134,8 @@ class SampleEngine final : public Engine {
   std::uint32_t unplayable_regions() const noexcept { return unplayable_regions_; }
   // Times a matching region was skipped because it is unplayable (missing sample data).
   std::uint64_t skipped_unplayable_starts() const noexcept { return skipped_unplayable_; }
+  // Voices that started with a filter or a CC crossfade on an engine that did not declare Config::extended_voices (budgeted at the plain cost).
+  std::uint64_t undeclared_extended_voices() const noexcept { return undeclared_extended_; }
   std::uint32_t region_count() const noexcept { return default_bank_ ? static_cast<std::uint32_t>(default_bank_->regions.size()) : 0u; }
 
   // Envelope states, exposed for tests (order matters: >= kRelease means released).
@@ -147,6 +168,25 @@ class SampleEngine final : public Engine {
     float ratio = 1.0f;
     float gain_l = 0.0f, gain_r = 0.0f;
     Env env;
+    // Story 5.2. base_gain = velocity x volume (the pan gains are the region's chan_l / chan_r); the filter state per channel
+    // (a mono sample uses `fl` only); the CC crossfade gain: xf_cur is the smoothed gain applied, xf_tgt the gain it moves
+    // towards by xf_step per frame (a linear ramp, sfizz's LinearSmoother).
+    float base_gain = 0.0f;
+    SampleFilterState fl, fr;
+    float xf_cur = 1.0f, xf_tgt = 1.0f, xf_step = 0.0f;
+  };
+
+  // A part's keyswitch state (sw_last / sw_previous / held keys).
+  struct KeyState {
+    std::int16_t last = -1;                // last keyswitch key pressed, -1 none
+    std::int16_t prev = -1;                // the note on before the current one, -1 none
+    std::array<std::uint64_t, 2> held{};   // keys currently down (bit n of held[n >> 6])
+    bool is_held(int k) const noexcept { return k >= 0 && k < 128 && ((held[static_cast<std::size_t>(k) >> 6] >> (k & 63)) & 1u) != 0; }
+    void set_held(int k, bool down) noexcept {
+      const std::uint64_t m = std::uint64_t{1} << (k & 63);
+      if (down) held[static_cast<std::size_t>(k) >> 6] |= m;
+      else held[static_cast<std::size_t>(k) >> 6] &= ~m;
+    }
   };
 
   void init_env(Env& e, const RegionRt& r) const noexcept;
@@ -161,6 +201,10 @@ class SampleEngine final : public Engine {
     return part_bound_[channel & 15u] ? part_bank_[channel & 15u] : default_bank_.get();
   }
   bool playing_attack_voice(const RegionRt& r, std::uint32_t channel) const noexcept;
+  // Story 5.2 helpers.
+  void reset_part_keys(std::uint32_t channel) noexcept;
+  bool region_switched(const RegionRt& r, const KeyState& ks) const noexcept;
+  float crossfade_target(const RegionRt& r, std::uint32_t channel) const noexcept;
   float next_random() noexcept;
   void render_voice(Voice& v, float* left, float* right, std::uint32_t frames) noexcept;
 
@@ -170,9 +214,10 @@ class SampleEngine final : public Engine {
   std::shared_ptr<SampleBank> default_bank_;           // set_instrument()
   std::array<SampleBank*, 16> part_bank_{};            // per-channel banks (set_part_sample_bank), borrowed from the snapshot generation
   std::array<bool, 16> part_bound_{};
+  std::array<std::uint64_t, 16> part_bank_id_{};      // SampleBank::id of the bound bank (0 = bound to nothing)
   // The bank each (channel, note) last started on (identity only, never dereferenced): a release-trigger region fires at note off only on
   // the bank the note started on, so a part rebound while the key is held does not mix the new bank with the old note's state.
-  std::array<const SampleBank*, 16 * 128> last_bank_{};
+  std::array<std::uint64_t, 16 * 128> last_bank_{};  // SampleBank::id (0 = none)
   std::array<std::uint8_t, 16 * 128> last_vel7_{};  // note-on velocity per (channel, note)
   std::array<float, 4096> pan_table_{};
   float tr_release_rate_off_ = 0.0f;  // exp rate of the 6 ms fast release
@@ -181,6 +226,10 @@ class SampleEngine final : public Engine {
   float gain_ = 1.0f;
   std::uint32_t unplayable_regions_ = 0;
   std::uint64_t skipped_unplayable_ = 0;
+  std::uint64_t undeclared_extended_ = 0;
+  std::array<KeyState, 16> ks_{};                       // per part (channel) keyswitch state
+  std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units
+  std::int32_t xf_frames_ = 240;                        // CC crossfade smoothing time in frames (sfizz xfadeSmoothing = 5 ms)
 };
 
 }  // namespace velora::core

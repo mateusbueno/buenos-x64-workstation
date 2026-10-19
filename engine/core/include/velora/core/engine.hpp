@@ -138,6 +138,29 @@ class Engine {
   // Forgets every per-part binding made with set_part_sample_bank() (the block loop leaves a Live Set generation).
   virtual void clear_part_sample_banks() noexcept VELORA_NONBLOCKING {}
 
+  // Controllers (Story 5.2). A MIDI 2.0 control change (CC number 0..127, 32-bit value 0 = 0.0 .. 0xFFFFFFFF = 1.0) addressed to `part`
+  // (the part's UMP channel), delivered by the block loop at the event's frame between render segments. Returns true when the engine
+  // reads controllers (only the sample engine: CC crossfades); the block loop counts the event as ignored when no engine did. The
+  // sustain pedal (CC 64) is not delivered here: the arbiter handles it.
+  virtual bool set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING {
+    (void)part;
+    (void)cc;
+    (void)value32;
+    return false;
+  }
+
+  // The key (channel, note) physically came up (Story 5.2). Called at the note off even when the sustain pedal defers the engine's
+  // stop_voice() to the pedal up, so that engines that follow held keys (sw_down / sw_up keyswitches) see the release at once.
+  // Idempotent for the engine: stop_voice() of the same key afterwards changes nothing more. Default: nothing.
+  virtual void key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING {
+    (void)channel;
+    (void)note;
+  }
+
+  // A Live Set switch takes effect (Story 5.2): drop the per-part play state that belongs to the previous Live Set (the sample engine
+  // returns every part to its instrument's sw_default keyswitch and forgets held keys). Sounding voices are not touched. Default: nothing.
+  virtual void reset_play_state() noexcept VELORA_NONBLOCKING {}
+
   // True for an engine whose voices the arbiter must never choose as steal victims (the tonewheel organ).
   // Its cost is reserved ahead of every engine floor through LiveSetConfig::organ_rotary_cost.
   virtual bool steal_protected() const noexcept { return false; }

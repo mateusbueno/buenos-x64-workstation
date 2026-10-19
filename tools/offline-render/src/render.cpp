@@ -59,12 +59,19 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       }
   const std::uint64_t tail = static_cast<std::uint64_t>(std::llround(opt.tail_seconds * kSampleRate));
   // Controllers that map to no parameter are dropped (they neither play nor extend the render).
-  // Controllers are an organ-engine feature (its parts are channels 0..7); other renders ignore them entirely.
+  // The organ engine maps controllers to its parameters (its parts are channels 0..7). The sample engine (Story 5.2) takes every
+  // control change as the control change itself: the part's CcState (CC crossfades) follows it; sustain (CC 64) is the pedal.
+  // Other renders ignore controllers entirely.
   const bool organ_render = opt.engine == EngineKind::kOrgan;
-  auto control = [organ_render](const NoteEvent& e, Ump& out) {
+  const bool sample_render = opt.engine == EngineKind::kSample;
+  auto control = [organ_render, sample_render](const NoteEvent& e, Ump& out) {
+    const std::uint32_t v32 = static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127);
+    if (sample_render && !e.contact) {
+      out = make_control_change(0, e.channel, e.note, v32);
+      return true;
+    }
     if (!organ_render || e.contact || e.channel >= OrganEngine::kPartCount) return false;
-    return cc_to_param_event(
-        make_control_change(0, e.channel, e.note, static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127)), out);
+    return cc_to_param_event(make_control_change(0, e.channel, e.note, v32), out);
   };
   std::uint64_t last = 0;
   for (const NoteEvent& e : events) {

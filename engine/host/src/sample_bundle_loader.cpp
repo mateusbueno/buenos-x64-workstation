@@ -55,6 +55,25 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   d.ampeg_sustain = r.ampeg.sustain;
   d.ampeg_release = r.ampeg.release;
   d.trigger = r.trigger == fmt::TriggerMode::kRelease ? ports::SampleTrigger::kRelease : ports::SampleTrigger::kAttack;
+  // Story 5.2: the Story 5.1 extension (keyswitches, CC crossfades, filter) travels unchanged.
+  d.sw = {r.sw.lokey, r.sw.hikey, r.sw.last, r.sw.down, r.sw.up, r.sw.previous, r.sw.default_key};
+  // More controllers than the port holds (formatlib bounds them at the same 4, so this is defence in depth) is not truncated: the count is
+  // passed on as it is and the engine's validation makes the region unplayable (counted) instead of playing a different crossfade.
+  d.xfin_count = r.xf.in_count;
+  d.xfout_count = r.xf.out_count;
+  d.xf_curve = r.xf.curve == fmt::XfCurve::kGain ? ports::SampleXfCurve::kGain : ports::SampleXfCurve::kPower;
+  for (unsigned i = 0; i < std::min<unsigned>(d.xfin_count, ports::kSampleMaxCcCrossfades); ++i) d.xfin[i] = {r.xf.in[i].cc, r.xf.in[i].lo, r.xf.in[i].hi};
+  for (unsigned i = 0; i < std::min<unsigned>(d.xfout_count, ports::kSampleMaxCcCrossfades); ++i) d.xfout[i] = {r.xf.out[i].cc, r.xf.out[i].lo, r.xf.out[i].hi};
+  switch (r.filter.type) {
+    case fmt::FilterType::kNone: d.filter_type = ports::SampleFilterType::kNone; break;
+    case fmt::FilterType::kLpf1p: d.filter_type = ports::SampleFilterType::kLpf1p; break;
+    case fmt::FilterType::kLpf2p: d.filter_type = ports::SampleFilterType::kLpf2p; break;
+    case fmt::FilterType::kHpf1p: d.filter_type = ports::SampleFilterType::kHpf1p; break;
+    case fmt::FilterType::kHpf2p: d.filter_type = ports::SampleFilterType::kHpf2p; break;
+    case fmt::FilterType::kBpf2p: d.filter_type = ports::SampleFilterType::kBpf2p; break;
+  }
+  d.filter_cutoff_hz = r.filter.cutoff_hz;
+  d.filter_resonance_db = r.filter.resonance_db;
   return d;
 }
 

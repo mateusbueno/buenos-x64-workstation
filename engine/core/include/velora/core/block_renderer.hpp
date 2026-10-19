@@ -135,6 +135,16 @@ class BlockRenderer {
   // by zone (PartRouter, see part_router.hpp for the keyboard-channel convention and the note-off rules) and each part is mapped to the
   // engine and instrument of its PartCfg at the generation change. The counters live in router().
   const PartRouter& router() const noexcept { return router_; }
+  // --- controllers (Story 5.2) ---------------------------------------------------------------------------------------
+  // A UMP control change other than the sustain pedal (CC 64) reaches the sample engine's per-part CcState (CC crossfades). Outside a
+  // Live Set generation the channel is the part (like every part event). In a Live Set generation the channel names the keyboard
+  // source and the controller is fanned out to every part that sounds with the keyboard on, exactly as the sustain pedal reaches the
+  // parts: the parts' CcState follows the keyboard's controllers. Registry-mapped CCs (70-94: drawbars, vibrato, ...) arrive as
+  // parameter events (the host maps them before the queue, unchanged) and keep that meaning; additionally the CcState of the
+  // addressed part follows them (a parameter event carries the CC's normalised value), so a sample instrument that crossfades on one
+  // of those controller numbers still sees it. A control change no engine reads is an ignored event (ignored_events()). Only genuine MIDI control changes feed that state: the event
+  // made by cc_to_param_event carries kMidiCcOriginBit and is routed exactly like an unmapped CC (every part that listens in a Live Set, whatever the
+  // scope of the parameter and even when the parameter event itself is refused); a parameter event from the UI / ws.v1 does not.
   // Parts a Live Set generation left silent (missing library, engine not available) receive no notes; notes that no part took are
   // counted in router().unzoned_keys().
 
@@ -150,6 +160,14 @@ class BlockRenderer {
   void apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on, std::uint32_t type_id) noexcept VELORA_NONBLOCKING;
   void apply_keyboard_note(const Ump& ump) noexcept VELORA_NONBLOCKING;
   void apply_keyboard_sustain(bool down) noexcept VELORA_NONBLOCKING;
+  // Controllers other than the pedal (Story 5.2): UMP control change -> the part's engine (CcState of the sample engine).
+  void apply_controller(const Ump& ump) noexcept VELORA_NONBLOCKING;
+  // The raw controller path: `channel` is the part (outside a Live Set) or the keyboard source (in one, fanned out to every part that
+  // listens). `count_ignored`: a control change nobody read is an ignored event (not for the copy of a mapped CC that also was a parameter).
+  void route_cc(std::uint32_t channel, std::uint32_t cc, std::uint32_t value32, bool count_ignored) noexcept VELORA_NONBLOCKING;
+  bool deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
+  // Gives the keyboard's last controller values to the parts that listen and did not have them (all = a seamless switch: every listening part).
+  void replay_keyboard_ccs(const Snapshot& s, bool all, const std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
   void leave_live_set(std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
   void adopt_live_set_parts(const Snapshot& s, std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
   void record(EngineStatus s) noexcept VELORA_NONBLOCKING;
@@ -192,6 +210,10 @@ class BlockRenderer {
   bool applied_valid_ = false;
   std::uint64_t applied_program_generation_ = 0;  // RT-owned: the program_generation last adopted (Story 4.4)
   std::uint64_t applied_reservation_epoch_ = 0;   // RT-owned: the Snapshot::reservation_epoch last committed to the arbiter (Story 4.5)
+  std::array<std::uint32_t, 128> keyboard_cc_{};  // RT-owned: the last value of every controller the keyboard sent in a Live Set generation (32 bit)
+  std::array<bool, 128> keyboard_cc_seen_{};
+  std::array<bool, params::kPartCount> replay_listening_{};    // RT-owned: parts that listened to the keyboard at the last replay decision
+  std::array<std::uint64_t, params::kPartCount> replay_bank_{};  // ... and the SampleBank::id they had
   bool keyboard_pedal_down_ = false;              // RT-owned: the last keyboard sustain (CC 64) state seen in a Live Set generation
   // Per (channel, note): bit i set = this key holds one reference on ledger slot i (a generation).
   std::array<std::uint32_t, 16 * 128> gen_mask_{};

@@ -29,6 +29,12 @@ target_compile_definitions(offline_render_tests PRIVATE
 add_dependencies(offline_render_tests velora-offline-render)
 add_test(NAME offline_render_tests COMMAND offline_render_tests)
 
+# --- Live Set renderer: raw controller pass-through to the sample parts (Story 5.2) ---
+add_executable(live_set_cc_test tests/live_set_cc_test.cpp)
+target_link_libraries(live_set_cc_test PRIVATE velora_offline)
+target_compile_definitions(live_set_cc_test PRIVATE OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME live_set_cc_test COMMAND live_set_cc_test)
+
 # --- routing (Story 2.7): Main/Aux, sends, line-in and master verified by null tests against analytically mixed references ---
 add_executable(offline_routing_tests tests/routing_test.cpp)
 target_link_libraries(offline_routing_tests PRIVATE velora_offline)
@@ -742,6 +748,10 @@ endforeach()
 # The harness must be able to fail: a 1 dB gain error and the wrong interpolation are caught.
 add_test(NAME sample_null_neg_gain COMMAND sample_suite_test velocity_layers hermite --negative gain)
 add_test(NAME sample_null_neg_interp COMMAND sample_suite_test pitch_far hermite --negative interp)
+# Story 5.2: the keyswitch, crossfade and filter cases must fail when the same instrument is imported without those opcodes.
+foreach(_neg keyswitch_last keyswitch_down_up keyswitch_previous xfade_power xfade_gain filters)
+  add_test(NAME sample_null_neg_strip_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip)
+endforeach()
 add_test(NAME sample_render_cli_errors COMMAND sample_suite_test cli-errors)
 
 # Real libraries (Salamander Grand Piano, a VSCO2 instrument) against a locally built sfizz oracle: env-gated.

@@ -1,0 +1,12 @@
+<control>
+default_path=samples/
+<global> sw_lokey=36 sw_hikey=39 sw_default=36 ampeg_release=0.05
+<group> sw_last=36
+<region> sample=a.wav lokey=48 hikey=84 pitch_keycenter=60
+<group> sw_last=37
+<region> sample=b.wav lokey=48 hikey=84 pitch_keycenter=60
+<group> sw_last=38
+<region> sample=c.wav lokey=48 hikey=84 pitch_keycenter=60
+<group> sw_last=39
+<region> sample=d.wav lokey=48 hikey=84 pitch_keycenter=60
+<region> sample=short.wav lokey=39 hikey=39 pitch_keycenter=60

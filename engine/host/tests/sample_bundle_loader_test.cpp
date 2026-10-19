@@ -198,7 +198,61 @@ static void test_pcm_to_float() {
   CHECK(!host::pcm_to_float({1, 32, true, 48000}, nanbits, 2, out));
 }
 
+// Story 5.2: the Story 5.1 extension (keyswitches, CC crossfades, filter) reaches the sample-source port unchanged, and a region without
+// it converts to the port's "not used" defaults.
+static void test_extension_reaches_the_port() {
+  using namespace velora::format;
+  Region r;
+  r.sw = {36, 39, 37, 40, 41, 60, 36};
+  r.xf.in_count = 2;
+  r.xf.out_count = 1;
+  r.xf.curve = XfCurve::kGain;
+  r.xf.in[0] = {1, 10, 60};
+  r.xf.in[1] = {74, 0, 127};
+  r.xf.out[0] = {11, 70, 120};
+  r.filter = {FilterType::kBpf2p, 1234.5f, 7.5f};
+  const ports::SampleRegionDesc d = host::to_port_region(r);
+  CHECK(d.sw.lokey == 36 && d.sw.hikey == 39 && d.sw.last == 37 && d.sw.down == 40 && d.sw.up == 41 && d.sw.previous == 60 && d.sw.default_key == 36);
+  CHECK(d.xfin_count == 2 && d.xfout_count == 1 && d.xf_curve == ports::SampleXfCurve::kGain);
+  CHECK(d.xfin[0].cc == 1 && d.xfin[0].lo == 10 && d.xfin[0].hi == 60 && d.xfin[1].cc == 74 && d.xfin[1].hi == 127);
+  CHECK(d.xfout[0].cc == 11 && d.xfout[0].lo == 70 && d.xfout[0].hi == 120);
+  CHECK(d.filter_type == ports::SampleFilterType::kBpf2p && d.filter_cutoff_hz == 1234.5f && d.filter_resonance_db == 7.5f);
+  for (auto t : {FilterType::kLpf1p, FilterType::kLpf2p, FilterType::kHpf1p, FilterType::kHpf2p}) {
+    Region f;
+    f.filter = {t, 500.0f, 0.0f};
+    CHECK(static_cast<int>(host::to_port_region(f).filter_type) == static_cast<int>(t));  // the two enums agree value for value
+  }
+  Region many;
+  many.xf.in_count = 5;  // more than the port holds: not truncated, so the engine can refuse the region
+  CHECK(host::to_port_region(many).xfin_count > ports::kSampleMaxCcCrossfades);
+  const ports::SampleRegionDesc plain = host::to_port_region(Region{});
+  CHECK(plain.sw.last == -1 && plain.sw.lokey == -1 && plain.sw.default_key == -1 && plain.xfin_count == 0 && plain.xfout_count == 0 &&
+        plain.filter_type == ports::SampleFilterType::kNone && plain.xf_curve == ports::SampleXfCurve::kPower);
+  // Through a real bundle: write, read back, load.
+  BundleWriter w;
+  const auto inst = w.add_instrument("Ext", "Ext.sfz");
+  std::vector<std::int32_t> pcm(2000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 2000, pcm});
+  Region e = r;
+  e.sample = 0;
+  e.key_lo = 0;
+  e.key_hi = 127;
+  e.key_center = 60;
+  CHECK(w.add_region(inst.value(), e) == Error::kNone);
+  auto fin = w.finalize();
+  const std::vector<std::uint8_t> bytes = fin.take();
+  auto rd = BundleReader::open_memory(bytes);
+  CHECK(rd.ok());
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  const ports::SampleRegionDesc& g = loaded.instrument->instrument().regions[0];
+  CHECK(g.sw.last == 37 && g.xfin_count == 2 && g.xfout[0].cc == 11 && g.filter_type == ports::SampleFilterType::kBpf2p && g.filter_cutoff_hz == 1234.5f);
+}
+
 int main() {
+  test_extension_reaches_the_port();
   test_unusable_samples();
   test_pcm_to_float();
   test_load_and_convert();

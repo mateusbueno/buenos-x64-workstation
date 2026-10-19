@@ -21,8 +21,9 @@
 // note off goes out when the last of them lets go, so one key's release never cuts a note another key still holds.
 //
 // Sustain (CC 64): pedal down reaches the parts with the keyboard on; pedal up reaches every part (so a part switched off while the
-// pedal held its notes still lets them go). Pitch bend, mod wheel and the other controllers are not consumed by any engine yet:
-// they stay ignored events in the block loop (to be fanned out to all parts when an engine reads them; documented, not implemented).
+// pedal held its notes still lets them go). Pitch bend is not consumed by any engine and stays an ignored event. Since Story 5.2 the other
+// controllers (mod wheel, expression, ...) are read by the sample engine: the block loop fans them out to the parts that sound with the
+// keyboard on (BlockRenderer::apply_controller, not the router); one that no engine reads stays an ignored event.
 //
 // Real-time: configure(), note_on() and note_off() never allocate, lock or block.
 #include <array>

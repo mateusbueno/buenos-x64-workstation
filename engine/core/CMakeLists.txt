@@ -34,6 +34,11 @@ add_executable(sample_engine_tests tests/sample_engine_test.cpp)
 target_link_libraries(sample_engine_tests PRIVATE velora_core)
 add_test(NAME sample_engine_tests COMMAND sample_engine_tests)
 
+# Story 5.2: keyswitches, CC crossfades and filters of the sample engine (the sfizz parity is in tools/offline-render).
+add_executable(sample_features_tests tests/sample_features_test.cpp)
+target_link_libraries(sample_features_tests PRIVATE velora_core)
+add_test(NAME sample_features_tests COMMAND sample_features_tests)
+
 add_executable(voice_arbiter_tests tests/voice_arbiter_test.cpp)
 target_link_libraries(voice_arbiter_tests PRIVATE velora_core)
 target_compile_definitions(voice_arbiter_tests PRIVATE VELORA_ARBITER_TEST_HOOKS)
@@ -126,6 +131,13 @@ target_link_libraries(part_router_traffic_test PRIVATE velora_core)
 add_test(NAME part_router_traffic_test COMMAND part_router_traffic_test)
 set_tests_properties(part_router_traffic_test PROPERTIES TIMEOUT 300)
 
+# Keyswitch changes, controller sweeps and filtered / crossfaded regions beside dense traffic and generation changes (Story 5.2) without the sanitizer, so
+# macOS runs its logic too (and checks determinism); the RTSan build is below.
+add_executable(sample_features_traffic_test tests/rtsan_sample_features_test.cpp)
+target_link_libraries(sample_features_traffic_test PRIVATE velora_core)
+add_test(NAME sample_features_traffic_test COMMAND sample_features_traffic_test)
+set_tests_properties(sample_features_traffic_test PROPERTIES TIMEOUT 300)
+
 # Encoder storms in ASSIGN mode beside dense traffic and generation changes (Story 4.10) without the sanitizer, so macOS runs its logic too; the RTSan build is below.
 add_executable(assign_traffic_test tests/rtsan_assign_test.cpp)
 target_link_libraries(assign_traffic_test PRIVATE velora_core)
@@ -160,8 +172,15 @@ target_compile_options(delay_bench PRIVATE -O3 -DNDEBUG)
 add_test(NAME delay_bench COMMAND delay_bench)
 set_tests_properties(delay_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative" FAIL_REGULAR_EXPRESSION "FAIL" TIMEOUT 120)
 
+# Sample engine voice cost (Story 5.2): filter and crossfade against the declared cost units; prints the figures, asserts nothing about time.
+add_executable(sample_bench tests/sample_bench.cpp)
+target_link_libraries(sample_bench PRIVATE velora_core_o2)
+target_compile_options(sample_bench PRIVATE -O3 -DNDEBUG)
+add_test(NAME sample_bench COMMAND sample_bench)
+set_tests_properties(sample_bench PROPERTIES PASS_REGULAR_EXPRESSION "host, not representative" FAIL_REGULAR_EXPRESSION "FAILED" TIMEOUT 120)
+
 # Timing tests must not compete with other tests for the cores (the cost ratios would be noise): they run alone.
-set_tests_properties(organ_bench reverb_bench delay_bench PROPERTIES RUN_SERIAL TRUE)
+set_tests_properties(organ_bench reverb_bench delay_bench sample_bench PROPERTIES RUN_SERIAL TRUE)
 
 # --- RealtimeSanitizer gate -------------------------------------------------
 if(VELORA_RTSAN)
@@ -216,6 +235,12 @@ if(VELORA_RTSAN)
     target_link_options(rtsan_part_router_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_part_router_test COMMAND rtsan_part_router_test)
     set_tests_properties(rtsan_part_router_test PROPERTIES TIMEOUT 300)
+    add_executable(rtsan_sample_features_test tests/rtsan_sample_features_test.cpp)
+    target_link_libraries(rtsan_sample_features_test PRIVATE velora_core)
+    target_compile_options(rtsan_sample_features_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_sample_features_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_sample_features_test COMMAND rtsan_sample_features_test)
+    set_tests_properties(rtsan_sample_features_test PROPERTIES TIMEOUT 300)
     add_executable(rtsan_assign_test tests/rtsan_assign_test.cpp)
     target_link_libraries(rtsan_assign_test PRIVATE velora_core)
     target_compile_options(rtsan_assign_test PRIVATE -fsanitize=realtime -g)

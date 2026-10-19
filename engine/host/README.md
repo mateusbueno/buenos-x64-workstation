@@ -243,7 +243,10 @@ panel, Velora Studio) talk to it with `ws.v1` (`proto/ws_v1.proto`) over a Unix 
   validated like a command and published as generation 1 **before audio runs**; an invalid file (unknown field, bad enum, out of range,
   duplicate part) makes `engine-host` print a clear error and exit 1. `engine-host --config PATH` selects another file.
 - `midi_ingest` also turns MIDI CCs the registry maps (drawbars CC 70-78, ...) into performance parameter UMPs (channel = part);
-  CC 64 (sustain) is forwarded unchanged to the renderer's pedal handling, other CCs stay ignored.
+  CC 64 (sustain) is forwarded unchanged to the renderer's pedal handling. Since Story 5.2 every other CC is forwarded as the MIDI 2.0
+  control change itself (`MidiIngestCounters::controllers`): the block loop delivers it to the sample engine's per-part controller state (CC
+  crossfades; `engine/core/README.md`, "Keyswitches, CC crossfades and filters"); a controller no engine reads is counted there as an ignored
+  event. `engine-host` declares extended sample voices (`SampleEngine::Config::extended_voices`: the voice cost budgets a filter and a crossfade).
 - Tests: `control_tests` (a real UDS client for every row of the story's matrix: handshake, structural commands, every invalid
   command, performance path via ws.v1 and CC, held note across a swap, 8 concurrent clients, generation exhaustion, socket
   lifecycle), `control_rt_traffic_test` / `rtsan_control_test` (10,000 parameter changes + 100 swaps beside a rendering RT thread;

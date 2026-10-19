@@ -1,6 +1,7 @@
 #include "velora/core/sample_engine.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace velora::core {
@@ -18,14 +19,34 @@ constexpr int kPanSize = 4095;
 constexpr float kMonoPanCompensation = 1.4125375446227544f;    // +3 dB, one pan stage
 constexpr float kStereoPanCompensation = 1.9952623149688797f;  // +6 dB, pan and position stages
 
+constexpr unsigned kXfadeSmoothingMs = 5;  // sfizz Config::xfadeSmoothing
 constexpr float kMaxRatio = 1024.0f, kMinRatio = 1.0f / 4096.0f;
 constexpr float kMaxSeconds = 100.0f;
 
 bool finite_time(float t) noexcept { return std::isfinite(t) && t >= 0.0f && t <= kMaxSeconds; }
 
+// Story 5.2 fields: keyswitch notes, crossfade ranges and the filter must be well formed (a region that is not is unplayable).
+bool extension_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  auto note_ok = [](std::int16_t k) { return k >= -1 && k <= 127; };
+  if (!note_ok(d.sw.lokey) || !note_ok(d.sw.hikey) || !note_ok(d.sw.last) || !note_ok(d.sw.down) || !note_ok(d.sw.up) ||
+      !note_ok(d.sw.previous) || !note_ok(d.sw.default_key))
+    return false;
+  if (d.sw.lokey >= 0 && d.sw.hikey >= 0 && d.sw.lokey > d.sw.hikey) return false;  // an inverted keyswitch range
+  if (d.xfin_count > velora::ports::kSampleMaxCcCrossfades || d.xfout_count > velora::ports::kSampleMaxCcCrossfades) return false;
+  for (unsigned i = 0; i < d.xfin_count; ++i)
+    if (d.xfin[i].cc > 127 || d.xfin[i].lo > d.xfin[i].hi || d.xfin[i].hi > 127) return false;
+  for (unsigned i = 0; i < d.xfout_count; ++i)
+    if (d.xfout[i].cc > 127 || d.xfout[i].lo > d.xfout[i].hi || d.xfout[i].hi > 127) return false;
+  if (static_cast<unsigned>(d.filter_type) > static_cast<unsigned>(velora::ports::SampleFilterType::kBpf2p)) return false;
+  if (d.filter_type != velora::ports::SampleFilterType::kNone &&
+      !(std::isfinite(d.filter_cutoff_hz) && d.filter_cutoff_hz >= 0.0f && std::isfinite(d.filter_resonance_db)))
+    return false;
+  return true;
+}
+
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -77,6 +98,15 @@ SampleEngine::SampleEngine(const Config& cfg) : cfg_(cfg) {
   for (std::size_t i = kPanSize; i < pan_table_.size(); ++i) pan_table_[i] = pan_table_[kPanSize - 1];
   tr_release_rate_off_ = seconds_to_exp_rate(kFastReleaseTime, static_cast<float>(cfg_.sample_rate));
   set_seed(cfg_.seed);
+  // CcState defaults are sfizz's (MidiState / Synth::resetDefaultCCValues): CC7 volume 100, CC10 pan centre, CC11 expression 127.
+  for (auto& part : cc_) {
+    part.fill(0.0f);
+    part[7] = 100.0f;
+    part[10] = 63.5f;
+    part[11] = 127.0f;
+  }
+  // The CC crossfade smoother is sfizz's `Smoother` (= LinearSmoother) with xfadeSmoothing = 5 ms: int(5e-3 * fs) frames.
+  xf_frames_ = static_cast<std::int32_t>(1e-3f * static_cast<float>(kXfadeSmoothingMs) * static_cast<float>(cfg_.sample_rate));
 }
 
 void SampleEngine::set_seed(std::uint64_t seed) noexcept {
@@ -100,7 +130,9 @@ float SampleEngine::next_random() noexcept {
 }
 
 std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSource& src, std::shared_ptr<const void> owner) const {
+  static std::atomic<std::uint64_t> next_bank_id{1};
   auto bank = std::make_shared<SampleBank>();
+  bank->id = next_bank_id.fetch_add(1, std::memory_order_relaxed);
   bank->owner = std::move(owner);
   std::vector<SampleBankRegion>& regions = bank->regions;
   const velora::ports::InstrumentView view = src.instrument();
@@ -173,6 +205,26 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
     r.env_sustain = std::clamp(d.ampeg_sustain / 100.0f, 0.0f, 1.0f);
     r.env_release_rate = seconds_to_exp_rate(d.ampeg_release > 0.0f ? d.ampeg_release : kDefaultRelease, sr);
     r.env_free_running = r.env_sustain <= kFreeRunningSustain;
+
+    // Story 5.2: keyswitch gating, CC crossfades, filter.
+    r.has_keyswitch = d.sw.last >= 0 || d.sw.down >= 0 || d.sw.up >= 0 || d.sw.previous >= 0;
+    r.has_xfade = d.xfin_count != 0 || d.xfout_count != 0;
+    if (d.filter_type != velora::ports::SampleFilterType::kNone && extension_sane(d)) {
+      r.filter = make_sample_filter(d.filter_type, d.filter_cutoff_hz, d.filter_resonance_db, static_cast<double>(cfg_.sample_rate));
+      r.filtered = r.filter.kind != SampleFilterCoeffs::Kind::kNone;
+    }
+    if (extension_sane(d)) {
+      if (d.sw.last >= 0) bank->switch_key[static_cast<std::size_t>(d.sw.last)] = 1;
+      if (d.sw.lokey >= 0 || d.sw.hikey >= 0) {  // the keyswitch range: a missing end is the end of the keyboard (SFZ defaults 0 / 127)
+        const int lo = d.sw.lokey >= 0 ? d.sw.lokey : 0, hi = d.sw.hikey >= 0 ? d.sw.hikey : 127;
+        for (int k = lo; k <= hi; ++k) bank->switch_key[static_cast<std::size_t>(k)] = 1;
+        bank->uses_keyswitches = true;
+      }
+      if (d.sw.default_key >= 0) bank->default_switch = d.sw.default_key;
+    }
+    bank->uses_keyswitches = bank->uses_keyswitches || r.has_keyswitch;
+    bank->uses_filters = bank->uses_filters || r.filtered;
+    bank->uses_crossfades = bank->uses_crossfades || r.has_xfade;
     regions.push_back(r);
   }
 
@@ -198,6 +250,7 @@ bool SampleEngine::set_instrument(const velora::ports::SampleSource& src) {
   clear_instrument();
   default_bank_ = prepare(src);
   unplayable_regions_ = default_bank_->unplayable_regions;
+  for (std::uint32_t ch = 0; ch < 16; ++ch) reset_part_keys(ch);
   return true;
 }
 
@@ -205,9 +258,80 @@ void SampleEngine::clear_instrument() {
   for (auto& v : voices_) v = Voice{};
   default_bank_.reset();
   last_vel7_.fill(0);
-  last_bank_.fill(nullptr);
+  last_bank_.fill(0);
   unplayable_regions_ = 0;
   skipped_unplayable_ = 0;
+  undeclared_extended_ = 0;
+  for (std::uint32_t ch = 0; ch < 16; ++ch) reset_part_keys(ch);
+}
+
+// --- Story 5.2: keyswitch state, controllers ----------------------------------------------------------------------------------
+
+void SampleEngine::reset_part_keys(std::uint32_t channel) noexcept {
+  channel &= 15u;
+  KeyState k;
+  const SampleBank* bank = bank_for(channel);
+  k.last = bank ? bank->default_switch : static_cast<std::int16_t>(-1);
+  ks_[channel] = k;
+}
+
+void SampleEngine::set_part_sample_bank(std::uint32_t part, SampleBank* bank) noexcept {
+  if (part >= part_bank_.size()) return;
+  const std::uint64_t id = bank ? bank->id : 0;
+  part_bank_[part] = bank;
+  if (part_bound_[part] && part_bank_id_[part] == id) return;  // the same instrument again (by token, not by address): nothing changes
+  part_bank_id_[part] = id;
+  part_bound_[part] = true;
+  reset_part_keys(part);
+}
+
+void SampleEngine::clear_part_banks() noexcept {
+  for (std::uint32_t p = 0; p < part_bank_.size(); ++p) {
+    const bool was = part_bound_[p];
+    part_bank_[p] = nullptr;
+    part_bank_id_[p] = 0;
+    part_bound_[p] = false;
+    if (was) reset_part_keys(p);
+  }
+}
+
+void SampleEngine::reset_play_state() noexcept {
+  for (std::uint32_t ch = 0; ch < 16; ++ch) reset_part_keys(ch);
+}
+
+bool SampleEngine::set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept {
+  if (cc > 127) return false;
+  // 32-bit value -> CC units. A 7-bit MIDI 1.0 value v arrives as the bit repetition of v, which is v / 127 of full scale to
+  // better than 1e-8: values within 1e-6 of a whole CC step snap to it, so a controller sitting exactly on a crossfade
+  // boundary behaves as in sfizz (which sees the integer).
+  double x = static_cast<double>(value32) * (127.0 / 4294967295.0);
+  const double nearest = std::floor(x + 0.5);
+  if (std::fabs(x - nearest) < 1e-6) x = nearest;
+  cc_[part & 15u][cc] = static_cast<float>(x);
+  return true;
+}
+
+void SampleEngine::key_released(std::uint32_t channel, std::uint32_t note) noexcept {
+  if (note > 127) return;
+  ks_[channel & 15u].set_held(static_cast<int>(note), false);
+}
+
+bool SampleEngine::region_switched(const RegionRt& r, const KeyState& ks) const noexcept {
+  const auto& sw = r.d.sw;
+  if (sw.last >= 0 && ks.last != sw.last) return false;
+  if (sw.down >= 0 && !ks.is_held(sw.down)) return false;
+  if (sw.up >= 0 && ks.is_held(sw.up)) return false;
+  if (sw.previous >= 0 && ks.prev != sw.previous) return false;
+  return true;
+}
+
+// The product of the region's CC crossfade gains at the part's current controller values (sfizz Voice::applyCrossfades).
+float SampleEngine::crossfade_target(const RegionRt& r, std::uint32_t channel) const noexcept {
+  const auto& cc = cc_[channel & 15u];
+  float g = 1.0f;
+  for (unsigned i = 0; i < r.d.xfin_count; ++i) g *= sample_xf_in_gain(r.d.xfin[i].lo, r.d.xfin[i].hi, cc[r.d.xfin[i].cc], r.d.xf_curve);
+  for (unsigned i = 0; i < r.d.xfout_count; ++i) g *= sample_xf_out_gain(r.d.xfout[i].lo, r.d.xfout[i].hi, cc[r.d.xfout[i].cc], r.d.xf_curve);
+  return g;
 }
 
 std::uint32_t SampleEngine::active_voices() const noexcept {
@@ -342,7 +466,14 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   v->ratio = ratio;
   v->gain_l = base * r.chan_l;
   v->gain_r = base * r.chan_r;
+  v->base_gain = base;
   init_env(v->env, r);
+  if (r.has_xfade) {  // sfizz resetCrossfades(): the smoother starts at the current gain, so a new note does not ramp
+    v->xf_tgt = crossfade_target(r, channel);
+    v->xf_cur = v->xf_tgt;
+    v->xf_step = 0.0f;
+  }
+  if ((r.filtered || r.has_xfade) && !cfg_.extended_voices) ++undeclared_extended_;
   return true;
 }
 
@@ -360,14 +491,24 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
                                        std::uint32_t velocity16) noexcept {
   channel &= 15u;
   SampleBank* bank = bank_for(channel);
-  if (note > 127 || !bank || bank->regions.empty()) return EngineStatus::kOk;
+  if (note > 127) return EngineStatus::kOk;
+  KeyState& ks = ks_[channel];
+  ks.set_held(static_cast<int>(note), true);  // the key state follows the keyboard even when the part has no (or an empty) instrument
+  if (!bank || bank->regions.empty()) {
+    ks.prev = static_cast<std::int16_t>(note);
+    return EngineStatus::kOk;
+  }
   const std::uint32_t v16 = std::min<std::uint32_t>(velocity16, 65535u);
   // 7-bit velocity, as MIDI 1.0 and SFZ define it (the UMP value is rounded to the nearest step).
   std::uint8_t vel7 = static_cast<std::uint8_t>((v16 * 127u + 32767u) / 65535u);
   if (vel7 == 0) vel7 = 1;  // a note on is never velocity 0
   last_vel7_[(channel & 15u) * 128u + note] = vel7;
-  last_bank_[(channel & 15u) * 128u + note] = bank;
+  last_bank_[(channel & 15u) * 128u + note] = bank->id;
   const float rnd = next_random();
+
+  // Keyswitch state first (sfizz order): the key goes down, and a keyswitch key becomes the part's last switch, before any region
+  // is looked at, so a region mapped to the keyswitch key itself already follows it.
+  if (bank->switch_key[note]) ks.last = static_cast<std::int16_t>(note);
 
   bool exhausted = false;
   for (std::uint32_t i = bank->note_begin[note]; i < bank->note_begin[note + 1]; ++i) {
@@ -376,6 +517,7 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
     // Round robin: every region whose key range holds the note advances its own counter.
     bank->seq_switched[ri] = (bank->seq_counter[ri]++ % r.d.seq_length) == r.d.seq_position - 1 ? 1 : 0;
     if (r.d.trigger != velora::ports::SampleTrigger::kAttack) continue;
+    if (r.has_keyswitch && !region_switched(r, ks)) continue;
     if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
@@ -385,12 +527,15 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
     }
     if (!start_region(*bank, ri, channel, note, vel7, false)) exhausted = true;
   }
+  ks.prev = static_cast<std::int16_t>(note);  // sw_previous: the note on before the next one
   return exhausted ? EngineStatus::kPoolExhausted : EngineStatus::kOk;
 }
 
 EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note) noexcept {
   if (note > 127) return EngineStatus::kVoiceNotFound;
   channel &= 15u;
+  // Only a physical note off clears a held key (key_released()): this call also comes from the sustain pedal's deferred release, when the key
+  // may be down again.
   bool found = false;
   for (auto& v : voices_) {
     if (!v.active || v.stolen || v.release_trigger || v.channel != channel || v.note != note || v.key_up) continue;
@@ -409,12 +554,13 @@ EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note)
   const std::uint8_t vel7 = last_vel7_[(channel & 15u) * 128u + note];
   bool exhausted = false;
   SampleBank* bank = bank_for(channel);
-  const SampleBank* started_on = last_bank_[(channel & 15u) * 128u + note];
-  if (started_on && started_on != bank) bank = nullptr;  // rebound while held: no release-trigger lookup on a bank the note never used
+  const std::uint64_t started_on = last_bank_[(channel & 15u) * 128u + note];
+  if (started_on && (!bank || started_on != bank->id)) bank = nullptr;  // rebound while held: no release-trigger lookup on a bank the note never used
   for (std::uint32_t i = 0; bank && i < bank->note_begin[note + 1] - bank->note_begin[note]; ++i) {
     const std::uint32_t ri = bank->note_list[bank->note_begin[note] + i];
     const RegionRt& r = bank->regions[ri];
     if (r.d.trigger != velora::ports::SampleTrigger::kRelease) continue;
+    if (r.has_keyswitch && !region_switched(r, ks_[channel])) continue;
     if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
@@ -455,6 +601,16 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
   const std::int64_t end_idx = nframes - 2;  // sfizz: positions at or past this index end the sample
   const bool sustain_loop = r.d.loop_mode == velora::ports::SampleLoopMode::kLoopSustain;
   const float gl = v.gain_l * gain_, gr = v.gain_r * gain_;
+  const bool has_xf = r.has_xfade, filtered = r.filtered;
+  if (has_xf) {  // the controllers as they are for this render segment: a new target restarts the linear ramp (sfizz LinearSmoother)
+    const float want = crossfade_target(r, v.channel);
+    if (want != v.xf_tgt) {
+      v.xf_tgt = want;
+      v.xf_step = (want - v.xf_cur) / static_cast<float>(std::max<std::int32_t>(16, xf_frames_));
+      if (v.xf_step == 0.0f || !std::isfinite(v.xf_step)) v.xf_cur = want;  // a step that rounds to nothing would never arrive: snap
+    }
+  }
+  const float cl = r.chan_l * gain_, cr = r.chan_r * gain_;
 
   const std::uint64_t oracle_n = cfg_.oracle_block_frames;
   for (std::uint32_t f = 0; f < frames; ++f) {
@@ -537,12 +693,40 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       }
     }
 
-    if (v.stolen) {
-      left[f] += sl * env * gl * fade;
-      right[f] += sr_ * env * gr * fade;
+    if (!has_xf && !filtered) {  // the plain voice: exactly the Story 1.15 arithmetic (bit-exact bypass)
+      if (v.stolen) {
+        left[f] += sl * env * gl * fade;
+        right[f] += sr_ * env * gr * fade;
+      } else {
+        left[f] += sl * env * gl;
+        right[f] += sr_ * env * gr;
+      }
     } else {
-      left[f] += sl * env * gl;
-      right[f] += sr_ * env * gr;
+      // CC crossfade gain: a linear ramp to the target the controllers ask for, 5 ms long (sfizz's LinearSmoother).
+      float xf = 1.0f;
+      if (has_xf) {
+        if (v.xf_tgt > v.xf_cur) v.xf_cur = std::min(v.xf_tgt, v.xf_cur + v.xf_step);
+        else if (v.xf_tgt < v.xf_cur) v.xf_cur = std::max(v.xf_tgt, v.xf_cur + v.xf_step);
+        xf = v.xf_cur;
+      }
+      float ol, orr;
+      if (filtered) {  // amplitude stage -> filter -> pan (mono) / pan -> filter (stereo; the same linear result)
+        const float a = env * xf * v.base_gain;
+        const float yl = static_cast<float>(sample_filter_tick(r.filter, v.fl, static_cast<double>(sl * a)));
+        const float yr = r.stereo ? static_cast<float>(sample_filter_tick(r.filter, v.fr, static_cast<double>(sr_ * a))) : yl;
+        ol = yl * cl;
+        orr = yr * cr;
+      } else {
+        const float a = env * xf;
+        ol = sl * a * gl;
+        orr = sr_ * a * gr;
+      }
+      if (v.stolen) {
+        ol *= fade;
+        orr *= fade;
+      }
+      left[f] += ol;
+      right[f] += orr;
     }
     v.pos += static_cast<double>(v.ratio);
   }

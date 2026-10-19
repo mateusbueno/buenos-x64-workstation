@@ -73,7 +73,13 @@ constexpr bool is_fence_event(const Ump& ump) noexcept {
          (ump.word0 & 0x7Fu) == (kFenceParamId & 0x7Fu);
 }
 
-// MIDI CC (MIDI 2.0 control change: channel = part, 32-bit value) -> parameter event. False when the
+// Origin mark of a parameter event that was made from a genuine MIDI control change (cc_to_param_event): bit 7 of the index byte, which
+// the 7-bit index never uses, so decoding and every comparison of ids are unchanged. The block loop (Story 5.2) feeds the sample engine's raw
+// controller state from MIDI control changes only: a knob move from the UI / ws.v1 builds its event with make_param_event and carries no mark.
+constexpr std::uint32_t kMidiCcOriginBit = 0x80u;
+constexpr bool is_midi_cc_origin(const Ump& ump) noexcept { return (ump.word0 & kMidiCcOriginBit) != 0; }
+
+// MIDI CC (MIDI 2.0 control change: channel = part, 32-bit value) -> parameter event (marked as MIDI-originated). False when the
 // controller is not mapped or the channel is not a part.
 inline bool cc_to_param_event(const Ump& cc, Ump& out) noexcept {
   if (!cc.is_control_change() || cc.group() != 0 || cc.channel() >= params::kPartCount) return false;
@@ -81,6 +87,7 @@ inline bool cc_to_param_event(const Ump& cc, Ump& out) noexcept {
   if (!d) return false;
   const double n = static_cast<double>(cc.controller_value32()) / 4294967295.0;
   out = make_param_event(*d, cc.channel(), d->min + n * (d->max - d->min));
+  out.word0 |= kMidiCcOriginBit;
   return true;
 }
 

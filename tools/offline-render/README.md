@@ -23,6 +23,10 @@ Dependency rule: may depend on `engine/core`, `engine/ports`, `engine/host` (the
   64; the report line counts unplayable regions and pool exhaustion. `--seed` seeds `lorand/hirand`; `--gain-db` scales the
   output; `--oracle-block-frames N` (test only) emulates sfizz's per-voice block-boundary hold (see `engine/core/README.md`).
   `--bundle/--instrument` are errors without `--engine sample`; an unknown instrument or an unreadable bundle exits 1 and writes nothing.
+  Control changes in the MIDI file (Story 5.2): the sample engine takes EVERY controller as the UMP control change itself (the SMF 7-bit
+  value scaled to 32 bits), channel = part, delivered at its frame to the part's controller state, which the CC crossfades read; CC 64 is the
+  sustain pedal; nothing is mapped to registry parameters in a sample render. A controller extends the render like a note does (frames up to its
+  time are rendered). The Live Set renderer (`--live-set`) also passes unmapped controllers through, as the keyboard's, fanned out to the parts (`live_set_cc_test`: a CC1 sweep against a crossfading sample part, and a controller after the last note extends the render).
 - `velora-null-test` also takes `--max-length-diff-frames N`, `--check-excess` (the energy outside the compared overlap, i.e. a tail in
   one file only, must stay below the tolerance too) and `--reference-decode sfizz-s16` (case keys `check_excess`, `reference_decode`).
   16-bit PCM WAVs are readable; `sfizz-s16` undoes `sfizz_render`'s float->s16 conversion (dr_wav maps silence to -1 and scales by
@@ -92,7 +96,13 @@ renders of them as committed goldens (`golden/*.wav`, the untouched `sfizz_rende
 `librarian import` (in process) -> `velora-offline-render --engine sample` -> `velora-null-test --case` against the golden
 (`sample_null_<case>`), so **no sfizz is needed to run the tests**. Further tests: `sample_null_neg_gain` / `sample_null_neg_interp`
 (a 1 dB gain error and the wrong interpolation must fail the same null test), `sample_render_cli_errors`, and the env-gated
-`sample_demo_null_test` for real libraries (`VELORA_SFZ_DEMO_DIR`; skipped, exit 77, without it or without an oracle). Tolerances,
+`sample_demo_null_test` for real libraries (`VELORA_SFZ_DEMO_DIR`; skipped, exit 77, without it or without an oracle). Story 5.2 adds the
+fixture instruments `keyswitch_last`, `keyswitch_down_up`, `keyswitch_previous`, `xfade_power`, `xfade_gain` and `filters` (keyswitches,
+CC crossfades with a controller sweep, every filter type; the MIDI files now carry control changes), their negatives
+`sample_null_neg_strip_<case>` (the same SFZ imported without its `sw_*`, `xfin_*`/`xfout_*`, `xf_cccurve`, `fil_type`, `cutoff`, `resonance`
+opcodes must fail the case's null test) and a second probe for the real-library test, `demo_features.mid` (a keyswitch ladder over C0..B2, then
+a chord under CC1 and CC2 sweeps), which is where a Karoryfer instrument is null-tested against sfizz when `VELORA_SFZ_DEMO_DIR` points at
+one. Tolerances,
 measured residuals and every deviation are in `tests/sample_suite/README.md`. Regenerating the goldens needs the oracle:
 `tests/sample_suite/regenerate_goldens.sh` (see `tools/oracle/README.md`).
 

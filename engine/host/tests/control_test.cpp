@@ -518,8 +518,9 @@ static void test_performance_path() {
   CHECK(L.rig.live(p::kDrawbar8, 3) == 1.0f);
   const std::uint32_t unmapped[] = {0x2000'0000u | (0xBu << 20) | (3u << 16) | (20u << 8) | 127u};
   const auto ign = L.rig.ingest.counters().ignored.load();
-  L.rig.ingest.on_ump(unmapped, 1, L.rig.now());
-  CHECK(L.rig.ingest.counters().ignored.load() == ign + 1);
+  const auto ctl = L.rig.ingest.counters().controllers.load();
+  L.rig.ingest.on_ump(unmapped, 1, L.rig.now());  // Story 5.2: an unmapped CC is a raw controller for the sample engine, not an ignored message
+  CHECK(L.rig.ingest.counters().ignored.load() == ign && L.rig.ingest.counters().controllers.load() == ctl + 1);
   CHECK(L.rig.ingest.counters().params.load() == 2);
   CHECK(L.rig.plane.revision() == rev0);
   // CoreMIDI-style CC 64 (sustain) is not a registry parameter: it still reaches the arbiter's pedal state

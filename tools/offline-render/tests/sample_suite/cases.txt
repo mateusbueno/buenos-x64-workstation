@@ -14,3 +14,10 @@ envelope          hermite  2  -60
 loops             hermite  2  -60
 release_trigger   hermite  2  -60
 poly_layers       hermite  2  -60
+# Story 5.2: keyswitches, CC crossfades and basic filters (one fixture instrument per feature; see README.md).
+keyswitch_last      hermite  2  -60
+keyswitch_down_up   hermite  2  -60
+keyswitch_previous  hermite  2  -60
+xfade_power         hermite  2  -60
+xfade_gain          hermite  2  -60
+filters             hermite  2  -60

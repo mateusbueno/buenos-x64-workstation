@@ -82,7 +82,8 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
     }
   }
 
-  // Controllers: sustain goes through as it is; the registry-mapped ones become parameter events of the part that is their channel.
+  // Controllers: sustain goes through as it is; the registry-mapped ones become parameter events of the part that is their channel;
+  // every other one goes through as the control change itself (Story 5.2: the keyboard's controllers reach the parts' CcState).
   auto control = [](const NoteEvent& e, Ump& u) {
     const std::uint32_t v32 = static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127);
     const Ump cc = make_control_change(0, e.channel, e.note, v32);
@@ -90,7 +91,9 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
       u = cc;
       return true;
     }
-    return e.channel < params::kPartCount && cc_to_param_event(cc, u);
+    if (e.channel < params::kPartCount && cc_to_param_event(cc, u)) return true;
+    u = cc;
+    return true;
   };
   std::uint64_t last = 0;
   for (const NoteEvent& e : events) {

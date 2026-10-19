@@ -93,8 +93,11 @@ static int run(Fixture& fx) {
   if (!wait_for(ing.counters().notes, 2)) throw Skip{"MIDI 1.0 note-on never arrived"};
   check_mapped(ing, *queue, 37, "midi1");
 
-  const UInt32 cc[1] = {0x20B0'0740u};
+  const UInt32 cc[1] = {0x20B0'0740u};  // CC 7: the registry does not map it, so it passes as a controller (Story 5.2)
   CHECK(send(fx.src1, kMIDIProtocol_1_0, cc, 1));
+  CHECK(wait_for(ing.counters().controllers, 1));
+  const UInt32 pc[1] = {0x20C0'0700u};  // program change: ignored
+  CHECK(send(fx.src1, kMIDIProtocol_1_0, pc, 1));
   CHECK(wait_for(ing.counters().ignored, 1));
 
   // Hot-plug: a source created after open() is picked up by rescan().

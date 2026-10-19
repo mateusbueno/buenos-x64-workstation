@@ -36,19 +36,24 @@ constexpr std::size_t ump_packet_words(std::uint32_t message_type) noexcept {
   }
 }
 
-// Normalise the first packet of `words` to a MIDI 2.0 channel-voice note on/off, or a control change the
-// parameter registry maps (ParamDef::cc) to a performance parameter UMP (channel = part).
-// Always sets `consumed` (>=1 when count>0). Returns true and fills `out` for note on/off and mapped controllers; false
-// for any other message. Velocity-0 policy: a MIDI 1.0 (type 2) note-on with velocity 0 is a
+// Normalise the first packet of `words` to a MIDI 2.0 channel-voice note on/off, a control change the
+// parameter registry maps (ParamDef::cc) to a performance parameter UMP (channel = part), the sustain pedal, or any other
+// control change as the MIDI 2.0 control change itself (Story 5.2: the sample engine's CC crossfades read them).
+// Always sets `consumed` (>=1 when count>0). Returns true and fills `out` for those; false for any other message. Velocity-0 policy: a MIDI 1.0 (type 2) note-on with velocity 0 is a
 // note-off (MIDI 1.0 convention); a MIDI 2.0 (type 4) note-on with velocity 0 is passed through
 // UNCHANGED as a note-on (MIDI 2.0 has real note-offs; the engine treats velocity 0 as minimum).
 bool normalise_packet(const std::uint32_t* words, std::size_t count, std::size_t& consumed,
                       core::Ump& out) noexcept;
 
+// Slots of the event queue that only notes and the sustain pedal may use (controller floods stop short of them).
+inline constexpr std::size_t kNoteHeadroom = 128;
+
 struct MidiIngestCounters {
   std::atomic<std::uint64_t> notes{0};          // note on/off events queued
   std::atomic<std::uint64_t> params{0};         // mapped control changes queued as parameter UMPs
-  std::atomic<std::uint64_t> ignored{0};        // non-note messages (or truncated packets)
+  std::atomic<std::uint64_t> controllers{0};    // control changes the registry does not map (not the pedal), queued as MIDI 2.0 control changes (Story 5.2)
+  std::atomic<std::uint64_t> controllers_dropped{0};  // controllers (and mapped parameter events) shed because the queue had only note headroom left
+  std::atomic<std::uint64_t> ignored{0};        // messages that are not notes, controllers or pedal (or truncated packets)
   std::atomic<std::uint64_t> queue_full{0};     // dropped because the audio side is behind
 };
 

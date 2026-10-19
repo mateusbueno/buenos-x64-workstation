@@ -25,6 +25,32 @@ enum class SampleTrigger : std::uint8_t {
   kRelease = 1,  // fires on note off
 };
 
+// Story 5.2 extension (keyswitches, CC crossfades, basic filter). Every field defaults to "the region does not use it", so a
+// region built before this story keeps its meaning and its render bit for bit.
+
+// Keyswitch opcodes of a region; -1 = not given, otherwise a MIDI note 0..127 (sw_lokey/sw_hikey are the keyswitch range,
+// sw_last, sw_down, sw_up, sw_previous, sw_default).
+struct SampleKeyswitch {
+  std::int16_t lokey = -1, hikey = -1, last = -1, down = -1, up = -1, previous = -1, default_key = -1;
+};
+
+// One CC crossfade range: controller number and the CC value range 0..127 (inclusive, as written in the SFZ).
+struct SampleCcRange {
+  std::uint8_t cc = 0, lo = 0, hi = 0;
+};
+inline constexpr unsigned kSampleMaxCcCrossfades = 4;  // per direction and region
+
+enum class SampleXfCurve : std::uint8_t { kGain = 0, kPower = 1 };
+
+enum class SampleFilterType : std::uint8_t {
+  kNone = 0,
+  kLpf1p = 1,
+  kLpf2p = 2,
+  kHpf1p = 3,
+  kHpf2p = 4,
+  kBpf2p = 5,
+};
+
 // One region of the instrument (the SFZ opcode subset of Story 1.13). Field meaning follows the
 // SFZ specification; times are in seconds, ampeg_start and ampeg_sustain in percent, pan in
 // -100..100, offset and loop points in frames of the region's sample (loop_end inclusive).
@@ -45,6 +71,14 @@ struct SampleRegionDesc {
   float ampeg_delay = 0.0f, ampeg_start = 0.0f, ampeg_attack = 0.0f, ampeg_hold = 0.0f,
         ampeg_decay = 0.0f, ampeg_sustain = 100.0f, ampeg_release = 0.0f;
   SampleTrigger trigger = SampleTrigger::kAttack;
+  // Story 5.2: keyswitches, CC crossfades (xfin_*/xfout_* on up to four controllers each, entries sorted by cc), basic filter
+  // (filter_type kNone = no filter; cutoff in Hz, resonance in dB).
+  SampleKeyswitch sw;
+  std::uint8_t xfin_count = 0, xfout_count = 0;
+  SampleXfCurve xf_curve = SampleXfCurve::kPower;
+  SampleCcRange xfin[kSampleMaxCcCrossfades], xfout[kSampleMaxCcCrossfades];
+  SampleFilterType filter_type = SampleFilterType::kNone;
+  float filter_cutoff_hz = 0.0f, filter_resonance_db = 0.0f;
 };
 
 // One sample's PCM. channels is 1 or 2; `right` is used only when channels == 2. A sample whose

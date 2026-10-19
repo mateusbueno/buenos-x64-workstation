@@ -36,6 +36,11 @@ class SpscQueue {
     return true;
   }
 
+  // Producer side: how many elements are queued right now (exact for the producer, who owns `head`; the consumer may only have made it smaller).
+  std::size_t size() const noexcept {
+    return head_.load(std::memory_order_relaxed) - tail_.load(std::memory_order_acquire);
+  }
+
   static constexpr std::size_t capacity() noexcept { return Capacity; }
 
  private:

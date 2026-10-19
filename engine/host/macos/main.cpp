@@ -161,6 +161,7 @@ int main(int argc, char** argv) {
   // The sample engine and the organ are bound only for a Live Set (the dev configuration plays the test tone).
   core::SampleEngine::Config sample_cfg;
   sample_cfg.max_voices = 340;  // the 256 voice floor plus the 64 voice fade headroom, with slack
+  sample_cfg.extended_voices = true;  // Story 5.2: any imported instrument may use filters and CC crossfades, so every voice is budgeted for them
   core::SampleEngine sample(sample_cfg);
   core::OrganEngine organ;
   host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);

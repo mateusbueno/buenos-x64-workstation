@@ -74,12 +74,15 @@ void BlockRenderer::adopt_generation() noexcept {
   if (live_set_switch) {
     arbiter_.commit_prepared(next->reservation);
     applied_reservation_epoch_ = next->reservation_epoch;
+    // Per-part play state belongs to the Live Set (keyswitches return to the instrument's sw_default); controllers are physical.
+    for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->reset_play_state();
     // The pedal is a keyboard event, not a part event: a pedal that is physically down when the new Live Set takes over must also hold the
     // new notes of the parts that listen to the keyboard (their pedal flag may have been unset under the old part layout).
     if (next->live_set && keyboard_pedal_down_)
       for (std::uint32_t p = 0; p < params::kPartCount; ++p)
         if (router_.pedal_down_target(p)) arbiter_.set_sustain(p, true);
   }
+  if (next->live_set) replay_keyboard_ccs(*next, live_set_switch, remapped);
   std::array<bool, params::kPerfSlotCount> changed{};
   // A scene recall (new program_generation) also re-applies the slots it stores, once, whatever the previous generation held.
   const bool program_change = applied_valid_ && next->program_generation != applied_program_generation_;
@@ -118,6 +121,8 @@ void BlockRenderer::leave_live_set(std::array<bool, params::kPartCount>& remappe
     channel_engine_[p] = legacy_engine_[p];
   }
   in_live_set_ = false;
+  keyboard_cc_seen_.fill(false);  // the keyboard's controllers of that Live Set must not be replayed into a later one
+  replay_listening_.fill(false);
   keyboard_pedal_down_ = false;  // the plain path owns the pedal again (its own events set it)
 }
 
@@ -260,6 +265,10 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     ParamEvent pe;
     if (decode_param_event(ump, pe)) apply_param(pe);
     else param_rejected_.fetch_add(1, std::memory_order_relaxed);
+    if (is_midi_cc_origin(ump)) {  // a registry-mapped MIDI CC is also a raw controller (Story 5.2), whether or not the parameter took it
+      const params::ParamDef* d = params::find((((ump.word0 >> 8) & 0x7Fu) << 7) | (ump.word0 & 0x7Fu));
+      if (d && d->cc >= 0) route_cc(ump.channel(), static_cast<std::uint32_t>(d->cc), ump.word1, false);
+    }
     return;
   }
   if (ump.group() == 0 && ump.is_control_change() && ump.controller_index() == Ump::kControllerSustain) {
@@ -275,6 +284,10 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
   }
   if (ump.group() == 0 && ump.is_assignable_per_note_controller()) {  // contact_k (Story 2.5)
     apply_contact(ump);
+    return;
+  }
+  if (ump.group() == 0 && ump.is_control_change()) {  // every other controller (Story 5.2): the CcState of the part's engine
+    apply_controller(ump);
     return;
   }
   if (ump.group() != 0 || (!ump.is_note_on() && !ump.is_note_off())) {
@@ -314,6 +327,7 @@ void BlockRenderer::apply_part_note(std::uint32_t channel, std::uint32_t note, s
     record(rs);  // silence: nothing is rendered for this request
     return;
   }
+  if (!on) engine->key_released(channel, note);  // the key is up even when the pedal keeps the voice (sw_down / sw_up follow the key)
   if (on) {
     const EngineStatus st = engine->start_voice(channel, note, velocity16);
     record(st);
@@ -355,6 +369,45 @@ void BlockRenderer::apply_keyboard_sustain(bool down) noexcept {
       arbiter_.set_sustain(p, false);
       release_deferred(p);
     }
+  }
+}
+
+bool BlockRenderer::deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept {
+  Engine* engine = nullptr;
+  if (part >= 16 || registry_.resolve(channel_engine_[part], engine) != EngineStatus::kOk) return false;
+  return engine->set_part_cc(part, cc, value32);
+}
+
+void BlockRenderer::apply_controller(const Ump& ump) noexcept {
+  route_cc(ump.channel(), ump.controller_index(), ump.controller_value32(), true);
+}
+
+void BlockRenderer::route_cc(std::uint32_t channel, std::uint32_t cc, std::uint32_t value, bool count_ignored) noexcept {
+  bool consumed = false;
+  if (router_.active()) {
+    keyboard_cc_[cc] = value;
+    keyboard_cc_seen_[cc] = true;
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p)
+      if (router_.pedal_down_target(p)) consumed = deliver_cc(p, cc, value) || consumed;
+  } else {
+    consumed = deliver_cc(channel, cc, value);
+  }
+  if (!consumed && count_ignored) ++ignored_;
+}
+
+// A Live Set switch: the keyboard's controllers are physical, so every part that sounds with the keyboard on takes their last values
+// (a part the keyboard did not reach before would otherwise start from the instrument defaults).
+void BlockRenderer::replay_keyboard_ccs(const Snapshot& s, bool all, const std::array<bool, params::kPartCount>& remapped) noexcept {
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    const bool listening = router_.pedal_down_target(p);
+    const std::uint64_t bank = s.parts[p].sample_bank ? s.parts[p].sample_bank->id : 0;
+    // Also a part that just began to listen (keyboard on, ready) or got another engine / instrument in a generation without a new epoch.
+    const bool needs = listening && (all || !replay_listening_[p] || remapped[p] || bank != replay_bank_[p]);
+    replay_listening_[p] = listening;
+    replay_bank_[p] = bank;
+    if (!needs) continue;
+    for (std::uint32_t cc = 0; cc < 128; ++cc)
+      if (keyboard_cc_seen_[cc]) deliver_cc(p, cc, keyboard_cc_[cc]);
   }
 }
 

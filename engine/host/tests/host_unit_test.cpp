@@ -76,9 +76,18 @@ static void test_normalise() {
   const core::Ump n2 = core::make_note_on(0, 5, 72, 40000);
   const std::uint32_t w2[] = {n2.word0, n2.word1};
   CHECK(normalise_packet(w2, 2, used, u) && used == 2 && u.word0 == n2.word0 && u.word1 == n2.word1);
-  // Control change (type 2 status B) ignored but consumed; truncated type-4 packet dropped.
+  // Control change (type 2 status B), not mapped by the registry (CC 7): passes as the MIDI 2.0 control change (bit-repeated 7 -> 32
+  // bits) for the sample engine's CcState (Story 5.2); a registry-mapped one still becomes its parameter event; truncated type-4 packet dropped.
   const std::uint32_t cc[] = {0x20B0'0740u};
-  CHECK(!normalise_packet(cc, 1, used, u) && used == 1);
+  CHECK(normalise_packet(cc, 1, used, u) && used == 1 && u.is_control_change() && u.controller_index() == 7 && u.channel() == 0 &&
+        u.controller_value32() == ((0x40u << 25) | (0x40u << 18) | (0x40u << 11) | (0x40u << 4) | (0x40u >> 3)));
+  const std::uint32_t cc_mapped[] = {0x20B0'4840u};  // CC 72: drawbar
+  CHECK(normalise_packet(cc_mapped, 1, used, u) && u.is_assignable_controller());
+  const std::uint32_t cc2_raw[] = {0x40B3'0100u, 0x8000'0000u};  // MIDI 2.0 CC 1 on channel 3
+  CHECK(normalise_packet(cc2_raw, 2, used, u) && used == 2 && u.is_control_change() && u.channel() == 3 && u.controller_index() == 1 &&
+        u.controller_value32() == 0x8000'0000u);
+  const std::uint32_t pc[] = {0x20C0'0700u};  // program change: not a note or a controller
+  CHECK(!normalise_packet(pc, 1, used, u) && used == 1);
   const std::uint32_t trunc[] = {n2.word0};
   CHECK(!normalise_packet(trunc, 1, used, u) && used == 1);
   CHECK(scale_velocity_7_to_16(0) == 0 && scale_velocity_7_to_16(127) == 65535);
@@ -88,11 +97,18 @@ static void test_ingest_and_driver() {
   auto q = std::make_unique<HostEventQueue>();
   MidiIngest ing(*q);
   const core::Ump n = core::make_note_on(0, 0, 69, 50000);
-  // Packet stream: note-on (2.0), CC (1.0, ignored), note-off (1.0).
-  const std::uint32_t words[] = {n.word0, n.word1, 0x20B0'0740u, 0x2080'4500u};
+  // Packet stream: note-on (2.0), program change (1.0, ignored), note-off (1.0).
+  const std::uint32_t words[] = {n.word0, n.word1, 0x20C0'0740u, 0x2080'4500u};
   const std::uint64_t t0 = 5'000'000'000ull;
   ing.on_ump(words, 4, t0);
   CHECK(ing.counters().notes == 2 && ing.counters().ignored == 1);
+  {  // A CC the registry does not map is queued as a controller (Story 5.2), not ignored (own queue: the events below are counted).
+    auto cq = std::make_unique<HostEventQueue>();
+    MidiIngest cing(*cq);
+    const std::uint32_t cc_raw[] = {0x20B0'0140u};
+    cing.on_ump(cc_raw, 1, t0);
+    CHECK(cing.counters().controllers == 1 && cing.counters().ignored == 0 && cing.counters().notes == 0 && cing.counters().params == 0);
+  }
   CHECK(ing.last_stamp_ns() == t0);
 
   auto br = std::make_unique<core::BlockRenderer>();
@@ -258,7 +274,44 @@ static void test_slicer() {
   }
 }
 
+// Channel-mode messages are not controllers, and a controller flood never costs a note (Story 5.2).
+static void test_controller_flood_and_channel_mode() {
+  core::Ump u;
+  std::size_t used = 0;
+  for (std::uint32_t cc : {120u, 121u, 123u, 127u}) {
+    const std::uint32_t w1[] = {0x2000'0000u | (0xBu << 20) | (cc << 8) | 0x7Fu};
+    CHECK(!normalise_packet(w1, 1, used, u) && used == 1);
+    const std::uint32_t w2[] = {0x4000'0000u | (0xBu << 20) | (cc << 8), 0u};
+    CHECK(!normalise_packet(w2, 2, used, u) && used == 2);
+  }
+  const std::uint32_t cc119[] = {0x2000'0000u | (0xBu << 20) | (119u << 8) | 5u};
+  CHECK(normalise_packet(cc119, 1, used, u) && u.is_control_change());  // the last real controller still passes
+
+  auto q = std::make_unique<HostEventQueue>();  // nobody drains it: the worst case
+  MidiIngest ing(*q);
+  const std::uint32_t cc1[] = {0x2000'0000u | (0xBu << 20) | (1u << 8) | 64u};
+  for (int i = 0; i < 100000; ++i) ing.on_ump(cc1, 1, 1);
+  const std::uint64_t accepted = ing.counters().controllers.load();
+  CHECK(accepted == HostEventQueue::capacity() - kNoteHeadroom);
+  CHECK(ing.counters().controllers_dropped.load() == 100000 - accepted);
+  CHECK(ing.counters().queue_full.load() == 0);
+  // Notes and the pedal still get in, up to the headroom: nothing is lost to the flood.
+  for (std::size_t i = 0; i < kNoteHeadroom - 1; ++i) {
+    const core::Ump n = (i % 2) ? core::make_note_off(0, 0, 60, 0) : core::make_note_on(0, 0, 60, 40000);
+    const std::uint32_t w[] = {n.word0, n.word1};
+    ing.on_ump(w, 2, 2);
+  }
+  const std::uint32_t pedal[] = {0x2000'0000u | (0xBu << 20) | (64u << 8) | 127u};
+  ing.on_ump(pedal, 1, 3);
+  CHECK(ing.counters().notes.load() == kNoteHeadroom);
+  CHECK(ing.counters().queue_full.load() == 0);
+  // More controllers while the queue is that full are still shed, not queued.
+  ing.on_ump(cc1, 1, 4);
+  CHECK(ing.counters().controllers.load() == accepted);
+}
+
 int main() {
+  test_controller_flood_and_channel_mode();
   test_exact_start_and_vel0();
   test_deferred_absolute_position();
   test_no_reorder_beyond_horizon();
