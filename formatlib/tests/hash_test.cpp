@@ -1,4 +1,6 @@
+#include <string_view>
 #include <cstring>
+#include <string_view>
 #include <string>
 
 #include "test_util.hpp"
@@ -53,6 +55,10 @@ int main() {
   CHECK(a == library_id_from_fingerprint(sv("fingerprint-a")));
   CHECK(a != library_id_from_fingerprint(sv("fingerprint-b")));
   CHECK((a[6] >> 4) == 5 && (a[8] >> 6) == 2);
+  // Story 5.7: library_id_from_source is UUIDv5(kLibraryNamespace, SHA-256("velora.source.v1" || 0x00 || source_id)). Golden values computed independently
+  // with Python's hashlib (the importer, BundleWriter::set_source_id and the librarian preflight must all keep producing exactly these).
+  CHECK(uuid_to_string(library_id_from_source(std::string_view("/Volumes/USB/Piano.sfz"))) == "423277a9-1458-52be-855b-4fd0fc461f6d");
+  CHECK(uuid_to_string(library_id_from_source(std::string_view("/tmp/a.sfz"))) == "23181b8a-27dc-56d8-8a03-9e42413d1948");
 
   if (g_fail == 0) std::printf("hash_test OK\n");
   return g_fail == 0 ? 0 : 1;

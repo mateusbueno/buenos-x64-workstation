@@ -40,6 +40,57 @@ bool ImportWorker::enqueue(const std::shared_ptr<ImportJob>& job, std::size_t ma
   return true;
 }
 
+bool ImportWorker::enqueue_preflight(const std::shared_ptr<PreflightTask>& t, std::size_t max_queued) {
+  std::lock_guard<std::mutex> lk(m_);
+  if (stop_ || pre_queue_.size() >= max_queued) return false;
+  pre_queue_.push_back(t);
+  cv_.notify_all();
+  return true;
+}
+
+// `running_pre_` is set by the caller in the same critical section that popped `t` (so stop_and_join() always sees the task either queued or running).
+void ImportWorker::run_preflight(const std::shared_ptr<PreflightTask>& t) {
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    if (stop_) t->cancel.store(true);
+  }
+  if (cfg_.preflight_start_hook) cfg_.preflight_start_hook();
+  if (t->cancel.load()) {
+    t->result = PreflightResult{};
+    t->result.ok = true;
+    t->result.cancelled = true;
+  } else {
+    PreflightOptions o;
+    o.source = t->source;
+    o.volume_label = t->label;
+    o.max_files = t->max_files;
+    o.cancel = &t->cancel;
+    t->result = preflight_scan(o);
+  }
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    running_pre_.reset();
+  }
+  WorkerMsg m;
+  m.kind = WorkerMsg::Kind::kPreflightDone;
+  m.pre = t;
+  post(std::move(m));
+}
+
+void ImportWorker::run_pending_preflights() {
+  for (;;) {
+    std::shared_ptr<PreflightTask> t;
+    {
+      std::lock_guard<std::mutex> lk(m_);
+      if (pre_queue_.empty()) return;
+      t = pre_queue_.front();
+      pre_queue_.pop_front();
+      running_pre_ = t;
+    }
+    run_preflight(t);
+  }
+}
+
 bool ImportWorker::stopping() {
   std::lock_guard<std::mutex> lk(m_);
   return stop_;
@@ -71,6 +122,8 @@ void ImportWorker::stop_and_join() {
     stop_ = true;
     if (running_) running_->cancel.store(true);
     for (auto& j : queue_) j->cancel.store(true);
+    if (running_pre_) running_pre_->cancel.store(true);
+    for (auto& t : pre_queue_) t->cancel.store(true);
     cv_.notify_all();
   }
   if (thread_.joinable()) thread_.join();
@@ -89,9 +142,13 @@ void ImportWorker::run() {
     std::shared_ptr<ImportJob> job;
     {
       std::unique_lock<std::mutex> lk(m_);
-      cv_.wait(lk, [&] { return stop_ || !queue_.empty(); });
-      if (stop_ && queue_.empty()) return;
-      if (queue_.empty()) continue;
+      cv_.wait(lk, [&] { return stop_ || !queue_.empty() || !pre_queue_.empty(); });
+      if (stop_ && queue_.empty() && pre_queue_.empty()) return;
+      if (queue_.empty()) {
+        lk.unlock();
+        run_pending_preflights();
+        continue;
+      }
       job = queue_.front();
       queue_.pop_front();
       running_ = job;
@@ -103,6 +160,7 @@ void ImportWorker::run() {
       post(std::move(m));
     }
     for (std::size_t i = 0; i < job->items.size(); ++i) {
+      run_pending_preflights();  // read-only scans are answered between the items of a running job
       if (job->cancel.load()) break;
       const JobItem& it = job->items[i];
       {

@@ -295,3 +295,53 @@ intervals, tiny sources), so it runs in the default ctest. Deleting the "add mis
 
 **Deviations from the story text (kept on purpose).** The service lock is `<data>/lib/.service.lock` (inside `lib/`, so the board sandbox needs write access to that tree only) instead of a separate `lib.lock`;
 `catalog.meta` is a small text file, not protobuf (the CLI links no protobuf); instrument `bytes` is decoded PCM size; `--catalog-dir` splits the catalog from the library root (`/data/catalog` vs `/data/lib`).
+
+## Import preflight: batch scan, free space and duplicates (Story 5.7)
+
+Before anything is written the unit shows what is on a drive, what will be skipped and whether it fits. `PreflightRequest{source, volume_label, max_files}` on the Library API
+scans a mounted volume or folder for `.sfz` / `.sf2` **without converting anything**, on the worker thread (`import_worker.*`: the service thread keeps answering; a scan runs
+between jobs and between the items of a running import, is queued behind at most `max_queued_preflights` (4) others, and is cancelled by `CancelPreflight{request_id}`, by the
+requester disconnecting, or by the service stopping). The scanner itself is `preflight.hpp/.cpp` (`preflight_scan`), pure file system work with no catalog.
+
+- **Libraries and rows.** A library of the preflight is the top-level folder of the source (its files at any depth); the files directly in the source form the first library, named
+  `volume_label` (default the source folder's name; on the Mac the tests pass a folder plus an explicit label). Rows are one per timbre: an SFZ file, or one preset of an SF2 file
+  (`instrument_key` = the file name for an SFZ, `bank:preset` for SF2: the importer's keys). A file that cannot be parsed is one row with an empty key. The IMPORT unit stays
+  Story 5.1's: every file is its own catalog library; only the display grouping is by folder. Names starting `._` (macOS resource forks) are ignored.
+- **Status** is the closed set `ready` (a Story 5.5 category is suggested), `needs_category` (none is: the user must pick one, FR21), `skipped_unsupported_features`,
+  `skipped_damaged` (the importer's own Story 5.1 classification, reproduced from headers: unsupported opcodes/headers/values, unsupported sample formats; missing, unreadable or
+  truncated samples, a loop or offset that does not fit its sample, a damaged SF2) and `already_imported`. The scan decides the first four; the service adds `already_imported`
+  from the catalog: the row's `library_id` is minted by formatlib's `library_id_from_source` (the one function `BundleWriter::set_source_id` also calls: UUIDv5 of the canonical absolute
+  path) and the catalog must hold that library with that `instrument_key`. The default `action` of a row is IMPORT for `ready`/`needs_category` and SKIP for everything else.
+- **Import again.** `ImportItem.action` (additive): DEFAULT (0) imports exactly as in 5.6; IMPORT is the explicit "Import again" on an `already imported` row; SKIP leaves the item out
+  (no category required, no space counted, `ImportAccepted.skipped_count`); a request whose items are all SKIP is `INVALID_COMMAND` `details.reason=nothing_to_import`. Re-importing an
+  unchanged source ends `unchanged`; replacing a changed timbre in place is Story 5.8. The action is per file: an SF2 is one item, so all its preset rows share one action.
+- **Headers only.** An SFZ is parsed as text (formatlib parser) and each sample is examined through a RIFF chunk walk with `pread` (format chunk, the data chunk's declared size against
+  the file size); an SF2 is parsed over a counting byte source, which reads the `pdta` tables and the referenced sample headers but not the sample words. `PreflightDone.bytes_read` counts
+  what the scan read; the test reads 1.4 KB for an SFZ whose WAV holds 64 MiB (sparse) plus an SF2.
+- **Bounds.** At most 20000 `.sfz`/`.sf2` files (`max_files`, never above `kPreflightMaxFiles`), 400000 directory entries and 32 levels; hitting one sets `truncated` and the listing is
+  partial. Symbolic links are never followed: a linked folder is skipped, a linked file is used only when its target lies inside the source root (it is then identified by its canonical
+  target), and a sample that is a link leaving the root makes its SFZ `skipped_damaged`. `symlinks_skipped` counts them. Non-UTF-8 names are made valid (bad bytes become U+FFFD) in every
+  reply, as in 5.6. The result is kept in the service (newest 3) under `preflight_id` and paged with `ListPreflightRows{preflight_id, offset, limit, library}` (cut at
+  `reply_budget_bytes`, `more`); `PreflightDone` lists at most 200 library summaries (`libraries_total` says how many exist).
+- **Space.** An import of items with total decoded PCM size P (worst case, uncompressed: frames x channels x bytes per sample, per timbre, from the headers) needs
+  `required = 2 x P + 256 MiB` (`kImportPcmFactor` 2 = the published bundle plus the staging copy; `kImportReserveBytes` = the catalog, manifests, file system metadata and slack; 0 when
+  there are no items). `free` is `statvfs` `f_bavail x f_frsize` of the data directory (`LibraryServiceOptions::free_bytes_fn` replaces it in tests; a failing probe means "unknown": the check
+  is skipped). `PreflightDone` reports `pcm_bytes`, `required_bytes`, `reserve_bytes`, `free_bytes`, `fits` for the rows whose default action is IMPORT; an `ImportRequest` whose required bytes
+  exceed the free bytes is refused before anything is written or queued with `INSUFFICIENT_SPACE` and `details.required_bytes` / `details.free_bytes` (decimal). The request's estimate uses the
+  preflight's per-file figure while the file's size and mtime are unchanged, else a headers-only estimate made on the service thread at request time (cost: parsing the SFZ and the WAV headers
+  of the items, at most 1000 items).
+- **Duration.** `PreflightDone.duration_ms` is the scan wall clock. The 1,000-file synthetic volume test asserts counts and correctness, never time, and prints the figure (about 0.3 s on
+  the development Mac with tiny files and a warm cache); **host figures are not representative of the board** (USB flash, cold cache): measure there.
+
+Tests: `librarian_preflight_test` (statuses incl. all five, root-label library, library_id equals the importer's, already-imported default Skip then Import again, space refusal with both numbers
+and the exact boundary, symlink escapes, truncation cap, headers-only byte count, 1,000-file volume, cancel while the service stays responsive, bad sources, non-UTF-8 names where the file system allows).
+
+**Review round (Story 5.7), rules worth knowing.**
+- *Identity.* `library_id` derives from the **canonical absolute path** of the file: the same drive mounted at another path (`/Volumes/USB` vs `/Volumes/USB 1`) is a different library, so its rows are not `already imported`. Golden vectors for `library_id_from_source` are in `formatlib/tests/hash_test.cpp`.
+- *Chunks.* One ImportRequest holds at most 1000 items (`kMaxItems`) while a scan lists up to 20000 files (50000 rows, `kPreflightMaxRows`): a UI imports a big selection in chunks of at most 1000 items. Each chunk is checked for space on its own and the reserved bytes of the chunks that are still queued or running (`reserved_bytes_`, released when a job ends or is cancelled) are held against free space, so many chunks cannot jointly overcommit the drive.
+- *Selection.* `PreflightDone.required_bytes` is the figure for the **default** selection (everything that is not `already imported` or skipped). A different selection must add up `PreflightRow.pcm_bytes` with the same formula; "Import again" on already imported rows needs the full reserve too (the old bundle stays until the new one is current).
+- *Free space unknown.* `free_known=false` in `PreflightDone` and `ImportAccepted`: `fits` is then false (it only says "known and enough"), the import is NOT refused (the check is skipped); show the state, do not block.
+- *Estimate for an ImportRequest* is not confined to the source root (the importer follows sample links wherever they lead), uses the preflight's figure only while every file it depends on (.sfz, includes, samples) still has the same size and mtime, charges a file the estimate calls skipped its own size (never zero), and is made on the service thread for at most 50 files per request (`LIMIT_REACHED` `details.reason=estimate_budget`: run a preflight on the source first, its figures are then cache hits, or split the request). Cache hits cost one `stat` per dependency (at most 200000 per request, then they count as misses).
+- *Remaining service-thread work.* Finishing a scan reads the whole catalog once (`list_libraries` with instruments: bounded by the size of the catalog) and then does set lookups per row; no file is stat'ed there (the worker captured size and mtime). A scan holds at most 50000 rows and the service keeps the newest 3 results.
+- *Names.* A file whose name is not valid UTF-8 is listed with the bad bytes shown as U+FFFD; that sanitised path cannot be opened, so such a file cannot be imported through the API (rename it). A link to a file inside the source is an alias and is not listed (the file is, once, under its own name); links leaving the source are skipped; a sample link leaving the source makes its SFZ `skipped_damaged` in the scan although the importer itself would follow it (the one deliberate divergence from the importer, asserted in the parity table of the tests). FIFOs and devices are never read (opened non-blocking and refused unless regular).
+- *Limits.* At most 4 scans wait for the worker, at most 2 per connection (`QUEUE_FULL` `details.reason=per_client`). `detail` of a skipped row never quotes a file outside the source (only that one has a problem). `ImportItem.action` outside DEFAULT/IMPORT/SKIP is `INVALID_COMMAND` `details.reason=unknown_action`.

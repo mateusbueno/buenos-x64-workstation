@@ -16,7 +16,7 @@ std::string_view KeywordTable::embedded_json() {
 ")
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VELORA_CATEGORY_KEYWORDS_CPP}.tmp" "${VELORA_CATEGORY_KEYWORDS_CPP}")
 
-add_library(velora_librarian STATIC src/import.cpp src/batch.cpp src/library_index.cpp src/category_suggest.cpp "${VELORA_CATEGORY_KEYWORDS_CPP}")
+add_library(velora_librarian STATIC src/import.cpp src/batch.cpp src/library_index.cpp src/preflight.cpp src/category_suggest.cpp "${VELORA_CATEGORY_KEYWORDS_CPP}")
 add_library(velora::librarian ALIAS velora_librarian)
 target_include_directories(velora_librarian PUBLIC include)
 target_link_libraries(velora_librarian PUBLIC velora_format velora_sfz velora_host)
@@ -210,3 +210,10 @@ target_link_libraries(librarian_crash_campaign PRIVATE velora_librarian_service 
 target_include_directories(librarian_crash_campaign PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
 add_test(NAME librarian_crash_campaign COMMAND librarian_crash_campaign)
 set_tests_properties(librarian_crash_campaign PROPERTIES TIMEOUT 600)
+
+# Story 5.7: import preflight (scanner, statuses, duplicates, space, symlinks, truncation, headers-only, 1,000-file volume, cancel) over a real socket.
+add_executable(librarian_preflight_test tests/preflight_test.cpp)
+target_link_libraries(librarian_preflight_test PRIVATE velora_librarian_service velora_librarian)
+target_include_directories(librarian_preflight_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+add_test(NAME librarian_preflight_test COMMAND librarian_preflight_test)
+set_tests_properties(librarian_preflight_test PROPERTIES TIMEOUT 300)

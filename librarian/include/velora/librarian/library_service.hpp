@@ -36,10 +36,12 @@
 #include "library_api.pb.h"
 #include "velora/librarian/catalog.hpp"
 #include "velora/librarian/library_reconcile.hpp"
+#include "velora/librarian/preflight.hpp"
 
 namespace velora::librarian::detail {
 struct ImportJob;
 struct WorkerMsg;
+struct PreflightTask;
 class ImportWorker;
 }  // namespace velora::librarian::detail
 
@@ -66,6 +68,13 @@ struct LibraryServiceOptions {
   // transaction, before COMMIT), "catalog-committed", "job-finished"; and "reconcile.cleaned|add|update|remove" (job 0) during the startup pass. It
   // may _exit() the process or block (tests); it runs on the worker thread for the file points and on the service thread for the others.
   std::function<void(const char* point, std::uint64_t job_id, std::size_t item)> import_point_hook;
+  // Story 5.7. Free bytes of the file system that holds `data_dir` (statvfs f_bavail * f_frsize when empty). Tests inject a small or a huge number; returning
+  // false means "unknown": the import space check is then skipped and a preflight reports free_bytes 0 and fits = true.
+  std::function<bool(const std::string& dir, std::uint64_t& free_bytes)> free_bytes_fn;
+  std::size_t max_queued_preflights = 4;  // scans waiting for the worker; one more is refused with QUEUE_FULL
+  std::size_t max_preflights_per_client = 2;  // queued or running scans of one connection (QUEUE_FULL details.reason=per_client)
+  // Test hook: called on the worker thread at the start of every preflight scan (a test blocks here to cancel a scan that is queued or running).
+  std::function<void()> preflight_start_hook;
 };
 
 class LibraryService {
@@ -135,6 +144,14 @@ class LibraryService {
   void handle_list_libraries(Client& c, std::uint64_t rid, const ws::v1::ListLibraries& req);
   void handle_list_instruments(Client& c, std::uint64_t rid, const ws::v1::ListInstruments& req);
   void handle_cancel_import(Client& c, std::uint64_t rid, std::uint64_t job_id);
+  // Story 5.7
+  void handle_preflight_request(Client& c, std::uint64_t rid, const ws::v1::PreflightRequest& req);
+  void handle_list_preflight_rows(Client& c, std::uint64_t rid, const ws::v1::ListPreflightRows& req);
+  void handle_cancel_preflight(Client& c, std::uint64_t rid, std::uint64_t request_id);
+  void on_preflight_done(detail::PreflightTask& t, const std::shared_ptr<detail::PreflightTask>& sp);
+  void cancel_preflights_of(std::uint64_t client_id);
+  void release_reservation(detail::ImportJob& job);
+  bool free_bytes(std::uint64_t& out) const;
   void process_worker();
   void on_worker_msg(detail::WorkerMsg& m);
   void push_job_event(detail::ImportJob& job, const ws::v1::ImportItemResult* item);
@@ -165,6 +182,15 @@ class LibraryService {
   ReconcileReport reconcile_report_;
   std::unique_ptr<detail::ImportWorker> worker_;
   std::map<std::uint64_t, std::shared_ptr<detail::ImportJob>> jobs_;  // service thread only; finished jobs are trimmed to the newest 64
+  std::map<std::uint64_t, std::shared_ptr<detail::PreflightTask>> pending_preflights_;  // service thread only: queued or running scans
+  std::map<std::uint64_t, std::shared_ptr<detail::PreflightTask>> preflights_;          // finished results, the newest kMaxStoredPreflights
+  std::uint64_t next_preflight_id_ = 1;
+  struct Estimate {
+    std::uint64_t pcm = 0;
+    std::vector<FileDep> deps;  // the .sfz, its includes and samples (the .sf2): the figure is reused only while all of them are unchanged
+  };
+  std::map<std::string, Estimate> estimates_;  // path -> decoded bytes of a file that a preflight found importable (the space check of an ImportRequest)
+  std::uint64_t reserved_bytes_ = 0;           // sum of the required bytes of the import jobs that are queued or running: the next request must fit beside them
   std::uint64_t next_job_id_ = 1, cur_job_ = 0;
   std::size_t cur_item_ = 0;
   std::atomic<std::uint64_t> accepted_{0}, frames_in_{0}, dropped_slow_{0}, recent_writes_{0}, favorite_writes_{0};

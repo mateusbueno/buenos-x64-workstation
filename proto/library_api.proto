@@ -31,6 +31,9 @@ enum LibraryErrorCode {
   LIBRARY_ERROR_CODE_UNKNOWN_JOB = 13;         // no such import job
   LIBRARY_ERROR_CODE_UNKNOWN_LIBRARY = 14;     // no such library in the catalog
   LIBRARY_ERROR_CODE_SHUTTING_DOWN = 15;       // the service is stopping and accepts no new import
+  // Story 5.7 (additive).
+  LIBRARY_ERROR_CODE_INSUFFICIENT_SPACE = 16;  // an import whose required bytes exceed the free bytes of the data file system (details: required_bytes, free_bytes, both decimal); nothing is written or queued
+  LIBRARY_ERROR_CODE_UNKNOWN_PREFLIGHT = 17;   // no such preflight result (never made, or dropped: the service keeps the newest few)
   // INVALID_COMMAND with details.reason=empty_reconcile: a Reconcile whose list is empty while the catalog is not (see Reconcile).
 }
 
@@ -49,7 +52,7 @@ message LibraryHello {
 
 message LibraryHelloAck {
   uint32 version = 1;
-  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2" (Story 5.6)
+  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2" (Story 5.6), "preflight.v1" (Story 5.7)
   uint32 catalog_schema_version = 3;
 }
 
@@ -109,11 +112,21 @@ message ImportInstrumentOverride {
   string name = 2;                   // empty = the preset name
   optional uint32 category = 3;      // not set = use the item's category; set to 0 = "none" = CATEGORY_REQUIRED
 }
+// Story 5.7: what to do with one row/file. DEFAULT = import (as in Story 5.6: an identical bundle that is already current ends `unchanged`). IMPORT = "Import
+// again" on a row the preflight marked `already imported` (same effect, explicit). SKIP = leave the item out: it is not validated for a category, not counted
+// for space, not queued; a request whose items are all SKIP is INVALID_COMMAND with details.reason=nothing_to_import; any other value is INVALID_COMMAND with
+// details.reason=unknown_action.
+enum ImportAction {
+  IMPORT_ACTION_DEFAULT = 0;
+  IMPORT_ACTION_IMPORT = 1;
+  IMPORT_ACTION_SKIP = 2;
+}
 message ImportItem {
   string path = 1;                   // absolute, or relative to `source` when that is a folder
   optional uint32 category = 2;      // required, 1..17; presence matters: not set -> CATEGORY_REQUIRED reason missing, set to 0 -> reason none
   string name = 3;
   repeated ImportInstrumentOverride instruments = 4;
+  ImportAction action = 5;           // Story 5.7; default (0) = IMPORT_ACTION_DEFAULT, which imports exactly as before
 }
 message ImportOptions {}             // reserved for the checkpoint settings of Story 5.8
 // `source` is an .sfz / .sf2 file or a folder (the scan root). `items` are the files to import and each needs a category: for a file source the one item
@@ -130,6 +143,11 @@ message ImportAccepted {
   uint32 item_count = 2;
   uint64 bytes_total = 3;            // size of the source files
   uint32 queue_position = 4;         // 0 = starts at once; N = N jobs ahead of it
+  // Story 5.7
+  uint32 skipped_count = 5;          // items left out by action SKIP
+  uint64 required_bytes = 6;         // the space check (see "Import space" in librarian/README.md)
+  uint64 free_bytes = 7;             // free bytes of the data file system when the request was checked (0 when free_known is false)
+  bool free_known = 8;               // false: the free space could not be read and the space check was skipped
 }
 message CancelImport { uint64 job_id = 1; }   // answers LibraryAck{changed=true} when the job was queued or running, false when it had already finished
 message ImportStatusRequest { uint64 job_id = 1; }  // answers ImportProgress (the latest event of the job)
@@ -238,6 +256,92 @@ message InstrumentList {
   bool more = 5;
 }
 
+// --- Story 5.7: import preflight -------------------------------------------------------------------
+// Scans `source` (a mounted volume or a folder) for .sfz / .sf2 files WITHOUT converting anything, on the librarian's worker thread (the service thread
+// keeps serving), reading headers only. The reply (PreflightDone, sent when the scan has finished, same request_id) carries the summary; the rows are
+// paged with ListPreflightRows because a volume can hold up to 20000 files. The result stays in the service (the newest few) under `preflight_id`.
+// Libraries are the top-level folders of the source; the files at its root form the first library, named `volume_label` (empty = the source folder's name).
+// Each row is a timbre: an SFZ file, or one preset of an SF2 file.
+enum PreflightStatus {
+  PREFLIGHT_STATUS_UNSPECIFIED = 0;
+  PREFLIGHT_STATUS_READY = 1;                         // a category is suggested (Story 5.5)
+  PREFLIGHT_STATUS_NEEDS_CATEGORY = 2;                // no suggestion: the user must choose (FR21)
+  PREFLIGHT_STATUS_SKIPPED_UNSUPPORTED_FEATURES = 3;  // the importer would skip it (Story 5.1 reason unsupported_features)
+  PREFLIGHT_STATUS_SKIPPED_DAMAGED = 4;               // ... damaged
+  PREFLIGHT_STATUS_ALREADY_IMPORTED = 5;              // the catalog already holds this library_id + instrument_key (default action SKIP)
+}
+message PreflightRequest {
+  string source = 1;
+  string volume_label = 2;           // names the library made of the files at the root of the source
+  uint32 max_files = 3;              // 0 = 20000 (also the upper limit)
+}
+message CancelPreflight { uint64 request_id = 1; }  // the request_id of a PreflightRequest still running on THIS connection; answers LibraryAck{changed}
+message PreflightLibrary {
+  uint32 index = 1;
+  string name = 2;
+  string folder = 3;                 // top-level folder, relative to the source; empty for the root library
+  uint32 rows = 4;
+  uint32 ready = 5;
+  uint32 needs_category = 6;
+  uint32 skipped_unsupported_features = 7;
+  uint32 skipped_damaged = 8;
+  uint32 already_imported = 9;
+}
+message PreflightDone {
+  uint64 preflight_id = 1;           // 0 when the scan was cancelled (nothing is kept)
+  string source = 2;                 // canonical
+  string volume_label = 3;
+  repeated PreflightLibrary libraries = 4;   // at most 200 (libraries_total says how many exist; ListPreflightRows pages all rows)
+  uint32 libraries_total = 5;
+  uint32 rows_total = 6;
+  uint32 ready = 7;
+  uint32 needs_category = 8;
+  uint32 skipped_unsupported_features = 9;
+  uint32 skipped_damaged = 10;
+  uint32 already_imported = 11;
+  bool truncated = 12;               // a bound was reached (20000 files / entries / depth): the listing is partial
+  bool cancelled = 13;
+  uint32 files_scanned = 14;
+  uint32 symlinks_skipped = 15;      // links that were not followed (linked folders, links leaving the source)
+  uint64 bytes_read = 16;            // bytes read from the source files by the scan (headers only)
+  uint64 duration_ms = 17;           // scan wall clock; a Mac figure is not representative of the board
+  // Space for the rows whose default action is IMPORT (everything except already imported and skipped rows).
+  uint64 pcm_bytes = 18;             // worst-case decoded size of those rows
+  uint64 required_bytes = 19;        // 2 * pcm_bytes + reserve_bytes (0 when there is nothing to import). The DEFAULT selection only: a UI that changes the selection must add up PreflightRow.pcm_bytes itself (same formula), and an "Import again" of already imported rows needs the full amount too
+  uint64 reserve_bytes = 20;         // the fixed reserve constant
+  uint64 free_bytes = 21;            // free bytes on the data file system; 0 when free_known is false
+  bool fits = 22;                    // free_known AND required_bytes <= free_bytes. false when the free space is unknown: read free_known (an import is still allowed then, the check is skipped)
+  bool free_known = 23;
+}
+message ListPreflightRows {
+  uint64 preflight_id = 1;
+  uint32 offset = 2;
+  uint32 limit = 3;                  // 0 = 500
+  optional uint32 library = 4;       // only the rows of that library index
+}
+message PreflightRow {
+  string path = 1;                   // absolute path of the file: the `path` of an ImportItem
+  string rel_path = 2;
+  string name = 3;
+  string format = 4;                 // "sfz" | "sf2"
+  string library_id = 5;
+  string instrument_key = 6;         // empty for a file that could not be parsed
+  uint64 size_bytes = 7;
+  uint64 pcm_bytes = 8;              // worst-case decoded size an import of this row writes (0 for a skipped row)
+  uint32 suggested_category = 9;     // 0 = none
+  PreflightStatus status = 10;
+  ImportAction action = 11;          // the default action: SKIP for already imported and skipped rows, else IMPORT
+  uint32 library = 12;               // index into PreflightDone.libraries
+  string detail = 13;                // the first reason of a skipped row
+}
+message PreflightRowList {
+  uint64 preflight_id = 1;
+  repeated PreflightRow rows = 2;
+  uint32 total = 3;
+  uint32 offset = 4;
+  bool more = 5;
+}
+
 message LibraryClientMessage {
   uint64 request_id = 1;
   oneof body {
@@ -256,6 +360,9 @@ message LibraryClientMessage {
     ListInstruments list_instruments = 14;
     CancelImport cancel_import = 15;
     ImportStatusRequest import_status = 16;
+    PreflightRequest preflight_request = 17;    // Story 5.7
+    ListPreflightRows list_preflight_rows = 18;
+    CancelPreflight cancel_preflight = 19;
   }
 }
 
@@ -273,5 +380,7 @@ message LibraryServerMessage {
     LibraryList library_list = 10;
     InstrumentList instrument_list = 11;
     ImportProgress import_progress = 12;        // a push (request_id 0) or the answer to ImportStatusRequest
+    PreflightDone preflight_done = 13;          // Story 5.7
+    PreflightRowList preflight_rows = 14;
   }
 }

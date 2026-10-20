@@ -1,6 +1,7 @@
 #include "velora/format/hash.hpp"
 
 #include <cstring>
+#include <vector>
 
 namespace velora::format {
 namespace {
@@ -196,6 +197,16 @@ const Uuid kLibraryNamespace = [] {
 
 Uuid library_id_from_fingerprint(std::span<const std::uint8_t> fingerprint) {
   return uuid_v5(kLibraryNamespace, fingerprint);
+}
+
+Uuid library_id_from_source(std::string_view source_id) {
+  std::vector<std::uint8_t> fp;
+  static const char kTag[] = "velora.source.v1";
+  fp.insert(fp.end(), kTag, kTag + sizeof kTag - 1);
+  fp.push_back(0);
+  fp.insert(fp.end(), source_id.begin(), source_id.end());
+  const Digest256 d = Sha256::hash(fp);
+  return library_id_from_fingerprint(d);
 }
 
 }  // namespace velora::format

@@ -164,13 +164,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
   const std::uint32_t version_word = opt_.format_version | ((needs_ext ? 1u : 0u) << kMinorShift);
   Uuid library_id = library_id_;
   if (!has_library_id_ && has_source_id_) {
-    std::vector<std::uint8_t> fp;
-    static const char kTag[] = "velora.source.v1";
-    fp.insert(fp.end(), kTag, kTag + sizeof kTag - 1);
-    fp.push_back(0);
-    fp.insert(fp.end(), source_id_.begin(), source_id_.end());
-    const Digest256 d = Sha256::hash(fp);
-    library_id = library_id_from_fingerprint(d);
+    library_id = library_id_from_source(source_id_);
   } else if (!has_library_id_) {
     std::vector<std::uint8_t> fp;
     put_u32(fp, static_cast<std::uint32_t>(instruments_.size()));

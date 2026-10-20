@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <sys/file.h>
+#include <sys/statvfs.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -22,6 +23,7 @@
 #include "velora/format/category.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/librarian/import.hpp"
+#include "velora/librarian/preflight.hpp"
 
 namespace velora::librarian {
 
@@ -215,6 +217,7 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
   started_ = true;
   detail::ImportWorker::Config wc;
   wc.data_dir = opts_.data_dir;
+  wc.preflight_start_hook = opts_.preflight_start_hook;
   wc.point_hook = [this](const char* p, std::uint64_t job, std::size_t item) { point(p, job, item); };
   wc.wake = [this] {
     const char b = 1;
@@ -241,6 +244,9 @@ void LibraryService::stop() {
     if (!c.dead && !c.tx.empty()) flush(c);
   worker_.reset();
   jobs_.clear();
+  pending_preflights_.clear();
+  preflights_.clear();
+  estimates_.clear();
   for (Client& c : clients_) ::close(c.fd);
   clients_.clear();
   if (recent_dirty_) flush_recent(nullptr);  // orderly shutdown: the last chance to persist Recent, playing or not
@@ -297,6 +303,7 @@ void LibraryService::run() {
           playing_owner_ = 0;
           idle_flush();
         }
+        cancel_preflights_of(it->id);
         ::close(it->fd);
         it = clients_.erase(it);
       } else {
@@ -390,7 +397,7 @@ void LibraryService::process_frame(Client& c, const std::string& payload) {
     ack.set_request_id(msg.request_id());
     ws::v1::LibraryHelloAck* h = ack.mutable_hello_ack();
     h->set_version(kProtocolVersion);
-    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2"}) h->add_features(f);
+    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2", "preflight.v1"}) h->add_features(f);
     h->set_catalog_schema_version(catalog_->schema_version());
     send(c, ack);
     return;
@@ -685,6 +692,12 @@ void LibraryService::handle(Client& c, const ws::v1::LibraryClientMessage& msg) 
       return handle_list_instruments(c, rid, msg.list_instruments());
     case M::kCancelImport:
       return handle_cancel_import(c, rid, msg.cancel_import().job_id());
+    case M::kPreflightRequest:
+      return handle_preflight_request(c, rid, msg.preflight_request());
+    case M::kListPreflightRows:
+      return handle_list_preflight_rows(c, rid, msg.list_preflight_rows());
+    case M::kCancelPreflight:
+      return handle_cancel_preflight(c, rid, msg.cancel_preflight().request_id());
     case M::kImportStatus: {
       const auto it = jobs_.find(msg.import_status().job_id());
       if (it == jobs_.end()) return reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_UNKNOWN_JOB, "no such import job");
@@ -784,6 +797,27 @@ ws::v1::LibraryServerMessage typed_error(std::uint64_t rid, ws::v1::LibraryError
   return m;
 }
 
+std::int64_t mtime_ns(const struct stat& sb) {
+#ifdef __APPLE__
+  return static_cast<std::int64_t>(sb.st_mtimespec.tv_sec) * 1000000000ll + sb.st_mtimespec.tv_nsec;
+#else
+  return static_cast<std::int64_t>(sb.st_mtim.tv_sec) * 1000000000ll + sb.st_mtim.tv_nsec;
+#endif
+}
+
+constexpr std::size_t kMaxEstimateMisses = 50;
+constexpr std::size_t kMaxDepStats = 200000;
+bool deps_unchanged(const std::vector<FileDep>& deps) {
+  for (const FileDep& d : deps) {
+    struct stat sb{};
+    if (::stat(d.path.c_str(), &sb) != 0 || static_cast<std::uint64_t>(sb.st_size) != d.size || mtime_ns(sb) != d.mtime_ns) return false;
+  }
+  return true;
+}
+constexpr std::size_t kMaxStoredPreflights = 3;
+constexpr std::size_t kMaxEstimates = 100000;
+constexpr std::size_t kMaxLibrariesInDone = 200;  // PreflightDone lists this many library summaries (names are cut at 255 bytes): far below the frame limit
+
 bool importable_extension(const fs::path& p) {
   std::string e = p.extension().string();
   for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -835,7 +869,15 @@ void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const w
   job->source = clean_utf8(source.string());
   std::set<std::string> seen;
   const fs::path base = source_is_dir ? source : source.parent_path();
+  for (const ws::v1::ImportItem& it : req.items())
+    if (it.action() != ws::v1::IMPORT_ACTION_DEFAULT && it.action() != ws::v1::IMPORT_ACTION_IMPORT && it.action() != ws::v1::IMPORT_ACTION_SKIP)
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "unknown import action " + std::to_string(static_cast<int>(it.action())), {}, "unknown_action");
+  std::uint32_t skipped_by_action = 0;
   for (const ws::v1::ImportItem& it : req.items()) {
+    if (it.action() == ws::v1::IMPORT_ACTION_SKIP) {  // Story 5.7: left out of the request (no category needed, no space counted)
+      ++skipped_by_action;
+      continue;
+    }
     fs::path p;
     if (it.path().empty()) {
       if (source_is_dir) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "an item of a folder import needs a path", {}, "item_path_missing");
@@ -893,6 +935,42 @@ void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const w
     job->bytes_total += ji.bytes;
     job->items.push_back(std::move(ji));
   }
+  if (job->items.empty())
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "every item of the request has the action skip", {}, "nothing_to_import");
+  // Space (Story 5.7): the decoded size of what the request would write. A figure from the preflight is reused only while every file it depends on (sfz,
+  // includes, samples) is unchanged; otherwise a headers-only estimate is made here, on the service thread, for at most kMaxEstimateMisses items per request
+  // (more: LIMIT_REACHED reason estimate_budget, run a preflight first or split the request) and at most kMaxDepStats stats of cached dependencies. A file the
+  // estimate calls skipped is charged its own size, never nothing. The estimate is not confined to the source root (the importer accepts samples elsewhere).
+  std::uint64_t pcm_total = 0, free_now = 0;
+  std::size_t misses = 0, stats_left = kMaxDepStats;
+  for (detail::JobItem& ji : job->items) {
+    bool hit = false;
+    const auto cached = estimates_.find(ji.path);
+    if (cached != estimates_.end() && cached->second.deps.size() <= stats_left) {
+      stats_left -= cached->second.deps.size();
+      hit = deps_unchanged(cached->second.deps);
+      if (hit) pcm_total += cached->second.pcm;
+    }
+    if (hit) continue;
+    if (++misses > kMaxEstimateMisses)
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_LIMIT_REACHED, "too many files without a fresh preflight estimate; run a preflight on the source or split the request", {}, "estimate_budget");
+    ImportEstimate e = estimate_import(ji.path);
+    pcm_total += e.skipped ? ji.bytes : e.pcm_bytes;
+    if (!e.skipped) {
+      if (estimates_.size() >= kMaxEstimates) estimates_.clear();
+      estimates_[ji.path] = Estimate{e.pcm_bytes, std::move(e.deps)};
+    }
+  }
+  const std::uint64_t required = required_import_bytes(pcm_total, job->items.size());
+  const bool free_known = free_bytes(free_now);
+  if (free_known && (required > free_now || reserved_bytes_ > free_now - required)) {
+    auto e = typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_INSUFFICIENT_SPACE, "not enough free space for this import", {}, "space");
+    (*e.mutable_error()->mutable_details())["required_bytes"] = std::to_string(required);
+    (*e.mutable_error()->mutable_details())["free_bytes"] = std::to_string(free_now);
+    (*e.mutable_error()->mutable_details())["reserved_bytes"] = std::to_string(reserved_bytes_);  // already promised to queued / running imports
+    send(c, e);
+    return;
+  }
   job->id = next_job_id_;
   job->owner = c.id;
   std::size_t ahead = 0;
@@ -907,6 +985,8 @@ void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const w
     return;
   }
   ++next_job_id_;
+  job->reserved = required;
+  reserved_bytes_ += required;
   jobs_[job->id] = job;
   ws::v1::LibraryServerMessage m;
   m.set_request_id(rid);
@@ -915,9 +995,18 @@ void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const w
   a->set_item_count(static_cast<std::uint32_t>(job->items.size()));
   a->set_bytes_total(job->bytes_total);
   a->set_queue_position(static_cast<std::uint32_t>(ahead));
+  a->set_skipped_count(skipped_by_action);
+  a->set_required_bytes(required);
+  a->set_free_bytes(free_known ? free_now : 0);
+  a->set_free_known(free_known);
   send(c, m);
   push_job_event(*job, nullptr);  // QUEUED
   trim_finished_jobs();
+}
+
+void LibraryService::release_reservation(detail::ImportJob& job) {
+  reserved_bytes_ -= std::min(job.reserved, reserved_bytes_);
+  job.reserved = 0;
 }
 
 void LibraryService::trim_finished_jobs() {
@@ -944,6 +1033,7 @@ void LibraryService::handle_cancel_import(Client& c, std::uint64_t rid, std::uin
     // It never started: finished right here.
     job.state = ws::v1::IMPORT_STATE_CANCELLED;
     job.current_item.clear();
+    release_reservation(job);
     reply_ack(c, rid, true);
     push_job_event(job, nullptr);
     point("job-finished", job.id, 0);
@@ -1060,6 +1150,7 @@ void LibraryService::process_worker() {
 }
 
 void LibraryService::finish_job(detail::ImportJob& job, bool all_items_processed) {
+  release_reservation(job);
   job.current_item.clear();
   if (!all_items_processed || job.cancelled > 0) job.state = ws::v1::IMPORT_STATE_CANCELLED;
   else job.state = (job.imported + job.unchanged) > 0 ? ws::v1::IMPORT_STATE_PUBLISHED : ws::v1::IMPORT_STATE_FAILED;
@@ -1068,6 +1159,7 @@ void LibraryService::finish_job(detail::ImportJob& job, bool all_items_processed
 }
 
 void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
+  if (m.kind == detail::WorkerMsg::Kind::kPreflightDone) return on_preflight_done(*m.pre, m.pre);
   detail::ImportJob& job = *m.job;
   switch (m.kind) {
     case detail::WorkerMsg::Kind::kJobStarted:
@@ -1082,6 +1174,8 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
     case detail::WorkerMsg::Kind::kJobDone:
       finish_job(job, job.done >= job.items.size());
       return;
+    case detail::WorkerMsg::Kind::kPreflightDone:
+      return;  // handled above
     case detail::WorkerMsg::Kind::kItemDone:
       break;
   }
@@ -1154,6 +1248,248 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
     m.ticket->done = true;
     m.ticket->cv.notify_all();
   }
+}
+
+// --- Story 5.7: import preflight ---------------------------------------------------------------------------------------------------------------
+
+bool LibraryService::free_bytes(std::uint64_t& out) const {
+  if (opts_.free_bytes_fn) return opts_.free_bytes_fn(opts_.data_dir, out);
+  struct statvfs sv{};
+  if (::statvfs(opts_.data_dir.c_str(), &sv) != 0) return false;
+  out = static_cast<std::uint64_t>(sv.f_bavail) * static_cast<std::uint64_t>(sv.f_frsize);
+  return true;
+}
+
+void LibraryService::handle_preflight_request(Client& c, std::uint64_t rid, const ws::v1::PreflightRequest& req) {
+  if (stopping_.load()) {
+    send(c, typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_SHUTTING_DOWN, "the service is stopping and accepts no new preflight", {}, {}));
+    return;
+  }
+  auto refuse = [&](ws::v1::LibraryErrorCode code, const std::string& message, const std::string& path, const std::string& reason) {
+    send(c, typed_error(rid, code, message, path, reason));
+  };
+  if (req.source().empty() || req.source().size() > 4096 || req.source().find('\0') != std::string::npos)
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the preflight source is empty or too long", {}, "source_missing");
+  if (!valid_display_name(req.volume_label()))
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "invalid volume label", {}, "invalid_name");
+  std::error_code ec;
+  const fs::path source = fs::canonical(fs::path(req.source()), ec);
+  if (ec) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the preflight source cannot be read: " + ec.message(), req.source(), "source_unreadable");
+  if (!fs::is_directory(source, ec))
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the preflight source is not a folder", req.source(), "not_a_folder");
+  {
+    std::size_t mine = 0;
+    for (const auto& kv : pending_preflights_) mine += kv.second->owner == c.id ? 1 : 0;
+    if (mine >= opts_.max_preflights_per_client) {
+      auto e = typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_QUEUE_FULL, "this connection already has too many preflight scans waiting", {}, "per_client");
+      (*e.mutable_error()->mutable_details())["limit"] = std::to_string(opts_.max_preflights_per_client);
+      send(c, e);
+      return;
+    }
+  }
+  auto task = std::make_shared<detail::PreflightTask>();
+  task->id = next_preflight_id_;
+  task->owner = c.id;
+  task->request_id = rid;
+  task->source = source.string();
+  task->label = req.volume_label();
+  task->max_files = req.max_files();
+  if (!worker_ || !worker_->enqueue_preflight(task, opts_.max_queued_preflights)) {
+    if (stopping_.load() || (worker_ && worker_->stopping()))
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_SHUTTING_DOWN, "the service is stopping and accepts no new preflight", {}, {});
+    auto e = typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_QUEUE_FULL, "too many preflight scans are waiting", {}, {});
+    (*e.mutable_error()->mutable_details())["limit"] = std::to_string(opts_.max_queued_preflights);
+    send(c, e);
+    return;
+  }
+  ++next_preflight_id_;
+  pending_preflights_[task->id] = task;  // the answer (PreflightDone) is sent when the worker has finished the scan
+}
+
+void LibraryService::handle_cancel_preflight(Client& c, std::uint64_t rid, std::uint64_t request_id) {
+  bool found = false;
+  for (auto& kv : pending_preflights_)
+    if (kv.second->owner == c.id && kv.second->request_id == request_id) {
+      kv.second->cancel.store(true);
+      found = true;
+    }
+  reply_ack(c, rid, found);
+}
+
+void LibraryService::cancel_preflights_of(std::uint64_t client_id) {
+  for (auto& kv : pending_preflights_)
+    if (kv.second->owner == client_id) kv.second->cancel.store(true);
+}
+
+void LibraryService::on_preflight_done(detail::PreflightTask& t, const std::shared_ptr<detail::PreflightTask>& sp) {
+  pending_preflights_.erase(t.id);
+  Client* owner = nullptr;
+  for (Client& c : clients_)
+    if (c.id == t.owner && !c.dead && !c.closing) owner = &c;
+  if (!owner) return;  // the requester is gone: nothing to answer, nothing kept
+  PreflightResult& r = t.result;
+  if (!r.ok) {
+    send(*owner, typed_error(t.request_id, ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, r.error, t.source, "source_unreadable"));
+    return;
+  }
+  ws::v1::LibraryServerMessage m;
+  m.set_request_id(t.request_id);
+  ws::v1::PreflightDone* d = m.mutable_preflight_done();
+  d->set_source(clean_utf8(r.source));
+  d->set_volume_label(clean_utf8(r.volume_label, 255));
+  d->set_files_scanned(static_cast<std::uint32_t>(r.files_scanned));
+  d->set_symlinks_skipped(static_cast<std::uint32_t>(r.symlinks_skipped));
+  d->set_bytes_read(r.bytes_read);
+  d->set_duration_ms(r.duration_ms);
+  d->set_truncated(r.truncated);
+  if (r.cancelled) {
+    d->set_cancelled(true);
+    send(*owner, m);
+    return;
+  }
+  // `already imported`: the catalog holds the library_id AND the instrument key (the importer's key: the SFZ file name, or the SF2 "bank:preset"). One query
+  // reads every library with its instruments (bounded by the size of the catalog, on the service thread; the per-row work below is a set lookup).
+  std::vector<LibraryRecord> libs;
+  if (const CatalogStatus st = catalog_->list_libraries(libs, true); st != CatalogStatus::kOk) {
+    auto e = make_error(t.request_id, ws::v1::LIBRARY_ERROR_CODE_STORAGE_FAILED, "the catalog could not be read");
+    (*e.mutable_error()->mutable_details())["reason"] = to_string(st);
+    send(*owner, e);
+    return;
+  }
+  std::map<std::string, std::set<std::string>> keys;
+  {
+    std::set<std::string> wanted;
+    for (const PreflightRow& row : r.rows) wanted.insert(row.library_id);
+    for (const LibraryRecord& l : libs)
+      if (wanted.count(l.library_id))
+        for (const InstrumentRecord& ir : l.instruments) keys[l.library_id].insert(ir.key);
+  }
+  libs.clear();
+  for (PreflightRow& row : r.rows) {
+    if ((row.status != RowStatus::kReady && row.status != RowStatus::kNeedsCategory) || row.instrument_key.empty()) continue;
+    const auto it = keys.find(row.library_id);
+    if (it != keys.end() && it->second.count(row.instrument_key)) row.status = RowStatus::kAlreadyImported;
+  }
+  std::vector<ws::v1::PreflightLibrary> sums(r.libraries.size());
+  for (std::size_t i = 0; i < sums.size(); ++i) {
+    sums[i].set_index(static_cast<std::uint32_t>(i));
+    sums[i].set_name(clean_utf8(r.libraries[i].name, 255));
+    sums[i].set_folder(clean_utf8(r.libraries[i].folder, 255));
+  }
+  std::uint64_t pcm = 0;
+  std::set<std::string> import_files;
+  std::map<std::string, std::uint64_t> file_pcm;
+  std::set<std::string> skipped_files;
+  std::uint32_t n_ready = 0, n_needs = 0, n_unsup = 0, n_dam = 0, n_imp = 0;
+  for (const PreflightRow& row : r.rows) {
+    ws::v1::PreflightLibrary& s = sums[row.library];
+    s.set_rows(s.rows() + 1);
+    switch (row.status) {
+      case RowStatus::kReady: s.set_ready(s.ready() + 1); ++n_ready; break;
+      case RowStatus::kNeedsCategory: s.set_needs_category(s.needs_category() + 1); ++n_needs; break;
+      case RowStatus::kSkippedUnsupportedFeatures: s.set_skipped_unsupported_features(s.skipped_unsupported_features() + 1); ++n_unsup; break;
+      case RowStatus::kSkippedDamaged: s.set_skipped_damaged(s.skipped_damaged() + 1); ++n_dam; break;
+      case RowStatus::kAlreadyImported: s.set_already_imported(s.already_imported() + 1); ++n_imp; break;
+    }
+    if (row.status == RowStatus::kReady || row.status == RowStatus::kNeedsCategory) {
+      pcm += row.pcm_bytes;
+      import_files.insert(row.path);
+    }
+    if (row.status == RowStatus::kSkippedDamaged || row.status == RowStatus::kSkippedUnsupportedFeatures) skipped_files.insert(row.path);
+    file_pcm[row.path] += row.pcm_bytes;
+  }
+  // Remember the decoded size per importable file for the space check of the ImportRequest that follows (the worker already read the size and mtime of every
+  // file the figure depends on, so nothing is stat'ed here). Skipped files are not remembered.
+  if (estimates_.size() + file_pcm.size() > kMaxEstimates) estimates_.clear();
+  for (const auto& kv : file_pcm) {
+    if (skipped_files.count(kv.first)) continue;
+    const auto dep = r.deps.find(kv.first);
+    if (dep == r.deps.end()) continue;
+    estimates_[kv.first] = Estimate{kv.second, dep->second};
+  }
+  for (std::size_t i = 0; i < sums.size() && i < kMaxLibrariesInDone; ++i) *d->add_libraries() = sums[i];
+  d->set_libraries_total(static_cast<std::uint32_t>(sums.size()));
+  d->set_rows_total(static_cast<std::uint32_t>(r.rows.size()));
+  d->set_ready(n_ready);
+  d->set_needs_category(n_needs);
+  d->set_skipped_unsupported_features(n_unsup);
+  d->set_skipped_damaged(n_dam);
+  d->set_already_imported(n_imp);
+  d->set_pcm_bytes(pcm);
+  d->set_reserve_bytes(kImportReserveBytes);
+  const std::uint64_t required = required_import_bytes(pcm, import_files.size());
+  d->set_required_bytes(required);
+  std::uint64_t free_now = 0;
+  const bool known_free = free_bytes(free_now);
+  d->set_free_bytes(known_free ? free_now : 0);
+  d->set_free_known(known_free);
+  d->set_fits(known_free && required <= free_now);
+  d->set_preflight_id(t.id);
+  preflights_[t.id] = sp;
+  while (preflights_.size() > kMaxStoredPreflights) preflights_.erase(preflights_.begin());
+  send(*owner, m);
+}
+
+void LibraryService::handle_list_preflight_rows(Client& c, std::uint64_t rid, const ws::v1::ListPreflightRows& req) {
+  const auto it = preflights_.find(req.preflight_id());
+  if (it == preflights_.end()) {
+    auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_UNKNOWN_PREFLIGHT, "no such preflight result");
+    (*e.mutable_error()->mutable_details())["preflight_id"] = std::to_string(req.preflight_id());
+    send(c, e);
+    return;
+  }
+  const PreflightResult& r = it->second->result;
+  // The rows of one library are contiguous; without a filter the whole list is paged.
+  std::size_t first = 0, count = r.rows.size();
+  if (req.has_library()) {
+    if (req.library() >= r.libraries.size()) {
+      count = 0;
+    } else {
+      first = r.libraries[req.library()].first_row;
+      count = r.libraries[req.library()].row_count;
+    }
+  }
+  ws::v1::LibraryServerMessage m;
+  m.set_request_id(rid);
+  ws::v1::PreflightRowList* l = m.mutable_preflight_rows();
+  l->set_preflight_id(req.preflight_id());
+  l->set_total(static_cast<std::uint32_t>(count));
+  l->set_offset(req.offset());
+  const std::size_t limit = req.limit() == 0 ? 500 : std::min<std::size_t>(req.limit(), 2000);
+  std::size_t bytes = 0, used = 0;
+  for (std::size_t i = req.offset(); i < count && used < limit; ++i) {
+    const PreflightRow& row = r.rows[first + i];
+    ws::v1::PreflightRow* pr = l->add_rows();
+    pr->set_path(clean_utf8(row.path));
+    pr->set_rel_path(clean_utf8(row.rel_path));
+    pr->set_name(clean_utf8(row.name, 512));
+    pr->set_format(row.format);
+    pr->set_library_id(row.library_id);
+    pr->set_instrument_key(clean_utf8(row.instrument_key, 512));
+    pr->set_size_bytes(row.size_bytes);
+    pr->set_pcm_bytes(row.pcm_bytes);
+    pr->set_suggested_category(static_cast<std::uint32_t>(fmtlib::id(row.suggested)));
+    ws::v1::PreflightStatus st = ws::v1::PREFLIGHT_STATUS_READY;
+    switch (row.status) {
+      case RowStatus::kReady: st = ws::v1::PREFLIGHT_STATUS_READY; break;
+      case RowStatus::kNeedsCategory: st = ws::v1::PREFLIGHT_STATUS_NEEDS_CATEGORY; break;
+      case RowStatus::kSkippedUnsupportedFeatures: st = ws::v1::PREFLIGHT_STATUS_SKIPPED_UNSUPPORTED_FEATURES; break;
+      case RowStatus::kSkippedDamaged: st = ws::v1::PREFLIGHT_STATUS_SKIPPED_DAMAGED; break;
+      case RowStatus::kAlreadyImported: st = ws::v1::PREFLIGHT_STATUS_ALREADY_IMPORTED; break;
+    }
+    pr->set_status(st);
+    pr->set_action(row.status == RowStatus::kReady || row.status == RowStatus::kNeedsCategory ? ws::v1::IMPORT_ACTION_IMPORT : ws::v1::IMPORT_ACTION_SKIP);
+    pr->set_library(static_cast<std::uint32_t>(row.library));
+    pr->set_detail(clean_utf8(row.detail, 1024));
+    bytes += pr->ByteSizeLong() + 2;
+    if (bytes > opts_.reply_budget_bytes && l->rows_size() > 1) {
+      l->mutable_rows()->RemoveLast();
+      break;
+    }
+    ++used;
+  }
+  l->set_more(static_cast<std::uint64_t>(req.offset()) + used < count);
+  send(c, m);
 }
 
 }  // namespace velora::librarian

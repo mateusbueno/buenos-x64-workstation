@@ -55,5 +55,8 @@ std::string to_hex(std::span<const std::uint8_t> d);
 extern const Uuid kLibraryNamespace;
 // library_id for user imports: UUIDv5(kLibraryNamespace, source fingerprint bytes).
 Uuid library_id_from_fingerprint(std::span<const std::uint8_t> fingerprint);
+// library_id of an import from its source identity (Story 5.7: the ONE place this is minted; BundleWriter::set_source_id and the librarian's
+// preflight both call it): UUIDv5 of SHA-256("velora.source.v1" || 0x00 || source_id), where source_id is the canonical absolute path of the file.
+Uuid library_id_from_source(std::string_view source_id);
 
 }  // namespace velora::format
