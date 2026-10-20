@@ -129,7 +129,9 @@ set_tests_properties(librarian_service_smoke PROPERTIES TIMEOUT 120)
 # --- Story 5.6: libraries catalog, import API, atomic publish ---------------------------------------------------------------------------
 # No encryption anywhere in the librarian (FR27: user imports are never encrypted). Two guards run as ctest tests (tools/ci/check_librarian_no_crypto.py):
 #  - the link line: the libraries the two shipped targets link, collected recursively at configure time, must name no cryptography library;
-#  - the symbols of the built binaries and static libraries (`nm`) must contain no AES / OpenSSL / mbedTLS / libsodium / OP-TEE / CommonCrypto function.
+#  - the symbols of the built binaries and static libraries (`nm`) must contain no AES / OpenSSL / mbedTLS / libsodium / OP-TEE / CommonCrypto function
+#    (Story 6.2 allows only the Ed25519 verification entry points of OpenSSL and a shared libcrypto, for protected-bundle verification, Story 6.4;
+#    cipher and decrypt symbols stay forbidden, see the script header).
 function(velora_walk_link_libs tgt)
   get_property(_seen GLOBAL PROPERTY VELORA_LL_SEEN)
   if("${tgt}" IN_LIST _seen)
@@ -143,7 +145,7 @@ function(velora_walk_link_libs tgt)
     # The imported third-party targets below are created in other directories' scopes and are not visible here; their dependency closure is covered by the
     # symbol scan of the binaries instead (a library they pull in would put its symbols into the binary). Nothing else may be opaque.
     if(NOT "${tgt}" MATCHES "^-|/|^\\$|^$" AND
-       NOT "${tgt}" MATCHES "^(velora_flac_import|FLAC::.*|PkgConfig::.*|protobuf::.*|absl::.*|SQLite3?::SQLite3)$")
+       NOT "${tgt}" MATCHES "^(velora_flac_import|FLAC::.*|PkgConfig::.*|protobuf::.*|absl::.*|SQLite3?::SQLite3|OpenSSL::Crypto)$")
       set_property(GLOBAL APPEND PROPERTY VELORA_LL_NAMES "UNRESOLVED:${tgt}")
     endif()
     return()

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <set>
 
+#include "bundle_parse.hpp"
 #include "codec.hpp"
 #include "layout.hpp"
 
@@ -99,6 +100,34 @@ class Cursor {
 
 }  // namespace
 
+std::unique_ptr<ByteSource> make_memory_source(std::span<const std::uint8_t> bytes) {
+  return std::make_unique<MemorySource>(bytes);
+}
+
+Result<std::unique_ptr<ByteSource>> make_file_source(const std::string& path) {
+  const int fd = ::open(path.c_str(), O_RDONLY);
+  if (fd < 0) return Error::kIo;
+  struct stat st;
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+    ::close(fd);
+    return Error::kIo;
+  }
+  return std::unique_ptr<ByteSource>(std::make_unique<FileSource>(fd, static_cast<std::uint64_t>(st.st_size)));
+}
+
+ManifestStatement statement_of(const ParsedBundle& p) {
+  ManifestStatement s;
+  s.version_word = p.version_word;
+  s.library_id = p.library_id;
+  s.bundle_id = p.bundle_id;
+  s.index_sha256 = p.index_hash;
+  s.hash_list_root = p.prot.hash_list_root;
+  s.block_count = p.block_count;
+  s.nonce = p.prot.nonce;
+  s.signer_key_id = p.seal.key_id;
+  return s;
+}
+
 BundleReader::BundleReader() = default;
 BundleReader::BundleReader(BundleReader&&) noexcept = default;
 BundleReader& BundleReader::operator=(BundleReader&&) noexcept = default;
@@ -115,17 +144,30 @@ Result<BundleReader> BundleReader::open_source(std::unique_ptr<ByteSource> src, 
 }
 
 Result<BundleReader> BundleReader::open_file(const std::string& path, ReaderOptions opt) {
-  const int fd = ::open(path.c_str(), O_RDONLY);
-  if (fd < 0) return Error::kIo;
-  struct stat st;
-  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-    ::close(fd);
-    return Error::kIo;
-  }
-  return open(std::make_unique<FileSource>(fd, static_cast<std::uint64_t>(st.st_size)), opt);
+  auto src = make_file_source(path);
+  if (!src) return src.error();
+  return open(src.take(), opt);
 }
 
 Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderOptions opt) {
+  auto parsed = parse_bundle(*src, false, nullptr);
+  if (!parsed) return parsed.error();
+  ParsedBundle pb = parsed.take();
+  BundleReader r;
+  r.opt_ = opt;
+  r.version_ = pb.version;
+  r.minor_ = pb.minor;
+  r.bundle_id_ = pb.bundle_id;
+  r.library_id_ = pb.library_id;
+  r.instruments_ = std::move(pb.instruments);
+  r.samples_ = std::move(pb.samples);
+  r.index_ = std::move(pb.index);
+  r.src_ = std::move(src);
+  return r;
+}
+
+Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const SealVerifier* verify) {
+  ByteSource* src = &srcref;
   const std::uint64_t file_size = src->size();
   if (file_size < kHeaderSize) return Error::kTruncated;
   std::uint8_t h[kHeaderSize];
@@ -133,19 +175,24 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
   if (std::memcmp(h, kMagic, 4) != 0) return Error::kBadMagic;
   const std::uint32_t version_word = get_u32(h + 4);
   const std::uint32_t version = version_word & 0xFFFFu, minor = version_word >> kMinorShift;
-  if (version < kMinReadableVersion || version > kFormatVersion || minor > kFormatMinor ||
-      (version < 2 && minor != 0))
+  if (want_protected) {
+    if (version == 1 || version == 2) return Error::kNotProtected;
+    if (version != kProtectedFormatVersion || minor > kFormatMinor) return Error::kUnsupportedVersion;
+  } else if (version < kMinReadableVersion || version > kFormatVersion || minor > kFormatMinor ||
+             (version < 2 && minor != 0)) {
     return Error::kUnsupportedVersion;
+  }
+  const std::uint64_t seal_size = want_protected ? kSealSize : 0;
   const std::uint64_t manifest_off = get_u64(h + 8), manifest_size = get_u64(h + 16),
                       index_off = get_u64(h + 24), index_size = get_u64(h + 32),
                       data_off = get_u64(h + 40), data_size = get_u64(h + 48),
                       total_size = get_u64(h + 56);
   if (total_size > file_size) return Error::kTruncated;
   if (total_size < file_size) return Error::kCorruptHeader;  // trailing bytes
-  // Strict layout: header | manifest | index | blocks, no gaps. Overflow-safe step by step.
+  // Strict layout: header | manifest | index | [seal] | blocks, no gaps. Overflow-safe step by step.
   if (manifest_off != kHeaderSize || manifest_size > total_size ||
       index_off != manifest_off + manifest_size || index_size > total_size ||
-      data_off != index_off + index_size || data_size > total_size ||
+      data_off != index_off + index_size + seal_size || data_size > total_size ||
       total_size != data_off + data_size || index_size % kIndexEntrySize != 0)
     return Error::kCorruptHeader;
   Digest256 manifest_hash, index_hash;
@@ -161,15 +208,17 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
     return e;
   if (Sha256::hash(index_bytes) != index_hash) return Error::kCorruptIndex;
 
-  BundleReader r;
-  r.opt_ = opt;
-  r.version_ = version;
-  r.minor_ = minor;
-  r.bundle_id_ = manifest_hash;
+  ParsedBundle r;
+  r.version_word = version_word;
+  r.version = version;
+  r.minor = minor;
+  r.bundle_id = manifest_hash;
+  r.index_hash = index_hash;
+  r.is_protected = want_protected;
 
   Cursor c(manifest.data(), manifest.size());
   if (c.u32() != version_word) return Error::kCorruptManifest;
-  c.bytes(r.library_id_.data(), 16);
+  c.bytes(r.library_id.data(), 16);
   const std::uint32_t n_instr = c.u32(), n_samples = c.u32();
   const std::uint64_t n_blocks = c.u64();
   Digest256 manifest_index_hash{};
@@ -177,8 +226,34 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
   if (!c.ok() || manifest_index_hash != index_hash || n_blocks != index_size / kIndexEntrySize ||
       n_instr > c.remaining() || n_samples > c.remaining())
     return Error::kCorruptManifest;
-  r.instruments_.reserve(n_instr);
-  r.samples_.reserve(n_samples);
+  r.block_count = n_blocks;
+  if (want_protected) {
+    // Protection section (format 3): cipher u8, hash-list alg u8, 2 zero bytes, nonce[8], key_check[16], root[32].
+    r.prot.cipher = c.u8();
+    r.prot.hash_list_alg = c.u8();
+    const std::uint8_t pad0 = c.u8(), pad1 = c.u8();
+    c.bytes(r.prot.nonce.data(), 8);
+    c.bytes(r.prot.key_check.data(), 16);
+    c.bytes(r.prot.hash_list_root.data(), 32);
+    if (!c.ok() || r.prot.cipher != kCipherAes256Ctr || r.prot.hash_list_alg != kHashListMerkleSha256 ||
+        pad0 != 0 || pad1 != 0 || n_blocks >= kMaxProtectedBlocks)
+      return Error::kCorruptManifest;
+    // Seal: magic "VSL1", alg u8, 3 zero bytes, key id[8], signature[64], 48 zero bytes.
+    std::uint8_t sb[kSealSize];
+    if (Error e = src->read_at(index_off + index_size, sb, kSealSize); e != Error::kNone) return e;
+    bool zero_ok = true;
+    for (int i = 5; i < 8; ++i) zero_ok = zero_ok && sb[i] == 0;
+    for (std::size_t i = 80; i < kSealSize; ++i) zero_ok = zero_ok && sb[i] == 0;
+    if (std::memcmp(sb, kSealMagic, 4) != 0 || sb[4] != kSealAlgEd25519 || !zero_ok)
+      return Error::kCorruptHeader;
+    r.seal.alg = sb[4];
+    std::memcpy(r.seal.key_id.data(), sb + 8, 8);
+    std::memcpy(r.seal.signature.data(), sb + 16, 64);
+    if (!verify) return Error::kInvalidArgument;
+    if (Error e = (*verify)(r); e != Error::kNone) return e;
+  }
+  r.instruments.reserve(n_instr);
+  r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
   std::uint64_t total_ext = 0;
@@ -187,11 +262,11 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
     ins.key = c.str();
     ins.name = c.str();
     const std::uint32_t cnt = c.u32();
-    if (!c.ok() || cnt > n_samples - r.samples_.size()) return Error::kCorruptManifest;
+    if (!c.ok() || cnt > n_samples - r.samples.size()) return Error::kCorruptManifest;
     auto norm = normalize_instrument_key(ins.key);
     if (!norm || norm.value() != ins.key || !seen_keys.insert(ins.key).second)
       return Error::kCorruptManifest;
-    ins.first_sample = r.samples_.size();
+    ins.first_sample = r.samples.size();
     ins.sample_count = cnt;
     for (std::uint32_t s = 0; s < cnt; ++s) {
       SampleInfo si;
@@ -213,7 +288,7 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
           si.block_count != block_count_for(si.frame_count) || si.first_block != next_block)
         return Error::kCorruptManifest;
       next_block += si.block_count;
-      r.samples_.push_back(std::move(si));
+      r.samples.push_back(std::move(si));
     }
     if (version >= 2) {
       const std::uint32_t n_regions = c.u32();
@@ -238,7 +313,7 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
         rg.loop_mode = static_cast<LoopMode>(lm);
         rg.trigger = static_cast<TriggerMode>(tr);
         rg.has_loop_points = hl == 1;
-        if (validate_region(rg, r.samples_[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+        if (validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
           return Error::kCorruptManifest;
         ins.regions.push_back(rg);
       }
@@ -276,35 +351,36 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
           rg.filter.type = static_cast<FilterType>(ftype);
           // Canonical: a record exists only for a region that really uses an extension feature.
           if (!has_extension(rg) ||
-              validate_region(rg, r.samples_[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
             return Error::kCorruptManifest;
         }
       }
     }
-    r.instruments_.push_back(std::move(ins));
+    r.instruments.push_back(std::move(ins));
   }
-  if (!c.ok() || !c.done() || r.samples_.size() != n_samples || next_block != n_blocks)
+  if (!c.ok() || !c.done() || r.samples.size() != n_samples || next_block != n_blocks)
     return Error::kCorruptManifest;
   // Canonical: minor 1 exists only for bundles that carry at least one extension record (the same
   // content must not have two encodings, hence two bundle ids).
   if (minor >= 1 && total_ext == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
-  r.index_.resize(n_blocks);
+  r.index.resize(n_blocks);
   std::uint64_t expect_off = data_off;
   std::size_t si = 0;
   std::uint64_t in_sample = 0;
   for (std::uint64_t b = 0; b < n_blocks; ++b) {
-    while (r.samples_[si].block_count == 0 || in_sample == r.samples_[si].block_count) {
+    while (r.samples[si].block_count == 0 || in_sample == r.samples[si].block_count) {
       ++si;
       in_sample = 0;
     }
-    const SampleInfo& s = r.samples_[si];
+    const SampleInfo& s = r.samples[si];
     const std::uint8_t* p = index_bytes.data() + b * kIndexEntrySize;
-    IndexEntry& e = r.index_[b];
+    detail::BlockEntry& e = r.index[b];
     e.offset = get_u64(p);
     e.size = get_u32(p + 8);
     e.frames = get_u32(p + 12);
+    if (want_protected && e.size > kMaxProtectedBlockBytes) return Error::kCorruptIndex;
     std::memcpy(e.sha256.data(), p + 16, 32);
     const std::uint64_t start = in_sample * kBlockFrames;
     const std::uint32_t want_frames =
@@ -324,7 +400,12 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
   }
   if (expect_off != total_size) return Error::kCorruptIndex;
 
-  r.src_ = std::move(src);
+  if (want_protected) {
+    std::vector<Digest256> hashes;
+    hashes.reserve(r.index.size());
+    for (const auto& e : r.index) hashes.push_back(e.sha256);
+    if (hash_list_root(hashes) != r.prot.hash_list_root) return Error::kHashListMismatch;
+  }
   return r;
 }
 
@@ -366,6 +447,23 @@ Result<std::uint32_t> BundleReader::read_block_impl(std::size_t sample, std::uin
   }
   count_block(ctx);
   return e.frames;
+}
+
+Error BundleReader::decode_block_bytes(BlockDecoder& dec, const PcmFormat& f, std::uint32_t frames,
+                                       std::span<const std::uint8_t> bytes, std::span<std::int32_t> out) {
+  if (!dec.impl_) return Error::kInvalidArgument;
+  const std::size_t ch = f.channels;
+  if (out.size() < std::size_t(frames) * ch) return Error::kBufferTooSmall;
+  if (f.is_float) {
+    if (bytes.size() != std::size_t(frames) * ch * 4) return Error::kCorruptBlock;
+    for (std::size_t i = 0; i < std::size_t(frames) * ch; ++i)
+      out[i] = static_cast<std::int32_t>(get_u32(bytes.data() + 4 * i));
+  } else if (Error err = flac_decode_block(*dec.impl_, bytes.data(), bytes.size(), f, frames, out.data());
+             err != Error::kNone) {
+    return err;
+  }
+  count_block(*dec.impl_);
+  return Error::kNone;
 }
 
 Result<std::uint32_t> BundleReader::read_block(std::size_t sample, std::uint64_t block,

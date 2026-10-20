@@ -9,6 +9,13 @@ Checks, and fails if any of them finds a cryptography library or function:
      an AES / OpenSSL / mbedTLS / libsodium / gcrypt / OP-TEE / CommonCrypto / SQLCipher entry point fail the check.
 SHA-256 hashing (bundle ids) is not encryption and is not flagged.
 
+Story 6.2: protected-bundle VERIFICATION (Ed25519 manifest signature, hashes; formatlib target velora_format_verify, which the librarian links from Story
+6.4 on) is not encryption either. Exactly these OpenSSL entry points are allowed: EVP_PKEY_new_raw_public_key, EVP_PKEY_free, EVP_MD_CTX_new,
+EVP_MD_CTX_free, EVP_DigestVerifyInit and EVP_DigestVerify, and a link to a SHARED libcrypto (`-lcrypto`, `OpenSSL::Crypto`, libcrypto.so /
+.dylib). Everything else stays forbidden: every cipher / decrypt entry point (EVP_aes_*, EVP_Decrypt*, EVP_CIPHER_*, AES_*, ...) fails the symbol scan, and a
+STATIC libcrypto.a, libssl and the other libraries on the link-line list still fail the link-line check. tools/ci/check_format_no_decrypt.py is the stricter
+companion for the verify target itself.
+
 Without `nm` the symbol part is skipped with a clear message (exit 77 = ctest SKIP) after the link-line part ran.
 `--self-test` proves the check can fail: it compiles an object that calls EVP_EncryptInit_ex / AES_encrypt (never linked or run) with --cc and checks the
 scanner flags it, then checks that a clean object and the pattern list behave.
@@ -31,17 +38,23 @@ LINK_PATTERNS = [
 
 # Symbol names (after stripping one leading underscore). C entry points are matched by prefix; C++ symbols by namespace/word.
 SYMBOL_PATTERNS = [
-    r"^(EVP_|AES_|aes_|OPENSSL_|OpenSSL_|SSL_|TLS_(client_|server_)?method|BIO_|ERR_get_error|RAND_bytes|HMAC_|CRYPTO_|CMAC_|ChaCha|chacha20|poly1305_|X509_|PEM_|RSA_|EC_KEY_|ECDSA_)",
+    r"^(EVP_|AES_|aes_|OPENSSL_|OpenSSL_|SSL_|TLS_(client_|server_)?method|BIO_|ERR_|RAND_bytes|HMAC_|CRYPTO_|CMAC_|ChaCha|chacha20|poly1305_|X509_|PEM_|RSA_|EC_KEY_|ECDSA_)",
     r"^(mbedtls_|psa_|crypto_(secretbox|aead|box|stream|sign|generichash|pwhash|auth|kdf)|sodium_|randombytes_)",
     r"^(gcry_|nettle_|wc_|wolfSSL_|CCCrypt|CCCryptor|CCKeyDerivation|SecKey|SecRandom|SecItem|TEEC_|TEE_)",
     r"^(sqlite3_key|sqlite3_rekey|sqlcipher_)",
 ]
 SYMBOL_RE = [re.compile(p) for p in SYMBOL_PATTERNS]
+# Story 6.2: the verification-only OpenSSL surface (Ed25519 signature check). Exact names; nothing else of OpenSSL is allowed.
+VERIFY_ALLOW = {"EVP_PKEY_new_raw_public_key", "EVP_PKEY_free", "EVP_MD_CTX_new", "EVP_MD_CTX_free", "EVP_DigestVerifyInit", "EVP_DigestVerify"}
+SHARED_CRYPTO_RE = re.compile(r"(^|[\\/])(lib)?crypto(\.[0-9]+)*\.(so(\.[0-9]+)*|dylib)$|^-lcrypto$|^OpenSSL::Crypto$")
 CXX_RE = re.compile(r"(mbedtls|openssl|libsodium|wolfssl|botan|cryptopp)", re.I)
 
 
 def flag_symbol(name):
-    n = name[1:] if name.startswith("_") and not name.startswith("__") else name
+    n = name.split("@", 1)[0]  # ELF symbol version suffix: EVP_DigestVerify@OPENSSL_3.0.0
+    n = n[1:] if n.startswith("_") and not n.startswith("__") else n
+    if n in VERIFY_ALLOW:
+        return False
     if any(r.search(n) for r in SYMBOL_RE):
         return True
     # mangled C++: _ZN...mbedtls... / _ZN...openssl...
@@ -73,6 +86,8 @@ def check_links(path):
             if item.startswith("UNRESOLVED:"):
                 bad.append(item)  # CMake could not resolve this name to a target, path or flag: the link-line check would not cover it
                 continue
+            if SHARED_CRYPTO_RE.search(item):
+                continue  # Story 6.2: a shared libcrypto for signature verification; the symbol scan forbids its cipher entry points
             low = item.lower()
             if any(w in low for w in LINK_WORDS) or any(re.search(p, item, re.I) for p in LINK_PATTERNS):
                 bad.append(item)
@@ -98,6 +113,11 @@ def self_test(cc, nm):
     expect(flag_symbol("_crypto_secretbox_easy") and flag_symbol("_sqlite3_key") and flag_symbol("_CCCrypt"), "more crypto names are flagged")
     expect(not flag_symbol("_sqlite3_open_v2") and not flag_symbol("_memcpy") and not flag_symbol("_ZN6velora6format6Sha256C1Ev"), "ordinary names pass")
     expect(not flag_symbol("_ZN6velora6format6sha256Ev") and not flag_symbol("_cryptic_name"), "hashing and look-alikes pass")
+    expect(all(not flag_symbol(v) for v in ("_EVP_PKEY_new_raw_public_key", "_EVP_PKEY_free", "_EVP_MD_CTX_new", "_EVP_MD_CTX_free", "_EVP_DigestVerifyInit",
+                                           "_EVP_DigestVerify", "EVP_DigestVerify@OPENSSL_3.0.0", "EVP_DigestVerifyInit@@OPENSSL_3.0.0")), "the Ed25519 verification entry points are allowed")
+    expect(all(flag_symbol(v) for v in ("_EVP_DecryptInit_ex", "_EVP_aes_256_ctr", "_EVP_CIPHER_CTX_new", "_EVP_EncryptUpdate", "_EVP_PKEY_decrypt", "_EVP_DigestSignInit",
+                                        "_AES_ctr128_encrypt", "_EVP_PKEY_new_raw_private_key", "_EVP_Digest", "_OPENSSL_cleanse", "_EVP_DigestVerifyFinal", "_ERR_clear_error", "EVP_DecryptInit_ex@OPENSSL_3.0.0")),
+           "cipher / decrypt entry points (and every other OpenSSL name) stay forbidden")
     expect(not flag_symbol("_TLS_MODULE_BASE_") and not flag_symbol("__tls_get_addr") and flag_symbol("TLS_method"), "thread-local storage symbols are not TLS the protocol")
     with tempfile.TemporaryDirectory() as d:
         lf = os.path.join(d, "libs.txt")
@@ -107,6 +127,12 @@ def self_test(cc, nm):
         with open(lf, "w") as f:
             f.write("/usr/lib/libsqlite3.dylib\n/opt/homebrew/opt/openssl@3/lib/libcrypto.a\n-lmbedtls\n-lssl\n")
         expect(len(check_links(lf)) == 3, "a link list naming libcrypto / mbedtls / -lssl fails: %s" % check_links(lf))
+        with open(lf, "w") as f:
+            f.write("/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib\n/usr/lib/x86_64-linux-gnu/libcrypto.so.3\n-lcrypto\nOpenSSL::Crypto\n")
+        expect(check_links(lf) == [], "a shared libcrypto (verification) passes the link-line check: %s" % check_links(lf))
+        with open(lf, "w") as f:
+            f.write("/usr/lib/x86_64-linux-gnu/libcrypto.a\n/usr/lib/libssl.so.3\n/opt/homebrew/lib/libcrypto.a\nOpenSSL::SSL\n")
+        expect(len(check_links(lf)) == 4, "a static libcrypto, libssl and OpenSSL::SSL still fail: %s" % check_links(lf))
         with open(lf, "w") as f:
             f.write("velora_format\nUNRESOLVED:mystery\n")
         expect(check_links(lf) == ["UNRESOLVED:mystery"], "an unresolved name fails the link-line check")

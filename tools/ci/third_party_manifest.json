@@ -42,6 +42,13 @@
       "license": "Public-Domain",
       "notice_marker": "## 6. SQLite",
       "build_dependency": true
+    },
+    {
+      "name": "openssl",
+      "version": "3",
+      "license": "Apache-2.0",
+      "notice_marker": "## 7. OpenSSL 3",
+      "build_dependency": true
     }
   ]
 }

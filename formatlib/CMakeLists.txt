@@ -79,6 +79,42 @@ target_link_libraries(velora_sfz PUBLIC velora_format PRIVATE velora_sfizz_parse
 target_compile_options(velora_sfz PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
 
+# Story 6.2: protected bundles. OpenSSL libcrypto (EVP, >= 3.0, Apache-2.0, dynamic; THIRD_PARTY_NOTICES.md) provides Ed25519 and AES-256-CTR.
+# Three layers so shipped code links only what it needs (tools/ci/check_format_no_decrypt.py proves the first):
+#   velora_format_verify          signature + hash-list + ciphertext block-hash verification, NO decrypt (desktop, librarian)
+#   velora_format_decrypt         + AES-CTR decrypting reader (engine, offline-render, tests only)
+#   velora_format_protected_writer  AES-CTR encryption + Ed25519 signing (tools/content-pack, tests only)
+# Homebrew keeps OpenSSL keg-only; Apple's LibreSSL has neither the headers nor the EVP Ed25519 API.
+if(APPLE AND NOT OPENSSL_ROOT_DIR)
+  foreach(_ossl /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3)
+    if(EXISTS "${_ossl}/include/openssl/evp.h")
+      set(OPENSSL_ROOT_DIR "${_ossl}")
+      break()
+    endif()
+  endforeach()
+endif()
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+message(STATUS "formatlib: OpenSSL ${OPENSSL_VERSION} (libcrypto: Ed25519 verify/sign, AES-256-CTR)")
+
+set(VELORA_FORMAT_WARN $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+add_library(velora_format_verify STATIC protected/verify.cpp)
+add_library(velora::format_verify ALIAS velora_format_verify)
+target_include_directories(velora_format_verify PUBLIC include PRIVATE src)
+target_link_libraries(velora_format_verify PUBLIC velora_format PRIVATE OpenSSL::Crypto)
+target_compile_options(velora_format_verify PRIVATE ${VELORA_FORMAT_WARN})
+
+add_library(velora_format_decrypt STATIC protected/decrypt.cpp)
+add_library(velora::format_decrypt ALIAS velora_format_decrypt)
+target_include_directories(velora_format_decrypt PUBLIC include PRIVATE src)
+target_link_libraries(velora_format_decrypt PUBLIC velora_format_verify PRIVATE OpenSSL::Crypto)
+target_compile_options(velora_format_decrypt PRIVATE ${VELORA_FORMAT_WARN})
+
+add_library(velora_format_protected_writer STATIC protected/protected_writer.cpp)
+add_library(velora::format_protected_writer ALIAS velora_format_protected_writer)
+target_include_directories(velora_format_protected_writer PUBLIC include PRIVATE src)
+target_link_libraries(velora_format_protected_writer PUBLIC velora_format PRIVATE OpenSSL::Crypto)
+target_compile_options(velora_format_protected_writer PRIVATE ${VELORA_FORMAT_WARN})
+
 foreach(t hash_test bundle_test wav_test)
   add_executable(format_${t} tests/${t}.cpp)
   target_link_libraries(format_${t} PRIVATE velora_format)
@@ -107,3 +143,19 @@ target_compile_definitions(format_category_test PRIVATE
   VELORA_LOCALE_DIR="${PROJECT_SOURCE_DIR}/locale"
   VELORA_CATEGORY_PROTO="${PROJECT_SOURCE_DIR}/proto/category.proto")
 add_test(NAME format_category_test COMMAND format_category_test)
+
+# Story 6.2: protected bundle format (round trip, 10,000 seeks, tamper matrix, strict Ed25519, known-answer vectors). Writes the fixture bundle the
+# verify-only probe (a binary that links no decrypt code, scanned by check_format_no_decrypt.py) opens.
+add_executable(format_protected_test tests/protected_test.cpp)
+target_link_libraries(format_protected_test PRIVATE velora_format_decrypt velora_format_protected_writer OpenSSL::Crypto)
+target_include_directories(format_protected_test PRIVATE src)
+target_compile_options(format_protected_test PRIVATE ${VELORA_FORMAT_WARN})
+add_test(NAME format_protected_test COMMAND format_protected_test ${CMAKE_CURRENT_BINARY_DIR}/protected_fixture)
+set_tests_properties(format_protected_test PROPERTIES FIXTURES_SETUP protected_fixture TIMEOUT 600)
+
+add_executable(format_verify_probe tests/verify_probe.cpp)
+target_link_libraries(format_verify_probe PRIVATE velora_format_verify)
+target_compile_options(format_verify_probe PRIVATE ${VELORA_FORMAT_WARN})
+add_test(NAME format_verify_probe COMMAND format_verify_probe ${CMAKE_CURRENT_BINARY_DIR}/protected_fixture/fixture.vlrp
+         ${CMAKE_CURRENT_BINARY_DIR}/protected_fixture/trusted.hex)
+set_tests_properties(format_verify_probe PROPERTIES FIXTURES_REQUIRED protected_fixture)

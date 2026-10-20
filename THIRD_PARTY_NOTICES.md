@@ -348,6 +348,19 @@ The author disclaimed copyright to the SQLite source code. In place of a legal n
 
 See https://www.sqlite.org/copyright.html.
 
+## 7. OpenSSL 3 (libcrypto) — Apache License 2.0
+
+Build and link dependency of the protected-bundle targets of `formatlib` (Story 6.2: Ed25519 signature verification in `velora_format_verify`, AES-256-CTR in
+`velora_format_decrypt` and `velora_format_protected_writer`), linked dynamically from the system package (Homebrew `openssl@3`; Debian/Ubuntu `libssl-dev` +
+`libssl3`); not vendored in this repository. `engine/core` does not use it, and the librarian links at most the signature-verification part (never a cipher).
+Only libcrypto is used (no libssl, no TLS). OpenSSL 3.0 and later are licensed under the Apache License, Version 2.0; the full license text is reproduced in
+section 2 of this file (Abseil) and applies unchanged.
+
+Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
+
+Licensed under the Apache License 2.0 (the "License"). You may not use this software except in compliance with the License. You can obtain a copy of the
+License at https://www.openssl.org/source/license.html (header text as shipped in the installed OpenSSL 3 headers; the license text itself is in section 2).
+
 ## Not shipped: test oracle
 
 The sfizz renderer (`sfizz_render`, sfizz 1.2.3, commit 4e70dc0b) used by the null tests (Story 1.15) is neither vendored in this

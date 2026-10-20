@@ -16,11 +16,16 @@ const char* to_string(Error e) {
     case Error::kCorruptManifest: return "corrupt manifest";
     case Error::kCorruptIndex: return "corrupt index";
     case Error::kCorruptBlock: return "corrupt block";
-    case Error::kBlockHashMismatch: return "block hash mismatch";
+    case Error::kBlockHashMismatch: return "block_hash_mismatch";
     case Error::kPcmHashMismatch: return "pcm hash mismatch";
     case Error::kOutOfRange: return "out of range";
     case Error::kBufferTooSmall: return "buffer too small";
     case Error::kEncoderFailure: return "encoder failure";
+    case Error::kNotProtected: return "not a protected bundle";
+    case Error::kUntrustedKey: return "untrusted_key";
+    case Error::kSignatureInvalid: return "signature_invalid";
+    case Error::kHashListMismatch: return "hash list root mismatch";
+    case Error::kWrongContentKey: return "wrong_content_key";
   }
   return "unknown";
 }

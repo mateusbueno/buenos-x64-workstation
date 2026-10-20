@@ -162,9 +162,35 @@ Error BundleWriter::add_sample(std::size_t instrument, const SampleInput& in) {
   return Error::kNone;
 }
 
-Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
-  if (opt_.format_version < kMinReadableVersion || opt_.format_version > kFormatVersion + 1)
+Result<std::vector<std::uint8_t>> BundleWriter::finalize() const { return finalize_impl(nullptr); }
+
+Result<std::vector<std::uint8_t>> BundleWriter::finalize_protected(const ProtectParams& p) const {
+  if (!p.encrypt || !p.sign) return Error::kInvalidArgument;
+  if (std::all_of(p.nonce.begin(), p.nonce.end(), [](std::uint8_t b) { return b == 0; })) return Error::kInvalidArgument;  // never zero
+  return finalize_impl(&p);
+}
+
+Result<Nonce> BundleWriter::derive_nonce() const {
+  auto plain = finalize();
+  if (!plain) return plain.error();
+  const Digest256 content = Sha256::hash(plain.value());
+  static constexpr char kLabel[] = "velora/protected-nonce/v1";
+  Sha256 h;
+  h.update(kLabel, sizeof kLabel);  // includes the terminating 0x00
+  h.update(content.data(), 32);
+  const Digest256 d = h.finish();
+  Nonce n;
+  std::copy(d.begin(), d.begin() + 8, n.begin());
+  return n;
+}
+
+Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParams* prot) const {
+  const bool protect = prot != nullptr;
+  if (protect) {
+    if (opt_.format_version != kFormatVersion) return Error::kInvalidArgument;  // no test hooks on the protected path
+  } else if (opt_.format_version < kMinReadableVersion || opt_.format_version > kFormatVersion + 1) {
     return Error::kInvalidArgument;  // only the documented test hook range is producible
+  }
 
   // Fingerprint of the source content (used for library_id unless vendor-assigned).
   if (opt_.format_version < 2)
@@ -177,7 +203,8 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
     for (const auto& r : ins.regions) needs_ext = needs_ext || has_extension(r);
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
-  const std::uint32_t version_word = opt_.format_version | ((needs_ext ? 1u : 0u) << kMinorShift);
+  const std::uint32_t version_word =
+      (protect ? kProtectedFormatVersion : opt_.format_version) | ((needs_ext ? 1u : 0u) << kMinorShift);
   Uuid library_id = library_id_;
   if (!has_library_id_ && has_source_id_) {
     library_id = library_id_from_source(source_id_);
@@ -219,6 +246,22 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
       }
     }
 
+  Digest256 list_root{};
+  if (protect) {
+    if (ordered.size() >= kMaxProtectedBlocks) return Error::kInvalidArgument;
+    std::vector<Digest256> hashes;
+    hashes.reserve(ordered.size());
+    for (std::size_t b = 0; b < ordered.size(); ++b) {
+      BlockRec& br = ordered[b];
+      if (br.size > kMaxProtectedBlockBytes) return Error::kInvalidArgument;
+      const Error e = prot->encrypt(static_cast<std::uint32_t>(b), {data.data() + br.data_offset, br.size});
+      if (e != Error::kNone) return e;
+      br.sha256 = Sha256::hash({data.data() + br.data_offset, br.size});  // index hash is over the ciphertext
+      hashes.push_back(br.sha256);
+    }
+    list_root = hash_list_root(hashes);
+  }
+
   std::vector<std::uint8_t> manifest;
   put_u32(manifest, version_word);
   manifest.insert(manifest.end(), library_id.begin(), library_id.end());
@@ -229,6 +272,15 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
   put_u64(manifest, ordered.size());
   const std::size_t index_hash_pos = manifest.size();
   manifest.insert(manifest.end(), 32, 0);  // patched below
+  if (protect) {
+    put_u8(manifest, kCipherAes256Ctr);
+    put_u8(manifest, kHashListMerkleSha256);
+    put_u8(manifest, 0);
+    put_u8(manifest, 0);
+    manifest.insert(manifest.end(), prot->nonce.begin(), prot->nonce.end());
+    manifest.insert(manifest.end(), prot->key_check.begin(), prot->key_check.end());
+    manifest.insert(manifest.end(), list_root.begin(), list_root.end());
+  }
   std::size_t flat = 0;
   for (const auto& ins : instruments_) {
     put_str(manifest, ins.key);
@@ -247,7 +299,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
       put_u64(manifest, first_block[flat++]);
       manifest.insert(manifest.end(), s.pcm_sha256.begin(), s.pcm_sha256.end());
     }
-    if (opt_.format_version >= 2) {
+    if (protect || opt_.format_version >= 2) {
       put_u32(manifest, static_cast<std::uint32_t>(ins.regions.size()));
       for (const auto& r : ins.regions) put_region(manifest, r);
       if (needs_ext) {
@@ -263,7 +315,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
   const std::uint64_t manifest_off = kHeaderSize;
   const std::uint64_t index_off = manifest_off + manifest.size();
   const std::uint64_t index_size = ordered.size() * kIndexEntrySize;
-  const std::uint64_t data_off = index_off + index_size;
+  const std::uint64_t data_off = index_off + index_size + (protect ? kSealSize : 0);
   std::vector<std::uint8_t> index;
   index.reserve(index_size);
   for (const auto& b : ordered) {
@@ -291,6 +343,25 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize() const {
   out.insert(out.end(), index_hash.begin(), index_hash.end());
   out.insert(out.end(), manifest.begin(), manifest.end());
   out.insert(out.end(), index.begin(), index.end());
+  if (protect) {
+    ManifestStatement st;
+    st.version_word = version_word;
+    st.library_id = library_id;
+    st.bundle_id = manifest_hash;
+    st.index_sha256 = index_hash;
+    st.hash_list_root = list_root;
+    st.block_count = ordered.size();
+    st.nonce = prot->nonce;
+    st.signer_key_id = prot->signer_key_id;
+    Signature sig{};
+    if (const Error e = prot->sign(statement_bytes(st), sig); e != Error::kNone) return e;
+    out.insert(out.end(), kSealMagic, kSealMagic + 4);
+    put_u8(out, kSealAlgEd25519);
+    out.insert(out.end(), 3, 0);
+    out.insert(out.end(), prot->signer_key_id.begin(), prot->signer_key_id.end());
+    out.insert(out.end(), sig.begin(), sig.end());
+    out.insert(out.end(), kSealSize - 80, 0);
+  }
   out.insert(out.end(), data.begin(), data.end());
   return out;
 }

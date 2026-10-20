@@ -196,8 +196,8 @@ must expand it. The X25519 file holds the **unclamped** 32-byte scalar; clamping
 ### Signatures
 
 Content manifests are signed with pure Ed25519 (RFC 8032, no prehash). The signing key id (8 bytes) travels beside the signature so a reader picks
-the right entry of its trust list. Message layout and domain separation of the manifest are defined by Story 6.2 and must start with an ASCII context
-string unique to the manifest type.
+the right entry of its trust list. Message layout and domain separation of the manifest are defined by Story 6.2 (`formatlib/README.md`, "Protected bundles"): the signed statement starts with the ASCII context
+string `velora/protected-manifest/v1` and a 0x00 byte.
 
 **Verifier strictness (Stories 6.2 and 6.3 MUST implement):** reject a signature whose `S >= L`; reject non-canonical encodings of `R` and of the public key
 `A` (y >= p); reject a small-order `A` (the build already refuses such trusted keys); verify cofactorless, i.e. check `[S]B == R + [k]A` exactly, not with

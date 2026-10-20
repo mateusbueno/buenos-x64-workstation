@@ -22,13 +22,15 @@ jobs:
       - run: python3 tools/ci/check_third_party_notices.py --self-test
       - run: python3 tools/ci/check_no_private_keys.py
       - run: python3 tools/ci/check_no_private_keys.py --self-test
+      # self-test only; the nm scans of the built artifacts (format_no_decrypt*, librarian_no_crypto) run through ctest in the build jobs
+      - run: python3 tools/ci/check_format_no_decrypt.py --self-test
 
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install libFLAC and protobuf
-        run: brew install flac protobuf
+        run: brew install flac protobuf openssl@3
       - run: cmake -S . -B build
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure --no-tests=error
@@ -41,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install libFLAC and protobuf
-        run: sudo apt-get update && sudo apt-get install -y libflac-dev protobuf-compiler libprotobuf-dev
+        run: sudo apt-get update && sudo apt-get install -y libflac-dev protobuf-compiler libprotobuf-dev libssl-dev
       - run: cmake -S . -B build
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure --no-tests=error
@@ -55,7 +57,7 @@ jobs:
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm20.list
           sudo apt-get update
-          sudo apt-get install -y clang-20 libclang-rt-20-dev libflac-dev protobuf-compiler libprotobuf-dev
+          sudo apt-get install -y clang-20 libclang-rt-20-dev libflac-dev protobuf-compiler libprotobuf-dev libssl-dev
       - name: Configure (RTSan must be available)
         run: cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++-20 -DCMAKE_C_COMPILER=clang-20
       - name: Require RTSan

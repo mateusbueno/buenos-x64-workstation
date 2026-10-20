@@ -1,8 +1,8 @@
 # formatlib
 
-Role: lossless block-indexed library bundle (Story 1.12) plus the SFZ-to-instrument-model layer (Story 1.13) and the SF2 one (Story 5.3). Writer and reader for the container, identity minting (`bundle_id`, `library_id`, `instrument_key`), in-house SHA-256/SHA-1/UUIDv5, a small WAV loader that feeds the writer (`WavOptions::reject_truncated_data` makes a data chunk shorter than its header says `kTruncated` instead of clamping it; the librarian uses it), the per-instrument region table, and the SFZ importer mapping (`velora_sfz`). The SoundFont 2 reader (Story 5.3, in `velora_format`) maps SF2 presets onto the same model. Crypto, the librarian (`librarian/`) and streaming are out of scope.
+Role: lossless block-indexed library bundle (Story 1.12) plus the SFZ-to-instrument-model layer (Story 1.13) and the SF2 one (Story 5.3). Writer and reader for the container, identity minting (`bundle_id`, `library_id`, `instrument_key`), in-house SHA-256/SHA-1/UUIDv5, a small WAV loader that feeds the writer (`WavOptions::reject_truncated_data` makes a data chunk shorter than its header says `kTruncated` instead of clamping it; the librarian uses it), the per-instrument region table, and the SFZ importer mapping (`velora_sfz`). The SoundFont 2 reader (Story 5.3, in `velora_format`) maps SF2 presets onto the same model. The protected (encrypted, signed) bundle variant is Story 6.2 (section "Protected bundles" below); the librarian (`librarian/`) and streaming are out of scope.
 
-Dependency rule: may link only libFLAC (found via CMake config, pkg-config or find_library; >= 1.4, target 1.5.0; library only, no flac/metaflac binaries), the vendored SFZ parser closure under `third_party/` (only for the separate `velora_sfz` target) and the C++ standard library. It must not include anything from `engine/core` (or `engine/host`), and `engine/core` must not depend on it.
+Dependency rule: `velora_format` (the core) may link only libFLAC (found via CMake config, pkg-config or find_library; >= 1.4, target 1.5.0; library only, no flac/metaflac binaries), the vendored SFZ parser closure under `third_party/` (only for the separate `velora_sfz` target) and the C++ standard library; it contains no cryptography code. The three protected-bundle targets (`velora_format_verify`, `velora_format_decrypt`, `velora_format_protected_writer`, Story 6.2) additionally link OpenSSL libcrypto (>= 3.0, dynamic, Apache-2.0). It must not include anything from `engine/core` (or `engine/host`), and `engine/core` must not depend on it.
 
 Container (target `velora_format`, namespace `velora::format`):
 
@@ -115,3 +115,86 @@ keys to string values (no nesting, no duplicates; English is the source and defa
 `engine/core`) loads them with the in-house strict JSON reader (`json_lite.hpp`): `find_own` (no fallback), `find` / `get` (fall back to English, then the key itself), `category_label`.
 `format_category_test` fails when a category key is missing in a shipped locale (the English fallback does not hide it), when a short label exceeds 10 Unicode code points (counted
 as code points, not bytes) or when the three locales do not have exactly the same key set; it also proves those checks fail on broken catalogs.
+
+## Protected bundles (Story 6.2: AR27, NFR13, FR30/FR31 format)
+
+The protected variant of the block-indexed bundle is **format_version 3**. It is a separate major version, not a flag on version 2: the unprotected reader
+(`BundleReader`) answers a version 3 file with `kUnsupportedVersion` exactly as it does for any version it does not know, every existing unprotected bundle
+(versions 1 and 2, minors 0 and 1) is byte-identical to before and keeps its `bundle_id`, and the protected readers answer an unprotected bundle with
+`kNotProtected`. The version word is `3 | minor << 16`; minor 1 means the same extension table as format 2.1 (keyswitches, crossfades, filters) and is stamped only
+when a region needs it; minors above 1 and majors other than 3 are `kUnsupportedVersion`. The instrument/sample/region manifest body, the block size
+(`kBlockFrames`), the FLAC/raw-float block coding and the index entry are those of format 2 unchanged; only the items below are new.
+
+### Layout (little-endian; all fields byte-exact)
+
+```
+header   128 B   as format 2: magic "VLRB" | u32 version word | u64 manifest_off (=128), manifest_size, index_off, index_size, data_off, data_size, total_size |
+                 manifest_sha256[32] @64 | index_sha256[32] @96. Strict layout, no gaps: data_off = index_off + index_size + 128, total_size = file size.
+manifest         format 2 manifest with a protection section after the index hash (offsets from the manifest start):
+   0   u32  version word (equals the header's)          68  u8   cipher = 1 (AES-256-CTR)
+   4   [16] library_id (vendor-assigned UUID)           69  u8   hash_list_alg = 1 (Merkle SHA-256)
+   20  u32  instrument count                            70  u8[2] reserved, zero
+   24  u32  sample count                                72  [8]  nonce (per bundle, unique per content key)
+   28  u64  block count (<= 2^32)                       80  [16] key_check
+   36  [32] index_sha256                                96  [32] hash_list_root
+   128 ... instruments, samples, region tables (format 2 / 2.1 body, unchanged)
+index    48 B per block: u64 offset | u32 size | u32 frames | [32] SHA-256 of the CIPHERTEXT bytes of the block. size <= kMaxProtectedBlockBytes (1 MiB).
+seal     128 B: "VSL1" | u8 alg = 1 (Ed25519) | u8[3] zero | [8] signing key id | [64] Ed25519 signature | u8[48] zero
+blocks   ciphertext, in global block order (instrument-major, sample, block), contiguous
+```
+
+* `bundle_id` = SHA-256 of the manifest bytes (as before); it covers the nonce, key check, hash-list root and the index hash. `library_id` is the vendor id the
+  content-pack tool assigns (`BundleWriter::set_library_id`).
+* **Encryption**: each block is encrypted independently with AES-256-CTR under the per-library content key. The 16-byte counter block of byte 0 of global block `b`
+  is `nonce[8] || BE32(b) || BE32(0)` (`counter_block()`); CTR then increments the whole 128-bit counter. A block is capped at `kMaxProtectedBlockBytes` (1 MiB =
+  2^16 AES blocks), the writer and the reader assert it, so the low 32 bits never carry into the block-index field and no counter block is reused inside a
+  key, as long as the nonce is unique per content key and the bundle has fewer than 2^32 blocks (both enforced or documented below). The nonce is chosen by
+  the caller; `BundleWriter::derive_nonce()` derives it from the content (first 8 bytes of SHA-256("velora/protected-nonce/v1" 0x00 || SHA-256(plain bundle))), so revisions of a
+  library under one key get different nonces. Random access: block `b` is decrypted by itself, no other block is touched.
+* **Hashes**: the index SHA-256 is over the ciphertext, so a block is verified before any decryption. `hash_list_root` is a Merkle root over those block hashes
+  in global order: leaf = SHA-256(0x00 || block_hash), node = SHA-256(0x01 || left || right), an odd node at the end of a level is promoted unchanged, the root of an
+  empty list is SHA-256 of the empty string. The root is checked against the index at open.
+* **Key check**: `key_check` = first 16 bytes of HMAC-SHA256(content_key, "velora/key-check/v1" || 0x00 || nonce). A wrong key (or a wrong nonce)
+  is `kWrongContentKey` at open, never garbage PCM. Block plaintext additionally has to pass the FLAC frame CRCs (`kCorruptBlock`); float blocks are raw words and are checked by size only, so a signed bundle encrypted under a different key than its key check claims would decode to noise for float samples (such a bundle can only be produced by a holder of the signing key).
+* **Signature**: pure Ed25519 over the statement `"velora/protected-manifest/v1" 0x00 || u32 version_word || library_id[16] || bundle_id[32] || index_sha256[32] ||
+  hash_list_root[32] || u64 block_count || nonce[8] || signing_key_id[8]`. The signing key id is the first 8 bytes of SHA-256(public key), the id format of the trusted-key lists of
+  `tools/keys/KEY-HIERARCHY.md`. Verification follows the strictness of its section 6 (S < L, canonical R and A, small-order A rejected, cofactorless) on top of
+  OpenSSL's check, and additionally rejects a small-order R. Tests carry vectors that plain OpenSSL accepts (non-canonical and small-order A with R = identity and S = 0, a canonical A with
+  small-order R) and assert that `ed25519_verify_strict` rejects them, plus the S + L case and the RFC 8032 vectors.
+* Open order and typed errors: header layout (`kBadMagic`, `kTruncated`, `kUnsupportedVersion`, `kNotProtected`, `kCorruptHeader`), manifest and index hashes
+  (`kCorruptManifest`, `kCorruptIndex`), fixed manifest fields and seal, **trusted-key lookup** (`kUntrustedKey`), **signature** (`kSignatureInvalid`), the rest of the manifest
+  and the index structure, **hash-list root** (`kHashListMismatch`), then, in the decrypting reader only, the key check (`kWrongContentKey`). A trusted-key list that names one key id twice never trusts it. Reading a block
+  hashes the ciphertext first (`kBlockHashMismatch`, no bytes returned and the caller's output untouched), then decrypts and decodes. Tests flip every byte of the header, manifest,
+  index and seal, three bytes of every block and every byte of the smallest block, assert the exact error per byte class, and cut the file at every structural boundary; none opens or yields PCM.
+
+### Targets (who may link what)
+
+| Target | Contents | Linked by |
+|---|---|---|
+| `velora_format` | the container, hashing, HMAC, Merkle root, key check, statement bytes: **no cipher, no signing** | everything |
+| `velora_format_verify` | `ProtectedBundleView`, `ed25519_verify_strict`, `TrustedKeys`: signature, hash list and ciphertext block-hash verification, **no decrypt** | desktop build, librarian (Story 6.4) |
+| `velora_format_decrypt` | `ProtectedBundleReader` (AES-256-CTR decrypt, FLAC decode of only the blocks read) on top of verify | engine, offline-render, tests |
+| `velora_format_protected_writer` | `finalize_protected`, `ed25519_sign`, `aes256_ctr_xor` | tools/content-pack (Story 6.3), tests; never shipped |
+
+"No decrypt path" means the code never CALLS the cipher API: no cipher/decrypt symbol is defined or imported by the verify target. The shared libcrypto it links is a system library and does contain AES. The core holds only data-layout and hashing helpers (`counter_block`, `hmac_sha256`, `key_check_value`, `hash_list_root`, `statement_bytes`), none of which calls a cipher.
+
+`tools/ci/check_format_no_decrypt.py` (ctest `format_no_decrypt`, `tools/ci/docker-check.sh`, the CI purity job with `--self-test`) scans the symbols (`nm`) of
+`velora_format_verify`, `velora_format`, the verify-only probe binary (`format_verify_probe`) and the librarian binaries and libraries, and fails on any OpenSSL
+cipher entry point (`EVP_aes_*`, `EVP_Decrypt*`, `EVP_Encrypt*`, `EVP_CIPHER_*`, `AES_*`, CommonCrypto, mbedTLS, libsodium, ...) or project decrypt symbol, and, as an allowlist, on any
+undefined crypto-library symbol (`EVP_`, `OPENSSL_`, `CRYPTO_`, `ERR_`, `BIO_`, ...) other than the six Ed25519 verification calls (version suffixes such as `@OPENSSL_3.0.0` are stripped first);
+`format_no_decrypt_detects_decrypt` (`--expect-flagged`) succeeds only if the scanner flags `EVP_DecryptInit_ex`/`EVP_EncryptInit_ex`/`EVP_aes_256_ctr` in the decrypt and writer libraries. `tools/ci/check_librarian_no_crypto.py` now allows only the Ed25519 verification entry points of OpenSSL (`EVP_PKEY_new_raw_public_key`, `EVP_PKEY_free`, `EVP_MD_CTX_new/free`, `EVP_DigestVerifyInit`, `EVP_DigestVerify`; and a shared libcrypto) and
+still forbids every cipher/decrypt symbol and static libcrypto.
+
+**RTSan / threading.** Decrypt runs on non-real-time threads only: `ProtectedBundleView`/`ProtectedBundleReader` open, `read_block`, `read_frames` and `verify_all` allocate,
+do file I/O, hash and run AES, and are documented NOT real-time safe (like `BundleReader::read_block`); the engine's streaming threads call them, never the audio callback.
+Const methods are thread-safe with one `BlockDecoder` per thread. The reader keeps a copy of the content key and wipes it on destruction.
+
+**Nonce.** `ProtectParams::nonce`/`finalize_protected` require a nonce that is unique per content key and never all zero (zero is `kInvalidArgument`); a repeat under one key reuses the keystream. With 64-bit nonces keep far below 2^32 bundles per key (birthday bound ~n^2/2^65). `finalize_protected(writer, key, seed)` uses the content-derived nonce. `finalize_protected_to_file` writes through an `O_EXCL|O_NOFOLLOW` temp file (mode 0644), fsyncs it and the directory.
+
+**Writer API.** `BundleWriter::finalize_protected(ProtectParams)` (core, callbacks for encrypt and sign) builds the bytes; tools call
+`finalize_protected(writer, ContentKey, Nonce, SigningSeed)` from `velora/format/protected_writer.hpp`. Same writer content, key, nonce and signing seed give identical
+bytes (Ed25519 is deterministic). Key generation, wrapping and the vault are Stories 6.1 / 6.3 / 6.8; trusted keys come from `velora_trusted_keys_<variant>.hpp` via `TrustedKeys::from_generated`.
+
+Tests: `format_protected_test` (HMAC, AES-CTR, Ed25519 and Merkle known answers; counter layout; round trip of 16/24-bit and float samples; 10,000 deterministic random seeks
+bit-identical to the source; reproducibility; the tamper matrix above; untrusted keys, wrong content key, nonce change with and without re-signing, unknown versions, the block-size cap),
+`format_verify_probe` (a binary that links only the verify target), `format_no_decrypt*`.

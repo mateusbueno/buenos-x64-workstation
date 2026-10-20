@@ -1100,6 +1100,34 @@ void test_discard_last_instrument() {
   CHECK_ERR(x.discard_last_instrument(), Error::kInvalidArgument);
 }
 
+// Story 6.2 guard: the unprotected format is unchanged. Float-only bundles involve no libFLAC, so their bytes are the same on every platform and their
+// SHA-256 is pinned for format 2 (minor 0) and format 2.1 (minor 1, extension table). The values were taken from the pre-Story-6.2 tree (HEAD 8c1be3a).
+void test_float_goldens() {
+  for (bool ext : {false, true}) {
+    const PcmFormat f{2, 32, true, 48000};
+    const auto pcm = vt::make_float(2, 5000);
+    BundleWriter w;
+    w.set_library_id(Uuid{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
+    auto i0 = w.add_instrument("Pad", "pads/warm.sfz");
+    CHECK(i0.ok());
+    CHECK_ERR(w.add_sample(i0.value(), {"warm", f, 5000, pcm}), Error::kNone);
+    Region r;
+    r.sample = 0;
+    CHECK_ERR(w.add_region(i0.value(), r), Error::kNone);
+    if (ext) {
+      r.sw = {24, 28, 26, -1, 37, -1, 26};
+      CHECK_ERR(w.add_region(i0.value(), r), Error::kNone);
+    }
+    auto b = w.finalize();
+    CHECK(b.ok());
+    if (!b.ok()) continue;
+    CHECK(layout::get_u32(b.value().data() + 4) == (ext ? (2u | (1u << 16)) : 2u));
+    const std::string h = to_hex(Sha256::hash(b.value()));
+    CHECK(h == (ext ? "e63a91c4091b49b552e1e927314f244f06f56cc31cb6bc8a7c98d17a190e2a9b" : "4014b5788d6a090bb28fa4f187823457aa098021540024d4b5c78dde7cae70b7"));
+    if (h != (ext ? "e63a91c4091b49b552e1e927314f244f06f56cc31cb6bc8a7c98d17a190e2a9b" : "4014b5788d6a090bb28fa4f187823457aa098021540024d4b5c78dde7cae70b7")) std::printf("  %s golden: %s\n", ext ? "2.1" : "2", h.c_str());
+  }
+}
+
 int main() {
   test_discard_last_instrument();
   test_open_source();
@@ -1118,6 +1146,7 @@ int main() {
   test_version();
   test_regions();
   test_extensions();
+  test_float_goldens();
   test_identity();
   test_file_io();
   if (g_fail == 0) std::printf("bundle_test OK\n");

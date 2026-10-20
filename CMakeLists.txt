@@ -41,6 +41,36 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME no_private_keys_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_private_keys.py
                    --self-test)
+  # Story 6.2 (AR27/NFR13): the desktop-side verification target, the verify-only probe binary and the librarian binaries contain no decrypt path.
+  add_test(NAME format_no_decrypt
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --lib $<TARGET_FILE:velora_format_verify> --lib $<TARGET_FILE:velora_format>
+                   --binary $<TARGET_FILE:format_verify_probe>
+                   --binary $<TARGET_FILE:librarian> --binary $<TARGET_FILE:librarian-service>
+                   --lib $<TARGET_FILE:velora_librarian> --lib $<TARGET_FILE:velora_librarian_service> --lib $<TARGET_FILE:velora_sfz>
+                   --require-defined ed25519_verify_strict)
+  set_tests_properties(format_no_decrypt PROPERTIES SKIP_RETURN_CODE 77)
+  add_test(NAME format_no_decrypt_selftest
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py --self-test --cc ${CMAKE_C_COMPILER})
+  add_test(NAME format_no_decrypt_probe
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --binary $<TARGET_FILE:format_verify_probe> --require-defined ed25519_verify_strict)
+  set_tests_properties(format_no_decrypt_probe PROPERTIES SKIP_RETURN_CODE 77)
+  # Not vacuous: the same scanner must flag the cipher calls of the decrypt and writer libraries (exit 0 only when it does).
+  add_test(NAME format_no_decrypt_detects_decrypt
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --lib $<TARGET_FILE:velora_format_decrypt> --lib $<TARGET_FILE:velora_format_protected_writer>
+                   --expect-flagged EVP_DecryptInit_ex --expect-flagged EVP_EncryptInit_ex --expect-flagged EVP_aes_256_ctr)
+  set_tests_properties(format_no_decrypt_detects_decrypt PROPERTIES SKIP_RETURN_CODE 77)
+  # The librarian scanner accepts the verify target (only the Ed25519 verification calls) ...
+  add_test(NAME format_verify_librarian_scanner
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_librarian_no_crypto.py
+                   --binary $<TARGET_FILE:format_verify_probe> --lib $<TARGET_FILE:velora_format_verify>)
+  set_tests_properties(format_verify_librarian_scanner PROPERTIES SKIP_RETURN_CODE 77)
+  # ... and rejects the decrypt target.
+  add_test(NAME format_decrypt_librarian_scanner_rejects
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_librarian_no_crypto.py --lib $<TARGET_FILE:velora_format_decrypt>)
+  set_tests_properties(format_decrypt_librarian_scanner_rejects PROPERTIES WILL_FAIL TRUE)
 else()
   message(STATUS "Python3 not found: core purity tests not registered")
 endif()

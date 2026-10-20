@@ -26,6 +26,12 @@ enum class [[nodiscard]] Error : std::uint8_t {
   kOutOfRange,          // sample/block/frame index outside the bundle
   kBufferTooSmall,      // caller output buffer too small
   kEncoderFailure,
+  // Story 6.2 (protected bundles)
+  kNotProtected,        // a protected-bundle API was given an unprotected bundle
+  kUntrustedKey,        // the manifest signer's key id is not in the trusted-key list
+  kSignatureInvalid,    // Ed25519 signature over the manifest statement does not verify
+  kHashListMismatch,    // hash-list root in the manifest does not match the index block hashes
+  kWrongContentKey,     // the content key does not pass the manifest's key-check value
 };
 
 const char* to_string(Error e);

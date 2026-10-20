@@ -210,3 +210,122 @@ Uuid library_id_from_source(std::string_view source_id) {
 }
 
 }  // namespace velora::format
+
+// ---- Story 6.2: HMAC, key check, hash-list root, statement, counter block (no cipher, no signing) ----
+#include "velora/format/protected_format.hpp"
+
+namespace velora::format {
+
+// Pure data layout of the AES-CTR counter block (bytes, no cipher call): it stays in the core so the writer, the decrypt reader and the tests share
+// one definition; check_format_no_decrypt.py scans symbols, and this name is not a cipher entry point.
+CounterBlock counter_block(const Nonce& nonce, std::uint32_t idx) {
+  CounterBlock c{};
+  std::memcpy(c.data(), nonce.data(), 8);
+  for (int i = 0; i < 4; ++i) c[8 + i] = static_cast<std::uint8_t>(idx >> (24 - 8 * i));  // big-endian
+  return c;                                                                                // intra-block counter 0
+}
+
+namespace {
+// Key-derived stack material is wiped through a volatile pointer so the compiler cannot elide the stores.
+void wipe(void* p, std::size_t n) {
+  volatile std::uint8_t* v = static_cast<volatile std::uint8_t*>(p);
+  while (n--) *v++ = 0;
+}
+}  // namespace
+
+Digest256 hmac_sha256(std::span<const std::uint8_t> key, std::span<const std::uint8_t> data) {
+  std::uint8_t k[64] = {};
+  if (key.size() > 64) {
+    const Digest256 d = Sha256::hash(key);
+    std::memcpy(k, d.data(), 32);
+  } else if (!key.empty()) {
+    std::memcpy(k, key.data(), key.size());
+  }
+  std::uint8_t ipad[64], opad[64];
+  for (int i = 0; i < 64; ++i) {
+    ipad[i] = k[i] ^ 0x36;
+    opad[i] = k[i] ^ 0x5c;
+  }
+  Sha256 in;
+  in.update(ipad, 64);
+  in.update(data);
+  const Digest256 inner = in.finish();
+  Sha256 out;
+  out.update(opad, 64);
+  out.update(inner.data(), 32);
+  const Digest256 mac = out.finish();
+  wipe(k, sizeof k);
+  wipe(ipad, sizeof ipad);
+  wipe(opad, sizeof opad);
+  return mac;
+}
+
+KeyCheck key_check_value(std::span<const std::uint8_t, 32> content_key, const Nonce& nonce) {
+  static constexpr char kLabel[] = "velora/key-check/v1";
+  std::vector<std::uint8_t> msg(kLabel, kLabel + sizeof kLabel - 1);  // label, then a 0x00 separator
+  msg.push_back(0);
+  msg.insert(msg.end(), nonce.begin(), nonce.end());
+  const Digest256 mac = hmac_sha256(content_key, msg);
+  KeyCheck k;
+  std::memcpy(k.data(), mac.data(), 16);
+  return k;
+}
+
+Digest256 hash_list_root(std::span<const Digest256> block_hashes) {
+  if (block_hashes.empty()) return Sha256::hash({});
+  std::vector<Digest256> level;
+  level.reserve(block_hashes.size());
+  for (const Digest256& h : block_hashes) {
+    Sha256 s;
+    const std::uint8_t tag = 0x00;
+    s.update(&tag, 1);
+    s.update(h.data(), 32);
+    level.push_back(s.finish());
+  }
+  while (level.size() > 1) {
+    std::vector<Digest256> next;
+    next.reserve((level.size() + 1) / 2);
+    for (std::size_t i = 0; i + 1 < level.size(); i += 2) {
+      Sha256 s;
+      const std::uint8_t tag = 0x01;
+      s.update(&tag, 1);
+      s.update(level[i].data(), 32);
+      s.update(level[i + 1].data(), 32);
+      next.push_back(s.finish());
+    }
+    if (level.size() % 2) next.push_back(level.back());
+    level = std::move(next);
+  }
+  return level[0];
+}
+
+KeyId key_id_of_public(const PublicKey& pub) {
+  const Digest256 d = Sha256::hash(pub);
+  KeyId id;
+  std::memcpy(id.data(), d.data(), 8);
+  return id;
+}
+
+bool ct_equal(std::span<const std::uint8_t> a, std::span<const std::uint8_t> b) {
+  if (a.size() != b.size()) return false;
+  std::uint8_t acc = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) acc = static_cast<std::uint8_t>(acc | (a[i] ^ b[i]));
+  return acc == 0;
+}
+
+std::vector<std::uint8_t> statement_bytes(const ManifestStatement& s) {
+  static constexpr char kCtx[] = "velora/protected-manifest/v1";
+  std::vector<std::uint8_t> m(kCtx, kCtx + sizeof kCtx - 1);
+  m.push_back(0);
+  for (int i = 0; i < 4; ++i) m.push_back(static_cast<std::uint8_t>(s.version_word >> (8 * i)));
+  m.insert(m.end(), s.library_id.begin(), s.library_id.end());
+  m.insert(m.end(), s.bundle_id.begin(), s.bundle_id.end());
+  m.insert(m.end(), s.index_sha256.begin(), s.index_sha256.end());
+  m.insert(m.end(), s.hash_list_root.begin(), s.hash_list_root.end());
+  for (int i = 0; i < 8; ++i) m.push_back(static_cast<std::uint8_t>(s.block_count >> (8 * i)));
+  m.insert(m.end(), s.nonce.begin(), s.nonce.end());
+  m.insert(m.end(), s.signer_key_id.begin(), s.signer_key_id.end());
+  return m;
+}
+
+}  // namespace velora::format

@@ -19,6 +19,7 @@
 #include "velora/format/error.hpp"
 #include "velora/format/hash.hpp"
 #include "velora/format/instrument_model.hpp"
+#include "velora/format/protected_format.hpp"
 
 namespace velora::format {
 
@@ -122,7 +123,23 @@ class BundleWriter {
   Result<std::vector<std::uint8_t>> finalize() const;
   Error finalize_to_file(const std::string& path) const;
 
+  // Story 6.2: the protected variant (format_version 3, protected_format.hpp). Same content, same block
+  // order; every block is encrypted through `p.encrypt` and its index hash is taken over the CIPHERTEXT, the
+  // manifest carries nonce, key check and hash-list root, and `p.sign` signs the manifest statement. This
+  // core method performs no cryptography itself: the callbacks come from the protected-writer target
+  // (formatlib/protected/protected_writer.hpp is the entry point tools use). Deterministic: identical
+  // writer content, key, nonce and signing key give identical bytes. kInvalidArgument when a callback is
+  // missing, when WriterOptions::format_version is not the default, or when a block exceeds
+  // kMaxProtectedBlockBytes / the block count 2^32.
+  Result<std::vector<std::uint8_t>> finalize_protected(const ProtectParams& p) const;
+  // A deterministic per-bundle nonce: first 8 bytes of SHA-256("velora/protected-nonce/v1" 0x00 ||
+  // SHA-256(finalize())). Two different contents get different nonces (up to 2^-64 chance), so one content
+  // key can protect several bundle revisions of a library without reusing a counter block. Callers that
+  // pick their own nonce must keep it unique per content key.
+  Result<Nonce> derive_nonce() const;
+
  private:
+  Result<std::vector<std::uint8_t>> finalize_impl(const ProtectParams* prot) const;
   struct SampleRec {
     std::string name;
     PcmFormat format;
@@ -169,6 +186,16 @@ struct InstrumentInfo {
   std::size_t sample_count = 0;
   std::vector<Region> regions;   // empty for format v1 bundles
 };
+
+namespace detail {
+// One index-table entry (shared by BundleReader and the protected-bundle readers).
+struct BlockEntry {
+  std::uint64_t offset = 0;
+  std::uint32_t size = 0;
+  std::uint32_t frames = 0;
+  Digest256 sha256{};
+};
+}  // namespace detail
 
 struct ReaderOptions {
   // Check each block's SHA-256 against the index before decoding it.
@@ -234,13 +261,14 @@ class BundleReader {
   // Decodes every block of every sample and checks block hashes and per-sample PCM hashes.
   Error verify_all() const;
 
+  // Story 6.2: decodes one block whose stored bytes (FLAC stream, or raw float words) the caller already
+  // holds in the clear, e.g. the protected reader after decrypting. Same shape checks as read_block;
+  // kCorruptBlock when the bytes are not exactly one valid block of `frames` frames. No hashing, no crypto.
+  static Error decode_block_bytes(BlockDecoder& dec, const PcmFormat& f, std::uint32_t frames,
+                                  std::span<const std::uint8_t> bytes, std::span<std::int32_t> out);
+
  private:
-  struct IndexEntry {
-    std::uint64_t offset = 0;
-    std::uint32_t size = 0;
-    std::uint32_t frames = 0;
-    Digest256 sha256{};
-  };
+  using IndexEntry = detail::BlockEntry;
   BundleReader();
   Result<std::uint32_t> read_block_impl(std::size_t sample, std::uint64_t block,
                                         std::span<std::int32_t> out, BlockDecoder& dec,
