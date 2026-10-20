@@ -264,6 +264,10 @@ exponential backoff (50 ms doubling to 2 s); queued messages wait; the latest `s
 (default off, every existing smoke test is unchanged): the Live Set that sounds is reported from the control tick when it changes, and `set_playing(true)` follows MIDI notes, `false`
 after `--library-playing-idle-ms` (default 3000) without one, and on exit (`set_playing(false)` then a bounded flush in `stop()`); a hidden `--test-inject-note-after-ms N` counts as a note for the smoke test. The client also re-sends the last reported Live Set after a reconnect when no newer report is queued, and never evicts the item it is sending. Nothing else in `LiveSetSwitcher` / `EditSession` is touched.
 
+Story 5.6 grows `library_api.proto` additively (catalog, `ImportRequest` / `ImportProgress`, `ListLibraries` / `ListInstruments`; `librarian/README.md`). `LibraryClient` does not use the new messages: it sends the same
+handshake and commands and discards replies, so it works unchanged against the extended service (the new handshake features and the extra server messages are ignored by it). The UI and Studio reach the import
+API through the same Library API over the same socket (Epic 5 surfaces); nothing in the engine process writes the catalog or `/data/lib`.
+
 ## macOS only (`macos/`, built only when `APPLE`)
 
 - `CoreAudioLineIn` (Story 2.7, `ports::LineInSource`): optional capture of the default CoreAudio input device as 48 kHz stereo float into a lock-free ring that the engine drains once per block; mixed into the

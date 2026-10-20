@@ -88,7 +88,7 @@ void test_handshake_and_framing() {
     auto r = c.call(m);
     CHECK(r && r->has_hello_ack());
     if (r && r->has_hello_ack()) {
-      CHECK(r->hello_ack().version() == 1 && r->hello_ack().catalog_schema_version() == 1);
+      CHECK(r->hello_ack().version() == 1 && r->hello_ack().catalog_schema_version() == kCatalogSchemaVersion);
       const Ids f = ltest::strs(r->hello_ack().features());
       CHECK(std::find(f.begin(), f.end(), "favorites.v1") != f.end() && std::find(f.begin(), f.end(), "recent.v1") != f.end());
     }
@@ -173,7 +173,7 @@ void test_every_message() {
   CHECK(g && g->has_state());
   if (g && g->has_state()) {
     CHECK((ltest::strs(g->state().favorites()) == Ids{uid(1), uid(2)}));
-    CHECK(g->state().recent_size() == 0 && g->state().catalog_schema_version() == 1 && !g->state().playing());
+    CHECK(g->state().recent_size() == 0 && g->state().catalog_schema_version() == kCatalogSchemaVersion && !g->state().playing());
     CHECK(g->state().favorite_writes() == 2);
   }
   CHECK(is_ack(c.remove_fav(uid(1)), true));

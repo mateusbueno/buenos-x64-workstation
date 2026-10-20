@@ -141,6 +141,32 @@ int main(int argc, char** argv) {
     ::kill(p.pid, SIGTERM);
     CHECK(p.wait() == 0);
   }
+  // Story 5.6: --catalog-dir splits the catalog from the library root. catalog.db / catalog.lock go to the catalog directory; lib/ and its .service.lock stay
+  // under --data; nothing is created in the wrong place. (This real binary links Homebrew's protobuf next to formatlib's vendored abseil: starting it and
+  // talking to it is also the link/ODR smoke of velora_librarian_service.)
+  {
+    TempDir root;
+    const std::string cat = root.sub("catalog");
+    ::mkdir(cat.c_str(), 0755);
+    const std::string sk = root.sub("s.sock");
+    Proc p;
+    CHECK(p.start(exe, {"--data", root.path, "--catalog-dir", cat, "--socket", sk}, root.sub("split.log")));
+    Client c;
+    bool up = false;
+    for (int i = 0; i < 400 && !up; ++i) {
+      up = c.connect(sk) && c.handshake("smoke");
+      if (!up) std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    CHECK(up);
+    CHECK(c.add_fav(uid(1))->ack().changed());
+    CHECK(::access((cat + "/catalog.db").c_str(), F_OK) == 0 && ::access((cat + "/catalog.lock").c_str(), F_OK) == 0);
+    CHECK(::access((root.path + "/catalog.db").c_str(), F_OK) != 0 && ::access((root.path + "/catalog.lock").c_str(), F_OK) != 0);
+    CHECK(::access((root.path + "/lib/.service.lock").c_str(), F_OK) == 0);
+    CHECK(::access((cat + "/lib").c_str(), F_OK) != 0);
+    c.close();
+    ::kill(p.pid, SIGTERM);
+    CHECK(p.wait() == 0);
+  }
   // Exit codes: usage 2, a data directory that does not exist 1, a foreign catalog 1 (and the file is left alone).
   {
     Proc p;

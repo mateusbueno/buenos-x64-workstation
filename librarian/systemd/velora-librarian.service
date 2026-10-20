@@ -1,7 +1,7 @@
-# systemd unit for the librarian service (Story 4.11). Delivered as a documented file only: it is not installed by the build and has not been
+# systemd unit for the librarian service (Story 4.11, extended in 5.6 to own /data/lib). Delivered as a documented file only: it is not installed by the build and has not been
 # tested on the board. The Yocto recipe (Epic 11) installs it next to /usr/bin/librarian-service.
 #
-# The catalog is single-writer (AD-9): only this service writes /data/catalog. A second instance is refused by the flock on catalog.lock and
+# The catalog is single-writer (AD-9): only this service writes /data/catalog and (Story 5.6) /data/lib. A second instance is refused by the flock on catalog.lock and
 # exits 1, so Restart= does not fight a running one (RestartPreventExitStatus).
 [Unit]
 Description=Velora librarian (catalog and Library API)
@@ -18,20 +18,21 @@ RuntimeDirectory=velora
 RuntimeDirectoryMode=0750
 # '+' runs this step as root, outside the sandbox below, so it can create the directory before the service user's restricted view starts.
 ExecStartPre=+/usr/bin/install -d -m 0750 -o velora-librarian -g velora /data/catalog
-ExecStart=/usr/bin/librarian-service --data /data/catalog --socket /run/velora/library.sock --socket-group velora
+ExecStartPre=+/usr/bin/install -d -m 0755 -o velora-librarian -g velora /data/lib
+ExecStart=/usr/bin/librarian-service --data /data --catalog-dir /data/catalog --socket /run/velora/library.sock --socket-group velora
 # SIGTERM is the orderly stop: unwritten Recent is flushed, the WAL is checkpointed, the socket removed.
 KillSignal=SIGTERM
 TimeoutStopSec=10
 Restart=on-failure
 RestartSec=2
 RestartPreventExitStatus=1
-# Sandboxing (the full librarian sandbox is Story 5.9): no network, read-only system, writes only under /data/catalog and /run/velora.
+# Sandboxing (the full librarian sandbox is Story 5.9): no network, read-only system, writes only under /data/catalog, /data/lib and /run/velora.
 NoNewPrivileges=yes
 PrivateNetwork=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=-/data/catalog /run/velora
+ReadWritePaths=-/data/catalog -/data/lib /run/velora
 
 [Install]
 WantedBy=multi-user.target

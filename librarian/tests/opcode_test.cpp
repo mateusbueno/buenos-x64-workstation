@@ -463,7 +463,7 @@ void test_batch() {
   }
   // Exactly the three good libraries exist (plus .staging); the others wrote nothing.
   std::size_t libs = 0;
-  for (const auto& n : names(e.lib())) if (n != ".staging") ++libs;
+  for (const auto& n : names(e.lib())) if (n != ".staging" && n != kServiceLockFileName) ++libs;
   CHECK(libs == 3);
   // Order is stable (sorted) and the batch is repeatable: a second run changes nothing.
   CHECK(b.files[0].sfz_path < b.files[1].sfz_path);
@@ -624,7 +624,7 @@ void test_batch_cli() {
   CHECK(text.find("\"status\":\"imported\"") != std::string::npos && text.find("\"reason\":\"unsupported_features\"") != std::string::npos);
   CHECK(text.find("\"opcode\":\"lfo01_freq\"") != std::string::npos && text.find("{\"type\":\"summary\",\"files\":2,\"imported\":1") != std::string::npos);
   std::size_t libs = 0;
-  for (const auto& n : names(e.lib())) if (n != ".staging") ++libs;
+  for (const auto& n : names(e.lib())) if (n != ".staging" && n != kServiceLockFileName) ++libs;
   CHECK(libs == 1);
   // Text output on stdout: batch (lone directory) format with per-file lines and a summary.
   {

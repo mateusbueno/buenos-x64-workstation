@@ -40,6 +40,7 @@ enum class Stage : std::uint8_t {
   kRenamed,          // bundle directory in place, `current` not yet touched
   kLinkCreated,      // temporary symlink created, not yet renamed over `current`
   kFlipped,          // `current` flipped
+  kStageCreated,     // Story 5.6: the (empty) staging directory exists, nothing written into it yet. Appended: the values above are unchanged.
 };
 const char* to_string(Stage s);
 bool parse_stage(const std::string& name, Stage& out);
@@ -66,6 +67,17 @@ struct ImportOptions {
   // <bundle_dir>/category inside the atomic publish (Story 5.5; bundles written before it hold free text,
   // which `parse_category_file` still reads).
   std::string category;
+  // Story 5.6 (the librarian service sets these; the CLI does not, so its bundles stay byte-for-byte what they were): write `catalog.meta`
+  // (library_index.hpp) into the staged bundle directory, before the rename, so the catalog can be rebuilt from bundles alone. It records the
+  // library name, the source and each instrument's display name and category. `category` (required then) is the default category of every
+  // instrument; `instrument_meta` overrides name and/or category per instrument key; `library_name` overrides the library's display name (and,
+  // for a one-instrument SFZ, the instrument's, unless that instrument has its own override). None of this touches `bundle.vlb` or `bundle_id`.
+  bool write_catalog_meta = false;
+  std::string library_name;
+  struct InstrumentMeta {
+    std::string key, name, category;  // name / category empty = keep the default
+  };
+  std::vector<InstrumentMeta> instrument_meta;
   FaultInjection fault;
 };
 
@@ -164,6 +176,24 @@ bool is_sf2_path(const std::string& path);           // extension .sf2, case-ins
 int reconcile_staging(const std::string& root);
 
 inline constexpr const char* kStagingDirName = ".staging";
+// Story 5.6: `<root>/lib/.service.lock`. The librarian service holds it exclusively for its lifetime (it owns the `<root>/lib` tree and the catalog); the
+// `librarian import` CLI creates it if needed and takes it shared for the whole run, so it refuses to run while a service holds it and a service refuses to start (it needs the lock exclusively) during a CLI import. It sits inside
+// `lib/` so the service's sandbox needs write access to that one tree only (Story 5.9).
+inline constexpr const char* kServiceLockFileName = ".service.lock";
+class CliWriterGuard {
+ public:
+  explicit CliWriterGuard(const std::string& root);
+  ~CliWriterGuard();
+  CliWriterGuard(const CliWriterGuard&) = delete;
+  CliWriterGuard& operator=(const CliWriterGuard&) = delete;
+  bool ok() const { return ok_; }                 // false: a service holds the lock (or it cannot be examined); see error()
+  const std::string& error() const { return err_; }
+
+ private:
+  int fd_ = -1;
+  bool ok_ = true;
+  std::string err_;
+};
 inline constexpr const char* kLockFileName = ".lock";
 // Stale `.current.tmp.*` links are swept only in the directory of the library being imported.
 inline constexpr const char* kCategoryFileName = "category";

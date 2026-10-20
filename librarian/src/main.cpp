@@ -13,7 +13,7 @@
 // file (same format as librarian/data/category_keywords.json). Exit 0 for a usable table, 2 on usage or an unreadable --table, 3 if the embedded table is invalid. Control characters in names are echoed as \\xNN.
 // `import --category` takes a category key (category.piano), its slug or an English name, never "none".
 // Test builds only (-DVELORA_LIBRARIAN_TEST_HOOKS): VELORA_LIBRARIAN_FAULT=<stage>
-// (staged|verified|fsynced|renamed|link-created|flipped) makes the process _exit(137) there.
+// (stage-created|staged|verified|fsynced|renamed|link-created|flipped) makes the process _exit(137) there.
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -105,6 +105,12 @@ int main(int argc, char** argv) {
   struct stat st;
   bool single = false;
   if (opt.inputs.size() == 1) single = ::stat(opt.inputs[0].c_str(), &st) != 0 || !S_ISDIR(st.st_mode);
+  // Story 5.6: while a librarian service owns this data root, the CLI must not write into it.
+  CliWriterGuard writer_guard(opt.root);
+  if (!writer_guard.ok()) {
+    std::fprintf(stderr, "librarian: %s\n", writer_guard.error().c_str());
+    return 1;
+  }
   const BatchResult b = import_batch(opt);
   const bool report_to_stdout = report_path == "-";
   bool report_failed = false;  // the per-file reasons and the summary are still printed

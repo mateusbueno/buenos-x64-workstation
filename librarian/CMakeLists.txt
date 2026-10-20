@@ -16,7 +16,7 @@ std::string_view KeywordTable::embedded_json() {
 ")
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VELORA_CATEGORY_KEYWORDS_CPP}.tmp" "${VELORA_CATEGORY_KEYWORDS_CPP}")
 
-add_library(velora_librarian STATIC src/import.cpp src/batch.cpp src/category_suggest.cpp "${VELORA_CATEGORY_KEYWORDS_CPP}")
+add_library(velora_librarian STATIC src/import.cpp src/batch.cpp src/library_index.cpp src/category_suggest.cpp "${VELORA_CATEGORY_KEYWORDS_CPP}")
 add_library(velora::librarian ALIAS velora_librarian)
 target_include_directories(velora_librarian PUBLIC include)
 target_link_libraries(velora_librarian PUBLIC velora_format velora_sfz velora_host)
@@ -76,7 +76,7 @@ add_test(NAME librarian_category_test COMMAND librarian_category_test)
 
 # --- Story 4.11: the librarian service (catalog + Library API) -----------------------------------------------------------------
 # SQLite is a build dependency: the system libsqlite3 (macOS SDK / Homebrew; libsqlite3-dev on Debian/Ubuntu). It is public domain; see THIRD_PARTY_NOTICES.md.
-# The service library links only SQLite, protobuf (through velora_library_api) and threads: not formatlib, whose vendored abseil must not meet Homebrew's.
+# (Story 4.11 kept the service library free of formatlib; Story 5.6 links it, see below.)
 find_package(Threads REQUIRED)
 find_package(SQLite3)
 if(NOT SQLite3_FOUND)
@@ -90,10 +90,12 @@ else()
 endif()
 message(STATUS "librarian: SQLite ${SQLite3_VERSION}")
 
-add_library(velora_librarian_service STATIC src/catalog.cpp src/library_service.cpp)
+add_library(velora_librarian_service STATIC src/catalog.cpp src/library_service.cpp src/library_reconcile.cpp src/import_worker.cpp)
 add_library(velora::librarian_service ALIAS velora_librarian_service)
 target_include_directories(velora_librarian_service PUBLIC include)
-target_link_libraries(velora_librarian_service PUBLIC velora_library_api ${VELORA_SQLITE_TARGET} Threads::Threads)
+# Story 5.6: the service runs the importer, so it now links velora_librarian (formatlib). Homebrew's abseil (through protobuf) and formatlib's vendored
+# abseil meet in this binary exactly as in engine-host: they use different inline namespaces.
+target_link_libraries(velora_librarian_service PUBLIC velora_library_api velora_librarian ${VELORA_SQLITE_TARGET} Threads::Threads)
 target_compile_options(velora_librarian_service PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
 
@@ -123,3 +125,88 @@ target_link_libraries(librarian_service_smoke PRIVATE velora_library_api Threads
 add_dependencies(librarian_service_smoke librarian-service)
 add_test(NAME librarian_service_smoke COMMAND librarian_service_smoke $<TARGET_FILE:librarian-service>)
 set_tests_properties(librarian_service_smoke PROPERTIES TIMEOUT 120)
+
+# --- Story 5.6: libraries catalog, import API, atomic publish ---------------------------------------------------------------------------
+# No encryption anywhere in the librarian (FR27: user imports are never encrypted). Two guards run as ctest tests (tools/ci/check_librarian_no_crypto.py):
+#  - the link line: the libraries the two shipped targets link, collected recursively at configure time, must name no cryptography library;
+#  - the symbols of the built binaries and static libraries (`nm`) must contain no AES / OpenSSL / mbedTLS / libsodium / OP-TEE / CommonCrypto function.
+function(velora_walk_link_libs tgt)
+  get_property(_seen GLOBAL PROPERTY VELORA_LL_SEEN)
+  if("${tgt}" IN_LIST _seen)
+    return()
+  endif()
+  set_property(GLOBAL APPEND PROPERTY VELORA_LL_SEEN "${tgt}")
+  set_property(GLOBAL APPEND PROPERTY VELORA_LL_NAMES "${tgt}")
+  if(NOT TARGET "${tgt}")
+    # A path, a linker flag or a generator-expression remnant is recorded as is; any other name that is not a target is something this walk could not
+    # resolve, and the closure it stands for would silently escape the link-line check: mark it so the script fails.
+    # The imported third-party targets below are created in other directories' scopes and are not visible here; their dependency closure is covered by the
+    # symbol scan of the binaries instead (a library they pull in would put its symbols into the binary). Nothing else may be opaque.
+    if(NOT "${tgt}" MATCHES "^-|/|^\\$|^$" AND
+       NOT "${tgt}" MATCHES "^(velora_flac_import|FLAC::.*|PkgConfig::.*|protobuf::.*|absl::.*|SQLite3?::SQLite3)$")
+      set_property(GLOBAL APPEND PROPERTY VELORA_LL_NAMES "UNRESOLVED:${tgt}")
+    endif()
+    return()
+  endif()
+  get_target_property(_type "${tgt}" TYPE)
+  set(_deps "")
+  foreach(_prop LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+    if(NOT _type STREQUAL "INTERFACE_LIBRARY" OR _prop STREQUAL "INTERFACE_LINK_LIBRARIES")
+      get_target_property(_v "${tgt}" ${_prop})
+      if(_v)
+        list(APPEND _deps ${_v})
+      endif()
+    endif()
+  endforeach()
+  foreach(_prop IMPORTED_LOCATION IMPORTED_LOCATION_RELEASE IMPORTED_LOCATION_NONE IMPORTED_LOCATION_NOCONFIG IMPORTED_LOCATION_DEBUG IMPORTED_LIBNAME)
+    get_target_property(_loc "${tgt}" ${_prop})
+    if(_loc)
+      set_property(GLOBAL APPEND PROPERTY VELORA_LL_NAMES "${_loc}")
+    endif()
+  endforeach()
+  foreach(_d IN LISTS _deps)
+    set_property(GLOBAL APPEND PROPERTY VELORA_LL_NAMES "${_d}")
+    string(REGEX REPLACE "\\$<[A-Za-z_]+:" "" _clean "${_d}")
+    string(REGEX REPLACE ">+$" "" _clean "${_clean}")
+    if(_clean AND NOT _clean MATCHES "^\\$")
+      velora_walk_link_libs("${_clean}")
+    endif()
+  endforeach()
+endfunction()
+set_property(GLOBAL PROPERTY VELORA_LL_SEEN "")
+set_property(GLOBAL PROPERTY VELORA_LL_NAMES "")
+velora_walk_link_libs(librarian)
+velora_walk_link_libs(librarian-service)
+get_property(_ll GLOBAL PROPERTY VELORA_LL_NAMES)
+list(REMOVE_DUPLICATES _ll)
+string(REPLACE ";" "\n" _ll_text "${_ll}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/librarian_link_libs.txt" "${_ll_text}\n")
+
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME librarian_no_crypto
+           COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/ci/check_librarian_no_crypto.py
+                   --link-libs ${CMAKE_CURRENT_BINARY_DIR}/librarian_link_libs.txt
+                   --binary $<TARGET_FILE:librarian-service> --binary $<TARGET_FILE:librarian>
+                   --lib $<TARGET_FILE:velora_librarian> --lib $<TARGET_FILE:velora_librarian_service>
+                   --lib $<TARGET_FILE:velora_format> --lib $<TARGET_FILE:velora_sfz>)
+  set_tests_properties(librarian_no_crypto PROPERTIES SKIP_RETURN_CODE 77)
+  add_test(NAME librarian_no_crypto_selftest
+           COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/ci/check_librarian_no_crypto.py --self-test --cc ${CMAKE_C_COMPILER})
+endif()
+
+# The import API over a real socket, the order of the publish, categories, cancel, queue, progress, reconcile, single writer.
+add_executable(librarian_import_service_test tests/import_service_test.cpp)
+target_link_libraries(librarian_import_service_test PRIVATE velora_librarian_service velora_librarian)
+target_include_directories(librarian_import_service_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+target_compile_definitions(librarian_import_service_test PRIVATE LIBRARIAN_EXE="$<TARGET_FILE:librarian>")
+add_dependencies(librarian_import_service_test librarian)
+add_test(NAME librarian_import_service_test COMMAND librarian_import_service_test)
+set_tests_properties(librarian_import_service_test PROPERTIES TIMEOUT 300)
+
+# The crash campaign: 200 scripted imports, the service killed at a seeded boundary in a forked child, reconcile and invariants after each. Deterministic.
+add_executable(librarian_crash_campaign tests/crash_campaign_test.cpp)
+target_link_libraries(librarian_crash_campaign PRIVATE velora_librarian_service velora_librarian)
+target_include_directories(librarian_crash_campaign PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+add_test(NAME librarian_crash_campaign COMMAND librarian_crash_campaign)
+set_tests_properties(librarian_crash_campaign PROPERTIES TIMEOUT 600)

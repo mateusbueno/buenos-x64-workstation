@@ -13,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <optional>
 
 #include "velora/format/bundle.hpp"
 #include "velora/format/category.hpp"
@@ -21,6 +22,7 @@
 #include "velora/format/wav_source.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/librarian/category_suggest.hpp"
+#include "velora/librarian/library_index.hpp"
 
 namespace velora::librarian {
 namespace fs = std::filesystem;
@@ -45,12 +47,13 @@ const char* to_string(Stage s) {
     case Stage::kRenamed: return "renamed";
     case Stage::kLinkCreated: return "link-created";
     case Stage::kFlipped: return "flipped";
+    case Stage::kStageCreated: return "stage-created";
   }
   return "?";
 }
 
 bool parse_stage(const std::string& name, Stage& out) {
-  for (int i = 0; i <= static_cast<int>(Stage::kFlipped); ++i)
+  for (int i = 0; i <= static_cast<int>(Stage::kStageCreated); ++i)
     if (name == to_string(static_cast<Stage>(i))) {
       out = static_cast<Stage>(i);
       return true;
@@ -229,6 +232,62 @@ ImportResult& fail_res(ImportResult& res, Status s, std::string why) {
   return res;
 }
 
+// Writes `dir/name` atomically (tmp, fsync, rename): the file is either absent/old or complete.
+bool write_file_atomic(const std::string& dir, const char* name, const std::string& text) {
+  const std::string dst = dir + "/" + name, tmp = dst + ".tmp";
+  Fd f(::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644));
+  return f.ok() && ::write(f.fd, text.data(), text.size()) == static_cast<ssize_t>(text.size()) && full_sync(f.fd) &&
+         ::rename(tmp.c_str(), dst.c_str()) == 0;
+}
+
+// Story 5.6: the catalog.meta of the bundle being published, from its manifest (via the reopened staged bundle) and the options.
+// "" on success, else why the metadata cannot be built (an instrument without a category).
+std::string build_catalog_meta(const ImportOptions& opt, const fmt::BundleReader& rd, CatalogMeta& meta) {
+  meta = CatalogMeta{};
+  std::error_code ec;
+  const fs::path abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
+  meta.source_path = ec ? opt.sfz_path : abs.generic_string();
+  meta.source_kind = is_sf2_path(opt.sfz_path) ? "sf2" : "sfz";
+  const auto def_cat = fmt::parse_assignable_category(opt.category);
+  const bool single = rd.instruments().size() == 1;
+  for (const auto& ins : rd.instruments()) {
+    CatalogMetaInstrument mi;
+    mi.key = ins.key;
+    mi.name = ins.name.empty() ? ins.key : ins.name;
+    if (single && !opt.library_name.empty()) mi.name = opt.library_name;
+    std::optional<fmt::Category> cat = def_cat;
+    for (const auto& o : opt.instrument_meta) {
+      if (o.key != ins.key) continue;
+      if (!o.name.empty()) mi.name = o.name;
+      if (!o.category.empty()) cat = fmt::parse_assignable_category(o.category);
+    }
+    if (!cat || !fmt::is_assignable(*cat)) return "instrument '" + ins.key + "' has no category";
+    mi.category = *cat;
+    meta.instruments.push_back(std::move(mi));
+  }
+  meta.library_name = !opt.library_name.empty() ? opt.library_name
+                      : single                  ? meta.instruments[0].name
+                                                : abs.stem().string();
+  if (meta.library_name.empty()) meta.library_name = meta.source_path;
+  return {};
+}
+
+// Argument problems of the Story 5.6 options ("" = fine).
+std::string meta_options_problem(const ImportOptions& opt) {
+  if (!opt.write_catalog_meta) return {};
+  if (opt.category.empty()) return "a category is required when catalog.meta is written";
+  if (opt.library_name.size() > 256) return "library name too long";
+  for (unsigned char c : opt.library_name)
+    if (c < 0x20 || c == 0x7f) return "invalid library name";
+  for (const auto& o : opt.instrument_meta) {
+    if (o.name.size() > 256) return "instrument name too long";
+    for (unsigned char c : o.name)
+      if (c < 0x20 || c == 0x7f) return "invalid instrument name";
+    if (const std::string why = category_problem(o.category); !why.empty()) return why;
+  }
+  return {};
+}
+
 // false: `res` holds the failure.
 bool lock_root(const ImportOptions& opt, ImportResult& res, RootLock& rl) {
   auto fail = [&](Status s, std::string why) { fail_res(res, s, std::move(why)); return false; };
@@ -273,17 +332,15 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
   if (::mkdir(stage_dir.c_str(), 0755) != 0) return fail(Status::kIo, err_text("mkdir " + stage_dir));
   const std::string staged = stage_dir + "/" + host::kBundleFileName;
   auto cleanup = [&]() { std::error_code e; fs::remove_all(stage_dir, e); };
+  VELORA_HOOK(Stage::kStageCreated);
   // Category metadata is part of the staged directory, hence of the atomic publish.
   auto write_category = [&](const std::string& dir) -> bool {
-    const std::string cat = dir + "/" + kCategoryFileName, tmp = cat + ".tmp";
-    Fd f(::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644));
     // Validated by the importers: the stable key of an assignable category (never "none"), see category.hpp.
     const auto parsed = fmt::parse_assignable_category(opt.category);
     const std::string text = parsed ? fmt::category_file_text(*parsed) : std::string();
-    if (text.empty()) return false;
-    return f.ok() && ::write(f.fd, text.data(), text.size()) == static_cast<ssize_t>(text.size()) &&
-           full_sync(f.fd) && ::rename(tmp.c_str(), cat.c_str()) == 0;
+    return !text.empty() && write_file_atomic(dir, kCategoryFileName, text);
   };
+  std::string meta_text;  // Story 5.6: catalog.meta, built from the reopened staged bundle during verification
   if (!opt.category.empty() && !write_category(stage_dir)) {
     cleanup();
     return fail(Status::kIo, err_text("write category"));
@@ -317,6 +374,11 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
     if (fmt::Error e = rd.verify_all(); e != fmt::Error::kNone)
       return std::string("staged bundle failed verification: ") + fmt::to_string(e);
     if (std::string why = verify_content(rd); !why.empty()) return why;
+    if (opt.write_catalog_meta) {
+      CatalogMeta meta;
+      if (std::string why = build_catalog_meta(opt, rd, meta); !why.empty()) return why;
+      meta_text = catalog_meta_text(meta);
+    }
     res.library_id = fmt::uuid_to_string(rd.library_id());
     res.bundle_id = fmt::to_hex(rd.bundle_id());
     return {};
@@ -324,6 +386,10 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
   if (std::string why = verify(); !why.empty()) {
     cleanup();
     return fail(Status::kVerifyFailed, why);
+  }
+  if (opt.write_catalog_meta && !write_file_atomic(stage_dir, kCatalogMetaFileName, meta_text)) {
+    cleanup();
+    return fail(Status::kIo, err_text("write catalog.meta"));
   }
   VELORA_HOOK(Stage::kVerified);
 
@@ -360,6 +426,8 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
     // Identical bundle already there: refresh its category (still before the flip).
     if (!opt.category.empty() && (!write_category(res.bundle_dir) || !fsync_path(res.bundle_dir, true)))
       return fail(Status::kIo, err_text("write category"));
+    if (opt.write_catalog_meta && (!write_file_atomic(res.bundle_dir, kCatalogMetaFileName, meta_text) || !fsync_path(res.bundle_dir, true)))
+      return fail(Status::kIo, err_text("write catalog.meta"));
   } else {
     if (::rename(stage_dir.c_str(), res.bundle_dir.c_str()) != 0) {
       const bool xdev = errno == EXDEV;
@@ -411,6 +479,7 @@ ImportResult import_sfz(const ImportOptions& opt) {
   if (opt.sfz_path.empty() || opt.root.empty())
     return fail(Status::kInvalidArgument, "an SFZ file and a data root are required");
   if (const std::string why = category_problem(opt.category); !why.empty()) return fail(Status::kInvalidArgument, why);
+  if (const std::string why = meta_options_problem(opt); !why.empty()) return fail(Status::kInvalidArgument, why);
   // Suggestion only (Story 5.5): never stored; the caller decides the category.
   res.suggested_category =
       suggest_category(suggest_input_for_path(opt.sfz_path, sfz_metadata_strings(opt.sfz_path))).value_or(fmt::Category::kNone);
@@ -458,6 +527,11 @@ ImportResult import_sfz(const ImportOptions& opt) {
   const fs::path rel = sfz_abs.lexically_relative(base);
   if (rel.empty() || *rel.begin() == "..")
     return fail(Status::kInvalidArgument, "the SFZ file is not inside the base directory");
+
+  // An override for an instrument this file does not have is refused before anything is written.
+  for (const auto& o : opt.instrument_meta)
+    if (o.key != rel.generic_string())
+      return fail(Status::kInvalidArgument, "unknown_instrument_key: '" + o.key + "' is not an instrument of " + opt.sfz_path);
 
   // 2. Directories and the exclusive lock.
   RootLock rl;
@@ -569,6 +643,7 @@ ImportResult import_sf2(const ImportOptions& opt) {
   if (opt.sfz_path.empty() || opt.root.empty())
     return fail(Status::kInvalidArgument, "an SF2 file and a data root are required");
   if (const std::string why = category_problem(opt.category); !why.empty()) return fail(Status::kInvalidArgument, why);
+  if (const std::string why = meta_options_problem(opt); !why.empty()) return fail(Status::kInvalidArgument, why);
   {
     struct stat st;
     if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
@@ -615,6 +690,12 @@ ImportResult import_sf2(const ImportOptions& opt) {
   std::error_code ec;
   const fs::path abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
   if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
+
+  for (const auto& o : opt.instrument_meta) {
+    bool known = false;
+    for (const auto& p : parsed.presets) known |= p.key == o.key;
+    if (!known) return fail(Status::kInvalidArgument, "unknown_instrument_key: '" + o.key + "' is not a preset of " + opt.sfz_path);
+  }
 
   // 2. Directories and the exclusive lock.
   RootLock rl;
@@ -681,6 +762,39 @@ ImportResult import_sf2(const ImportOptions& opt) {
     return {};
   };
   return stage_and_publish(opt, res, rl, writer, verify_content);
+}
+
+CliWriterGuard::CliWriterGuard(const std::string& root) {
+  const std::string lib = (fs::path(root) / host::kLibDirName).string();
+  const std::string path = lib + "/" + kServiceLockFileName;
+  // Always created and always held shared for the whole run: a service that starts during this import then cannot take its exclusive lock, and so cannot
+  // reconcile (delete `.staging`) under the running import. A root that does not exist is left to the importer's own error.
+  if (::mkdir(lib.c_str(), 0755) != 0 && errno != EEXIST) {
+    if (errno != ENOENT && errno != ENOTDIR) {
+      ok_ = false;
+      err_ = err_text("cannot create " + lib);
+    }
+    return;
+  }
+  fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+  if (fd_ < 0) {
+    ok_ = false;
+    err_ = err_text("cannot open " + path);
+    return;
+  }
+  if (::flock(fd_, LOCK_SH | LOCK_NB) != 0) {
+    ok_ = false;
+    err_ = errno == EWOULDBLOCK
+               ? "the librarian service is running on " + root + " (it owns " + lib +
+                     " and the catalog): import through the Library API (ImportRequest), or stop the service first"
+               : err_text("cannot lock " + path);
+    ::close(fd_);
+    fd_ = -1;
+  }
+}
+
+CliWriterGuard::~CliWriterGuard() {
+  if (fd_ >= 0) ::close(fd_);
 }
 
 }  // namespace velora::librarian

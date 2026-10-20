@@ -15,10 +15,18 @@
 // asserts the moment is safe), or at once when a report arrives while not playing, and at orderly shutdown.
 // A Live Set deletion (LiveSetDeleted, Reconcile) removes the favorite row at once; its recent row is removed from RAM at once and from SQLite
 // with the same rule as any Recent write (deferred while playing). When idle both tables are cleaned in one transaction.
+//
+// Story 5.6: the service is also the ONLY writer of `<data>/lib` and of the libraries/instruments catalog tables. Before it serves, start() takes
+// an exclusive flock on `<data>/lib/.service.lock` (the `librarian import` CLI refuses to run while it is held) and runs the reconcile pass
+// (library_reconcile.hpp). ImportRequest queues a job; ONE worker thread runs jobs serially (FIFO, bounded queue) through the Epic 1 importer
+// (import_file: convert, stage, verify bit-exact, fsync, rename, flip `current`) and hands every finished item back to the service thread, which
+// writes the catalog rows (one transaction) only after that, then pushes ImportProgress events to the requester and to subscribers. Catalog access
+// stays on the service thread; the worker never touches SQLite.
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -27,11 +35,19 @@
 
 #include "library_api.pb.h"
 #include "velora/librarian/catalog.hpp"
+#include "velora/librarian/library_reconcile.hpp"
+
+namespace velora::librarian::detail {
+struct ImportJob;
+struct WorkerMsg;
+class ImportWorker;
+}  // namespace velora::librarian::detail
 
 namespace velora::librarian {
 
 struct LibraryServiceOptions {
-  std::string data_dir;     // must exist; holds catalog.db and catalog.lock
+  std::string data_dir;     // must exist; the library root: the service owns `<data_dir>/lib` (bundles) and writes nothing else there
+  std::string catalog_dir;  // holds catalog.db and catalog.lock; empty = data_dir. On the board: data_dir /data, catalog_dir /data/catalog
   std::string socket_path;
   std::size_t max_clients = 64;
   int handshake_timeout_ms = 5000;
@@ -42,6 +58,14 @@ struct LibraryServiceOptions {
   // playing_lease_ms > 0 it also expires that long after the last SetPlaying(true) (default 0 = no timeout). `clock` replaces steady_clock (tests).
   int playing_lease_ms = 0;
   std::function<std::chrono::steady_clock::time_point()> clock;
+  // Story 5.6.
+  std::size_t max_queued_jobs = 16;
+  std::size_t reply_budget_bytes = 200000;  // size at which a ListLibraries / ListInstruments reply is cut (`more` is set); tests lower it  // jobs waiting behind the running one; one more is refused with QUEUE_FULL
+  // Test hook (crash campaign): called at every boundary of an import with the point name, the job id and the item index:
+  // "stage-created", "samples-written", "verified", "fsynced", "renamed", "link-created", "link-flipped", "catalog-row-written" (inside the catalog
+  // transaction, before COMMIT), "catalog-committed", "job-finished"; and "reconcile.cleaned|add|update|remove" (job 0) during the startup pass. It
+  // may _exit() the process or block (tests); it runs on the worker thread for the file points and on the service thread for the others.
+  std::function<void(const char* point, std::uint64_t job_id, std::size_t item)> import_point_hook;
 };
 
 class LibraryService {
@@ -69,6 +93,8 @@ class LibraryService {
   std::uint64_t accepted() const noexcept { return accepted_.load(std::memory_order_relaxed); }
   std::uint64_t frames_in() const noexcept { return frames_in_.load(std::memory_order_relaxed); }
   std::uint64_t dropped_slow() const noexcept { return dropped_slow_.load(std::memory_order_relaxed); }
+  // What the startup reconcile pass did (valid after start()).
+  const ReconcileReport& startup_reconcile() const noexcept { return reconcile_report_; }
   // Catalog write counters (valid after start(); the counters outlive stop()).
   std::uint64_t recent_writes() const noexcept { return recent_writes_.load(std::memory_order_relaxed); }
   std::uint64_t favorite_writes() const noexcept { return favorite_writes_.load(std::memory_order_relaxed); }
@@ -104,6 +130,19 @@ class LibraryService {
   void check_playing_lease();
   std::chrono::steady_clock::time_point now() const { return opts_.clock ? opts_.clock() : std::chrono::steady_clock::now(); }
   void sync_counters();
+  // --- Story 5.6 ---
+  void handle_import_request(Client& c, std::uint64_t rid, const ws::v1::ImportRequest& req);
+  void handle_list_libraries(Client& c, std::uint64_t rid, const ws::v1::ListLibraries& req);
+  void handle_list_instruments(Client& c, std::uint64_t rid, const ws::v1::ListInstruments& req);
+  void handle_cancel_import(Client& c, std::uint64_t rid, std::uint64_t job_id);
+  void process_worker();
+  void on_worker_msg(detail::WorkerMsg& m);
+  void push_job_event(detail::ImportJob& job, const ws::v1::ImportItemResult* item);
+  void finish_job(detail::ImportJob& job, bool all_items_processed);
+  void trim_finished_jobs();
+  void point(const char* name, std::uint64_t job, std::size_t item) {
+    if (opts_.import_point_hook) opts_.import_point_hook(name, job, item);
+  }
 
   LibraryServiceOptions opts_;
   Catalog::FaultHook fault_hook_;
@@ -121,6 +160,13 @@ class LibraryService {
   std::chrono::steady_clock::time_point playing_since_{};
   CatalogStatus storage_status_ = CatalogStatus::kOk;  // the status behind the last failed write
   bool recent_dirty_ = false;   // RAM Recent differs from what SQLite holds
+  std::atomic<bool> stopping_{false};  // stop() has begun: new imports are refused (SHUTTING_DOWN)
+  int lib_lock_fd_ = -1;
+  ReconcileReport reconcile_report_;
+  std::unique_ptr<detail::ImportWorker> worker_;
+  std::map<std::uint64_t, std::shared_ptr<detail::ImportJob>> jobs_;  // service thread only; finished jobs are trimmed to the newest 64
+  std::uint64_t next_job_id_ = 1, cur_job_ = 0;
+  std::size_t cur_item_ = 0;
   std::atomic<std::uint64_t> accepted_{0}, frames_in_{0}, dropped_slow_{0}, recent_writes_{0}, favorite_writes_{0};
 };
 

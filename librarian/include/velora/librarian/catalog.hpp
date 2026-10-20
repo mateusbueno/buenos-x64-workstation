@@ -1,10 +1,15 @@
 #pragma once
 // The librarian catalog (Story 4.11, AR26 partial, AD-9): a SQLite database in WAL mode at `<data>/catalog.db` that only the `librarian` service
-// writes. This story creates only the two tables it needs; the library/instrument tables are Story 5.6.
+// writes.
 //
-//   meta(key TEXT PRIMARY KEY, value INTEGER)              'schema_version' (= kSchemaVersion) and 'next_seq', the persisted sequence counter
-//   live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL)
-//   live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL)
+//   meta(key TEXT PRIMARY KEY, value INTEGER)              'schema_version' (= kCatalogSchemaVersion) and 'next_seq', the persisted sequence counter
+//   live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL)            (schema 1)
+//   live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL)         (schema 1)
+//   libraries(library_id TEXT PRIMARY KEY, name, source_kind 'sfz'|'sf2', source_path, bundle_id, instrument_count, imported_seq)   (schema 2, Story 5.6)
+//   instruments(library_id -> libraries ON DELETE CASCADE, instrument_key, name, category CHECK 1..17, sample_count, region_count, bytes,
+//               PRIMARY KEY(library_id, instrument_key))                                                                     (schema 2, Story 5.6)
+// Search tables come with Story 5.16. A library row and its instrument rows are written in ONE transaction, after the bundle is published; the rows
+// can always be rebuilt from the bundles (library_index.hpp, library_reconcile.hpp).
 //
 // Ordering uses sequence numbers from the persisted counter, never wall-clock time (the unit has no RTC). Every write is one transaction
 // (BEGIN IMMEDIATE ... COMMIT) with synchronous=FULL, so a committed write has been fsynced through the WAL, and a process killed mid-write
@@ -14,8 +19,8 @@
 // (this or another process) gets kBusy. A Catalog is used from one thread at a time (the service thread); the write counters are atomic.
 //
 // Version policy: a database whose schema_version is newer than kSchemaVersion is refused (kSchemaTooNew) and left untouched; an older one is
-// migrated forward after a PRAGMA quick_check (the only integrity check; none on a matching version). Version 1 is the only version, so the
-// migration step is a stub. A file that is not a SQLite database, or a SQLite database that is not a catalog, is refused (kNotACatalog /
+// migrated forward after a PRAGMA quick_check (the only integrity check; none on a matching version). Version 2 (Story 5.6) adds the libraries and
+// instruments tables and keeps every favorite and recent row; migrations are forward-only, one transaction each. A file that is not a SQLite database, or a SQLite database that is not a catalog, is refused (kNotACatalog /
 // kCorrupt); it is never overwritten.
 //
 // No exception crosses this API: every call returns a typed CatalogStatus.
@@ -28,12 +33,14 @@
 #include <string>
 #include <vector>
 
+#include "velora/librarian/library_records.hpp"
+
 struct sqlite3;
 struct sqlite3_stmt;
 
 namespace velora::librarian {
 
-inline constexpr std::uint32_t kCatalogSchemaVersion = 1;
+inline constexpr std::uint32_t kCatalogSchemaVersion = 2;
 inline constexpr std::size_t kMaxRecent = 20;
 // 2048 favorites of 64-byte ids (~135 KB) always fit one Library API frame (262144 bytes) together with Recent.
 inline constexpr std::size_t kMaxFavorites = 2048;
@@ -53,6 +60,8 @@ enum class CatalogStatus : std::uint8_t {
   kInvalidId,
   kLimitReached,   // too many favorites
   kFaultInjected,  // the test hook failed the write; nothing changed
+  kConstraint,     // a library / instrument row violates the schema (category outside 1..17, empty id, unknown source kind...); nothing changed
+  kNotFound,       // no such library
   kCount
 };
 const char* to_string(CatalogStatus s);
@@ -71,9 +80,11 @@ struct ReconcileResult {
 
 class Catalog {
  public:
+  using FaultHook = std::function<bool(const char* point)>;  // see set_fault_hook
   // Opens (creating when absent) `<data_dir>/catalog.db`. `data_dir` must exist. `busy_timeout_ms` is SQLite's busy handler (another connection
   // reading the file, e.g. a diagnostic tool).
-  static CatalogStatus open(const std::string& data_dir, std::unique_ptr<Catalog>& out, int busy_timeout_ms = 2000);
+  // `open_hook` is installed before the schema is examined, so a migration can be failed by name ("migrate.before_commit") in tests.
+  static CatalogStatus open(const std::string& data_dir, std::unique_ptr<Catalog>& out, int busy_timeout_ms = 2000, FaultHook open_hook = {});
   ~Catalog();
   Catalog(const Catalog&) = delete;
   Catalog& operator=(const Catalog&) = delete;
@@ -95,15 +106,26 @@ class Catalog {
   CatalogStatus remove_live_set(const std::string& id, RemoveResult& out);                    // both tables, one transaction
   CatalogStatus reconcile(const std::set<std::string>& existing, ReconcileResult& out);       // removes the rows of every id not in `existing`
 
+  // --- libraries (schema 2, Story 5.6) ---
+  // Inserts or replaces the library row and ALL its instrument rows in one transaction. `rec.imported_seq` is set by the catalog: a new library gets the
+  // next sequence number, an existing one whose content differs gets a new one (it was imported again), one with identical content is left untouched
+  // (changed=false, no write). Every instrument needs a category 1..17 (kConstraint otherwise, the transaction rolled back).
+  CatalogStatus publish_library(LibraryRecord& rec, bool& changed);
+  CatalogStatus remove_library(const std::string& library_id, bool& removed);                        // cascades to the instrument rows
+  CatalogStatus list_libraries(std::vector<LibraryRecord>& out, bool with_instruments = false);      // ascending imported_seq
+  CatalogStatus get_library(const std::string& library_id, LibraryRecord& out, bool& found);         // with its instruments
+  // A page of the instruments of one library (ordered by instrument_key; get_library returns them in manifest order); `total` = all of them, `found` false when the library does not exist.
+  CatalogStatus list_instruments(const std::string& library_id, std::uint32_t offset, std::uint32_t limit, std::vector<InstrumentRecord>& out,
+                                 std::uint32_t& total, bool& found);
+
   // Write counters (committed write transactions; reads and idempotent no-ops do not count).
   std::uint64_t favorite_writes() const noexcept { return favorite_writes_.load(std::memory_order_relaxed); }
   std::uint64_t recent_writes() const noexcept { return recent_writes_.load(std::memory_order_relaxed); }
   std::uint64_t total_writes() const noexcept { return favorite_writes() + recent_writes() + other_writes_.load(std::memory_order_relaxed); }
 
   // Test hook (crash injection): called with a point name inside every write transaction, after the rows are written and before COMMIT
-  // ("favorite.before_commit", "recent.before_commit", "remove.before_commit", "reconcile.before_commit") and before the first row of Recent
-  // ("recent.begin"). A hook may _exit() the process; returning true fails the write (rolled back, kFaultInjected).
-  using FaultHook = std::function<bool(const char* point)>;
+  // ("favorite.before_commit", "recent.before_commit", "remove.before_commit", "reconcile.before_commit", "library.before_commit",
+  // "library.remove_before_commit") and before the first row of Recent ("recent.begin"). A hook may _exit() the process; returning true fails the write (rolled back, kFaultInjected).
   void set_fault_hook(FaultHook h) { fault_ = std::move(h); }
 
  private:
@@ -118,6 +140,7 @@ class Catalog {
   CatalogStatus commit();
   void rollback();
   CatalogStatus next_seq(std::int64_t& out);  // inside a transaction
+  CatalogStatus read_instruments(const std::string& id, std::uint32_t offset, std::uint32_t limit, std::vector<InstrumentRecord>& out, bool by_key = false);
   CatalogStatus prepare(sqlite3_stmt*& st, const char* sql);
   bool fault(const char* point) { return fault_ && fault_(point); }
   void close();

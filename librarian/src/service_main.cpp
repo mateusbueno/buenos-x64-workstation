@@ -1,7 +1,11 @@
 // librarian-service (Story 4.11): the librarian host process. Serves the Library API (proto/library_api.proto) on a Unix domain socket and owns
 // the SQLite catalog `<data>/catalog.db`. On the board it runs as the systemd unit librarian/systemd/velora-librarian.service.
 //
-//   librarian-service --data DIR --socket PATH [--socket-group NAME]
+//   librarian-service --data DIR --socket PATH [--catalog-dir DIR] [--socket-group NAME]
+//
+// DIR is the library root: the service is the only writer of DIR/lib (Story 5.6: imports, atomic publish) and, in --catalog-dir (default DIR), of
+// catalog.db. On the board DIR is /data and the catalog directory /data/catalog. At start it takes DIR/lib/.service.lock, then reconciles the catalog with
+// the bundles under DIR/lib before it serves.
 //
 // The socket is 0600 (dev). With --socket-group the socket gets that group and mode 0660 (the systemd unit passes `velora`, so ui/engine/studio can connect).
 //
@@ -16,16 +20,18 @@
 #include "velora/librarian/library_service.hpp"
 
 int main(int argc, char** argv) {
-  std::string data, socket_path, socket_group;
+  std::string data, socket_path, socket_group, catalog_dir;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--data") && i + 1 < argc) {
       data = argv[++i];
     } else if (!std::strcmp(argv[i], "--socket") && i + 1 < argc) {
       socket_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--catalog-dir") && i + 1 < argc) {
+      catalog_dir = argv[++i];
     } else if (!std::strcmp(argv[i], "--socket-group") && i + 1 < argc) {
       socket_group = argv[++i];
     } else {
-      std::fprintf(stderr, "usage: librarian-service --data DIR --socket PATH [--socket-group NAME]\n");
+      std::fprintf(stderr, "usage: librarian-service --data DIR --socket PATH [--catalog-dir DIR] [--socket-group NAME]\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
@@ -43,6 +49,7 @@ int main(int argc, char** argv) {
 
   velora::librarian::LibraryServiceOptions opts;
   opts.data_dir = data;
+  opts.catalog_dir = catalog_dir;
   opts.socket_path = socket_path;
   opts.socket_group = socket_group;
   velora::librarian::LibraryService service(opts);
@@ -55,8 +62,10 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "librarian-service: %s\n", err.c_str());
     return 1;
   }
-  std::printf("librarian-service: Library API (ws.v1) on %s, catalog %s/%s\n", socket_path.c_str(), data.c_str(),
-              velora::librarian::kCatalogFile);
+  const auto& rec = service.startup_reconcile();
+  std::printf("librarian-service: Library API (ws.v1) on %s, catalog %s/%s; reconcile: %d staging leftovers and %d temp links removed, %zu rows added, %zu updated, %zu removed, %zu not cataloged\n",
+              socket_path.c_str(), (catalog_dir.empty() ? data : catalog_dir).c_str(), velora::librarian::kCatalogFile, rec.staging_removed, rec.tmp_links_removed,
+              rec.rows_added, rec.rows_updated, rec.rows_removed, rec.skipped.size());
   std::fflush(stdout);
   int sig = 0;
   sigwait(&set, &sig);

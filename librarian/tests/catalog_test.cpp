@@ -1,6 +1,8 @@
 // Story 4.11: the librarian Catalog (SQLite WAL). Schema creation, the version policy, favorites (idempotent, ordered by added_seq), Recent (order,
 // dedupe, cap of 20), persistence across reopen, the single-writer lock (same and another process), corrupt / foreign files, the delete cascade,
-// fault injection and crash recovery (fork + kill mid-write). No timing assertions.
+// fault injection and crash recovery (fork + kill mid-write). Story 5.6: the schema 1 -> 2 migration (favorites and recent kept), the libraries and
+// instruments tables (constraints: category 0 and 18 refused, cascade, one transaction per library, content-identical republish writes nothing, fault
+// and crash inside the library transaction). No timing assertions.
 #include <fcntl.h>
 #include <sqlite3.h>
 #include <sys/wait.h>
@@ -47,7 +49,8 @@ struct Raw {
   sqlite3* db = nullptr;
   explicit Raw(const std::string& path) { CHECK(sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK); }
   ~Raw() { sqlite3_close(db); }
-  std::string one(const char* sql) {
+  std::string one(const std::string& sql_text) {
+    const char* sql = sql_text.c_str();
     sqlite3_stmt* st = nullptr;
     std::string out = "<err>";
     if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK && sqlite3_step(st) == SQLITE_ROW) {
@@ -64,20 +67,21 @@ void test_schema() {
   TempDir d;
   {
     auto c = open_ok(d.path);
-    CHECK(c && c->schema_version() == 1 && !c->migrated());
+    CHECK(c && c->schema_version() == kCatalogSchemaVersion && !c->migrated());
     CHECK(c && favs(*c).empty() && recs(*c).empty());
     CHECK(c && c->total_writes() == 0);
     // Reading the file while the catalog is open: WAL, user_version, exactly the tables of this story.
     Raw r(d.sub("catalog.db"));
     CHECK(r.one("PRAGMA journal_mode") == "wal");
-    CHECK(r.one("PRAGMA user_version") == "1");
-    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "1");
+    CHECK(r.one("PRAGMA user_version") == "2");
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "2");
+    CHECK(r.one("PRAGMA foreign_keys") == "0");  // a separate connection; the catalog's own connection enables them (see test_libraries)
     CHECK(r.one("SELECT group_concat(name) FROM (SELECT name FROM sqlite_master WHERE type='table' ORDER BY name)") ==
-          "live_set_favorites,live_set_recent,meta");
+          "instruments,libraries,live_set_favorites,live_set_recent,meta");
   }
   // Reopen: same schema, nothing migrated.
   auto c = open_ok(d.path);
-  CHECK(c && c->schema_version() == 1 && !c->migrated());
+  CHECK(c && c->schema_version() == kCatalogSchemaVersion && !c->migrated());
 }
 
 void test_version_policy() {
@@ -85,14 +89,14 @@ void test_version_policy() {
   { auto c = open_ok(d.path); }
   {
     Raw r(d.sub("catalog.db"));
-    r.exec("UPDATE meta SET value=2 WHERE key='schema_version'");
+    r.exec("UPDATE meta SET value=3 WHERE key='schema_version'");
   }
   std::unique_ptr<Catalog> c;
   CHECK(Catalog::open(d.path, c) == CatalogStatus::kSchemaTooNew);
   CHECK(!c);
-  {  // refused and untouched: still version 2 with its data
+  {  // refused and untouched: still version 3 with its data
     Raw r(d.sub("catalog.db"));
-    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "2");
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "3");
     r.exec("UPDATE meta SET value=0 WHERE key='schema_version'");
   }
   CHECK(Catalog::open(d.path, c) == CatalogStatus::kNotACatalog);  // below 1 is not a version this software ever wrote
@@ -101,11 +105,11 @@ void test_version_policy() {
     r.exec("DELETE FROM meta WHERE key='schema_version'");
   }
   CHECK(Catalog::open(d.path, c) == CatalogStatus::kNotACatalog);
-  {  // a file the policy accepts again
+  {  // a file the policy accepts again (version 1 of a v2 file: the migration step tolerates tables that are already there)
     Raw r(d.sub("catalog.db"));
     r.exec("INSERT INTO meta(key, value) VALUES('schema_version', 1)");
   }
-  CHECK(Catalog::open(d.path, c) == CatalogStatus::kOk);
+  CHECK(Catalog::open(d.path, c) == CatalogStatus::kOk && c->migrated());
 }
 
 void test_favorites() {
@@ -314,7 +318,7 @@ void test_refusal_touches_nothing() {
   check("newer schema", [&](const std::string& p) {
     const std::string dir = p.substr(0, p.rfind('/'));
     { std::unique_ptr<Catalog> c; CHECK(Catalog::open(dir, c) == CatalogStatus::kOk); }
-    sql(p, "UPDATE meta SET value=2 WHERE key='schema_version'", false);
+    sql(p, "UPDATE meta SET value=3 WHERE key='schema_version'", false);
   }, CatalogStatus::kSchemaTooNew);
   check("meta without a valid version", [&](const std::string& p) { sql(p, "CREATE TABLE meta(key TEXT PRIMARY KEY, value INTEGER)", true); },
         CatalogStatus::kNotACatalog);
@@ -450,6 +454,222 @@ void test_crash_recovery() {
 
 }  // namespace
 
+LibraryRecord make_lib(const std::string& id, const std::string& bundle, unsigned n, unsigned cat = 1) {
+  LibraryRecord r;
+  r.library_id = id;
+  r.name = "Lib " + id;
+  r.source_kind = "sfz";
+  r.source_path = "/src/" + id + ".sfz";
+  r.bundle_id = bundle;
+  for (unsigned i = 0; i < n; ++i) {
+    InstrumentRecord ir;
+    ir.key = "k" + std::to_string(i);
+    ir.name = "Instrument " + std::to_string(i);
+    ir.category = cat;
+    ir.sample_count = 2 + i;
+    ir.region_count = 3 + i;
+    ir.bytes = 1000 + i;
+    r.instruments.push_back(ir);
+  }
+  return r;
+}
+
+void test_migration_v1_to_v2() {
+  TempDir d;
+  {  // a genuine schema 1 file, exactly what Story 4.11 wrote
+    sqlite3* h = nullptr;
+    CHECK(sqlite3_open(d.sub("catalog.db").c_str(), &h) == SQLITE_OK);
+    CHECK(sqlite3_exec(h,
+                       "PRAGMA journal_mode=WAL;"
+                       "CREATE TABLE meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL);"
+                       "CREATE TABLE live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL);"
+                       "CREATE TABLE live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL);"
+                       "INSERT INTO meta(key, value) VALUES('schema_version', 1), ('next_seq', 6);"
+                       "INSERT INTO live_set_favorites VALUES('fav-a', 1), ('fav-b', 3);"
+                       "INSERT INTO live_set_recent VALUES('rec-a', 2), ('rec-b', 4), ('rec-c', 5);"
+                       "PRAGMA user_version=1;",
+                       nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(h);
+  }
+  {
+    auto c = open_ok(d.path);
+    CHECK(c && c->migrated() && c->schema_version() == 2);
+    CHECK(c && favs(*c) == Ids({"fav-a", "fav-b"}));
+    CHECK(c && recs(*c) == Ids({"rec-c", "rec-b", "rec-a"}));
+    std::vector<LibraryRecord> rows;
+    CHECK(c && c->list_libraries(rows, true) == CatalogStatus::kOk && rows.empty());  // the new tables exist and are empty
+    bool ch = false;
+    CHECK(c && c->add_favorite("fav-c", ch) == CatalogStatus::kOk && ch);  // and the old ones keep working, sequence numbers continue
+    CHECK(c && favs(*c) == Ids({"fav-a", "fav-b", "fav-c"}));
+    Raw r(d.sub("catalog.db"));
+    CHECK(r.one("PRAGMA user_version") == "2");
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "2");
+    CHECK(r.one("SELECT group_concat(name) FROM (SELECT name FROM sqlite_master WHERE type='table' ORDER BY name)") ==
+          "instruments,libraries,live_set_favorites,live_set_recent,meta");
+  }
+  auto c = open_ok(d.path);  // opened again: current, nothing migrated, data intact
+  CHECK(c && !c->migrated() && c->schema_version() == 2 && favs(*c).size() == 3);
+  // The injection point "migrate.before_commit" by name: the hook fails the migration step, which rolls back and leaves the file at schema 1.
+  {
+    TempDir f;
+    sqlite3* h = nullptr;
+    sqlite3_open(f.sub("catalog.db").c_str(), &h);
+    sqlite3_exec(h,
+                 "PRAGMA journal_mode=WAL;CREATE TABLE meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL);"
+                 "CREATE TABLE live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL);"
+                 "CREATE TABLE live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL);"
+                 "INSERT INTO meta(key, value) VALUES('schema_version', 1), ('next_seq', 2);INSERT INTO live_set_favorites VALUES('x', 1);PRAGMA user_version=1;",
+                 nullptr, nullptr, nullptr);
+    sqlite3_close(h);
+    std::string seen;
+    std::unique_ptr<Catalog> bad;
+    const CatalogStatus st = Catalog::open(f.path, bad, 2000, [&](const char* p) {
+      seen = p;
+      return seen == "migrate.before_commit";
+    });
+    CHECK(st == CatalogStatus::kFaultInjected && !bad && seen == "migrate.before_commit");
+    Raw r(f.sub("catalog.db"));
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "1" && r.one("PRAGMA user_version") == "1");
+    CHECK(r.one("SELECT count(*) FROM sqlite_master WHERE name='libraries'") == "0");
+    auto ok = open_ok(f.path);  // and without the fault the same file migrates, keeping its favorite
+    CHECK(ok && ok->migrated() && favs(*ok) == Ids({"x"}));
+  }
+  // A migration that fails leaves the old version untouched (a hostile index of the same name blocks it).
+  TempDir e;
+  {
+    sqlite3* h = nullptr;
+    sqlite3_open(e.sub("catalog.db").c_str(), &h);
+    sqlite3_exec(h,
+                 "PRAGMA journal_mode=WAL;CREATE TABLE meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL);"
+                 "CREATE TABLE live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL);"
+                 "CREATE TABLE live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL);"
+                 "INSERT INTO meta(key, value) VALUES('schema_version', 1), ('next_seq', 2);INSERT INTO live_set_favorites VALUES('x', 1);",
+                 nullptr, nullptr, nullptr);
+    sqlite3_close(h);
+  }
+  {
+    // Block the migration with an index that already has the name of a table the step creates: the step cannot create the schema, rolls back, reports it.
+    sqlite3* h = nullptr;
+    sqlite3_open(e.sub("catalog.db").c_str(), &h);
+    sqlite3_exec(h, "CREATE INDEX instruments ON live_set_favorites(added_seq)", nullptr, nullptr, nullptr);
+    sqlite3_close(h);
+    std::unique_ptr<Catalog> bad;
+    const CatalogStatus st = Catalog::open(e.path, bad);
+    CHECK(st == CatalogStatus::kMigrationFailed && !bad);
+    Raw r(e.sub("catalog.db"));
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "1");
+    CHECK(r.one("SELECT count(*) FROM live_set_favorites") == "1");
+    CHECK(r.one("SELECT count(*) FROM sqlite_master WHERE name='libraries'") == "0");  // the libraries table of the failed step was rolled back
+  }
+}
+
+void test_libraries_and_constraints() {
+  TempDir d;
+  auto c = open_ok(d.path);
+  CHECK(c);
+  if (!c) return;
+  const std::string id1 = uid(1), id2 = uid(2), b1(64, 'a'), b2(64, 'b');
+  LibraryRecord a = make_lib(id1, b1, 3);
+  bool changed = false;
+  CHECK(c->publish_library(a, changed) == CatalogStatus::kOk && changed && a.imported_seq >= 1);
+  LibraryRecord got;
+  bool found = false;
+  CHECK(c->get_library(id1, got, found) == CatalogStatus::kOk && found && same_content(a, got) && got.imported_seq == a.imported_seq);
+  // Content-identical republish: no transaction, same sequence number.
+  const auto writes = c->total_writes();
+  LibraryRecord same = make_lib(id1, b1, 3);
+  CHECK(c->publish_library(same, changed) == CatalogStatus::kOk && !changed && same.imported_seq == a.imported_seq && c->total_writes() == writes);
+  // Different content (new bundle, fewer instruments): replaced in one transaction, instrument rows exactly the new set, a newer sequence number.
+  LibraryRecord upd = make_lib(id1, b2, 2, 3);
+  CHECK(c->publish_library(upd, changed) == CatalogStatus::kOk && changed && upd.imported_seq > a.imported_seq);
+  CHECK(c->get_library(id1, got, found) == CatalogStatus::kOk && same_content(upd, got) && got.instruments.size() == 2);
+  LibraryRecord other = make_lib(id2, b1, 1, 17);
+  CHECK(c->publish_library(other, changed) == CatalogStatus::kOk && changed);
+  std::vector<LibraryRecord> rows;
+  CHECK(c->list_libraries(rows, false) == CatalogStatus::kOk && rows.size() == 2 && rows[0].library_id == id1 && rows[1].library_id == id2);
+  CHECK(rows[0].instrument_count() == 2 && rows[1].instrument_count() == 1);
+  std::vector<InstrumentRecord> page;
+  std::uint32_t total = 0;
+  CHECK(c->list_instruments(id1, 1, 10, page, total, found) == CatalogStatus::kOk && found && total == 2 && page.size() == 1 && page[0].key == "k1");
+  CHECK(c->list_instruments("nope", 0, 10, page, total, found) == CatalogStatus::kOk && !found && page.empty());
+
+  // Constraints: a category outside 1..17 (0 = none, 18) refuses the whole library, nothing of it is stored, the previous rows stay.
+  for (unsigned bad : {0u, 18u, 255u}) {
+    LibraryRecord r = make_lib(uid(3), b1, 3);
+    r.instruments[2].category = bad;
+    CHECK(c->publish_library(r, changed) == CatalogStatus::kConstraint && !changed);
+    LibraryRecord r2 = make_lib(id1, b1, 3);  // an update that fails on its last instrument must leave the old rows
+    r2.instruments[2].category = bad;
+    CHECK(c->publish_library(r2, changed) == CatalogStatus::kConstraint);
+    CHECK(c->get_library(id1, got, found) == CatalogStatus::kOk && same_content(upd, got));
+    CHECK(c->get_library(uid(3), got, found) == CatalogStatus::kOk && !found);
+  }
+  {
+    LibraryRecord dup = make_lib(uid(4), b1, 2);
+    dup.instruments[1].key = dup.instruments[0].key;  // primary key (library_id, instrument_key)
+    CHECK(c->publish_library(dup, changed) == CatalogStatus::kConstraint);
+    LibraryRecord kind = make_lib(uid(4), b1, 1);
+    kind.source_kind = "wav";
+    CHECK(c->publish_library(kind, changed) == CatalogStatus::kConstraint);
+    LibraryRecord empty = make_lib("", b1, 1);
+    CHECK(c->publish_library(empty, changed) == CatalogStatus::kConstraint);
+    CHECK(c->get_library(uid(4), got, found) == CatalogStatus::kOk && !found);
+  }
+  {  // the table itself rejects category 0 and 18 (not only the C++ layer): a second connection inserts directly
+    Raw r(d.sub("catalog.db"));
+    CHECK(sqlite3_exec(r.db, "INSERT INTO instruments(library_id, instrument_key, name, category) VALUES('x','k','n',0)", nullptr, nullptr, nullptr) == SQLITE_CONSTRAINT);
+    CHECK(sqlite3_exec(r.db, "INSERT INTO instruments(library_id, instrument_key, name, category) VALUES('x','k','n',18)", nullptr, nullptr, nullptr) == SQLITE_CONSTRAINT);
+    CHECK(sqlite3_exec(r.db, "INSERT INTO libraries(library_id, name, source_kind, bundle_id, instrument_count, imported_seq) VALUES('y','n','mp3','b',1,1)", nullptr,
+                       nullptr, nullptr) == SQLITE_CONSTRAINT);
+    CHECK(r.one("SELECT count(*) FROM instruments") == "3");
+  }
+  {  // foreign keys are on for the catalog's own connection: a dangling instrument row is refused, a removed library takes its rows along
+    CHECK(c->remove_library(id1, changed) == CatalogStatus::kOk && changed);
+    CHECK(c->remove_library(id1, changed) == CatalogStatus::kOk && !changed);  // idempotent
+    Raw r(d.sub("catalog.db"));
+    CHECK(r.one("SELECT count(*) FROM instruments WHERE library_id='" + id1 + "'") == "0");
+    CHECK(r.one("SELECT count(*) FROM instruments") == "1");
+  }
+}
+
+void test_library_fault_and_crash() {
+  TempDir d;
+  const std::string id = uid(7), b(64, 'c');
+  {
+    auto c = open_ok(d.path);
+    bool changed = false;
+    c->set_fault_hook([](const char* p) { return std::string(p) == "library.before_commit"; });
+    LibraryRecord r = make_lib(id, b, 2);
+    CHECK(c->publish_library(r, changed) == CatalogStatus::kFaultInjected && !changed);
+    std::vector<LibraryRecord> rows;
+    CHECK(c->list_libraries(rows, true) == CatalogStatus::kOk && rows.empty());  // rolled back: neither the row nor an instrument
+    c->set_fault_hook(nullptr);
+    CHECK(c->publish_library(r, changed) == CatalogStatus::kOk && changed);
+  }
+  // A process killed inside the transaction (rows written, COMMIT not reached) leaves the previous committed state.
+  {
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+      std::unique_ptr<Catalog> c;
+      if (Catalog::open(d.path, c) != CatalogStatus::kOk) ::_exit(3);
+      c->set_fault_hook([](const char* p) {
+        if (std::string(p) == "library.before_commit") ::_exit(137);
+        return false;
+      });
+      LibraryRecord r = make_lib(uid(8), b, 5);
+      bool changed = false;
+      c->publish_library(r, changed);
+      ::_exit(4);
+    }
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 137);
+    auto c = open_ok(d.path);
+    std::vector<LibraryRecord> rows;
+    CHECK(c && c->list_libraries(rows, true) == CatalogStatus::kOk && rows.size() == 1 && rows[0].library_id == id && rows[0].instruments.size() == 2);
+  }
+}
+
 int main() {
   test_schema();
   test_version_policy();
@@ -464,6 +684,9 @@ int main() {
   test_delete_cascade();
   test_fault_injection();
   test_crash_recovery();
+  test_migration_v1_to_v2();
+  test_libraries_and_constraints();
+  test_library_fault_and_crash();
   if (g_fail) {
     std::printf("librarian_catalog_test: %d failure(s)\n", g_fail);
     return 1;

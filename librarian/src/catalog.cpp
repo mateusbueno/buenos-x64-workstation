@@ -28,6 +28,8 @@ const char* to_string(CatalogStatus s) {
     case CatalogStatus::kInvalidId: return "invalid_id";
     case CatalogStatus::kLimitReached: return "limit_reached";
     case CatalogStatus::kFaultInjected: return "fault_injected";
+    case CatalogStatus::kConstraint: return "constraint";
+    case CatalogStatus::kNotFound: return "not_found";
     case CatalogStatus::kCount: break;
   }
   return "unknown";
@@ -54,6 +56,39 @@ struct Reset {
 
 constexpr const char* kSqliteMagic = "SQLite format 3";  // followed by a NUL: 16 bytes
 
+// Schema 2 (Story 5.6). The category range is kMinCategoryId..kMaxCategoryId (1..17); "none" (0) can never be stored. IF NOT EXISTS: a migration that was
+// interrupted cannot happen (one transaction), but a hand-edited version number must not make the step fail on tables that are already there.
+constexpr const char* kSchemaV2Ddl =
+    "CREATE TABLE IF NOT EXISTS libraries("
+    " library_id TEXT PRIMARY KEY CHECK(length(library_id) BETWEEN 1 AND 64),"
+    " name TEXT NOT NULL,"
+    " source_kind TEXT NOT NULL CHECK(source_kind IN ('sfz','sf2')),"
+    " source_path TEXT NOT NULL DEFAULT '',"
+    " bundle_id TEXT NOT NULL CHECK(length(bundle_id) > 0),"
+    " instrument_count INTEGER NOT NULL CHECK(instrument_count >= 0),"
+    " imported_seq INTEGER NOT NULL);"
+    "CREATE TABLE IF NOT EXISTS instruments("
+    " library_id TEXT NOT NULL REFERENCES libraries(library_id) ON DELETE CASCADE,"
+    " instrument_key TEXT NOT NULL CHECK(length(instrument_key) > 0),"
+    " name TEXT NOT NULL,"
+    " category INTEGER NOT NULL CHECK(category BETWEEN 1 AND 17),"
+    " sample_count INTEGER NOT NULL DEFAULT 0,"
+    " region_count INTEGER NOT NULL DEFAULT 0,"
+    " bytes INTEGER NOT NULL DEFAULT 0,"
+    " PRIMARY KEY(library_id, instrument_key));";
+static_assert(kMinCategoryId == 1 && kMaxCategoryId == 17, "the CHECK constraint above encodes the category range");
+
+// A one-shot prepared statement.
+struct Stmt {
+  sqlite3_stmt* st = nullptr;
+  Stmt() = default;
+  Stmt(const Stmt&) = delete;
+  Stmt& operator=(const Stmt&) = delete;
+  ~Stmt() {
+    if (st) sqlite3_finalize(st);
+  }
+};
+
 }  // namespace
 
 CatalogStatus Catalog::map_error(int rc) {
@@ -62,6 +97,7 @@ CatalogStatus Catalog::map_error(int rc) {
     case SQLITE_OK:
     case SQLITE_ROW:
     case SQLITE_DONE: return CatalogStatus::kOk;
+    case SQLITE_CONSTRAINT: return CatalogStatus::kConstraint;
     case SQLITE_NOTADB: return CatalogStatus::kNotACatalog;
     case SQLITE_CORRUPT: return CatalogStatus::kCorrupt;
     case SQLITE_BUSY:
@@ -75,9 +111,10 @@ CatalogStatus Catalog::map_error(int rc) {
   }
 }
 
-CatalogStatus Catalog::open(const std::string& data_dir, std::unique_ptr<Catalog>& out, int busy_timeout_ms) {
+CatalogStatus Catalog::open(const std::string& data_dir, std::unique_ptr<Catalog>& out, int busy_timeout_ms, FaultHook open_hook) {
   out.reset();
   std::unique_ptr<Catalog> c(new Catalog());
+  c->fault_ = std::move(open_hook);
   const CatalogStatus st = c->init(data_dir, busy_timeout_ms);
   if (st != CatalogStatus::kOk) return st;
   out = std::move(c);
@@ -205,6 +242,7 @@ CatalogStatus Catalog::init(const std::string& dir, int busy_timeout_ms) {
     }
   }
   CatalogStatus st = exec("PRAGMA synchronous=FULL");
+  if (st == CatalogStatus::kOk) st = exec("PRAGMA foreign_keys=ON");  // per connection; the instruments cascade with their library
   if (st == CatalogStatus::kOk) st = init_schema();
   if (st == CatalogStatus::kOk) {
     const struct { sqlite3_stmt** s; const char* sql; } stmts[] = {
@@ -357,8 +395,10 @@ CatalogStatus Catalog::init_schema() {
     st = exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL)");
     if (st == CatalogStatus::kOk) st = exec("CREATE TABLE live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL)");
     if (st == CatalogStatus::kOk) st = exec("CREATE TABLE live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL)");
-    if (st == CatalogStatus::kOk) st = exec("INSERT INTO meta(key, value) VALUES('schema_version', 1), ('next_seq', 1)");
-    if (st == CatalogStatus::kOk) st = exec("PRAGMA user_version=1");
+    if (st == CatalogStatus::kOk) st = exec(kSchemaV2Ddl);
+    if (st == CatalogStatus::kOk)
+      st = exec(("INSERT INTO meta(key, value) VALUES('schema_version', " + std::to_string(kCatalogSchemaVersion) + "), ('next_seq', 1)").c_str());
+    if (st == CatalogStatus::kOk) st = exec(("PRAGMA user_version=" + std::to_string(kCatalogSchemaVersion)).c_str());
     if (st != CatalogStatus::kOk) {
       rollback();
       return st;
@@ -427,11 +467,27 @@ CatalogStatus Catalog::init_schema() {
 }
 
 CatalogStatus Catalog::migrate_forward(std::uint32_t from) {
-  // Version 1 is the only version: there is nothing to migrate yet. The loop is the shape later versions fill in (each step one transaction that
-  // also writes the new schema_version and user_version).
+  // Forward only; each step is one transaction that also writes the new schema_version and user_version, so a crash leaves the old or the new
+  // version, never a mix. Step 1 -> 2 (Story 5.6) adds the libraries and instruments tables; favorites and recent rows are not touched.
   for (std::uint32_t v = from; v < kCatalogSchemaVersion; ++v) {
-    last_error_ = "no migration from schema_version " + std::to_string(v);
-    return CatalogStatus::kMigrationFailed;
+    CatalogStatus st = begin();
+    if (st != CatalogStatus::kOk) return st == CatalogStatus::kSql ? CatalogStatus::kMigrationFailed : st;
+    if (v == 1) {
+      st = exec(kSchemaV2Ddl);
+    } else {
+      last_error_ = "no migration from schema_version " + std::to_string(v);
+      rollback();
+      return CatalogStatus::kMigrationFailed;
+    }
+    if (st == CatalogStatus::kOk) st = exec(("UPDATE meta SET value=" + std::to_string(v + 1) + " WHERE key='schema_version'").c_str());
+    if (st == CatalogStatus::kOk) st = exec(("PRAGMA user_version=" + std::to_string(v + 1)).c_str());
+    if (st == CatalogStatus::kOk && fault("migrate.before_commit")) st = CatalogStatus::kFaultInjected;
+    if (st != CatalogStatus::kOk) {
+      rollback();
+      return st == CatalogStatus::kFaultInjected ? st : CatalogStatus::kMigrationFailed;
+    }
+    st = commit();
+    if (st != CatalogStatus::kOk) return st;
   }
   migrated_ = true;
   schema_version_ = kCatalogSchemaVersion;
@@ -651,6 +707,231 @@ CatalogStatus Catalog::reconcile(const std::set<std::string>& existing, Reconcil
   if (st != CatalogStatus::kOk) return st;
   other_writes_.fetch_add(1, std::memory_order_relaxed);
   out = std::move(res);
+  return CatalogStatus::kOk;
+}
+
+// --- libraries (Story 5.6) ------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+void bind_text(sqlite3_stmt* st, int i, const std::string& v) { sqlite3_bind_text(st, i, v.c_str(), static_cast<int>(v.size()), SQLITE_TRANSIENT); }
+
+std::string col_text(sqlite3_stmt* st, int i) {
+  const unsigned char* t = sqlite3_column_text(st, i);
+  return t ? std::string(reinterpret_cast<const char*>(t), static_cast<std::size_t>(sqlite3_column_bytes(st, i))) : std::string();
+}
+
+}  // namespace
+
+CatalogStatus Catalog::read_instruments(const std::string& id, std::uint32_t offset, std::uint32_t limit, std::vector<InstrumentRecord>& out, bool by_key) {
+  out.clear();
+  Stmt q;
+  int rc = sqlite3_prepare_v2(db_,
+                              "SELECT instrument_key, name, category, sample_count, region_count, bytes FROM instruments WHERE library_id=?1 "
+                              "ORDER BY CASE WHEN ?4 THEN instrument_key END, rowid LIMIT ?2 OFFSET ?3",
+                              -1, &q.st, nullptr);
+  if (rc != SQLITE_OK) return map_error(rc);
+  bind_text(q.st, 1, id);
+  sqlite3_bind_int64(q.st, 2, limit == 0 ? -1 : static_cast<sqlite3_int64>(limit));
+  sqlite3_bind_int64(q.st, 3, offset);
+  sqlite3_bind_int(q.st, 4, by_key ? 1 : 0);
+  while ((rc = sqlite3_step(q.st)) == SQLITE_ROW) {
+    InstrumentRecord r;
+    r.key = col_text(q.st, 0);
+    r.name = col_text(q.st, 1);
+    r.category = static_cast<std::uint32_t>(sqlite3_column_int64(q.st, 2));
+    r.sample_count = static_cast<std::uint32_t>(sqlite3_column_int64(q.st, 3));
+    r.region_count = static_cast<std::uint32_t>(sqlite3_column_int64(q.st, 4));
+    r.bytes = static_cast<std::uint64_t>(sqlite3_column_int64(q.st, 5));
+    out.push_back(std::move(r));
+  }
+  return rc == SQLITE_DONE ? CatalogStatus::kOk : map_error(rc);
+}
+
+CatalogStatus Catalog::get_library(const std::string& id, LibraryRecord& out, bool& found) {
+  found = false;
+  out = LibraryRecord{};
+  Stmt q;
+  int rc = sqlite3_prepare_v2(db_, "SELECT library_id, name, source_kind, source_path, bundle_id, imported_seq FROM libraries WHERE library_id=?1", -1,
+                              &q.st, nullptr);
+  if (rc != SQLITE_OK) return map_error(rc);
+  bind_text(q.st, 1, id);
+  rc = sqlite3_step(q.st);
+  if (rc == SQLITE_DONE) return CatalogStatus::kOk;
+  if (rc != SQLITE_ROW) return map_error(rc);
+  LibraryRecord r;
+  r.library_id = col_text(q.st, 0);
+  r.name = col_text(q.st, 1);
+  r.source_kind = col_text(q.st, 2);
+  r.source_path = col_text(q.st, 3);
+  r.bundle_id = col_text(q.st, 4);
+  r.imported_seq = sqlite3_column_int64(q.st, 5);
+  const CatalogStatus st = read_instruments(id, 0, 0, r.instruments);
+  if (st != CatalogStatus::kOk) return st;
+  out = std::move(r);
+  found = true;
+  return CatalogStatus::kOk;
+}
+
+CatalogStatus Catalog::list_libraries(std::vector<LibraryRecord>& out, bool with_instruments) {
+  out.clear();
+  std::vector<LibraryRecord> rows;
+  std::vector<std::uint32_t> counts;
+  {
+    Stmt q;
+    int rc = sqlite3_prepare_v2(db_,
+                                "SELECT library_id, name, source_kind, source_path, bundle_id, instrument_count, imported_seq FROM libraries "
+                                "ORDER BY imported_seq, library_id",
+                                -1, &q.st, nullptr);
+    if (rc != SQLITE_OK) return map_error(rc);
+    while ((rc = sqlite3_step(q.st)) == SQLITE_ROW) {
+      LibraryRecord r;
+      r.library_id = col_text(q.st, 0);
+      r.name = col_text(q.st, 1);
+      r.source_kind = col_text(q.st, 2);
+      r.source_path = col_text(q.st, 3);
+      r.bundle_id = col_text(q.st, 4);
+      counts.push_back(static_cast<std::uint32_t>(sqlite3_column_int64(q.st, 5)));
+      r.imported_seq = sqlite3_column_int64(q.st, 6);
+      rows.push_back(std::move(r));
+    }
+    if (rc != SQLITE_DONE) return map_error(rc);
+  }
+  if (with_instruments) {
+    for (auto& r : rows) {
+      const CatalogStatus st = read_instruments(r.library_id, 0, 0, r.instruments);
+      if (st != CatalogStatus::kOk) return st;
+    }
+  } else {
+    // Listing without the instrument rows still reports how many there are: placeholders keep instrument_count() truthful.
+    for (std::size_t i = 0; i < rows.size(); ++i) rows[i].instruments.assign(counts[i], InstrumentRecord{});
+  }
+  out = std::move(rows);
+  return CatalogStatus::kOk;
+}
+
+CatalogStatus Catalog::list_instruments(const std::string& id, std::uint32_t offset, std::uint32_t limit, std::vector<InstrumentRecord>& out,
+                                        std::uint32_t& total, bool& found) {
+  out.clear();
+  total = 0;
+  found = false;
+  {
+    Stmt q;
+    int rc = sqlite3_prepare_v2(db_, "SELECT instrument_count FROM libraries WHERE library_id=?1", -1, &q.st, nullptr);
+    if (rc != SQLITE_OK) return map_error(rc);
+    bind_text(q.st, 1, id);
+    rc = sqlite3_step(q.st);
+    if (rc == SQLITE_DONE) return CatalogStatus::kOk;
+    if (rc != SQLITE_ROW) return map_error(rc);
+    total = static_cast<std::uint32_t>(sqlite3_column_int64(q.st, 0));
+    found = true;
+  }
+  return read_instruments(id, offset, limit, out, /*by_key=*/true);  // the API order: by instrument_key
+}
+
+CatalogStatus Catalog::publish_library(LibraryRecord& rec, bool& changed) {
+  changed = false;
+  if (rec.library_id.empty() || rec.library_id.size() > 64 || rec.bundle_id.empty()) return CatalogStatus::kConstraint;
+  LibraryRecord have;
+  bool found = false;
+  CatalogStatus st = get_library(rec.library_id, have, found);
+  if (st != CatalogStatus::kOk) return st;
+  if (found && same_content(have, rec)) {
+    rec.imported_seq = have.imported_seq;
+    return CatalogStatus::kOk;
+  }
+  st = begin();
+  if (st != CatalogStatus::kOk) return st;
+  std::int64_t seq = 0;
+  st = next_seq(seq);
+  if (st == CatalogStatus::kOk && found) {
+    Stmt del;
+    int rc = sqlite3_prepare_v2(db_, "DELETE FROM libraries WHERE library_id=?1", -1, &del.st, nullptr);
+    if (rc == SQLITE_OK) {
+      bind_text(del.st, 1, rec.library_id);
+      rc = sqlite3_step(del.st);
+    }
+    if (rc != SQLITE_DONE) st = map_error(rc);  // the foreign key cascade removes its instrument rows
+  }
+  if (st == CatalogStatus::kOk) {
+    Stmt ins;
+    int rc = sqlite3_prepare_v2(db_,
+                                "INSERT INTO libraries(library_id, name, source_kind, source_path, bundle_id, instrument_count, imported_seq) "
+                                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                                -1, &ins.st, nullptr);
+    if (rc == SQLITE_OK) {
+      bind_text(ins.st, 1, rec.library_id);
+      bind_text(ins.st, 2, rec.name);
+      bind_text(ins.st, 3, rec.source_kind);
+      bind_text(ins.st, 4, rec.source_path);
+      bind_text(ins.st, 5, rec.bundle_id);
+      sqlite3_bind_int64(ins.st, 6, rec.instrument_count());
+      sqlite3_bind_int64(ins.st, 7, seq);
+      rc = sqlite3_step(ins.st);
+    }
+    if (rc != SQLITE_DONE) st = map_error(rc);
+  }
+  if (st == CatalogStatus::kOk) {
+    Stmt ins;
+    int rc = sqlite3_prepare_v2(db_,
+                                "INSERT INTO instruments(library_id, instrument_key, name, category, sample_count, region_count, bytes) "
+                                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                                -1, &ins.st, nullptr);
+    for (std::size_t i = 0; rc == SQLITE_OK && i < rec.instruments.size(); ++i) {
+      const InstrumentRecord& r = rec.instruments[i];
+      sqlite3_reset(ins.st);
+      bind_text(ins.st, 1, rec.library_id);
+      bind_text(ins.st, 2, r.key);
+      bind_text(ins.st, 3, r.name);
+      sqlite3_bind_int64(ins.st, 4, r.category);
+      sqlite3_bind_int64(ins.st, 5, r.sample_count);
+      sqlite3_bind_int64(ins.st, 6, r.region_count);
+      sqlite3_bind_int64(ins.st, 7, static_cast<sqlite3_int64>(r.bytes));
+      rc = sqlite3_step(ins.st);
+      if (rc == SQLITE_DONE) rc = SQLITE_OK;
+      else break;
+    }
+    if (rc != SQLITE_OK) st = map_error(rc);
+  }
+  if (st == CatalogStatus::kOk && fault("library.before_commit")) st = CatalogStatus::kFaultInjected;
+  if (st != CatalogStatus::kOk) {
+    rollback();
+    return st;
+  }
+  st = commit();
+  if (st != CatalogStatus::kOk) return st;
+  other_writes_.fetch_add(1, std::memory_order_relaxed);
+  rec.imported_seq = seq;
+  changed = true;
+  return CatalogStatus::kOk;
+}
+
+CatalogStatus Catalog::remove_library(const std::string& id, bool& removed) {
+  removed = false;
+  CatalogStatus st = begin();
+  if (st != CatalogStatus::kOk) return st;
+  int changes = 0;
+  {
+    Stmt del;
+    int rc = sqlite3_prepare_v2(db_, "DELETE FROM libraries WHERE library_id=?1", -1, &del.st, nullptr);
+    if (rc == SQLITE_OK) {
+      bind_text(del.st, 1, id);
+      rc = sqlite3_step(del.st);
+      changes = sqlite3_changes(db_);
+    }
+    if (rc != SQLITE_DONE) st = map_error(rc);
+  }
+  if (st == CatalogStatus::kOk && fault("library.remove_before_commit")) st = CatalogStatus::kFaultInjected;
+  if (st != CatalogStatus::kOk) {
+    rollback();
+    return st;
+  }
+  st = commit();
+  if (st != CatalogStatus::kOk) return st;
+  if (changes > 0) {
+    removed = true;
+    other_writes_.fetch_add(1, std::memory_order_relaxed);
+  }
   return CatalogStatus::kOk;
 }
 

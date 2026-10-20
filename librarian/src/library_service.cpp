@@ -1,5 +1,6 @@
 #include "velora/librarian/library_service.hpp"
 
+#include <cctype>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -8,9 +9,19 @@
 #include <grp.h>
 #include <unistd.h>
 
+#include <sys/file.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <optional>
+#include <set>
+
+#include "import_worker.hpp"
+#include "velora/format/category.hpp"
+#include "velora/host/library_resolver.hpp"
+#include "velora/librarian/import.hpp"
 
 namespace velora::librarian {
 
@@ -75,13 +86,12 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
     err = "already started";
     return false;
   }
-  CatalogStatus st = Catalog::open(opts_.data_dir, catalog_);
+  CatalogStatus st = Catalog::open(opts_.catalog_dir.empty() ? opts_.data_dir : opts_.catalog_dir, catalog_);
   if (status) *status = st;
   if (st != CatalogStatus::kOk) {
     err = std::string("catalog: ") + to_string(st);
     return false;
   }
-  if (fault_hook_) catalog_->set_fault_hook(fault_hook_);
   st = catalog_->favorites(favorites_);
   if (st == CatalogStatus::kOk) st = catalog_->recent(recent_);
   if (st != CatalogStatus::kOk) {
@@ -93,9 +103,49 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
   playing_ = false;
   recent_dirty_ = false;
 
+  // Story 5.6: the single writer of `<data>/lib`. The lock is taken before anything is changed; the reconcile pass then makes the catalog and the
+  // library tree agree, before a single client is served.
+  {
+    const std::string lib_dir = opts_.data_dir + "/" + host::kLibDirName;
+    if (::mkdir(lib_dir.c_str(), 0755) != 0 && errno != EEXIST) {
+      err = lib_dir + ": " + std::strerror(errno);
+      if (status) *status = CatalogStatus::kIo;
+      catalog_.reset();
+      return false;
+    }
+    const std::string lock_path = lib_dir + "/" + kServiceLockFileName;
+    lib_lock_fd_ = ::open(lock_path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (lib_lock_fd_ < 0 || ::flock(lib_lock_fd_, LOCK_EX | LOCK_NB) != 0) {
+      const bool busy = lib_lock_fd_ >= 0 && errno == EWOULDBLOCK;
+      err = busy ? "another writer (a librarian import or service) holds " + lock_path : lock_path + ": " + std::strerror(errno);
+      if (lib_lock_fd_ >= 0) ::close(lib_lock_fd_);
+      lib_lock_fd_ = -1;
+      if (status) *status = busy ? CatalogStatus::kBusy : CatalogStatus::kIo;
+      catalog_.reset();
+      return false;
+    }
+    catalog_->set_fault_hook([this](const char* p) {
+      if (std::strcmp(p, "library.before_commit") == 0) point("catalog-row-written", cur_job_, cur_item_);
+      return fault_hook_ ? fault_hook_(p) : false;
+    });
+    ReconcileOptions ro;
+    ro.hook = [this](const char* p) { point(p, 0, 0); };
+    const CatalogStatus rs = reconcile_libraries(*catalog_, opts_.data_dir, reconcile_report_, ro);
+    if (rs != CatalogStatus::kOk) {
+      err = std::string("reconcile: ") + to_string(rs);
+      if (status) *status = rs;
+      ::close(lib_lock_fd_);
+      lib_lock_fd_ = -1;
+      catalog_.reset();
+      return false;
+    }
+  }
+
   sockaddr_un addr{};
   if (opts_.socket_path.empty() || opts_.socket_path.size() >= sizeof(addr.sun_path)) {
     err = "socket path is empty or too long: " + opts_.socket_path;
+    if (lib_lock_fd_ >= 0) ::close(lib_lock_fd_);
+    lib_lock_fd_ = -1;
     catalog_.reset();
     return false;
   }
@@ -109,6 +159,8 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
     if (wake_[0] >= 0) ::close(wake_[0]);
     if (wake_[1] >= 0) ::close(wake_[1]);
     wake_[0] = wake_[1] = -1;
+    if (lib_lock_fd_ >= 0) ::close(lib_lock_fd_);
+    lib_lock_fd_ = -1;
     catalog_.reset();
     return false;
   };
@@ -159,7 +211,17 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
     return fail(std::string("pipe: ") + std::strerror(errno));
   }
   stop_.store(false);
+  stopping_.store(false);
   started_ = true;
+  detail::ImportWorker::Config wc;
+  wc.data_dir = opts_.data_dir;
+  wc.point_hook = [this](const char* p, std::uint64_t job, std::size_t item) { point(p, job, item); };
+  wc.wake = [this] {
+    const char b = 1;
+    [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
+  };
+  worker_ = std::make_unique<detail::ImportWorker>(std::move(wc));
+  worker_->start();
   thread_ = std::thread([this] { run(); });
   return true;
 }
@@ -167,15 +229,25 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
 void LibraryService::stop() {
   if (!started_) return;
   started_ = false;
+  stopping_.store(true);
+  // The running import stops at its next safe point; the service thread keeps handling the worker's messages until the worker is gone.
+  if (worker_) worker_->stop_and_join();
   stop_.store(true);
   const char b = 1;
   [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
   if (thread_.joinable()) thread_.join();
+  process_worker();  // what the worker posted last: the terminal events of the jobs that were cancelled by this stop
+  for (Client& c : clients_)
+    if (!c.dead && !c.tx.empty()) flush(c);
+  worker_.reset();
+  jobs_.clear();
   for (Client& c : clients_) ::close(c.fd);
   clients_.clear();
   if (recent_dirty_) flush_recent(nullptr);  // orderly shutdown: the last chance to persist Recent, playing or not
   sync_counters();
   catalog_.reset();  // checkpoints the WAL and releases the writer lock
+  if (lib_lock_fd_ >= 0) ::close(lib_lock_fd_);
+  lib_lock_fd_ = -1;
   ::close(listen_fd_);
   ::close(wake_[0]);
   ::close(wake_[1]);
@@ -203,6 +275,7 @@ void LibraryService::run() {
       while (::read(wake_[0], buf, sizeof buf) > 0) {
       }
     }
+    process_worker();
     if (fds[1].revents & POLLIN) accept_clients();
     for (std::size_t i = 0; i + 2 < fds.size() && i < clients_.size(); ++i) {
       Client& c = clients_[i];
@@ -317,7 +390,7 @@ void LibraryService::process_frame(Client& c, const std::string& payload) {
     ack.set_request_id(msg.request_id());
     ws::v1::LibraryHelloAck* h = ack.mutable_hello_ack();
     h->set_version(kProtocolVersion);
-    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1"}) h->add_features(f);
+    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2"}) h->add_features(f);
     h->set_catalog_schema_version(catalog_->schema_version());
     send(c, ack);
     return;
@@ -604,6 +677,23 @@ void LibraryService::handle(Client& c, const ws::v1::LibraryClientMessage& msg) 
       send(c, m);
       return;
     }
+    case M::kImportRequest:
+      return handle_import_request(c, rid, msg.import_request());
+    case M::kListLibraries:
+      return handle_list_libraries(c, rid, msg.list_libraries());
+    case M::kListInstruments:
+      return handle_list_instruments(c, rid, msg.list_instruments());
+    case M::kCancelImport:
+      return handle_cancel_import(c, rid, msg.cancel_import().job_id());
+    case M::kImportStatus: {
+      const auto it = jobs_.find(msg.import_status().job_id());
+      if (it == jobs_.end()) return reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_UNKNOWN_JOB, "no such import job");
+      ws::v1::LibraryServerMessage m;
+      m.set_request_id(rid);
+      *m.mutable_import_progress() = it->second->last_event;
+      send(c, m);
+      return;
+    }
     case M::BODY_NOT_SET:
       break;
   }
@@ -640,6 +730,429 @@ void LibraryService::flush(Client& c) {
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
     c.dead = true;
     return;
+  }
+}
+
+// --- Story 5.6: import jobs and the libraries catalog ---------------------------------------------------------------------------------------
+
+namespace {
+
+namespace fs = std::filesystem;
+namespace fmtlib = velora::format;
+
+// The whole request is validated on the service thread (one canonical path, one stat per item), so the number of items is bounded to keep favorites / Recent /
+// playing handling responsive; a UI splits a bigger import into several requests.
+constexpr std::size_t kMaxItems = 1000;
+constexpr std::size_t kMaxReportEntries = 100;  // offenders and messages kept per item result
+constexpr std::size_t kMaxReportString = 400;   // bytes of each of those strings
+constexpr std::size_t kMaxFinishedJobs = 64;
+
+// A string for a proto3 `string` field: valid UTF-8 (each bad byte becomes U+FFFD; file names are arbitrary bytes) and at most `max` bytes (cut at a
+// character boundary). protobuf refuses to parse invalid UTF-8 in a proto3 string, so every string that comes from the file system goes through this.
+std::string clean_utf8(const std::string& s, std::size_t max = 4096) {
+  std::string o;
+  for (std::size_t i = 0; i < s.size();) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    std::size_t n = 0;
+    if (c < 0x80) n = 1;
+    else if (c >= 0xC2 && c <= 0xDF) n = 2;
+    else if (c >= 0xE0 && c <= 0xEF) n = 3;
+    else if (c >= 0xF0 && c <= 0xF4) n = 4;
+    bool ok = n != 0 && i + n <= s.size();
+    std::uint32_t cp = n == 1 ? c : n == 2 ? (c & 0x1F) : n == 3 ? (c & 0x0F) : (c & 0x07);
+    for (std::size_t k = 1; ok && k < n; ++k) {
+      const unsigned char d = static_cast<unsigned char>(s[i + k]);
+      if ((d & 0xC0) != 0x80) ok = false;
+      cp = (cp << 6) | (d & 0x3F);
+    }
+    if (ok && ((n == 3 && (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF))) || (n == 4 && (cp < 0x10000 || cp > 0x10FFFF)))) ok = false;
+    const std::string piece = ok ? s.substr(i, n) : std::string("\xEF\xBF\xBD");
+    if (o.size() + piece.size() > max) break;
+    o += piece;
+    i += ok ? n : 1;
+  }
+  return o;
+}
+
+// Closed typed error with details.
+ws::v1::LibraryServerMessage typed_error(std::uint64_t rid, ws::v1::LibraryErrorCode code, const std::string& message, const std::string& path,
+                                          const std::string& reason) {
+  ws::v1::LibraryServerMessage m = make_error(rid, code, message);
+  if (!path.empty()) (*m.mutable_error()->mutable_details())["path"] = clean_utf8(path);
+  if (!reason.empty()) (*m.mutable_error()->mutable_details())["reason"] = reason;
+  m.mutable_error()->set_message(clean_utf8(m.error().message()));
+  return m;
+}
+
+bool importable_extension(const fs::path& p) {
+  std::string e = p.extension().string();
+  for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return e == ".sfz" || e == ".sf2";
+}
+
+bool valid_display_name(const std::string& n) {
+  if (n.size() > 256) return false;
+  return std::none_of(n.begin(), n.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; });
+}
+
+// 0 -> "none", otherwise the category key; nullopt for an id outside 1..17.
+std::optional<fmtlib::Category> assignable_from_id(std::uint32_t id) {
+  const auto c = fmtlib::category_from_id(id);
+  if (!c || !fmtlib::is_assignable(*c)) return std::nullopt;
+  return c;
+}
+
+}  // namespace
+
+void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const ws::v1::ImportRequest& req) {
+  using ws::v1::LibraryErrorCode;
+  if (stopping_.load()) {
+    send(c, typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_SHUTTING_DOWN, "the service is stopping and accepts no new import", {}, {}));
+    return;
+  }
+  auto refuse = [&](LibraryErrorCode code, const std::string& message, const std::string& path, const std::string& reason) {
+    send(c, typed_error(rid, code, message, path, reason));
+  };
+  std::error_code ec;
+  if (req.source().empty() || req.source().size() > 4096 || req.source().find('\0') != std::string::npos)
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the import source is empty or too long", {}, "source_missing");
+  const fs::path source = fs::canonical(fs::path(req.source()), ec);
+  if (ec) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the import source cannot be read: " + ec.message(), req.source(), "source_unreadable");
+  const bool source_is_dir = fs::is_directory(source, ec);
+  if (!source_is_dir && !(fs::is_regular_file(source, ec) && importable_extension(source)))
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the source is neither a folder nor an .sfz / .sf2 file", req.source(), "not_importable");
+  if (source_is_dir) {
+    fs::directory_iterator probe(source, ec);  // a folder that cannot be listed
+    if (ec) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the source folder cannot be read: " + ec.message(), req.source(), "source_unreadable");
+  }
+  if (req.items_size() == 0)
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_CATEGORY_REQUIRED, "an import needs at least one item, each with a category", req.source(), "missing");
+  if (static_cast<std::size_t>(req.items_size()) > kMaxItems)
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_LIMIT_REACHED, "too many items in one import", {}, "items");
+
+  // Everything below validates the WHOLE request; nothing is written, queued or created until all of it passes.
+  auto job = std::make_shared<detail::ImportJob>();
+  job->source = clean_utf8(source.string());
+  std::set<std::string> seen;
+  const fs::path base = source_is_dir ? source : source.parent_path();
+  for (const ws::v1::ImportItem& it : req.items()) {
+    fs::path p;
+    if (it.path().empty()) {
+      if (source_is_dir) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "an item of a folder import needs a path", {}, "item_path_missing");
+      p = source;
+    } else {
+      if (it.path().size() > 4096 || it.path().find('\0') != std::string::npos)
+        return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item path is too long or holds a NUL byte", {}, "item_unreadable");
+      fs::path q(it.path());
+      if (q.is_relative()) q = base / q;
+      p = fs::canonical(q, ec);
+      if (ec) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item cannot be read: " + ec.message(), it.path(), "item_unreadable");
+    }
+    const fs::path rel = p.lexically_relative(source_is_dir ? source : source);
+    const bool inside = source_is_dir ? (!rel.empty() && *rel.begin() != "..") : p == source;
+    if (!inside) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item lies outside the import source", it.path(), "outside_source");
+    if (!fs::is_regular_file(p, ec) || !importable_extension(p))
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item is not an .sfz / .sf2 file", p.string(), "not_importable");
+    if (::access(p.c_str(), R_OK) != 0)
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item cannot be read", p.string(), "item_unreadable");
+    if (!seen.insert(p.string()).second)
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item is listed twice", p.string(), "duplicate_item");
+    if (!valid_display_name(it.name()))
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "invalid display name", p.string(), "invalid_name");
+    detail::JobItem ji;
+    ji.path = p.string();
+    // The category rule (Story 5.6): every item needs one; "none" and unknown ids are refused as typed CATEGORY_REQUIRED errors.
+    if (!it.has_category())
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_CATEGORY_REQUIRED, "every imported instrument needs a category", p.string(), "missing");
+    if (it.category() == 0)
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_CATEGORY_REQUIRED, "\"none\" is not a category an instrument can carry", p.string(), "none");
+    const auto cat = assignable_from_id(it.category());
+    if (!cat) return refuse(ws::v1::LIBRARY_ERROR_CODE_CATEGORY_REQUIRED, "unknown category id " + std::to_string(it.category()), p.string(), "unknown");
+    ji.category_key = std::string(fmtlib::key(*cat));
+    ji.name = it.name();
+    std::set<std::string> keys;
+    for (const ws::v1::ImportInstrumentOverride& ov : it.instruments()) {
+      if (ov.key().empty() || ov.key().size() > 256 || !keys.insert(ov.key()).second)
+        return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "invalid or repeated instrument key in an override", p.string(), "invalid_instrument_key");
+      if (!valid_display_name(ov.name()))
+        return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "invalid display name", p.string(), "invalid_name");
+      ImportOptions::InstrumentMeta im;
+      im.key = ov.key();
+      im.name = ov.name();
+      if (ov.has_category()) {
+        if (ov.category() == 0)
+          return refuse(ws::v1::LIBRARY_ERROR_CODE_CATEGORY_REQUIRED, "\"none\" is not a category an instrument can carry (" + ov.key() + ")", p.string(), "none");
+        const auto oc = assignable_from_id(ov.category());
+        if (!oc) return refuse(ws::v1::LIBRARY_ERROR_CODE_CATEGORY_REQUIRED, "unknown category id " + std::to_string(ov.category()) + " for " + ov.key(), p.string(), "unknown");
+        im.category = std::string(fmtlib::key(*oc));
+      }
+      ji.meta.push_back(std::move(im));
+    }
+    struct stat sb{};
+    ji.bytes = ::stat(p.c_str(), &sb) == 0 ? static_cast<std::uint64_t>(sb.st_size) : 0;
+    job->bytes_total += ji.bytes;
+    job->items.push_back(std::move(ji));
+  }
+  job->id = next_job_id_;
+  job->owner = c.id;
+  std::size_t ahead = 0;
+  if (!worker_ || !worker_->enqueue(job, opts_.max_queued_jobs, ahead)) {
+    if (stopping_.load() || (worker_ && worker_->stopping())) {  // stop() began between the check above and here
+      send(c, typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_SHUTTING_DOWN, "the service is stopping and accepts no new import", {}, {}));
+      return;
+    }
+    auto e = typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_QUEUE_FULL, "too many import jobs are waiting", {}, {});
+    (*e.mutable_error()->mutable_details())["limit"] = std::to_string(opts_.max_queued_jobs);
+    send(c, e);
+    return;
+  }
+  ++next_job_id_;
+  jobs_[job->id] = job;
+  ws::v1::LibraryServerMessage m;
+  m.set_request_id(rid);
+  ws::v1::ImportAccepted* a = m.mutable_import_accepted();
+  a->set_job_id(job->id);
+  a->set_item_count(static_cast<std::uint32_t>(job->items.size()));
+  a->set_bytes_total(job->bytes_total);
+  a->set_queue_position(static_cast<std::uint32_t>(ahead));
+  send(c, m);
+  push_job_event(*job, nullptr);  // QUEUED
+  trim_finished_jobs();
+}
+
+void LibraryService::trim_finished_jobs() {
+  std::size_t finished = 0;
+  for (const auto& kv : jobs_)
+    if (kv.second->finished()) ++finished;
+  for (auto it = jobs_.begin(); finished > kMaxFinishedJobs && it != jobs_.end();) {
+    if (it->second->finished()) {
+      it = jobs_.erase(it);
+      --finished;
+    } else {
+      ++it;
+    }
+  }
+}
+
+void LibraryService::handle_cancel_import(Client& c, std::uint64_t rid, std::uint64_t job_id) {
+  const auto it = jobs_.find(job_id);
+  if (it == jobs_.end()) return reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_UNKNOWN_JOB, "no such import job");
+  detail::ImportJob& job = *it->second;
+  if (job.finished()) return reply_ack(c, rid, false);
+  job.cancel.store(true);
+  if (job.state == ws::v1::IMPORT_STATE_QUEUED && worker_ && worker_->remove_queued(it->second)) {
+    // It never started: finished right here.
+    job.state = ws::v1::IMPORT_STATE_CANCELLED;
+    job.current_item.clear();
+    reply_ack(c, rid, true);
+    push_job_event(job, nullptr);
+    point("job-finished", job.id, 0);
+    return;
+  }
+  reply_ack(c, rid, true);  // running (or just taken by the worker): it stops at its next safe point and the terminal event follows
+}
+
+void LibraryService::handle_list_libraries(Client& c, std::uint64_t rid, const ws::v1::ListLibraries& req) {
+  std::vector<LibraryRecord> rows;
+  const CatalogStatus st = catalog_->list_libraries(rows, false);
+  if (st != CatalogStatus::kOk) {
+    auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_STORAGE_FAILED, "the catalog could not be read");
+    (*e.mutable_error()->mutable_details())["reason"] = to_string(st);
+    send(c, e);
+    return;
+  }
+  ws::v1::LibraryServerMessage m;
+  m.set_request_id(rid);
+  ws::v1::LibraryList* l = m.mutable_library_list();
+  l->set_total(static_cast<std::uint32_t>(rows.size()));
+  l->set_offset(req.offset());
+  const std::size_t limit = req.limit() == 0 ? 500 : std::min<std::size_t>(req.limit(), 2000);
+  std::size_t bytes = 0, n = 0, i = req.offset();
+  for (; i < rows.size() && n < limit; ++i, ++n) {
+    ws::v1::LibraryInfo* li = l->add_libraries();
+    li->set_library_id(rows[i].library_id);
+    li->set_name(clean_utf8(rows[i].name, 512));
+    li->set_source_kind(rows[i].source_kind);
+    li->set_source_path(clean_utf8(rows[i].source_path));
+    li->set_bundle_id(rows[i].bundle_id);
+    li->set_instrument_count(rows[i].instrument_count());
+    li->set_imported_seq(static_cast<std::uint64_t>(rows[i].imported_seq));
+    bytes += li->ByteSizeLong() + 2;
+    if (bytes > opts_.reply_budget_bytes && l->libraries_size() > 1) {  // keep the reply a frame the peer accepts (at least one entry: progress); `more` says ask again
+      l->mutable_libraries()->RemoveLast();
+      break;
+    }
+  }
+  l->set_more(i < rows.size());
+  send(c, m);
+}
+
+void LibraryService::handle_list_instruments(Client& c, std::uint64_t rid, const ws::v1::ListInstruments& req) {
+  std::vector<InstrumentRecord> rows;
+  std::uint32_t total = 0;
+  bool found = false;
+  const std::uint32_t limit = req.limit() == 0 ? 500 : std::min<std::uint32_t>(req.limit(), 2000);
+  const CatalogStatus st = catalog_->list_instruments(req.library_id(), req.offset(), limit, rows, total, found);
+  if (st != CatalogStatus::kOk) {
+    auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_STORAGE_FAILED, "the catalog could not be read");
+    (*e.mutable_error()->mutable_details())["reason"] = to_string(st);
+    send(c, e);
+    return;
+  }
+  if (!found) {
+    auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_UNKNOWN_LIBRARY, "no such library");
+    (*e.mutable_error()->mutable_details())["library_id"] = req.library_id().substr(0, 64);
+    send(c, e);
+    return;
+  }
+  ws::v1::LibraryServerMessage m;
+  m.set_request_id(rid);
+  ws::v1::InstrumentList* l = m.mutable_instrument_list();
+  l->set_library_id(req.library_id());
+  l->set_total(total);
+  l->set_offset(req.offset());
+  std::size_t bytes = 0, used = 0;
+  for (const InstrumentRecord& r : rows) {
+    ws::v1::InstrumentInfo* ii = l->add_instruments();
+    ii->set_instrument_key(clean_utf8(r.key, 512));
+    ii->set_name(clean_utf8(r.name, 512));
+    ii->set_category(r.category);
+    ii->set_sample_count(r.sample_count);
+    ii->set_region_count(r.region_count);
+    ii->set_bytes(r.bytes);
+    bytes += ii->ByteSizeLong() + 2;
+    if (bytes > opts_.reply_budget_bytes && l->instruments_size() > 1) {
+      l->mutable_instruments()->RemoveLast();
+      break;
+    }
+    ++used;
+  }
+  l->set_more(static_cast<std::uint64_t>(req.offset()) + used < total);
+  send(c, m);
+}
+
+void LibraryService::push_job_event(detail::ImportJob& job, const ws::v1::ImportItemResult* item) {
+  ws::v1::ImportProgress p;
+  p.set_job_id(job.id);
+  p.set_event_seq(++job.event_seq);
+  p.set_state(job.state);
+  p.set_items_total(static_cast<std::uint32_t>(job.items.size()));
+  p.set_items_done(job.done);
+  p.set_items_imported(job.imported);
+  p.set_items_unchanged(job.unchanged);
+  p.set_items_skipped(job.skipped);
+  p.set_items_failed(job.failed);
+  p.set_items_cancelled(job.cancelled);
+  p.set_current_item(clean_utf8(job.current_item));
+  p.set_bytes_total(job.bytes_total);
+  p.set_bytes_done(job.bytes_done);
+  job.last_event = p;  // the status answer carries no item result
+  if (item) *p.mutable_item() = *item;
+  ws::v1::LibraryServerMessage m;
+  *m.mutable_import_progress() = std::move(p);
+  for (Client& c : clients_)
+    if (!c.dead && !c.closing && (c.id == job.owner || c.subscribed)) send(c, m);
+}
+
+void LibraryService::process_worker() {
+  if (!worker_) return;
+  for (detail::WorkerMsg& m : worker_->drain()) on_worker_msg(m);
+}
+
+void LibraryService::finish_job(detail::ImportJob& job, bool all_items_processed) {
+  job.current_item.clear();
+  if (!all_items_processed || job.cancelled > 0) job.state = ws::v1::IMPORT_STATE_CANCELLED;
+  else job.state = (job.imported + job.unchanged) > 0 ? ws::v1::IMPORT_STATE_PUBLISHED : ws::v1::IMPORT_STATE_FAILED;
+  push_job_event(job, nullptr);
+  point("job-finished", job.id, 0);
+}
+
+void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
+  detail::ImportJob& job = *m.job;
+  switch (m.kind) {
+    case detail::WorkerMsg::Kind::kJobStarted:
+      job.state = ws::v1::IMPORT_STATE_RUNNING;
+      push_job_event(job, nullptr);
+      return;
+    case detail::WorkerMsg::Kind::kItemStarted:
+      job.state = ws::v1::IMPORT_STATE_RUNNING;
+      job.current_item = job.items[m.index].path;
+      push_job_event(job, nullptr);
+      return;
+    case detail::WorkerMsg::Kind::kJobDone:
+      finish_job(job, job.done >= job.items.size());
+      return;
+    case detail::WorkerMsg::Kind::kItemDone:
+      break;
+  }
+  // An item the worker has finished. Order of the story: the bundle is already published (verified, fsynced, renamed, `current` flipped); only now
+  // do the catalog rows go in, in one transaction. A failure here leaves a published library that the next start's reconcile pass lists.
+  const detail::JobItem& it = job.items[m.index];
+  const ImportResult& r = m.result;
+  ws::v1::ImportItemResult ir;
+  ir.set_path(clean_utf8(it.path));
+  ir.set_library_id(r.library_id);
+  ir.set_bundle_id(r.bundle_id);
+  ir.set_samples(static_cast<std::uint32_t>(r.sample_count));
+  ir.set_regions(static_cast<std::uint32_t>(r.region_count));
+  ir.set_warning_count(static_cast<std::uint32_t>(r.warnings.size()));
+  ir.set_allowlisted_count(static_cast<std::uint32_t>(r.allowlisted.size()));
+  ir.set_suggested_category(static_cast<std::uint32_t>(fmtlib::id(r.suggested_category)));
+  // Bounded, valid UTF-8: a file with thousands of offenders must not make the ImportProgress frame exceed the frame limit.
+  for (std::size_t i = 0; i < r.reasons.size() && i < kMaxReportEntries; ++i) ir.add_messages(clean_utf8(r.reasons[i], kMaxReportString));
+  if (r.reasons.size() > kMaxReportEntries) ir.add_messages("... " + std::to_string(r.reasons.size() - kMaxReportEntries) + " more");
+  for (std::size_t i = 0; i < r.offenders.size() && i < kMaxReportEntries; ++i) {
+    const Offender& o = r.offenders[i];
+    ws::v1::ImportOffender* po = ir.add_offenders();
+    po->set_opcode(clean_utf8(o.opcode, kMaxReportString));
+    po->set_file(clean_utf8(o.file, kMaxReportString));
+    po->set_line(static_cast<std::uint32_t>(o.line));
+    po->set_message(clean_utf8(o.message, kMaxReportString));
+  }
+  if (r.ok()) {
+    if (!m.have_record) {
+      ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
+      ir.set_detail(clean_utf8("the published bundle could not be described: " + m.describe_error, 1024));
+    } else {
+      cur_job_ = job.id;
+      cur_item_ = m.index;
+      bool changed = false;
+      const CatalogStatus st = catalog_->publish_library(m.record, changed);
+      sync_counters();
+      if (st != CatalogStatus::kOk) {
+        ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
+        ir.set_detail(std::string("the library is published but the catalog write failed (") + to_string(st) + "); the next start lists it");
+      } else {
+        point("catalog-committed", job.id, m.index);
+        ir.set_status(r.bundle_created || r.current_flipped ? ws::v1::IMPORT_ITEM_IMPORTED : ws::v1::IMPORT_ITEM_UNCHANGED);
+        ir.set_instruments(m.record.instrument_count());
+      }
+    }
+  } else if (r.status == Status::kSkipped) {
+    ir.set_status(ws::v1::IMPORT_ITEM_SKIPPED);
+    ir.set_reason(r.reason_code == ReasonCode::kDamaged ? ws::v1::IMPORT_REASON_DAMAGED : ws::v1::IMPORT_REASON_UNSUPPORTED_FEATURES);
+    ir.set_failing_path(clean_utf8(r.failing_path));
+  } else if (r.status == Status::kAborted) {
+    ir.set_status(ws::v1::IMPORT_ITEM_CANCELLED);
+  } else {
+    ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
+    ir.set_detail(clean_utf8(std::string(to_string(r.status)) + (r.reasons.empty() ? std::string() : ": " + r.reasons.front()), 1024));
+  }
+  switch (ir.status()) {
+    case ws::v1::IMPORT_ITEM_IMPORTED: ++job.imported; break;
+    case ws::v1::IMPORT_ITEM_UNCHANGED: ++job.unchanged; break;
+    case ws::v1::IMPORT_ITEM_SKIPPED: ++job.skipped; break;
+    case ws::v1::IMPORT_ITEM_CANCELLED: ++job.cancelled; break;
+    default: ++job.failed; break;
+  }
+  ++job.done;
+  job.bytes_done += it.bytes;
+  job.state = ws::v1::IMPORT_STATE_RUNNING;
+  push_job_event(job, &ir);
+  if (m.ticket) {
+    std::lock_guard<std::mutex> lk(m.ticket->m);
+    m.ticket->done = true;
+    m.ticket->cv.notify_all();
   }
 }
 

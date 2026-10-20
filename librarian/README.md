@@ -3,8 +3,9 @@
 POSIX only (uses `flock`, `fsync`, `rename`, symlinks; its tests also use `fork`): macOS and Linux, not Windows.
 
 Role: imports an SFZ library or a SoundFont 2 file into an immutable formatlib bundle and publishes it atomically under
-`<root>/lib/<library_id>/` (Story 1.13, SF2 in Story 5.3). Runs on the Mac and on the board; the full import UX, categories UI,
-crypto and streaming are later stories (Epic 5 and beyond). Target `velora_librarian`, CLI `librarian`.
+`<root>/lib/<library_id>/` (Story 1.13, SF2 in Story 5.3). Runs on the Mac and on the board; since Story 5.6 the `librarian-service` runs these imports behind the
+Library API and keeps the libraries catalog (below); the import UX and categories UI are later stories. There is no encryption anywhere in the librarian (user
+imports are never encrypted; Epic 6 protects bundles elsewhere). Target `velora_librarian`, CLI `librarian`.
 
 ```
 build/librarian/librarian import <file.sfz | file.sf2 | dir>... --root <data root> [--base DIR] [--category NAME] [--report FILE|-]
@@ -17,7 +18,10 @@ and rejects `none` and unknown names (exit 1, nothing written); it is stored as 
 (an identical re-import refreshes it before the flip). Since Story 5.5 the file holds the **stable key** (`category.piano\n`) whatever spelling was passed; bundles written
 before it hold free text such as `Piano\n`, which `parse_category_file` (formatlib) still reads, and a bundle without a category file stays byte-identical (the manifest is
 not touched, so no format bump). `librarian suggest-category [--table FILE] <name>...` prints `<name><TAB><key|none>` per argument. `--root` must be an existing directory
-(a mistyped root is an error, never created); the file argument must come first.
+(a mistyped root is an error, never created); the file argument must come first. **While a `librarian-service` owns the data root the CLI refuses to import**
+(exit 1, "the librarian service is running on <root>...": the service holds `<root>/lib/.service.lock` exclusively). The CLI creates that file if needed and holds it shared for its whole run, so a
+service that starts during a CLI import is refused too (its reconcile would otherwise delete `.staging` under the running import). With no service the CLI works standalone as before (it leaves the empty
+`lib/.service.lock` next to `.staging`), and the next service start lists what it published (see "Startup reconcile").
 
 Identity: `library_id` = UUIDv5 of the SFZ's canonical absolute path (formatlib `set_source_id`), so changing a sample
 keeps the `library_id` and yields a new `bundle_id`; moving the SFZ makes a new library. `bundle_id` is the manifest
@@ -217,3 +221,77 @@ RAM equal to SQLite, keeps unwritten Recent marked `recent_unwritten`, and is re
 
 **Socket access.** Default mode 0600 (dev). `--socket-group NAME` (`LibraryServiceOptions::socket_group`) sets the socket's group and mode 0660; the systemd unit passes `velora`
 (its `/run/velora` directory is 0750, group velora). An unknown group refuses to start. The unit is untested on the board.
+
+## Libraries catalog, import API and atomic publish (Story 5.6)
+
+The `librarian-service` is the only writer under `<data>/lib` and of the catalog (AD-9). It now imports: an `ImportRequest` on the Library API queues a job, one worker
+thread runs jobs serially through the Epic 1 importer, and the service writes the catalog rows only after the bundle is published. Proto: `proto/library_api.proto`
+(additive messages and error codes, see `proto/README.md`).
+
+```
+build/librarian/librarian-service --data DIR --socket PATH [--catalog-dir DIR] [--socket-group NAME]
+```
+
+`DIR` is the library root (`DIR/lib/<library_id>/...`, the layout the engine's resolver reads); `catalog.db` and `catalog.lock` live in `--catalog-dir` (default `DIR`; the
+board: `--data /data --catalog-dir /data/catalog`, see `systemd/velora-librarian.service`).
+
+**Catalog schema 2** (`PRAGMA user_version=2`, `meta.schema_version=2`; migration 1 -> 2 is forward-only, one transaction, keeps every favorite and recent row; a newer schema is
+refused untouched as in 4.11): `libraries(library_id PRIMARY KEY, name, source_kind 'sfz'|'sf2', source_path, bundle_id, instrument_count, imported_seq)` and
+`instruments(library_id -> libraries ON DELETE CASCADE, instrument_key, name, category CHECK 1..17, sample_count, region_count, bytes, PRIMARY KEY(library_id, instrument_key))`.
+Category 0 ("none") and anything above 17 are refused by the table itself. A library and its instruments are written in one transaction (`Catalog::publish_library`); identical
+content writes nothing; `imported_seq` (an import counter, no wall clock) is the list order. `bytes` is the decoded PCM size of an instrument's samples. No search tables yet (5.16).
+
+**Library API additions.** `ImportRequest{source, items[]{path, category, name, instruments[]{key, name, category}}}`: `source` is an .sfz/.sf2 file or a folder, `items` are the files
+to import (each its own library, Story 5.1), each needs a category 1..17; an SF2's `category` is the default of its presets and `instruments[]` overrides category and/or name per preset
+key. The reply `ImportAccepted{job_id, item_count, bytes_total, queue_position}` is synchronous; `ImportProgress` events (job id, `event_seq` growing by one, state
+QUEUED/RUNNING/PUBLISHED/FAILED/CANCELLED, counters, `current_item`, bytes, and on the event that finishes an item an `ImportItemResult` with status imported/unchanged/skipped/failed/cancelled,
+the Story 5.1 reason `unsupported_features`/`damaged`, offenders `file:line`, `failing_path`, messages) go to the requesting connection and to every `LibrarySubscribe` subscriber.
+The last event of a job is terminal: PUBLISHED = at least one item reached the catalog (others may be skipped), FAILED = none did (**an all-skipped or all-failed job ends FAILED**), CANCELLED. A request holds at most 1000 items (the whole request is validated on the service thread, so a UI splits a bigger import), and every string that comes from the file system in an event or list reply is made valid UTF-8 (bad bytes become U+FFFD) and bounded; an item result keeps at most 100 offenders and 100 messages of at most 400 bytes each (the rest is summarised as `... N more`), so a progress frame stays far below the 262144 byte limit. `ListLibraries` and
+`ListInstruments{library_id}` page (`offset`, `limit`, `total`, `more`; `ListInstruments` is ordered by `instrument_key`; a reply is also cut at `reply_budget_bytes`, 200000 by default, always with at least one entry, and then `more` is set: ask again from offset + size), `CancelImport{job_id}`, `ImportStatusRequest{job_id}` (latest event). **Refusals happen before anything is
+written or queued, as typed errors:** `CATEGORY_REQUIRED` (no items, or a category that is missing, `none` or unknown; `category` is an `optional` field so presence is known: `details.reason` is `missing` when it is not set, `none` when it is set to 0, `unknown` for an id above 17), `INVALID_SOURCE` (missing or unreadable
+source or item, not .sfz/.sf2, item outside the source, an item twice), `QUEUE_FULL` (more than `max_queued_jobs` = 16 waiting), `UNKNOWN_JOB`, `UNKNOWN_LIBRARY`. An override whose instrument key is not in the file is not imported: that item fails with `unknown_instrument_key` before anything is written. A re-import of unchanged
+content is `unchanged` ("already imported"): no bundle, no new `current`, the catalog row is untouched unless the name or category differ.
+
+**Order of one item (AR28).** stage in `<data>/lib/.staging/<unique>/` -> samples written -> bit-exact verification (reopen, `verify_all`, region table and every sample compared with a fresh
+decode of the source) -> fsync -> rename into `<library_id>/<bundle_id>` -> flip `current` (symlink then rename) -> **then** the catalog rows in one transaction -> the progress event. A failure at any point
+publishes no catalog rows. The importer itself is Stories 1.13/5.1/5.3 (`import_file`); the service reuses it and only adds `catalog.meta` and the hooks. Worker and service thread talk through a mailbox: the
+worker never touches SQLite, and waits until the service thread has written the rows of an item before it starts the next one. A cancel takes effect at the next safe point before the rename (an aborted
+staging directory is removed at once); a published item stays published. Shutdown does the same.
+
+**`catalog.meta`** (`library_index.hpp`) sits in the bundle directory next to `bundle.vlb` and the legacy `category` file, is written inside the staging directory before the rename (so it is part of
+the atomic publish) and records the library name, source kind and path and, per instrument key, its display name and category. This is how the catalog is rebuilt from bundles alone. It is deliberately not
+in the binary manifest: the manifest is hashed into `bundle_id` and read by the engine, adding names and categories would bump the bundle format and change the ids of every bundle, and display data may be
+refreshed by an identical re-import (like the Story 5.5 `category` file) without making a new bundle; it is rewritten atomically (tmp + rename) and `bundle.vlb` stays immutable. It is a small text
+file (percent-escaped, `format_version 1`; unknown record types are ignored, a newer version is treated as absent) so the CLI links no protobuf. Only the service writes it (`ImportOptions::write_catalog_meta`);
+CLI imports keep their exact old bytes.
+
+**Startup reconcile** (`library_reconcile.hpp`, run by `start()` before the socket is bound, also exposed as `reconcile_libraries` / `rebuild_libraries`): (1) deletes `<data>/lib/.staging/*` (not the lock) and orphan
+`.current.tmp.*` links in every library directory; (2) lists every library directory whose `current` names an existing bundle; (3) adds or refreshes the catalog row of each from the bundle alone (after `verify_all`;
+a bundle that fails is not cataloged) and removes the rows of libraries with no usable `current`, so the catalog and `<data>/lib` agree and no partial library is listed. A bundle without `catalog.meta` (Epic 1
+demo bundles, CLI imports) is listed with the instrument names of its manifest and the category of its legacy `category` file (`read_category_file`); one with no valid category is **not cataloged**
+(reported in `ReconcileReport::skipped`, left on disk). The pass is idempotent and crash safe (a kill inside it just repeats it). It never deletes a bundle directory (non-`current` bundles are the engine's
+leases, Story 5.8). **Only a definite absence removes a row** (`ENOENT`, a `current` that is not a link or is dangling): any other error while examining `lib/` or resolving a `current` (EACCES, EIO...) is recorded in
+`ReconcileReport::errors` and the whole pass removes no row; a bundle that cannot be opened or whose `catalog.meta` is unreadable, oversized, malformed or from a newer format keeps its existing row (the legacy `category`
+file is NOT used as a fallback then, it would rewrite the categories) and is reported in `skipped`; the index checks the manifest's sample ranges before using them. `rebuild_libraries` drops every library row first (tested: the result equals what the service wrote).
+
+**Single writer.** `start()` takes `catalog.lock` (a second service gets exit 1) and then an exclusive flock on `<data>/lib/.service.lock`; the `librarian import` CLI always holds that file shared for its run, so it
+refuses while a service holds it and a service refuses to start (before it reconciles or touches `.staging`) while a CLI import holds it. **Shutdown:** `stop()` first refuses new imports (`SHUTTING_DOWN`), cancels the running
+item at its next safe point and every queued job (each ends with a terminal CANCELLED event), then stops; whatever was published but not yet cataloged is listed by the next start's reconcile.
+
+**No encryption.** `tools/ci/check_librarian_no_crypto.py` (ctest `librarian_no_crypto`, with `librarian_no_crypto_selftest`) checks the link line collected at configure time and the symbols (`nm`) of
+`librarian`, `librarian-service` and their static libraries for AES / OpenSSL / mbedTLS / libsodium / OP-TEE / CommonCrypto / SQLCipher; without `nm` it skips (exit 77) after the link-line part; an `nm` that fails or prints nothing for a target is a FAIL for that target. The link-line walk records any name it cannot resolve as `UNRESOLVED:<name>` (the script fails on it); only the imported third-party targets of other directories (FLAC, protobuf/abseil, SQLite) are exempt there, their code being covered by the symbol scan. The Homebrew-protobuf/vendored-abseil link of `velora_librarian_service` is exercised by the real binary in `librarian_service_smoke` (it starts `librarian-service`, also with `--catalog-dir`, and talks to it) and by every service test.
+
+**Tests.** `librarian_import_service_test` (a real socket client; beyond the rows below: `--catalog-dir` split, progress to subscribers and not to bystanders, cancel of a three-item job after the first commit, `stop()` while a job runs, paging and the reply budget, bounded and non-UTF-8 reports, unknown override keys, a CLI import blocking a service start, reconcile with injected I/O errors, unreadable `catalog.meta`; the exact boundary order with the catalog and file system observed from outside at each point, category-required refusals with nothing
+written, duplicates/changed source/metadata refresh, progress monotonicity and skip reasons with offenders, SF2 per-instrument categories and paging, cancel of a running and a queued job with a gate (no sleeps),
+the bounded queue, unreadable/invalid sources, single writer incl. the CLI, concurrent list and import clients, startup reconcile, rebuild from bundles alone, legacy/uncategorised/corrupt bundles),
+`librarian_catalog_test` (migration 1 -> 2 keeping favorites and recent, a migration failed by name through `migrate.before_commit`, constraints, cascade, fault and kill inside the library transaction), `librarian_crash_campaign` (below), `librarian_no_crypto*`.
+
+**Crash campaign** (`tests/crash_campaign_test.cpp`): a seeded script of 200 imports (SFZ and SF2, single and multi-instrument, re-imports of unchanged and of changed sources, changing categories and names,
+damaged and unsupported files). Each import runs in a forked child hosting the real service, killed with `_exit(137)` by `import_point_hook` at a seeded boundary (stage-created, samples-written, verified,
+fsynced, renamed, link-created, link-flipped, catalog-row-written, catalog-committed, job-finished) or inside its own startup reconcile. After each kill the parent restarts (reconcile) and checks that every catalog
+library has a verifying `current` bundle and matching instrument rows, every published library is cataloged, nothing is left in staging, and the pass is idempotent; at the end the whole script is replayed without
+faults on the crashed tree and on a fresh one and both end in the same published state. The script is deterministic (xorshift seed in the file); it takes about 20 s on a laptop (process starts and service poll
+intervals, tiny sources), so it runs in the default ctest. Deleting the "add missing row" step of reconcile makes it fail at the first step (checked by hand while writing it).
+
+**Deviations from the story text (kept on purpose).** The service lock is `<data>/lib/.service.lock` (inside `lib/`, so the board sandbox needs write access to that tree only) instead of a separate `lib.lock`;
+`catalog.meta` is a small text file, not protobuf (the CLI links no protobuf); instrument `bytes` is decoded PCM size; `--catalog-dir` splits the catalog from the library root (`/data/catalog` vs `/data/lib`).

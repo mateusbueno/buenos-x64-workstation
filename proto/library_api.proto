@@ -24,6 +24,13 @@ enum LibraryErrorCode {
   LIBRARY_ERROR_CODE_LIMIT_REACHED = 7;        // too many favorites (details: limit)
   LIBRARY_ERROR_CODE_STORAGE_FAILED = 8;       // the catalog could not be written (details: reason); nothing changed
   LIBRARY_ERROR_CODE_INTERNAL = 9;
+  // Story 5.6 (additive; the import and catalog API). Every refusal below happens before anything is written.
+  LIBRARY_ERROR_CODE_CATEGORY_REQUIRED = 10;   // an import item (or a per-instrument override) has no category, "none" or an unknown id (details: path, reason = `missing` when the category field is not set, `none` when it is set to 0, `unknown` for an id above 17)
+  LIBRARY_ERROR_CODE_INVALID_SOURCE = 11;      // the source is missing / unreadable / not an SFZ, SF2 or folder, holds nothing importable, an item lies outside it, or an item is listed twice (details: path, reason)
+  LIBRARY_ERROR_CODE_QUEUE_FULL = 12;          // too many import jobs are waiting (details: limit)
+  LIBRARY_ERROR_CODE_UNKNOWN_JOB = 13;         // no such import job
+  LIBRARY_ERROR_CODE_UNKNOWN_LIBRARY = 14;     // no such library in the catalog
+  LIBRARY_ERROR_CODE_SHUTTING_DOWN = 15;       // the service is stopping and accepts no new import
   // INVALID_COMMAND with details.reason=empty_reconcile: a Reconcile whose list is empty while the catalog is not (see Reconcile).
 }
 
@@ -42,7 +49,7 @@ message LibraryHello {
 
 message LibraryHelloAck {
   uint32 version = 1;
-  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1"
+  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2" (Story 5.6)
   uint32 catalog_schema_version = 3;
 }
 
@@ -90,6 +97,147 @@ message FlushReply {
   uint64 recent_writes = 2;
 }
 
+
+// --- Story 5.6: libraries catalog and import ------------------------------------------------------
+// Category ids are those of category.proto (1..17); 0 is "none" and is never accepted for an import.
+
+// One file to import. For an SFZ the file is one instrument; for an SF2 the file is one library with one instrument per preset: `category` is the
+// category of every preset and `instruments` overrides category and/or display name per preset ("bank:preset" keys). `name` is the display name of the
+// library (and, for an SFZ, of its one instrument); empty = the name in the file.
+message ImportInstrumentOverride {
+  string key = 1;                    // instrument_key, e.g. "0:48" for an SF2 preset
+  string name = 2;                   // empty = the preset name
+  optional uint32 category = 3;      // not set = use the item's category; set to 0 = "none" = CATEGORY_REQUIRED
+}
+message ImportItem {
+  string path = 1;                   // absolute, or relative to `source` when that is a folder
+  optional uint32 category = 2;      // required, 1..17; presence matters: not set -> CATEGORY_REQUIRED reason missing, set to 0 -> reason none
+  string name = 3;
+  repeated ImportInstrumentOverride instruments = 4;
+}
+message ImportOptions {}             // reserved for the checkpoint settings of Story 5.8
+// `source` is an .sfz / .sf2 file or a folder (the scan root). `items` are the files to import and each needs a category: for a file source the one item
+// is the file itself (path empty or equal to `source`); for a folder the items name files inside it (any depth; relative paths are relative to the folder).
+// No items, or any item (or per-instrument override) without a category or with "none", is CATEGORY_REQUIRED (at most 1000 items per request) and nothing is written. Each SFZ / SF2 is its
+// own library (Story 5.1); files the request does not list are not imported.
+message ImportRequest {
+  string source = 1;
+  repeated ImportItem items = 2;
+  ImportOptions options = 3;
+}
+message ImportAccepted {
+  uint64 job_id = 1;
+  uint32 item_count = 2;
+  uint64 bytes_total = 3;            // size of the source files
+  uint32 queue_position = 4;         // 0 = starts at once; N = N jobs ahead of it
+}
+message CancelImport { uint64 job_id = 1; }   // answers LibraryAck{changed=true} when the job was queued or running, false when it had already finished
+message ImportStatusRequest { uint64 job_id = 1; }  // answers ImportProgress (the latest event of the job)
+
+enum ImportState {
+  IMPORT_STATE_UNSPECIFIED = 0;
+  IMPORT_STATE_QUEUED = 1;
+  IMPORT_STATE_RUNNING = 2;
+  IMPORT_STATE_PUBLISHED = 3;        // terminal: the job ran to the end and at least one item is in the catalog (other items may still be skipped, see their results)
+  IMPORT_STATE_FAILED = 4;           // terminal: nothing from this job reached the catalog (every item skipped or failed: an all-skipped job ends FAILED)
+  IMPORT_STATE_CANCELLED = 5;        // terminal: cancelled; what was published before stays, nothing partial
+}
+enum ImportItemStatus {
+  IMPORT_ITEM_STATUS_UNSPECIFIED = 0;
+  IMPORT_ITEM_IMPORTED = 1;          // new bundle and/or `current` flipped
+  IMPORT_ITEM_UNCHANGED = 2;         // the identical bundle was already current ("already imported")
+  IMPORT_ITEM_SKIPPED = 3;           // the Story 5.1 reason codes below; nothing published
+  IMPORT_ITEM_FAILED = 4;            // infrastructure problem (I/O, busy, verification, catalog); nothing partial is listed
+  IMPORT_ITEM_CANCELLED = 5;
+}
+enum ImportReason {                  // the closed set of the import report (Story 5.1)
+  IMPORT_REASON_NONE = 0;
+  IMPORT_REASON_UNSUPPORTED_FEATURES = 1;
+  IMPORT_REASON_DAMAGED = 2;
+}
+message ImportOffender {
+  string opcode = 1;
+  string file = 2;
+  uint32 line = 3;
+  string message = 4;
+}
+message ImportItemResult {
+  string path = 1;
+  ImportItemStatus status = 2;
+  ImportReason reason = 3;
+  string failing_path = 4;
+  repeated ImportOffender offenders = 5;
+  repeated string messages = 6;
+  string library_id = 7;
+  string bundle_id = 8;
+  uint32 instruments = 9;
+  uint32 samples = 10;
+  uint32 regions = 11;
+  string detail = 12;                // the failure text of a failed item
+  uint32 warning_count = 13;
+  uint32 allowlisted_count = 14;
+  uint32 suggested_category = 15;    // Story 5.5 suggestion (0 = none); informational
+}
+// Pushed to the requester (and to every LibrarySubscribe subscriber) at each change of a job. event_seq grows by one per event of the job; items_done,
+// the counters and bytes_done never decrease; the last event of a job has a terminal state and an empty current_item.
+message ImportProgress {
+  uint64 job_id = 1;
+  uint64 event_seq = 2;
+  ImportState state = 3;
+  uint32 items_total = 4;
+  uint32 items_done = 5;             // processed so far (imported + unchanged + skipped + failed + cancelled)
+  uint32 items_imported = 6;
+  uint32 items_unchanged = 7;
+  uint32 items_skipped = 8;
+  uint32 items_failed = 9;
+  string current_item = 10;          // the file being processed
+  uint64 bytes_total = 11;
+  uint64 bytes_done = 12;
+  ImportItemResult item = 13;        // set on the event that reports a finished item
+  string message = 14;
+  uint32 items_cancelled = 15;       // an item that was stopped by a cancel before it was published (nothing of it is left)
+}
+
+message ListLibraries {
+  uint32 offset = 1;
+  uint32 limit = 2;                  // 0 = 500
+}
+message LibraryInfo {
+  string library_id = 1;
+  string name = 2;
+  string source_kind = 3;            // "sfz" | "sf2"
+  string source_path = 4;
+  string bundle_id = 5;              // the current bundle
+  uint32 instrument_count = 6;
+  uint64 imported_seq = 7;           // import order (no wall clock: the unit has no RTC)
+}
+message LibraryList {
+  repeated LibraryInfo libraries = 1;
+  uint32 total = 2;
+  uint32 offset = 3;
+  bool more = 4;
+}
+message ListInstruments {
+  string library_id = 1;
+  uint32 offset = 2;
+  uint32 limit = 3;                  // 0 = 500
+}
+message InstrumentInfo {
+  string instrument_key = 1;
+  string name = 2;
+  uint32 category = 3;               // 1..17
+  uint32 sample_count = 4;
+  uint32 region_count = 5;
+  uint64 bytes = 6;                  // decoded PCM bytes of its samples
+}
+message InstrumentList {
+  string library_id = 1;
+  repeated InstrumentInfo instruments = 2;
+  uint32 total = 3;
+  uint32 offset = 4;
+  bool more = 5;
+}
+
 message LibraryClientMessage {
   uint64 request_id = 1;
   oneof body {
@@ -103,6 +251,11 @@ message LibraryClientMessage {
     Reconcile reconcile = 9;
     SetPlaying set_playing = 10;
     FlushRecent flush_recent = 11;
+    ImportRequest import_request = 12;          // Story 5.6
+    ListLibraries list_libraries = 13;
+    ListInstruments list_instruments = 14;
+    CancelImport cancel_import = 15;
+    ImportStatusRequest import_status = 16;
   }
 }
 
@@ -116,5 +269,9 @@ message LibraryServerMessage {
     FavoritesChanged favorites_changed = 6;
     RecentChanged recent_changed = 7;
     FlushReply flush_reply = 8;
+    ImportAccepted import_accepted = 9;         // Story 5.6
+    LibraryList library_list = 10;
+    InstrumentList instrument_list = 11;
+    ImportProgress import_progress = 12;        // a push (request_id 0) or the answer to ImportStatusRequest
   }
 }

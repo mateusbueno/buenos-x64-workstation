@@ -535,9 +535,9 @@ void test_cli() {
   const int rc = std::system(("VELORA_LIBRARIAN_FAULT=renamed " + tb + " >/dev/null 2>&1").c_str());
   CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) == 137);
   std::size_t links = 0;
-  for (const auto& n : list_names(k.lib())) if (n != ".staging") ++links;
+  for (const auto& n : list_names(k.lib())) if (n != ".staging" && n != kServiceLockFileName) ++links;  // the CLI holds .service.lock (Story 5.6)
   CHECK(links == 1);  // the library dir exists with a complete bundle but no `current`
-  for (const auto& n : list_names(k.lib())) if (n != ".staging") CHECK(!fs::exists(k.lib() / n / "current"));
+  for (const auto& n : list_names(k.lib())) if (n != ".staging" && n != kServiceLockFileName) CHECK(!fs::exists(k.lib() / n / "current"));
   CHECK(std::system((kb + " >/dev/null").c_str()) == 0);
   // Unsupported opcode: non-zero exit and reason on stderr.
   write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav amp_veltrack=1\n");
