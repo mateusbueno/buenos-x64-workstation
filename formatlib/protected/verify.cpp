@@ -83,6 +83,19 @@ bool ed25519_verify_strict(const PublicKey& pub, std::span<const std::uint8_t> m
   return EVP_DigestVerify(ctx.get(), sig.data(), sig.size(), message.data(), message.size()) == 1;
 }
 
+Error verify_catalog_meta_seal(const TrustedKeys& trusted, const Digest256& bundle_id, std::span<const std::uint8_t> meta_bytes,
+                               std::span<const std::uint8_t> seal_bytes, KeyId* signer_out, std::uint32_t* revision_out) {
+  KeyId signer{};
+  Signature sig{};
+  std::uint32_t revision = 0;
+  if (!decode_catalog_meta_seal(seal_bytes, signer, revision, sig)) return Error::kCatalogMetaInvalid;
+  if (signer_out) *signer_out = signer;
+  if (revision_out) *revision_out = revision;
+  const TrustedKey* k = trusted.find(signer);
+  if (!k || key_id_of_public(k->pub) != k->id) return Error::kUntrustedKey;
+  return ed25519_verify_strict(k->pub, catalog_meta_statement(bundle_id, meta_bytes, signer, revision), sig) ? Error::kNone : Error::kSignatureInvalid;
+}
+
 struct ProtectedBundleView::Impl {
   std::unique_ptr<ByteSource> src;
   ParsedBundle pb;
@@ -119,7 +132,11 @@ Result<ProtectedBundleView> ProtectedBundleView::open(std::unique_ptr<ByteSource
     const std::vector<std::uint8_t> msg = statement_bytes(statement_of(p));
     return ed25519_verify_strict(k->pub, msg, p.seal.signature) ? Error::kNone : Error::kSignatureInvalid;
   };
-  auto parsed = parse_bundle(*src, true, &verify);
+  const SealPrecheck precheck = [&trusted](const KeyId& id) -> Error {
+    const TrustedKey* k = trusted.find(id);
+    return !k || key_id_of_public(k->pub) != k->id ? Error::kUntrustedKey : Error::kNone;
+  };
+  auto parsed = parse_bundle(*src, true, &verify, &precheck);
   if (!parsed) return parsed.error();
   ProtectedBundleView v;
   v.impl_ = std::make_unique<Impl>();

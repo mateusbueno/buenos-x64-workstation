@@ -43,7 +43,7 @@ int usage() {
   std::fprintf(stderr,
                "usage: velora-content-pack pack --description FILE --out DIR [--keys-dir DIR] [--signing-key FILE] [--kek FILE]\n"
                "                                [--device-pub FILE]... [--reuse-vault-entry FILE | --content-key-file FILE] [--deterministic-vault]\n"
-               "                                [--register --owner NAME] [--register-file FILE] [--dev-trust-list FILE] [--overwrite]\n"
+               "                                [--register --owner NAME] [--register-file FILE] [--dev-trust-list FILE] [--overwrite] [--revision N]\n"
                "       velora-content-pack register --description FILE --owner NAME [--register-file FILE] [--date YYYY-MM-DD]\n"
                "       velora-content-pack verify --bundle FILE --vault-entry FILE --kek FILE --trusted-pub FILE\n"
                "       velora-content-pack check-register [--register-file FILE]\n"
@@ -177,6 +177,7 @@ struct Args {
   std::string dev_trust_list = VELORA_KEYS_DEV_TRUST_LIST;
   std::vector<std::string> device_pubs;
   bool deterministic_vault = false, register_new = false, overwrite = false;
+  std::uint32_t revision = 1;
 };
 
 bool parse_args(int argc, char** argv, Args& a) {
@@ -204,6 +205,11 @@ bool parse_args(int argc, char** argv, Args& a) {
     else if (s == "--bundle") { if (!val(a.bundle)) return false; }
     else if (s == "--vault-entry") { if (!val(a.vault_entry)) return false; }
     else if (s == "--trusted-pub") { if (!val(a.trusted_pub)) return false; }
+    else if (s == "--revision") {
+      std::string v;
+      if (!val(v) || v.empty() || v.size() > 9 || v.find_first_not_of("0123456789") != std::string::npos || std::stoul(v) == 0) return false;
+      a.revision = static_cast<std::uint32_t>(std::stoul(v));
+    }
     else if (s == "--deterministic-vault") a.deterministic_vault = true;
     else if (s == "--register") a.register_new = true;
     else if (s == "--overwrite") a.overwrite = true;
@@ -264,6 +270,7 @@ int cmd_pack(const Args& a) {
   }
   req.out_dir = a.out;
   req.overwrite = a.overwrite;
+  req.revision = a.revision;
   req.kek = &kek.get();
   req.signing_seed = &seed.get();
   req.deterministic_vault = a.deterministic_vault;

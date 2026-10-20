@@ -51,6 +51,27 @@ if(Python3_Interpreter_FOUND)
                    --lib $<TARGET_FILE:velora_librarian> --lib $<TARGET_FILE:velora_librarian_service> --lib $<TARGET_FILE:velora_sfz>
                    --require-defined ed25519_verify_strict)
   set_tests_properties(format_no_decrypt PROPERTIES SKIP_RETURN_CODE 77)
+  # Story 6.4: the librarian installs protected bundles by VERIFYING them. Its real binaries (the shipped CLI and service, and the test CLI that is the same code with
+  # the kill hooks) and its libraries hold no cipher symbol, and the scan is not vacuous: they do define the Ed25519 verification and the install path.
+  add_test(NAME librarian_binaries_no_cipher
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --binary $<TARGET_FILE:librarian> --binary $<TARGET_FILE:librarian-service> --binary $<TARGET_FILE:librarian_test_cli>
+                   --lib $<TARGET_FILE:velora_librarian> --lib $<TARGET_FILE:velora_librarian_service> --lib $<TARGET_FILE:velora_format_verify>
+                   --require-defined ed25519_verify_strict --require-defined install_protected --require-defined ProtectedBundleView)
+  set_tests_properties(librarian_binaries_no_cipher PROPERTIES SKIP_RETURN_CODE 77)
+  add_test(NAME librarian_binary_links_verify_only
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --binary $<TARGET_FILE:librarian> --require-defined ed25519_verify_strict)
+  set_tests_properties(librarian_binary_links_verify_only PROPERTIES SKIP_RETURN_CODE 77)
+  # Negative control: the scanner DOES flag a test binary that links the protected writer (AES), so a clean librarian result is not an empty one.
+  add_test(NAME librarian_install_test_flagged_by_no_decrypt_scan
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --binary $<TARGET_FILE:librarian_install_test> --expect-flagged EVP_aes_256_ctr --expect-flagged EVP_EncryptInit_ex)
+  set_tests_properties(librarian_install_test_flagged_by_no_decrypt_scan PROPERTIES SKIP_RETURN_CODE 77)
+  # The dev trust variant (a developer's keys, --trust-list) must not be configurable into a Release / production build.
+  add_test(NAME librarian_dev_trust_refused_in_release
+           COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/release_refusal_probe -DCMAKE_BUILD_TYPE=Release)
+  set_tests_properties(librarian_dev_trust_refused_in_release PROPERTIES PASS_REGULAR_EXPRESSION "must not be built into a Release")
   add_test(NAME format_no_decrypt_selftest
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py --self-test --cc ${CMAKE_C_COMPILER})
   add_test(NAME format_no_decrypt_probe

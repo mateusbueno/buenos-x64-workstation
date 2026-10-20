@@ -354,4 +354,39 @@ std::vector<std::uint8_t> statement_bytes(const ManifestStatement& s) {
   return m;
 }
 
+std::vector<std::uint8_t> catalog_meta_statement(const Digest256& bundle_id, std::span<const std::uint8_t> meta_bytes, const KeyId& signer, std::uint32_t pack_revision) {
+  static constexpr char kCtx[] = "velora/catalog-meta/v1";
+  std::vector<std::uint8_t> m(kCtx, kCtx + sizeof kCtx - 1);
+  m.push_back(0);
+  m.insert(m.end(), bundle_id.begin(), bundle_id.end());
+  const Digest256 h = Sha256::hash(meta_bytes);
+  m.insert(m.end(), h.begin(), h.end());
+  m.insert(m.end(), signer.begin(), signer.end());
+  for (int i = 0; i < 4; ++i) m.push_back(static_cast<std::uint8_t>(pack_revision >> (8 * i)));
+  return m;
+}
+
+std::array<std::uint8_t, kCatalogMetaSealSize> encode_catalog_meta_seal(const KeyId& signer, std::uint32_t pack_revision, const Signature& sig) {
+  std::array<std::uint8_t, kCatalogMetaSealSize> o{};
+  for (int i = 0; i < 4; ++i) o[i] = static_cast<std::uint8_t>(kCatalogMetaSealMagic[i]);
+  o[4] = kSealAlgEd25519;
+  for (int i = 0; i < 4; ++i) o[8 + i] = static_cast<std::uint8_t>(pack_revision >> (8 * i));
+  for (std::size_t i = 0; i < signer.size(); ++i) o[12 + i] = signer[i];
+  for (std::size_t i = 0; i < sig.size(); ++i) o[20 + i] = sig[i];
+  return o;
+}
+
+bool decode_catalog_meta_seal(std::span<const std::uint8_t> b, KeyId& signer, std::uint32_t& pack_revision, Signature& sig) {
+  if (b.size() != kCatalogMetaSealSize) return false;
+  for (int i = 0; i < 4; ++i)
+    if (b[i] != static_cast<std::uint8_t>(kCatalogMetaSealMagic[i])) return false;
+  if (b[4] != kSealAlgEd25519 || b[5] != 0 || b[6] != 0 || b[7] != 0) return false;
+  pack_revision = 0;
+  for (int i = 0; i < 4; ++i) pack_revision |= static_cast<std::uint32_t>(b[8 + i]) << (8 * i);
+  if (pack_revision == 0) return false;
+  for (std::size_t i = 0; i < signer.size(); ++i) signer[i] = b[12 + i];
+  for (std::size_t i = 0; i < sig.size(); ++i) sig[i] = b[20 + i];
+  return true;
+}
+
 }  // namespace velora::format

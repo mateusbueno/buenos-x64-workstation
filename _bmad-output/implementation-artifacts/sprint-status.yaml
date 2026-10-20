@@ -177,7 +177,7 @@ development_status:
   6-1-signing-and-content-key-hierarchy-with-dev-roots: done
   6-2-protected-bundle-format-in-formatlib: done
   6-3-content-pack-tool: done
-  6-4-librarian-verifies-and-installs-protected-bundles: backlog
+  6-4-librarian-verifies-and-installs-protected-bundles: done
   6-5-engine-decrypts-protected-bundles-on-i-o-edge-threads: backlog
   6-6-op-tee-content-key-trusted-application-on-the-board: backlog
   6-7-a-copied-or-tampered-library-does-not-play-elsewhere: backlog

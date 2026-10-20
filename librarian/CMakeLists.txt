@@ -16,10 +16,35 @@ std::string_view KeywordTable::embedded_json() {
 ")
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VELORA_CATEGORY_KEYWORDS_CPP}.tmp" "${VELORA_CATEGORY_KEYWORDS_CPP}")
 
-add_library(velora_librarian STATIC src/import.cpp src/batch.cpp src/library_index.cpp src/preflight.cpp src/category_suggest.cpp "${VELORA_CATEGORY_KEYWORDS_CPP}")
+# Story 6.4: the trusted content-signing public keys embedded for the image variant (tools/keys; public keys only), the verify-only protected-bundle
+# target (Ed25519 signature check and SHA-256; NO decrypt, see install.hpp) and the install of protected bundles.
+include(${PROJECT_SOURCE_DIR}/tools/keys/TrustedKeys.cmake)
+set(VELORA_LIBRARIAN_TRUST_VARIANT "dev" CACHE STRING "image variant whose trusted content-signing keys the librarian embeds: dev | factory-test | production")
+set(VELORA_DEV_KEYS_DIR "" CACHE PATH "dev variant only: a local dev key directory (tools/keys/velora_keys.py generate) whose content-manifest public key is trusted too")
+option(VELORA_PRODUCTION "this configuration builds a shippable image: the librarian must not embed the dev trust variant" OFF)
+if(VELORA_LIBRARIAN_TRUST_VARIANT STREQUAL "dev" AND (VELORA_PRODUCTION OR CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel)$"))
+  message(FATAL_ERROR "librarian: the dev trust variant (a developer's keys, and --trust-list) must not be built into a Release / MinSizeRel / VELORA_PRODUCTION configuration. "
+                      "Set -DVELORA_LIBRARIAN_TRUST_VARIANT=factory-test or production.")
+endif()
+string(REPLACE "-" "_" _trust_ident "${VELORA_LIBRARIAN_TRUST_VARIANT}")
+set(_trust_dir "${CMAKE_CURRENT_BINARY_DIR}/trusted-keys")
+if(VELORA_DEV_KEYS_DIR AND VELORA_LIBRARIAN_TRUST_VARIANT STREQUAL "dev")
+  velora_embed_trusted_keys(${VELORA_LIBRARIAN_TRUST_VARIANT} OUTPUT_DIR "${_trust_dir}" DEV_KEYS_DIR "${VELORA_DEV_KEYS_DIR}")
+else()
+  velora_embed_trusted_keys(${VELORA_LIBRARIAN_TRUST_VARIANT} OUTPUT_DIR "${_trust_dir}")
+endif()
+
+add_library(velora_librarian STATIC src/import.cpp src/batch.cpp src/library_index.cpp src/preflight.cpp src/category_suggest.cpp src/install.cpp
+            src/trust_embedded.cpp "${VELORA_CATEGORY_KEYWORDS_CPP}")
 add_library(velora::librarian ALIAS velora_librarian)
 target_include_directories(velora_librarian PUBLIC include)
-target_link_libraries(velora_librarian PUBLIC velora_format velora_sfz velora_host)
+target_include_directories(velora_librarian PRIVATE "${_trust_dir}")
+target_compile_definitions(velora_librarian PRIVATE VELORA_LIBRARIAN_TRUST_HEADER="velora_trusted_keys_${_trust_ident}.hpp"
+                           VELORA_LIBRARIAN_TRUST_NS=velora::keys::${_trust_ident})
+if(VELORA_LIBRARIAN_TRUST_VARIANT STREQUAL "dev")
+  target_compile_definitions(velora_librarian PRIVATE VELORA_LIBRARIAN_TRUST_OVERRIDE=1)  # only the dev variant can read a trust list from a file
+endif()
+target_link_libraries(velora_librarian PUBLIC velora_format velora_format_verify velora_sfz velora_host)
 target_compile_options(velora_librarian PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
 
@@ -189,9 +214,9 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME librarian_no_crypto
            COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/ci/check_librarian_no_crypto.py
                    --link-libs ${CMAKE_CURRENT_BINARY_DIR}/librarian_link_libs.txt
-                   --binary $<TARGET_FILE:librarian-service> --binary $<TARGET_FILE:librarian>
+                   --binary $<TARGET_FILE:librarian-service> --binary $<TARGET_FILE:librarian> --binary $<TARGET_FILE:librarian_test_cli>
                    --lib $<TARGET_FILE:velora_librarian> --lib $<TARGET_FILE:velora_librarian_service>
-                   --lib $<TARGET_FILE:velora_format> --lib $<TARGET_FILE:velora_sfz>)
+                   --lib $<TARGET_FILE:velora_format> --lib $<TARGET_FILE:velora_format_verify> --lib $<TARGET_FILE:velora_sfz>)
   set_tests_properties(librarian_no_crypto PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME librarian_no_crypto_selftest
            COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tools/ci/check_librarian_no_crypto.py --self-test --cc ${CMAKE_C_COMPILER})
@@ -208,7 +233,7 @@ set_tests_properties(librarian_import_service_test PROPERTIES TIMEOUT 300)
 
 # The crash campaign: 200 scripted imports, the service killed at a seeded boundary in a forked child, reconcile and invariants after each. Deterministic.
 add_executable(librarian_crash_campaign tests/crash_campaign_test.cpp)
-target_link_libraries(librarian_crash_campaign PRIVATE velora_librarian_service velora_librarian)
+target_link_libraries(librarian_crash_campaign PRIVATE velora_librarian_service velora_librarian velora_format_protected_writer)
 target_include_directories(librarian_crash_campaign PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
 # Story 5.8: part of the campaign SIGKILLs the test CLI (a real process, told where to die by VELORA_LIBRARIAN_KILL).
 target_compile_definitions(librarian_crash_campaign PRIVATE LIBRARIAN_TEST_EXE="$<TARGET_FILE:librarian_test_cli>")
@@ -232,3 +257,34 @@ target_compile_definitions(librarian_checkpoint_test PRIVATE LIBRARIAN_EXE="$<TA
 add_dependencies(librarian_checkpoint_test librarian librarian_test_cli librarian-service)
 add_test(NAME librarian_checkpoint_test COMMAND librarian_checkpoint_test)
 set_tests_properties(librarian_checkpoint_test PROPERTIES TIMEOUT 300)
+
+# --- Story 6.4: protected bundles ---------------------------------------------------------------------------------------------------------------
+# The install of protected vendor bundles: verify only (Ed25519 + SHA-256), never a cipher. The tests build their fixtures with the protected WRITER (signing,
+# AES-CTR) - a test-only dependency; no shipped target links it (tools/ci/check_format_no_decrypt.py scans the real binaries).
+add_executable(librarian_install_test tests/install_test.cpp)
+target_link_libraries(librarian_install_test PRIVATE velora_librarian_service velora_format_protected_writer)
+target_include_directories(librarian_install_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+target_compile_definitions(librarian_install_test PRIVATE LIBRARIAN_EXE="$<TARGET_FILE:librarian>")
+add_dependencies(librarian_install_test librarian)
+add_test(NAME librarian_install_test COMMAND librarian_install_test)
+set_tests_properties(librarian_install_test PROPERTIES TIMEOUT 600)
+
+add_executable(librarian_install_service_test tests/install_service_test.cpp)
+target_link_libraries(librarian_install_service_test PRIVATE velora_librarian_service velora_format_protected_writer)
+target_include_directories(librarian_install_service_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+target_compile_definitions(librarian_install_service_test PRIVATE LIBRARIAN_EXE="$<TARGET_FILE:librarian>" LIBRARIAN_SERVICE_EXE="$<TARGET_FILE:librarian-service>")
+add_dependencies(librarian_install_service_test librarian librarian-service)
+add_test(NAME librarian_install_service_test COMMAND librarian_install_service_test)
+set_tests_properties(librarian_install_service_test PROPERTIES TIMEOUT 300)
+
+# End to end across the real tools: velora-content-pack -> librarian install-protected -> a service listing the Factory library.
+if(Python3_Interpreter_FOUND)
+  add_executable(librarian_e2e_pack_install_test tests/e2e_pack_install_test.cpp)
+  target_link_libraries(librarian_e2e_pack_install_test PRIVATE velora_librarian_service)
+  target_include_directories(librarian_e2e_pack_install_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+  target_compile_definitions(librarian_e2e_pack_install_test PRIVATE LIBRARIAN_EXE="$<TARGET_FILE:librarian>" CP_EXE="$<TARGET_FILE:velora-content-pack>"
+                             PYTHON_EXE="${Python3_EXECUTABLE}" KEYS_PY="${PROJECT_SOURCE_DIR}/tools/keys/velora_keys.py")
+  add_dependencies(librarian_e2e_pack_install_test librarian velora-content-pack)
+  add_test(NAME librarian_e2e_pack_install_test COMMAND librarian_e2e_pack_install_test)
+  set_tests_properties(librarian_e2e_pack_install_test PROPERTIES TIMEOUT 300)
+endif()

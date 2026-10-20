@@ -24,6 +24,7 @@ jobs:
       - run: python3 tools/ci/check_no_private_keys.py --self-test
       # self-test only; the nm scans of the built artifacts (format_no_decrypt*, librarian_no_crypto) run through ctest in the build jobs
       - run: python3 tools/ci/check_format_no_decrypt.py --self-test
+      - run: python3 tools/ci/check_librarian_no_crypto.py --self-test --cc cc
 
   macos:
     runs-on: macos-latest

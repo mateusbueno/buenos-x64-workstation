@@ -26,6 +26,7 @@ const char* to_string(Error e) {
     case Error::kSignatureInvalid: return "signature_invalid";
     case Error::kHashListMismatch: return "hash list root mismatch";
     case Error::kWrongContentKey: return "wrong_content_key";
+    case Error::kCatalogMetaInvalid: return "catalog_meta_invalid";
   }
   return "unknown";
 }

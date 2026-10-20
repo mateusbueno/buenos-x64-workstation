@@ -51,6 +51,18 @@ CRYPTO_PREFIX_RE = re.compile(r"^(EVP_|OPENSSL_|CRYPTO_|ERR_|BIO_|CC|Sec|mbedtls
 CIPHER_RE = [re.compile(p) for p in CIPHER_PATTERNS]
 # Project symbols that exist only on the decrypt side (C names, and substrings of mangled C++ names).
 PROJECT_RE = re.compile(r"decrypt|aes_?256|aes_?ctr|ProtectedBundleReader|ContentKey", re.I)
+# The only names exempt from the "ContentKey" rule are the two EXACT symbols tools/keys/embed_trusted_keys.py generates (PUBLIC signing keys the librarian verifies
+# against, not content keys): kTrustedContentKeys and kTrustedContentKeyCount. They are removed from a name before the rule runs; any other name with "ContentKey" in it
+# (also one that merely contains "Trusted", e.g. kTrustedContentKeysAndMore, or a type ContentKey) is still flagged.
+GENERATED_KEY_NAMES = ("kTrustedContentKeys", "kTrustedContentKeyCount")
+GENERATED_KEY_MANGLED_RE = re.compile(r"(\d+)(kTrustedContentKeys|kTrustedContentKeyCount)")
+
+
+def strip_generated(name):
+    """Removes the two exact generated names: a whole plain C name, or an Itanium-mangled source name whose length prefix is exactly the name's length."""
+    if normalize(name) in GENERATED_KEY_NAMES:
+        return ""
+    return GENERATED_KEY_MANGLED_RE.sub(lambda m: "" if int(m.group(1)) == len(m.group(2)) else m.group(0), name)
 
 
 def normalize(name):
@@ -64,7 +76,7 @@ def flag_symbol(name):
     n = normalize(name)
     if any(r.search(n) for r in CIPHER_RE):
         return True
-    return bool(PROJECT_RE.search(name))
+    return bool(PROJECT_RE.search(strip_generated(name)))
 
 
 def unexpected_crypto(name):
@@ -131,8 +143,13 @@ def self_test(cc, nm):
                  "_ZN6velora6format21ed25519_verify_strictERKNSt3__15arrayIhLm32EEENS1_4spanIKhLm18446744073709551615EEERKNS2_IhLm64EEE",
                  "_ZN6velora6format19ProtectedBundleView9open_fileERKNSt3__112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEERKNS0_11TrustedKeysE",
                  "_ZN6velora6format6Sha256C1Ev", "_memcpy", "_ZN6velora6format15hash_list_rootENSt3__14spanIKNS1_5arrayIhLm32EEELm18446744073709551615EEE",
-                 "_ZN6velora6format15key_check_valueE"):
+                 "_ZN6velora6format15key_check_valueE",
+                 "__ZN6velora4keys3dev19kTrustedContentKeysE", "_ZN6velora4keys12factory_test23kTrustedContentKeyCountE", "__ZN6velora4keys10production19kTrustedContentKeysE",
+                 "_ZN6velora9librarian15install_protectedERKNS0_14InstallOptionsE"):
         expect(not flag_symbol(good), "verify-side name passes: " + good)
+    for bad in ("_ZN6velora6format10ContentKeyC1Ev", "_ZN6velora6format12finalize_protectedERKNS0_13BundleWriterERKNS0_10ContentKeyE", "kContentKeyBytes",
+                "__ZN6velora4keys3dev26kTrustedContentKeysAndMoreE", "_ZN6velora4keys3dev19kTrustedContentKeysE12ContentKeyX", "_ZN6velora6format17kTrustedContentKeyE"):
+        expect(flag_symbol(bad), "a content key symbol is still flagged: " + bad)
     for bad in ("_CCCrypt", "_CCCryptorCreate", "_BIO_f_cipher", "_BIO_set_cipher", "_mbedtls_aes_setkey_dec", "_crypto_stream_xor", "_crypto_secretbox_open_easy",
                 "wc_AesSetKey", "EVP_DecryptInit_ex@OPENSSL_3.0.0", "EVP_aes_256_ctr@@OPENSSL_3.0.0"):
         expect(flag_symbol(bad), "extended denylist name is flagged: " + bad)
@@ -204,6 +221,9 @@ def main():
         print("nothing to check (give --binary or --lib)")
         return 2
     if not nm:
+        if os.environ.get("CI"):  # in CI a missing nm must not turn the proof into a skip
+            print("FAIL: `nm` not found in CI: the symbol check could not run")
+            return 1
         print("SKIP: `nm` not found, symbol check not run")
         return 77
     if a.expect_flagged:

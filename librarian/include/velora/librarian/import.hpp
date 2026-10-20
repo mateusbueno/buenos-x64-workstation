@@ -161,6 +161,7 @@ enum class Status : std::uint8_t {
   kBusy,           // another import holds the lock
   kAborted,        // fault injection stopped the run
   kDriveRemoved,   // Story 5.8: the source disappeared mid-import; the timbre in progress was discarded whole, `timbres_published` of `timbres_total` are published
+  kFactoryProtected,  // Story 6.4: the library_id names an installed Factory (protected) library; a user import never replaces or adds to it. Nothing published.
 };
 const char* to_string(Status s);
 

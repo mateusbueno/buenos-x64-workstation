@@ -197,6 +197,62 @@ void ImportWorker::run() {
         m.index = i;
         post(std::move(m));
       }
+      if (it.install) {
+        InstallOptions io = it.install_opt;
+        io.root = cfg_.data_dir;
+        io.trusted = &cfg_.trusted;
+        io.free_bytes_fn = cfg_.free_bytes_fn;
+        const std::uint64_t ijid = job->id;
+        io.cancelled = [&job] { return job->cancel.load(); };
+        io.source_gone = source_gone;
+        io.fault.on_stage = [&, ijid, i](Stage s) {
+          if (cfg_.point_hook) cfg_.point_hook(point_name(s), ijid, i);
+          // Like an import: a cancel (or the service stopping) takes effect at the next safe point before the bundle is renamed into place.
+          if (job->cancel.load() && (s == Stage::kStageCreated || s == Stage::kStaged || s == Stage::kVerified || s == Stage::kFsynced)) return HookAction::kAbort;
+          return HookAction::kContinue;
+        };
+        io.on_copy_chunk = [&, ijid, i](std::uint64_t) {
+          if (cfg_.point_hook) cfg_.point_hook("copy-chunk", ijid, i);  // a test kill point mid-copy
+        };
+        if (cfg_.install_options_hook) cfg_.install_options_hook(ijid, i, io);
+        WorkerMsg done;
+        done.kind = WorkerMsg::Kind::kItemDone;
+        done.job = job;
+        done.index = i;
+        done.is_install = true;
+        done.install = install_protected(io);
+        const InstallResult& ir = done.install;
+        done.result.library_id = ir.library_id;
+        done.result.bundle_id = ir.bundle_id;
+        done.result.bundle_dir = ir.bundle_dir;
+        done.result.sample_count = ir.samples;
+        done.result.region_count = ir.regions;
+        done.result.bundle_created = ir.bundle_created;
+        done.result.current_flipped = ir.current_flipped;
+        done.result.timbres_total = 1;
+        if (ir.status == InstallStatus::kAborted) reconcile_staging(cfg_.data_dir);  // what the abort left in .staging
+        if (ir.ok()) {
+          done.result.status = Status::kOk;
+          done.result.timbres_published = 1;
+          DescribeOptions dopt;
+          dopt.trusted = &cfg_.trusted;
+          DescribeResult dr = describe_bundle(ir.bundle_dir, dopt);
+          if (dr.status == DescribeStatus::kOk) {
+            done.record = std::move(dr.record);
+            done.have_record = true;
+          } else {
+            done.describe_error = dr.why;
+          }
+        }
+        const bool removed = ir.status == InstallStatus::kDriveRemoved;
+        done.ticket = std::make_shared<Ticket>();
+        std::shared_ptr<Ticket> t = done.ticket;
+        post(std::move(done));
+        std::unique_lock<std::mutex> lk(t->m);
+        t->cv.wait(lk, [&] { return t->done; });
+        if (removed) break;
+        continue;
+      }
       ImportOptions o;
       o.sfz_path = it.path;
       o.root = cfg_.data_dir;

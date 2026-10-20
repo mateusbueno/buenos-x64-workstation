@@ -34,6 +34,8 @@ enum LibraryErrorCode {
   // Story 5.7 (additive).
   LIBRARY_ERROR_CODE_INSUFFICIENT_SPACE = 16;  // an import whose required bytes exceed the free bytes of the data file system (details: required_bytes, free_bytes, both decimal); nothing is written or queued
   LIBRARY_ERROR_CODE_UNKNOWN_PREFLIGHT = 17;   // no such preflight result (never made, or dropped: the service keeps the newest few)
+  // Story 6.4 (additive).
+  LIBRARY_ERROR_CODE_FACTORY_LIBRARY_PROTECTED = 18;  // an import (user import path) whose library_id is an installed Factory library: refused before anything is queued or written (details: path, library_id, reason=factory_library_protected). The same refusal found by the importer itself, after the request was accepted, ends the item FAILED with detail starting `factory_library_protected`
   // INVALID_COMMAND with details.reason=empty_reconcile: a Reconcile whose list is empty while the catalog is not (see Reconcile).
 }
 
@@ -52,7 +54,7 @@ message LibraryHello {
 
 message LibraryHelloAck {
   uint32 version = 1;
-  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2" (Story 5.6), "preflight.v1" (Story 5.7), "import.checkpoints.v1" (Story 5.8)
+  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2" (Story 5.6), "preflight.v1" (Story 5.7), "import.checkpoints.v1" (Story 5.8), "install.protected.v1" and "library.kind.v1" (Story 6.4)
   uint32 catalog_schema_version = 3;
 }
 
@@ -149,6 +151,22 @@ message ImportAccepted {
   uint64 free_bytes = 7;             // free bytes of the data file system when the request was checked (0 when free_known is false)
   bool free_known = 8;               // false: the free space could not be read and the space check was skipped
 }
+// Story 6.4: install a protected bundle (a vendor pack made by tools/content-pack: bundle.vlrp, catalog.meta, catalog.meta.sig, wrapped-key.<device key id>.bin).
+// Either `source_dir` (the pack directory; its `wrapped-key.*.bin` must be exactly one unless `wrapped_key_path` names the one for this device) or `bundle_path`
+// (then catalog.meta, catalog.meta.sig and the wrapped key sit beside it unless named). The service reads them where they are (a mounted volume, a folder) and
+// copies into <data>/lib/<library_id>/<bundle_id>/. `expected_library_id` (canonical UUID text, optional) must equal the bundle's library_id; without it the name of
+// `source_dir` is used when it is a UUID. Answers ImportAccepted (item_count 1) and runs as a job on the librarian's worker: ImportProgress events, CancelImport,
+// ImportStatusRequest and the terminal states behave as for an import (IMPORT_STATE_DRIVE_REMOVED when the volume goes away mid-install; the result item carries
+// `install_reason`). Refusals before the job exists: INVALID_SOURCE (details path, reason source_missing | source_unreadable | bundle_missing |
+// not_a_directory | bad_path), INVALID_COMMAND (reason install_target | invalid_library_id), INSUFFICIENT_SPACE (required = bundle size + reserve), SHUTTING_DOWN, QUEUE_FULL.
+message InstallProtectedRequest {
+  string source_dir = 1;
+  string bundle_path = 2;
+  string wrapped_key_path = 3;
+  string catalog_meta_path = 4;
+  string catalog_meta_seal_path = 5;
+  string expected_library_id = 6;
+}
 message CancelImport { uint64 job_id = 1; }   // answers LibraryAck{changed=true} when the job was queued or running, false when it had already finished
 message ImportStatusRequest { uint64 job_id = 1; }  // answers ImportProgress (the latest event of the job)
 
@@ -177,6 +195,25 @@ enum ImportReason {                  // the closed set of the import report (Sto
   IMPORT_REASON_DAMAGED = 2;
   IMPORT_REASON_DRIVE_REMOVED = 3;   // Story 5.8: an item that was not attempted because the source drive went away during an earlier item (status SKIPPED)
 }
+// Story 6.4: why a protected-bundle install was refused (the closed set of librarian/README.md, "Installing protected bundles"). Nothing is published, whatever the reason.
+enum InstallReason {
+  INSTALL_REASON_NONE = 0;
+  INSTALL_REASON_SIGNATURE_INVALID = 1;   // the Ed25519 signature over the manifest does not verify
+  INSTALL_REASON_UNTRUSTED_KEY = 2;       // the signer is not in the trusted content-signing keys of this image
+  INSTALL_REASON_BLOCK_HASH_MISMATCH = 3; // a ciphertext block does not match its signed index hash
+  INSTALL_REASON_HASH_LIST_MISMATCH = 4;
+  INSTALL_REASON_CORRUPT_BUNDLE = 5;      // header, manifest or index damaged or truncated
+  INSTALL_REASON_WRAPPED_KEY_INVALID = 6; // missing, ambiguous or not a well-formed wrapped_key_v1 (structure only; never unwrapped)
+  INSTALL_REASON_ALREADY_INSTALLED = 7;   // with status UNCHANGED: the same bundle_id is already installed
+  INSTALL_REASON_LIBRARY_ID_MISMATCH = 8; // the bundle is not the library the request named (expected_library_id, or the pack directory's name)
+  INSTALL_REASON_NOT_PROTECTED = 9;       // an unprotected (older) format: never installed as a Factory library
+  INSTALL_REASON_UNSUPPORTED_VERSION = 10;
+  INSTALL_REASON_DOWNGRADE = 11;          // older than the bundle that is current for this library
+  INSTALL_REASON_CATALOG_META_INVALID = 12; // catalog.meta / catalog.meta.sig altered, missing, sealed for another bundle or not matching the bundle
+  INSTALL_REASON_LIBRARY_ID_IN_USE = 13;  // the library_id is a user library
+  INSTALL_REASON_MISSING_FILE = 14;       // the bundle file does not exist
+  INSTALL_REASON_IO_ERROR = 15;
+}
 message ImportOffender {
   string opcode = 1;
   string file = 2;
@@ -204,6 +241,12 @@ message ImportItemResult {
   // Story 5.8: true when the item did NOT finish (status other than IMPORTED / UNCHANGED) but `timbres` > 0: a checkpoint published that many leading timbres of the file
   // before the item was cancelled, skipped, failed or the drive went away. They are in the catalog and playable; the rest is not; "Import again" completes the library.
   bool partial = 18;
+  // Story 6.4: set on the result of a protected-bundle install (InstallProtectedRequest). INSTALL_REASON_NONE for an import and for an install that succeeded; on a
+  // rejected install (status FAILED) the typed reason; INSTALL_REASON_ALREADY_INSTALLED with status UNCHANGED for an install that found the same bundle_id in place.
+  InstallReason install_reason = 19;
+  // Story 6.4: an install of a bundle that was already installed (status UNCHANGED) whose wrapped-key blob differed - the pack was re-delivered for this device - and
+  // the stored `wrapped-key.bin` was replaced (atomically, after the same structural validation).
+  bool wrapped_key_updated = 20;
 }
 // Pushed to the requester (and to every LibrarySubscribe subscriber) at each change of a job. event_seq grows by one per event of the job; items_done,
 // the counters and bytes_done never decrease; the last event of a job has a terminal state and an empty current_item.
@@ -238,6 +281,12 @@ message ListLibraries {
   uint32 offset = 1;
   uint32 limit = 2;                  // 0 = 500
 }
+// Story 6.4: where a library comes from. USER (the default, also for every library of an older catalog) = imported from an SFZ / SF2, stored unencrypted.
+// FACTORY = installed from a signed, protected vendor bundle; the librarian holds no key for it.
+enum LibraryKind {
+  LIBRARY_KIND_USER = 0;
+  LIBRARY_KIND_FACTORY = 1;
+}
 message LibraryInfo {
   string library_id = 1;
   string name = 2;
@@ -246,6 +295,7 @@ message LibraryInfo {
   string bundle_id = 5;              // the current bundle
   uint32 instrument_count = 6;
   uint64 imported_seq = 7;           // import order (no wall clock: the unit has no RTC)
+  LibraryKind kind = 8;              // Story 6.4
 }
 message LibraryList {
   repeated LibraryInfo libraries = 1;
@@ -381,6 +431,7 @@ message LibraryClientMessage {
     PreflightRequest preflight_request = 17;    // Story 5.7
     ListPreflightRows list_preflight_rows = 18;
     CancelPreflight cancel_preflight = 19;
+    InstallProtectedRequest install_protected = 20;  // Story 6.4
   }
 }
 

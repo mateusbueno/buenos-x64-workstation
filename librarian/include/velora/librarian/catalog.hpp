@@ -8,6 +8,7 @@
 //   libraries(library_id TEXT PRIMARY KEY, name, source_kind 'sfz'|'sf2', source_path, bundle_id, instrument_count, imported_seq)   (schema 2, Story 5.6)
 //   instruments(library_id -> libraries ON DELETE CASCADE, instrument_key, name, category CHECK 1..17, sample_count, region_count, bytes,
 //               PRIMARY KEY(library_id, instrument_key))                                                                     (schema 2, Story 5.6)
+//   libraries.kind TEXT NOT NULL DEFAULT 'user' CHECK(kind IN ('user','factory'))                                                   (schema 3, Story 6.4)
 // Search tables come with Story 5.16. A library row and its instrument rows are written in ONE transaction, after the bundle is published; the rows
 // can always be rebuilt from the bundles (library_index.hpp, library_reconcile.hpp).
 //
@@ -20,7 +21,7 @@
 //
 // Version policy: a database whose schema_version is newer than kSchemaVersion is refused (kSchemaTooNew) and left untouched; an older one is
 // migrated forward after a PRAGMA quick_check (the only integrity check; none on a matching version). Version 2 (Story 5.6) adds the libraries and
-// instruments tables and keeps every favorite and recent row; migrations are forward-only, one transaction each. A file that is not a SQLite database, or a SQLite database that is not a catalog, is refused (kNotACatalog /
+// instruments tables and keeps every favorite and recent row; version 3 (Story 6.4) adds libraries.kind (every existing row becomes 'user'); migrations are forward-only, one transaction each. A file that is not a SQLite database, or a SQLite database that is not a catalog, is refused (kNotACatalog /
 // kCorrupt); it is never overwritten.
 //
 // No exception crosses this API: every call returns a typed CatalogStatus.
@@ -40,7 +41,7 @@ struct sqlite3_stmt;
 
 namespace velora::librarian {
 
-inline constexpr std::uint32_t kCatalogSchemaVersion = 2;
+inline constexpr std::uint32_t kCatalogSchemaVersion = 3;
 inline constexpr std::size_t kMaxRecent = 20;
 // 2048 favorites of 64-byte ids (~135 KB) always fit one Library API frame (262144 bytes) together with Recent.
 inline constexpr std::size_t kMaxFavorites = 2048;

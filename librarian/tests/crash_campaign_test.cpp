@@ -19,6 +19,13 @@
 // After every kill: restart (the catalog opens, the reconcile pass runs), the Story 5.6 invariants hold, every bundle directory left under the library verifies, `current`
 // names a bundle that holds the first k timbres of the clean import bit for bit, and a completed re-run ends in the clean import's bundle id (the content hash).
 // A chain of 10 kills on ONE root and 20 kills of the service process (SIGKILL at timbre, stage and catalog points) follow the same checks.
+//
+// Story 6.4 (install_campaign, last part of main): 28 SIGKILLs of the INSTALL of a protected bundle - the CLI (`librarian_test_cli install-protected`) at each of the 7
+// stage points on a fresh root and on a root that already holds the previous revision of the library, and the service process (an InstallProtectedRequest) at each
+// of its 10 boundaries (and 4 of them on the root with the previous revision). After every kill: restart (the catalog opens, reconcile runs with the trusted keys),
+// the same invariants as for imports (a listed library has a `current` bundle that verifies, every library with a usable `current` is listed, no staging leftovers, no
+// orphan `.current.tmp.*`, reconcile idempotent), every bundle directory that is left is whole and byte-identical to the pack, `current` is the old or the new
+// bundle (never anything else), and a completed re-run ends in the new bundle, installed exactly as a clean install.
 #include <functional>
 #include <cstring>
 #include <sqlite3.h>
@@ -35,9 +42,11 @@
 
 #include "import_fixtures.hpp"
 #include "lib_test_util.hpp"
+#include "protected_fixtures.hpp"
 #include "velora/format/bundle.hpp"
 #include "velora/format/hash.hpp"
 #include "velora/librarian/import.hpp"
+#include "velora/librarian/install.hpp"
 #include "velora/librarian/library_index.hpp"
 #include "velora/librarian/library_reconcile.hpp"
 #include "velora/librarian/library_service.hpp"
@@ -183,6 +192,8 @@ int g_inv_fail = 0;
     }                                                                                               \
   } while (0)
 
+const fmt::TrustedKeys* g_trusted = nullptr;  // Story 6.4: set by install_campaign for the protected bundles
+
 std::string current_target(const fs::path& libdir) {
   std::error_code ec;
   const fs::path link = libdir / "current";
@@ -204,7 +215,7 @@ void check_invariants(const std::string& data, int step, Catalog& cat) {
     for (fs::directory_iterator sub(it->path(), ec), send; !ec && sub != send; sub.increment(ec))
       INV(sub->path().filename().string().rfind(".current.tmp", 0) != 0, step, "orphan .current.tmp link");
     const std::string target = current_target(it->path());
-    if (target.size() == 64 && fs::exists(it->path() / target / "bundle.vlb", ec)) on_disk[name] = target;
+    if (target.size() == 64 && (fs::exists(it->path() / target / "bundle.vlb", ec) || fs::exists(it->path() / target / "bundle.vlrp", ec))) on_disk[name] = target;
   }
   std::vector<LibraryRecord> rows;
   INV(cat.list_libraries(rows, true) == CatalogStatus::kOk, step, "catalog readable");
@@ -215,9 +226,16 @@ void check_invariants(const std::string& data, int step, Catalog& cat) {
     INV(on_disk.count(r.library_id) == 1 && on_disk[r.library_id] == r.bundle_id, step, "catalog library without its current bundle");
     if (!on_disk.count(r.library_id)) continue;
     const std::string bdir = (lib / r.library_id / r.bundle_id).string();
-    auto rd = fmt::BundleReader::open_file(bdir + "/bundle.vlb");
-    INV(rd.ok() && rd.value().verify_all() == fmt::Error::kNone, step, "listed bundle does not verify");
-    const DescribeResult dr = describe_bundle(bdir);
+    DescribeOptions dopt;
+    dopt.trusted = g_trusted;
+    if (r.kind == LibraryKind::kFactory) {  // Story 6.4: a protected bundle verifies by its signature and its ciphertext block hashes (nothing is decrypted)
+      auto pv = g_trusted ? fmt::ProtectedBundleView::open_file(bdir + "/bundle.vlrp", *g_trusted) : fmt::Result<fmt::ProtectedBundleView>(fmt::Error::kUntrustedKey);
+      INV(pv.ok() && pv.value().verify_all_blocks() == fmt::Error::kNone, step, "listed factory bundle does not verify");
+    } else {
+      auto rd = fmt::BundleReader::open_file(bdir + "/bundle.vlb");
+      INV(rd.ok() && rd.value().verify_all() == fmt::Error::kNone, step, "listed bundle does not verify");
+    }
+    const DescribeResult dr = describe_bundle(bdir, dopt);
     INV(dr.status == DescribeStatus::kOk && same_content(dr.record, r), step, "instrument rows differ from the bundle");
     INV(!r.instruments.empty(), step, "a listed library without instruments");
     for (const auto& i : r.instruments) INV(i.category >= 1 && i.category <= 17, step, "category out of range");
@@ -513,6 +531,232 @@ void multi_timbre_campaign() {
               kills, pts.size(), service_kills);
 }
 
+// --- Story 6.4: SIGKILL campaign over the install of a protected bundle -----------------------------------------------------------------------------
+
+const pfx::Keys& campaign_keys() {
+  static const pfx::Keys k = pfx::make_keys(1);
+  return k;
+}
+
+// Runs `librarian_test_cli install-protected <dir>` as a real child; `kill_spec` empty = to completion. Returns the wait status.
+int run_install_cli_child(const std::string& pack_dir, const std::string& root, const std::string& trust_list, const std::string& kill_spec) {
+  const pid_t pid = ::fork();
+  if (pid == 0) {
+    if (!kill_spec.empty()) ::setenv("VELORA_LIBRARIAN_KILL", kill_spec.c_str(), 1);
+    else ::unsetenv("VELORA_LIBRARIAN_KILL");
+    const int devnull = ::open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+      ::dup2(devnull, 1);
+      ::dup2(devnull, 2);
+    }
+    const char* argv[] = {"librarian_test_cli", "install-protected", pack_dir.c_str(), "--root", root.c_str(), "--trust-list", trust_list.c_str(), nullptr};
+    ::execv(LIBRARIAN_TEST_EXE, const_cast<char* const*>(argv));
+    ::_exit(127);
+  }
+  int status = 0;
+  ::waitpid(pid, &status, 0);
+  return status;
+}
+
+// One service process (forked) installs the pack over the Library API and kills itself with SIGKILL at the n-th arrival at `point`.
+int run_install_service_child(const std::string& root, const std::string& sock, const std::string& pack_dir, const std::string& point, int nth = 1) {
+  const pid_t pid = ::fork();
+  if (pid == 0) {
+    LibraryServiceOptions o;
+    o.data_dir = root;
+    o.socket_path = sock;
+    o.trusted_keys = campaign_keys().trusted;
+    auto seen = std::make_shared<int>(0);
+    o.import_point_hook = [point, nth, seen](const char* p, std::uint64_t, std::size_t) {
+      if (point == p && ++*seen == nth) ::kill(::getpid(), SIGKILL);
+    };
+    LibraryService svc(o);
+    std::string err;
+    if (!svc.start(err)) ::_exit(21);
+    Client c;
+    if (!c.connect(sock) || !c.handshake("kill")) ::_exit(22);
+    ws::v1::LibraryClientMessage m;
+    m.mutable_install_protected()->set_source_dir(pack_dir);
+    auto a = c.call(m, 30000);
+    if (!a || !a->has_import_accepted()) ::_exit(23);
+    for (;;) {
+      auto e = c.recv(60000);
+      if (!e) ::_exit(24);
+      if (e->has_import_progress() && terminal(e->import_progress().state())) break;
+    }
+    svc.stop();
+    ::_exit(0);
+  }
+  int status = 0;
+  ::waitpid(pid, &status, 0);
+  return status;
+}
+
+struct InstallTally {
+  int none = 0, old_current = 0, new_current = 0;  // what the kills left: no current bundle, the previous bundle, the new one
+};
+
+// The restart and the invariants of the story for one library with an old (optional) and a new bundle.
+void check_after_install_kill(const std::string& root, int step, const pfx::Pack& old_pack, bool old_installed, const pfx::Pack& new_pack, InstallTally& tally,
+                              bool via_service = false) {
+  if (via_service) {  // the restart is the real LibraryService::start: it takes the locks, reconciles (staging, links, catalog) and only then serves
+    LibraryServiceOptions so;
+    so.data_dir = root;
+    so.socket_path = root + "/s.sock";
+    so.trusted_keys = *g_trusted;
+    LibraryService svc(so);
+    std::string err;
+    INV(svc.start(err), step, "the service does not start after a kill");
+    INV(svc.startup_reconcile().errors.empty() && svc.startup_reconcile().skipped.empty(), step, "the startup reconcile reported errors or skipped a library");
+    svc.stop();
+  }
+  std::unique_ptr<Catalog> cat;
+  INV(Catalog::open(root, cat) == CatalogStatus::kOk, step, "the catalog does not open after a kill");
+  if (!cat) return;
+  ReconcileOptions ro;
+  ro.trusted = g_trusted;
+  ReconcileReport rep;
+  INV(reconcile_libraries(*cat, root, rep, ro) == CatalogStatus::kOk && rep.errors.empty() && rep.skipped.empty(), step, "reconcile failed or skipped a library");
+  check_invariants(root, step, *cat);
+  ReconcileReport rep2;
+  INV(reconcile_libraries(*cat, root, rep2, ro) == CatalogStatus::kOk && !rep2.changed(), step, "reconcile is not idempotent");
+  const fs::path ldir = fs::path(root) / "lib" / new_pack.library_id;
+  std::error_code ec;
+  const std::string cur = current_target(ldir);
+  // every bundle directory that is left is whole and equals its pack; only the old and the new one can exist
+  for (fs::directory_iterator it(ldir, ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string n = it->path().filename().string();
+    if (n.size() != 64) {
+      INV(n == "current", step, "an unexpected entry in the library directory");
+      continue;
+    }
+    const pfx::Pack* pk = n == new_pack.bundle_id ? &new_pack : (old_installed && n == old_pack.bundle_id ? &old_pack : nullptr);
+    INV(pk != nullptr, step, "a bundle directory that is neither the old nor the new bundle");
+    if (!pk) continue;
+    INV(pfx::read_bytes(it->path() / "bundle.vlrp") == pk->bundle && pfx::read_bytes(it->path() / "wrapped-key.bin") == pk->wrapped &&
+            pfx::read_bytes(it->path() / "catalog.meta") == pk->meta && pfx::read_bytes(it->path() / "catalog.meta.sig") == pk->seal,
+        step, "a bundle directory left on disk is not byte-identical to its pack");
+  }
+  std::vector<LibraryRecord> rows;
+  INV(cat->list_libraries(rows, true) == CatalogStatus::kOk, step, "catalog readable");
+  if (cur.empty()) {
+    ++tally.none;
+    INV(!old_installed, step, "the previous bundle was current and is not any more");
+    INV(rows.empty(), step, "a library without a current bundle is listed");
+  } else {
+    INV(cur == new_pack.bundle_id || (old_installed && cur == old_pack.bundle_id), step, "current names neither the old nor the new bundle");
+    if (cur == new_pack.bundle_id) ++tally.new_current;
+    else ++tally.old_current;
+    INV(rows.size() == 1 && rows[0].bundle_id == cur && rows[0].kind == LibraryKind::kFactory, step, "the catalog does not list the current bundle as Factory");
+  }
+}
+
+// A clean run of the install ends in the new bundle, exactly as a clean install does.
+void complete_install(const std::string& root, int step, const std::string& pack_dir, const std::string& trust_list, const pfx::Pack& new_pack, std::size_t instruments) {
+  const int done = run_install_cli_child(pack_dir, root, trust_list, "");
+  INV(WIFEXITED(done) && WEXITSTATUS(done) == 0, step, "the completing install did not succeed");
+  std::unique_ptr<Catalog> cat;
+  INV(Catalog::open(root, cat) == CatalogStatus::kOk, step, "the catalog does not open for the completing install");
+  if (!cat) return;
+  ReconcileOptions ro;
+  ro.trusted = g_trusted;
+  ReconcileReport rep;
+  INV(reconcile_libraries(*cat, root, rep, ro) == CatalogStatus::kOk && rep.errors.empty(), step, "reconcile after the completing install failed");
+  INV(current_target(fs::path(root) / "lib" / new_pack.library_id) == new_pack.bundle_id, step, "after the completing install `current` is not the new bundle");
+  std::vector<LibraryRecord> rows;
+  INV(cat->list_libraries(rows, true) == CatalogStatus::kOk && rows.size() == 1 && rows[0].bundle_id == new_pack.bundle_id && rows[0].instrument_count() == instruments, step,
+      "the catalog does not list the installed library");
+  check_invariants(root, step, *cat);
+}
+
+void install_campaign_set(bool big, InstallTally& cli_tally, InstallTally& svc_tally, int& kills, int& service_kills, int& step) {
+  const pfx::Keys& keys = campaign_keys();
+  g_trusted = &keys.trusted;
+  ltest::TempDir work;
+  char id[17], pub[65];
+  for (int i = 0; i < 8; ++i) std::snprintf(id + 2 * i, 3, "%02x", keys.id[i]);
+  for (int i = 0; i < 32; ++i) std::snprintf(pub + 2 * i, 3, "%02x", keys.pub[i]);
+  const std::string trust_list = work.sub("trust.pub-list");
+  pfx::write_bytes(trust_list, pfx::as_bytes(std::string("dev content-manifest ") + id + " " + pub + "\n"));
+  pfx::PackSpec s_old, s_new;
+  s_old.big = s_new.big = big;
+  if (big) {
+    s_old.instruments = s_new.instruments = 1;
+    s_old.frames = s_new.frames = 200000;  // 1.6 MB of float noise: seven copy chunks
+  }
+  s_new.variant = 1;
+  s_new.revision = 2;
+  const pfx::Pack old_pack = pfx::make_pack(work.sub("packs_old"), s_old, keys);
+  const pfx::Pack new_pack = pfx::make_pack(work.sub("packs_new"), s_new, keys);
+  CHECK(!old_pack.bundle_id.empty() && old_pack.bundle_id != new_pack.bundle_id && old_pack.library_id == new_pack.library_id);
+
+  const std::size_t n_instr = s_new.instruments;
+  const int kills0 = kills, service_kills0 = service_kills;
+  // CLI: each stage point, on a fresh root and on a root that holds the previous revision
+  for (const bool with_old : {false, true}) {
+    std::vector<std::string> cli_points;
+    if (big) cli_points = {"copy-chunk@1", "copy-chunk@3", "copy-chunk@6"};
+    else for (const char* sp : kStagePoints) cli_points.push_back(std::string(sp) + "@1");
+    for (const std::string& spec : cli_points) {
+      const std::string root = work.sub("c" + std::to_string(step));
+      fs::create_directories(root);
+      if (with_old) {
+        const int st = run_install_cli_child(old_pack.dir.string(), root, trust_list, "");
+        INV(WIFEXITED(st) && WEXITSTATUS(st) == 0, step, "the previous revision did not install");
+      }
+      const int st = run_install_cli_child(new_pack.dir.string(), root, trust_list, spec);
+      INV(killed_by_sigkill(st), step, "the install child was not killed by SIGKILL at its point (the kill point was not reached)");
+      if (killed_by_sigkill(st)) ++kills;
+      check_after_install_kill(root, step, old_pack, with_old, new_pack, cli_tally, big);
+      complete_install(root, step, new_pack.dir.string(), trust_list, new_pack, n_instr);
+      ++step;
+    }
+  }
+  // the service: every boundary of an install on a fresh root, and four of them over the previous revision
+  std::vector<std::pair<std::string, int>> svc_points;
+  if (big) svc_points = {{"copy-chunk", 1}, {"copy-chunk", 3}, {"copy-chunk", 6}};
+  else for (const char* sp : {"stage-created", "samples-written", "verified", "fsynced", "renamed", "link-created", "link-flipped", "catalog-row-written", "catalog-committed", "job-finished"}) svc_points.push_back({sp, 1});
+  for (const bool with_old : {false, true}) {
+    for (const auto& [sp, nth] : svc_points) {
+      if (!big && with_old && sp != "renamed" && sp != "link-created" && sp != "link-flipped" && sp != "catalog-row-written") continue;
+      const std::string root = work.sub("s" + std::to_string(step));
+      fs::create_directories(root);
+      if (with_old) {
+        const int st = run_install_cli_child(old_pack.dir.string(), root, trust_list, "");
+        INV(WIFEXITED(st) && WEXITSTATUS(st) == 0, step, "the previous revision did not install");
+      }
+      const int st = run_install_service_child(root, work.sub("sock" + std::to_string(step)), new_pack.dir.string(), sp, nth);
+      INV(killed_by_sigkill(st), step, "the service child was not killed at its point");
+      if (killed_by_sigkill(st)) ++service_kills;
+      check_after_install_kill(root, step, old_pack, with_old, new_pack, svc_tally, big);
+      complete_install(root, step, new_pack.dir.string(), trust_list, new_pack, n_instr);
+      ++step;
+    }
+  }
+  (void)kills0;
+  (void)service_kills0;
+  g_trusted = nullptr;
+}
+
+void install_campaign() {
+  InstallTally cli_tally, svc_tally;
+  int kills = 0, service_kills = 0, step = 5000;
+  install_campaign_set(false, cli_tally, svc_tally, kills, service_kills, step);
+  const int small_cli = kills, small_svc = service_kills;
+  CHECK(small_cli == 14 && small_svc == 14);
+  // the kills left every kind of state (a vacuous campaign would pass otherwise)
+  CHECK(cli_tally.none >= 3 && cli_tally.old_current >= 4 && cli_tally.new_current >= 2);
+  CHECK(svc_tally.none >= 2 && svc_tally.old_current >= 2 && svc_tally.new_current >= 2);
+  // mid-copy kills of a multi-chunk bundle (kill point copy-chunk), restarted through the real LibraryService::start
+  InstallTally big_cli, big_svc;
+  int big_kills = 0, big_service_kills = 0;
+  install_campaign_set(true, big_cli, big_svc, big_kills, big_service_kills, step);
+  CHECK(big_kills == 6 && big_service_kills == 6);
+  CHECK(big_cli.old_current == 3 && big_cli.none == 3 && big_svc.old_current == 3 && big_svc.none == 3);  // a kill mid-copy publishes nothing: the old bundle or none
+  std::printf("install campaign: %d SIGKILLs of the CLI (states left: %d without current, %d previous, %d new) and %d of the service (%d/%d/%d); %d + %d mid-copy kills of a multi-chunk bundle restarted through LibraryService::start; every restart reconciled, every re-run installed the new bundle\n",
+              small_cli, cli_tally.none, cli_tally.old_current, cli_tally.new_current, small_svc, svc_tally.none, svc_tally.old_current, svc_tally.new_current, big_kills, big_service_kills);
+}
+
 }  // namespace
 
 int main() {
@@ -641,6 +885,7 @@ int main() {
   }
 
   multi_timbre_campaign();
+  install_campaign();
 
   const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   std::printf("crash campaign: %d imports, %d killed (%d inside the startup reconcile), %d ran clean, %d boundaries required to fire; kills per point:", kSteps, killed,

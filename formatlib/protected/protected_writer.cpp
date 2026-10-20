@@ -48,6 +48,15 @@ Result<Signature> ed25519_sign(const SigningSeed& seed, std::span<const std::uin
   return sig;
 }
 
+Result<std::array<std::uint8_t, kCatalogMetaSealSize>> sign_catalog_meta(const SigningSeed& seed, const Digest256& bundle_id,
+                                                                         std::span<const std::uint8_t> meta_bytes, std::uint32_t pack_revision) {
+  if (pack_revision == 0) return Error::kInvalidArgument;
+  const KeyId signer = key_id_of_public(ed25519_public_from_seed(seed));
+  auto sig = ed25519_sign(seed, catalog_meta_statement(bundle_id, meta_bytes, signer, pack_revision));
+  if (!sig) return sig.error();
+  return encode_catalog_meta_seal(signer, pack_revision, sig.value());
+}
+
 Error aes256_ctr_xor(const ContentKey& key, const CounterBlock& counter, std::span<std::uint8_t> data) {
   std::unique_ptr<EVP_CIPHER_CTX, CipherDeleter> ctx(EVP_CIPHER_CTX_new());
   if (!ctx || EVP_EncryptInit_ex(ctx.get(), EVP_aes_256_ctr(), nullptr, key.bytes.data(), counter.data()) != 1)

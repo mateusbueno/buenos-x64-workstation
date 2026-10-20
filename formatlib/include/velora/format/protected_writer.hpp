@@ -12,6 +12,10 @@ PublicKey ed25519_public_from_seed(const SigningSeed& seed);
 // Pure Ed25519 signature (deterministic).
 Result<Signature> ed25519_sign(const SigningSeed& seed, std::span<const std::uint8_t> message);
 
+// Story 6.4: the detached seal (catalog.meta.sig) that binds a catalog.meta to the protected bundle `bundle_id`, signed with the bundle's own key.
+Result<std::array<std::uint8_t, kCatalogMetaSealSize>> sign_catalog_meta(const SigningSeed& seed, const Digest256& bundle_id,
+                                                                         std::span<const std::uint8_t> meta_bytes, std::uint32_t pack_revision = 1);
+
 // AES-256-CTR with a full 16-byte counter block (also decryption). Exposed for the known-answer tests and the
 // content-pack tool; the bundle path derives the counter block with counter_block().
 Error aes256_ctr_xor(const ContentKey& key, const CounterBlock& counter, std::span<std::uint8_t> data);

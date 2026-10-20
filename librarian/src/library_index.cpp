@@ -6,12 +6,17 @@
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <exception>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <set>
 #include <sstream>
 
 #include "velora/format/bundle.hpp"
 #include "velora/format/hash.hpp"
+#include "velora/format/protected_format.hpp"
+#include "velora/format/protected_verify.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/librarian/import.hpp"
 
@@ -148,43 +153,124 @@ MetaState read_catalog_meta(const std::string& bundle_dir, CatalogMeta& out) {
   return parse_catalog_meta(ss.str(), out) ? MetaState::kValid : MetaState::kUnreadable;
 }
 
-DescribeResult describe_bundle(const std::string& bundle_dir) {
+namespace {
+
+bool read_small_file(const std::string& path, std::size_t max, std::vector<std::uint8_t>& out) {
+  struct stat st;
+  if (::lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || static_cast<std::uint64_t>(st.st_size) > max) return false;
+  std::ifstream in(path, std::ios::binary);
+  out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  return (in.good() || in.eof()) && out.size() == static_cast<std::size_t>(st.st_size);
+}
+
+bool path_exists(const std::string& p) {
+  struct stat st;
+  return ::lstat(p.c_str(), &st) == 0;
+}
+
+}  // namespace
+
+bool factory_library_installed(const std::string& data_root, const std::string& library_id) {
+  std::error_code ec;
+  for (fs::directory_iterator it(fs::path(data_root) / "lib" / library_id, ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string n = it->path().filename().string();
+    if (n.size() == 64 && path_exists((it->path() / kProtectedBundleFileName).string())) return true;
+  }
+  return false;
+}
+
+static DescribeResult describe_bundle_impl(const std::string& bundle_dir, const DescribeOptions& opt);
+
+DescribeResult describe_bundle(const std::string& bundle_dir, const DescribeOptions& opt) {
+  try {
+    return describe_bundle_impl(bundle_dir, opt);
+  } catch (const std::exception& e) {  // bad_alloc included: an unexaminable bundle is not a definite "no" (reconcile keeps its row)
+    DescribeResult r;
+    r.status = DescribeStatus::kUnreadable;
+    r.why = std::string("the bundle could not be examined: ") + e.what();
+    return r;
+  }
+}
+
+static DescribeResult describe_bundle_impl(const std::string& bundle_dir, const DescribeOptions& opt) {
   DescribeResult res;
   const fs::path dir(bundle_dir);
   const std::string bundle_name = dir.filename().string();
   const std::string library_name_dir = dir.parent_path().filename().string();
-  auto rd = fmt::BundleReader::open_file(bundle_dir + "/" + host::kBundleFileName);
-  if (!rd) {
-    res.status = DescribeStatus::kUnreadable;
-    res.why = std::string("bundle does not open: ") + fmt::to_string(rd.error());
-    return res;
+  const bool is_protected = !path_exists(bundle_dir + "/" + host::kBundleFileName) && path_exists(bundle_dir + "/" + kProtectedBundleFileName);
+  std::optional<fmt::BundleReader> plain;
+  std::optional<fmt::ProtectedBundleView> prot;
+  if (is_protected) {
+    if (!opt.trusted) {
+      res.status = DescribeStatus::kUnreadable;
+      res.why = "a protected bundle cannot be described without trusted keys";
+      return res;
+    }
+    auto pv = fmt::ProtectedBundleView::open_file(bundle_dir + "/" + kProtectedBundleFileName, *opt.trusted);
+    if (!pv) {
+      res.status = DescribeStatus::kUnreadable;
+      res.why = std::string("protected bundle does not open: ") + fmt::to_string(pv.error());
+      return res;
+    }
+    prot.emplace(pv.take());
+  } else {
+    auto rd = fmt::BundleReader::open_file(bundle_dir + "/" + host::kBundleFileName);
+    if (!rd) {
+      res.status = DescribeStatus::kUnreadable;
+      res.why = std::string("bundle does not open: ") + fmt::to_string(rd.error());
+      return res;
+    }
+    plain.emplace(rd.take());
   }
-  const fmt::BundleReader& r = rd.value();
-  if (fmt::uuid_to_string(r.library_id()) != library_name_dir || fmt::to_hex(r.bundle_id()) != bundle_name) {
+  const fmt::Uuid& lib_uuid = is_protected ? prot->info().library_id : plain->library_id();
+  const fmt::Digest256& bundle_digest = is_protected ? prot->info().bundle_id : plain->bundle_id();
+  const std::span<const fmt::InstrumentInfo> instruments = is_protected ? prot->instruments() : plain->instruments();
+  const std::span<const fmt::SampleInfo> samples = is_protected ? prot->samples() : plain->samples();
+  if (fmt::uuid_to_string(lib_uuid) != library_name_dir || fmt::to_hex(bundle_digest) != bundle_name) {
     res.status = DescribeStatus::kIdentityMismatch;
     res.why = "the bundle's library_id / bundle_id disagree with its path";
     return res;
   }
   CatalogMeta meta;
-  const MetaState ms = read_catalog_meta(bundle_dir, meta);
+  MetaState ms = MetaState::kAbsent;
+  if (is_protected) {
+    // The names and categories of a factory library are display data a pack author signed: accepted only with a seal that verifies for THIS bundle, made by the
+    // bundle's own signer. The bytes that were verified are the bytes that are parsed (one read).
+    if (path_exists(bundle_dir + "/" + kCatalogMetaFileName)) {
+      std::vector<std::uint8_t> text, seal;
+      fmt::KeyId signer{};
+      ms = MetaState::kUnreadable;
+      if (read_small_file(bundle_dir + "/" + kCatalogMetaFileName, kMaxCatalogMetaBytes, text) &&
+          read_small_file(bundle_dir + "/" + fmt::kCatalogMetaSealFileName, fmt::kCatalogMetaSealSize, seal) &&
+          fmt::verify_catalog_meta_seal(*opt.trusted, bundle_digest, text, seal, &signer) == fmt::Error::kNone && signer == prot->info().signer_key_id &&
+          parse_catalog_meta(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()), meta))
+        ms = MetaState::kValid;
+    }
+  } else {
+    ms = read_catalog_meta(bundle_dir, meta);
+  }
   res.from_meta = ms == MetaState::kValid;
   if (ms == MetaState::kUnreadable) {  // never fall back to the legacy category: it would silently rewrite the categories
     res.status = DescribeStatus::kMetaUnreadable;
-    res.why = "catalog.meta is unreadable, malformed, oversized or from a newer format";
+    res.why = is_protected ? "catalog.meta is unreadable, malformed, oversized, from a newer format, or its seal (catalog.meta.sig) does not verify"
+                           : "catalog.meta is unreadable, malformed, oversized or from a newer format";
     return res;
   }
-  for (const auto& ins : r.instruments()) {  // a corrupt manifest must not index outside the sample table (this runs before verify_all)
-    if (ins.first_sample > r.samples().size() || ins.sample_count > r.samples().size() - ins.first_sample) {
+  for (const auto& ins : instruments) {  // a corrupt manifest must not index outside the sample table (this runs before verify_all)
+    if (ins.first_sample > samples.size() || ins.sample_count > samples.size() - ins.first_sample) {
       res.status = DescribeStatus::kUnreadable;
       res.why = "instrument '" + ins.key + "' names samples outside the bundle";
       return res;
     }
   }
-  const fmt::CategoryFileResult legacy = fmt::read_category_file(bundle_dir + "/" + kCategoryFileName);
+  // A protected bundle has no legacy `category` file: its categories are those of the sealed catalog.meta.
+  const fmt::CategoryFileResult legacy =
+      is_protected ? fmt::CategoryFileResult{} : fmt::read_category_file(bundle_dir + "/" + kCategoryFileName);
   LibraryRecord& rec = res.record;
   rec.library_id = library_name_dir;
   rec.bundle_id = bundle_name;
-  for (const auto& ins : r.instruments()) {
+  rec.kind = is_protected ? LibraryKind::kFactory : LibraryKind::kUser;
+  for (const auto& ins : instruments) {
     InstrumentRecord ir;
     ir.key = ins.key;
     ir.name = ins.name.empty() ? ins.key : ins.name;
@@ -206,7 +292,7 @@ DescribeResult describe_bundle(const std::string& bundle_dir) {
     ir.category = static_cast<std::uint32_t>(fmt::id(cat));
     ir.sample_count = static_cast<std::uint32_t>(ins.sample_count);
     ir.region_count = static_cast<std::uint32_t>(ins.regions.size());
-    for (std::size_t k = 0; k < ins.sample_count; ++k) ir.bytes += pcm_bytes(r.samples()[ins.first_sample + k]);
+    for (std::size_t k = 0; k < ins.sample_count; ++k) ir.bytes += pcm_bytes(samples[ins.first_sample + k]);
     rec.instruments.push_back(std::move(ir));
   }
   if (rec.instruments.empty()) {

@@ -208,6 +208,8 @@ Content manifests are signed with pure Ed25519 (RFC 8032, no prehash). The signi
 the right entry of its trust list. Message layout and domain separation of the manifest are defined by Story 6.2 (`formatlib/README.md`, "Protected bundles"): the signed statement starts with the ASCII context
 string `velora/protected-manifest/v1` and a 0x00 byte.
 
+**Pack revision (Story 6.4).** The detached seal of a pack's `catalog.meta` (`catalog.meta.sig`, `formatlib/README.md`) carries a signed, monotonic `pack_revision` per library. A device installs a revision not lower than the installed one (the same revision only for the same bundle), so an older signed bundle cannot be replayed over a newer one; a deliberate rollback is a new, higher revision with the old content.
+
 **Verifier strictness (Stories 6.2 and 6.3 MUST implement):** reject a signature whose `S >= L`; reject non-canonical encodings of `R` and of the public key
 `A` (y >= p); reject a small-order `A` (the build already refuses such trusted keys); verify cofactorless, i.e. check `[S]B == R + [k]A` exactly, not with
 the cofactor multiplied through. A signature check that passes with a different strictness must be treated as a failure.

@@ -13,7 +13,7 @@ run() { # builds in a container-local copy so the host tree stays untouched
     $1"
 }
 case "$job" in purity|all)
-  echo "== purity"; run "python3 tools/ci/check_core_deps.py && python3 tools/ci/check_core_deps.py --self-test && python3 tools/ci/check_third_party_notices.py && python3 tools/ci/check_third_party_notices.py --self-test && python3 tools/ci/check_no_private_keys.py && python3 tools/ci/check_no_private_keys.py --self-test && python3 tools/ci/check_format_no_decrypt.py --self-test && python3 tools/ci/check_content_pack_not_linked.py && python3 tools/ci/check_content_pack_not_linked.py --self-test";; esac
+  echo "== purity"; run "python3 tools/ci/check_core_deps.py && python3 tools/ci/check_core_deps.py --self-test && python3 tools/ci/check_third_party_notices.py && python3 tools/ci/check_third_party_notices.py --self-test && python3 tools/ci/check_no_private_keys.py && python3 tools/ci/check_no_private_keys.py --self-test && python3 tools/ci/check_format_no_decrypt.py --self-test && python3 tools/ci/check_librarian_no_crypto.py --self-test --cc cc && python3 tools/ci/check_content_pack_not_linked.py && python3 tools/ci/check_content_pack_not_linked.py --self-test";; esac
 case "$job" in gcc|all)
   echo "== linux-gcc"; run "CC=gcc CXX=g++ cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build --output-on-failure --no-tests=error";; esac
 case "$job" in rtsan|all)

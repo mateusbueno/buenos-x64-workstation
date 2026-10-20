@@ -73,8 +73,8 @@ void test_schema() {
     // Reading the file while the catalog is open: WAL, user_version, exactly the tables of this story.
     Raw r(d.sub("catalog.db"));
     CHECK(r.one("PRAGMA journal_mode") == "wal");
-    CHECK(r.one("PRAGMA user_version") == "2");
-    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "2");
+    CHECK(r.one("PRAGMA user_version") == "3");
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "3");
     CHECK(r.one("PRAGMA foreign_keys") == "0");  // a separate connection; the catalog's own connection enables them (see test_libraries)
     CHECK(r.one("SELECT group_concat(name) FROM (SELECT name FROM sqlite_master WHERE type='table' ORDER BY name)") ==
           "instruments,libraries,live_set_favorites,live_set_recent,meta");
@@ -89,14 +89,14 @@ void test_version_policy() {
   { auto c = open_ok(d.path); }
   {
     Raw r(d.sub("catalog.db"));
-    r.exec("UPDATE meta SET value=3 WHERE key='schema_version'");
+    r.exec("UPDATE meta SET value=9 WHERE key='schema_version'");
   }
   std::unique_ptr<Catalog> c;
   CHECK(Catalog::open(d.path, c) == CatalogStatus::kSchemaTooNew);
   CHECK(!c);
-  {  // refused and untouched: still version 3 with its data
+  {  // refused and untouched: still version 9 with its data
     Raw r(d.sub("catalog.db"));
-    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "3");
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "9");
     r.exec("UPDATE meta SET value=0 WHERE key='schema_version'");
   }
   CHECK(Catalog::open(d.path, c) == CatalogStatus::kNotACatalog);  // below 1 is not a version this software ever wrote
@@ -318,7 +318,7 @@ void test_refusal_touches_nothing() {
   check("newer schema", [&](const std::string& p) {
     const std::string dir = p.substr(0, p.rfind('/'));
     { std::unique_ptr<Catalog> c; CHECK(Catalog::open(dir, c) == CatalogStatus::kOk); }
-    sql(p, "UPDATE meta SET value=3 WHERE key='schema_version'", false);
+    sql(p, "UPDATE meta SET value=9 WHERE key='schema_version'", false);
   }, CatalogStatus::kSchemaTooNew);
   check("meta without a valid version", [&](const std::string& p) { sql(p, "CREATE TABLE meta(key TEXT PRIMARY KEY, value INTEGER)", true); },
         CatalogStatus::kNotACatalog);
@@ -493,7 +493,7 @@ void test_migration_v1_to_v2() {
   }
   {
     auto c = open_ok(d.path);
-    CHECK(c && c->migrated() && c->schema_version() == 2);
+    CHECK(c && c->migrated() && c->schema_version() == 3);
     CHECK(c && favs(*c) == Ids({"fav-a", "fav-b"}));
     CHECK(c && recs(*c) == Ids({"rec-c", "rec-b", "rec-a"}));
     std::vector<LibraryRecord> rows;
@@ -502,13 +502,13 @@ void test_migration_v1_to_v2() {
     CHECK(c && c->add_favorite("fav-c", ch) == CatalogStatus::kOk && ch);  // and the old ones keep working, sequence numbers continue
     CHECK(c && favs(*c) == Ids({"fav-a", "fav-b", "fav-c"}));
     Raw r(d.sub("catalog.db"));
-    CHECK(r.one("PRAGMA user_version") == "2");
-    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "2");
+    CHECK(r.one("PRAGMA user_version") == "3");
+    CHECK(r.one("SELECT value FROM meta WHERE key='schema_version'") == "3");
     CHECK(r.one("SELECT group_concat(name) FROM (SELECT name FROM sqlite_master WHERE type='table' ORDER BY name)") ==
           "instruments,libraries,live_set_favorites,live_set_recent,meta");
   }
   auto c = open_ok(d.path);  // opened again: current, nothing migrated, data intact
-  CHECK(c && !c->migrated() && c->schema_version() == 2 && favs(*c).size() == 3);
+  CHECK(c && !c->migrated() && c->schema_version() == 3 && favs(*c).size() == 3);
   // The injection point "migrate.before_commit" by name: the hook fails the migration step, which rolls back and leaves the file at schema 1.
   {
     TempDir f;

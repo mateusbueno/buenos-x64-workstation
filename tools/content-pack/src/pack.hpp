@@ -24,6 +24,9 @@ struct PackRequest {
   PackDescription desc;
   std::string out_dir;  // parent directory; the pack goes to <out_dir>/<library_id>/
   bool overwrite = false;
+  // Story 6.4: the pack revision (>= 1) signed into catalog.meta.sig. A device installs a revision only if it is not lower than the installed one, and an equal one only
+  // if it is the same bundle: raise it with every release; a deliberate rollback is a NEW higher revision with the old content.
+  std::uint32_t revision = 1;
 
   // Secrets (borrowed; the caller owns and wipes them).
   const Key32* kek = nullptr;

@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "velora/format/protected_verify.hpp"
 #include "velora/librarian/catalog.hpp"
 
 namespace velora::librarian {
@@ -26,6 +27,10 @@ struct ReconcileOptions {
   std::function<void(const char* point)> hook;
   // Verify (verify_all) a bundle before it is added to or refreshed in the catalog. Default on; a bundle that fails is not cataloged.
   bool verify_new_rows = true;
+  // Story 6.4: the trusted content-manifest keys. A library whose `current` bundle is protected (`bundle.vlrp`: a Factory library) is cataloged from its signed manifest and
+  // sealed catalog.meta and, with verify_new_rows, by hashing every ciphertext block, exactly like a user bundle; without trusted keys it cannot be examined
+  // (its existing row, if any, is kept and the library is reported in `skipped`). Nothing is ever decrypted.
+  const velora::format::TrustedKeys* trusted = nullptr;
   // Test hook: an errno (0 = none) to pretend a file system probe failed with ("list_lib", "current" with the path being examined).
   std::function<int(const char* what, const std::string& path)> inject_errno;
 };

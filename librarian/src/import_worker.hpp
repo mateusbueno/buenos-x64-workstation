@@ -18,7 +18,9 @@
 #include <vector>
 
 #include "library_api.pb.h"
+#include "velora/format/protected_verify.hpp"
 #include "velora/librarian/import.hpp"
+#include "velora/librarian/install.hpp"
 #include "velora/librarian/library_records.hpp"
 #include "velora/librarian/preflight.hpp"
 
@@ -30,6 +32,9 @@ struct JobItem {
   std::string name;                                  // display name override, may be empty
   std::vector<ImportOptions::InstrumentMeta> meta;   // per-instrument overrides
   std::uint64_t bytes = 0;
+  // Story 6.4: an install of a protected bundle instead of an import (`path` is then the pack directory or the bundle file).
+  bool install = false;
+  InstallOptions install_opt;                        // paths and expected library_id; the worker fills the rest
 };
 
 // Story 5.7: a preflight scan. Runs on the worker thread (read-only; between jobs and between the items of a job), answered through the mailbox.
@@ -79,7 +84,9 @@ struct WorkerMsg {
   std::shared_ptr<ImportJob> job;
   std::shared_ptr<PreflightTask> pre;  // kPreflightDone
   std::size_t index = 0;
-  ImportResult result;           // kItemDone; kCheckpoint (the result so far)
+  ImportResult result;           // kItemDone; kCheckpoint (the result so far). For an install: library_id, bundle_id, bundle_dir, counts, status kOk when installed or unchanged
+  bool is_install = false;       // kItemDone of an install job item: `install` holds the typed outcome
+  InstallResult install;
   LibraryRecord record;          // kItemDone, when result.ok() (or a drive-removed item published timbres) and the bundle was described; kCheckpoint
   bool have_record = false;
   std::string describe_error;    // result.ok() but the published bundle could not be described: the item fails, nothing is cataloged
@@ -99,6 +106,10 @@ class ImportWorker {
     // Story 5.8: true when `source` (the job's folder or file) is gone; combined with the built-in probe (the source no longer stat-able, or its device changed).
     std::function<bool(const std::string& source)> source_gone;
     std::function<void(std::uint64_t job_id, std::size_t item, ImportOptions&)> options_hook;  // tests: adjusts the options of each item (fault injection)
+    // Story 6.4. The trusted content-signing keys an install verifies against (a copy), the free-space probe, and a test hook like options_hook for installs.
+    velora::format::TrustedKeys trusted;
+    std::function<bool(const std::string& dir, std::uint64_t& free_bytes)> free_bytes_fn;
+    std::function<void(std::uint64_t job_id, std::size_t item, InstallOptions&)> install_options_hook;
     std::uint32_t checkpoint_timbres = 0;  // 0 = the default
     std::uint64_t checkpoint_bytes = 0;
     std::function<std::uint64_t(std::size_t index, std::uint64_t actual)> checkpoint_size_fn;

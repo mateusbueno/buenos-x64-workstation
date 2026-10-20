@@ -32,6 +32,8 @@ enum class [[nodiscard]] Error : std::uint8_t {
   kSignatureInvalid,    // Ed25519 signature over the manifest statement does not verify
   kHashListMismatch,    // hash-list root in the manifest does not match the index block hashes
   kWrongContentKey,     // the content key does not pass the manifest's key-check value
+  // Story 6.4
+  kCatalogMetaInvalid,  // catalog.meta.sig is malformed (size, magic, algorithm), or the seal is not for this catalog.meta
 };
 
 const char* to_string(Error e);

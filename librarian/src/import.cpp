@@ -97,6 +97,7 @@ const char* to_string(Status s) {
     case Status::kBusy: return "another import is running";
     case Status::kAborted: return "aborted";
     case Status::kDriveRemoved: return "drive removed";
+    case Status::kFactoryProtected: return "factory_library_protected";
   }
   return "?";
 }
@@ -514,6 +515,11 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
   // 7. Publish: rename the staging directory to <library_id>/<bundle_id>.
   const std::string lib_dir = lib_root + "/" + res.library_id;
   res.bundle_dir = lib_dir + "/" + res.bundle_id;
+  // Story 6.4: an installed Factory library (any of its bundles is protected: bundle.vlrp) is never replaced or extended by a user import.
+  if (factory_library_installed(opt.root, res.library_id)) {
+    cleanup();
+    return fail(Status::kFactoryProtected, "library " + res.library_id + " is a factory library installed from a protected bundle; a user import cannot replace it");
+  }
   if (::mkdir(lib_dir.c_str(), 0755) != 0 && errno != EEXIST) {
     cleanup();
     return fail(Status::kIo, err_text("mkdir " + lib_dir));
@@ -639,6 +645,10 @@ ImportResult import_sfz(const ImportOptions& opt) {
   std::error_code ec;
   const fs::path sfz_abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
   if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
+  // Story 6.4: refused early, before any sample is read or encoded.
+  if (!opt.bundle_sink && !opt.root.empty() &&
+      factory_library_installed(opt.root, fmt::uuid_to_string(has_vendor_id ? vendor_id : fmt::library_id_from_source(sfz_abs.generic_string()))))
+    return fail(Status::kFactoryProtected, "the library of " + opt.sfz_path + " is a factory library installed from a protected bundle; a user import cannot replace it");
   const fs::path base = opt.base_dir.empty() ? sfz_abs.parent_path()
                                               : fs::weakly_canonical(fs::absolute(opt.base_dir, ec), ec);
   const fs::path rel = sfz_abs.lexically_relative(base);
@@ -837,6 +847,9 @@ ImportResult import_sf2(const ImportOptions& opt) {
   std::error_code ec;
   const fs::path abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
   if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
+  if (!opt.bundle_sink && !opt.root.empty() &&
+      factory_library_installed(opt.root, fmt::uuid_to_string(has_vendor_id ? vendor_id : fmt::library_id_from_source(abs.generic_string()))))
+    return fail(Status::kFactoryProtected, "the library of " + opt.sfz_path + " is a factory library installed from a protected bundle; a user import cannot replace it");
 
   for (const auto& o : opt.instrument_meta) {
     bool known = false;

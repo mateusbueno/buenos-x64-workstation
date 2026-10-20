@@ -92,6 +92,23 @@ struct ManifestStatement {
 };
 std::vector<std::uint8_t> statement_bytes(const ManifestStatement& s);
 
+// Story 6.4: the signed binding of `catalog.meta` (the librarian's display metadata: library name, instrument names and categories) to ONE protected bundle, and
+// the pack revision. catalog.meta is not part of the signed manifest (it can be refreshed without making a new bundle), so a pack carries `catalog.meta.sig`, a
+// detached seal made with the same content-manifest key as the bundle:
+//   file (84 B): "VCM2" | u8 alg = 1 (Ed25519) | u8[3] zero | u32 pack_revision (LE) | signer key id[8] | Ed25519 signature[64]
+//   signed statement: "velora/catalog-meta/v1" 0x00 | bundle_id[32] | SHA-256(catalog.meta bytes)[32] | signer key id[8] | u32 pack_revision (LE)
+// bundle_id is in the statement, so a seal made for one bundle never fits another, and one flipped bit in catalog.meta or in the seal breaks the signature.
+// `pack_revision` (>= 1) is a monotonic per-library counter the vendor raises with every release: a device installs a revision only when it is not lower than the one
+// installed (replaying an older signed bundle is a downgrade), and the same revision only when it is the same bundle. A deliberate vendor rollback is a NEW,
+// higher revision that carries the old content.
+inline constexpr std::size_t kCatalogMetaSealSize = 84;
+inline constexpr char kCatalogMetaSealMagic[4] = {'V', 'C', 'M', '2'};
+inline constexpr const char* kCatalogMetaSealFileName = "catalog.meta.sig";
+std::vector<std::uint8_t> catalog_meta_statement(const Digest256& bundle_id, std::span<const std::uint8_t> meta_bytes, const KeyId& signer, std::uint32_t pack_revision);
+std::array<std::uint8_t, kCatalogMetaSealSize> encode_catalog_meta_seal(const KeyId& signer, std::uint32_t pack_revision, const Signature& sig);
+// false: wrong size, magic, algorithm, non-zero reserved bytes or a revision of 0.
+bool decode_catalog_meta_seal(std::span<const std::uint8_t> bytes, KeyId& signer, std::uint32_t& pack_revision, Signature& sig);
+
 // What BundleWriter::finalize_protected needs from the signing/encrypting layer. The core writer builds the
 // bytes; the callbacks do the cryptography.
 struct ProtectParams {

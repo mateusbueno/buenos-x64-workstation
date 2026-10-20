@@ -166,7 +166,12 @@ Result<BundleReader> BundleReader::open(std::unique_ptr<ByteSource> src, ReaderO
   return r;
 }
 
-Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const SealVerifier* verify) {
+// Story 6.4: sizes that are accepted before anything is allocated for them. A signer-less or untrusted file must not be able to make a reader allocate a
+// file-sized manifest or index: the manifest of a real library is well below a megabyte per thousand instruments, the index is 48 bytes per block.
+inline constexpr std::uint64_t kMaxManifestBytes = 64ull << 20;
+inline constexpr std::uint64_t kMaxProtectedIndexBytes = 512ull << 20;
+
+Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const SealVerifier* verify, const SealPrecheck* precheck) {
   ByteSource* src = &srcref;
   const std::uint64_t file_size = src->size();
   if (file_size < kHeaderSize) return Error::kTruncated;
@@ -195,9 +200,27 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
       data_off != index_off + index_size + seal_size || data_size > total_size ||
       total_size != data_off + data_size || index_size % kIndexEntrySize != 0)
     return Error::kCorruptHeader;
+  if (manifest_size > kMaxManifestBytes || (want_protected && index_size > kMaxProtectedIndexBytes)) return Error::kCorruptHeader;
   Digest256 manifest_hash, index_hash;
   std::memcpy(manifest_hash.data(), h + 64, 32);
   std::memcpy(index_hash.data(), h + 96, 32);
+  // Protected: the seal (128 bytes at a position the header fixes) is read FIRST and its signer is checked against the trust list before the manifest and the
+  // index are allocated, read and hashed; the signature itself needs the manifest and is verified below.
+  SealFields seal;
+  if (want_protected) {
+    // Seal: magic "VSL1", alg u8, 3 zero bytes, key id[8], signature[64], 48 zero bytes.
+    std::uint8_t sb[kSealSize];
+    if (Error e = src->read_at(index_off + index_size, sb, kSealSize); e != Error::kNone) return e;
+    bool zero_ok = true;
+    for (int i = 5; i < 8; ++i) zero_ok = zero_ok && sb[i] == 0;
+    for (std::size_t i = 80; i < kSealSize; ++i) zero_ok = zero_ok && sb[i] == 0;
+    if (std::memcmp(sb, kSealMagic, 4) != 0 || sb[4] != kSealAlgEd25519 || !zero_ok) return Error::kCorruptHeader;
+    seal.alg = sb[4];
+    std::memcpy(seal.key_id.data(), sb + 8, 8);
+    std::memcpy(seal.signature.data(), sb + 16, 64);
+    if (precheck)
+      if (Error e = (*precheck)(seal.key_id); e != Error::kNone) return e;
+  }
 
   std::vector<std::uint8_t> manifest(manifest_size);
   if (Error e = src->read_at(manifest_off, manifest.data(), manifest.size()); e != Error::kNone)
@@ -238,17 +261,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
     if (!c.ok() || r.prot.cipher != kCipherAes256Ctr || r.prot.hash_list_alg != kHashListMerkleSha256 ||
         pad0 != 0 || pad1 != 0 || n_blocks >= kMaxProtectedBlocks)
       return Error::kCorruptManifest;
-    // Seal: magic "VSL1", alg u8, 3 zero bytes, key id[8], signature[64], 48 zero bytes.
-    std::uint8_t sb[kSealSize];
-    if (Error e = src->read_at(index_off + index_size, sb, kSealSize); e != Error::kNone) return e;
-    bool zero_ok = true;
-    for (int i = 5; i < 8; ++i) zero_ok = zero_ok && sb[i] == 0;
-    for (std::size_t i = 80; i < kSealSize; ++i) zero_ok = zero_ok && sb[i] == 0;
-    if (std::memcmp(sb, kSealMagic, 4) != 0 || sb[4] != kSealAlgEd25519 || !zero_ok)
-      return Error::kCorruptHeader;
-    r.seal.alg = sb[4];
-    std::memcpy(r.seal.key_id.data(), sb + 8, 8);
-    std::memcpy(r.seal.signature.data(), sb + 16, 64);
+    r.seal = seal;
     if (!verify) return Error::kInvalidArgument;
     if (Error e = (*verify)(r); e != Error::kNone) return e;
   }

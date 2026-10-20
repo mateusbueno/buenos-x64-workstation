@@ -13,6 +13,13 @@
 // or a path (its folders count too, below the file name). `--table` replaces the embedded keyword table with a JSON
 // file (same format as librarian/data/category_keywords.json). Exit 0 for a usable table, 2 on usage or an unreadable --table, 3 if the embedded table is invalid. Control characters in names are echoed as \\xNN.
 // `import --category` takes a category key (category.piano), its slug or an English name, never "none".
+//
+// librarian install-protected <pack dir> --root <data root> [--bundle FILE] [--wrapped-key FILE] [--library-id UUID] [--trust-list FILE]
+// Story 6.4: verifies a protected vendor bundle (a tools/content-pack output directory) against the trusted content-signing keys of this build and installs it
+// under <root>/lib/<library_id>/<bundle_id>/ (stage, verify every block hash, fsync, rename, flip `current`). Nothing is decrypted: the wrapped key is stored as
+// it is. Exit codes: 0 installed (or the same bundle was already installed: "unchanged"), 1 refused or failed (the typed reason on stderr, nothing published),
+// 2 usage. `--trust-list FILE` (dev variant only) names a `*.pub-list` of trusted public keys instead of the embedded ones. Like `import` it refuses to run while a
+// librarian service owns the data root, and the catalog is not written (the service's next start lists the library).
 // Test builds only (-DVELORA_LIBRARIAN_TEST_HOOKS): VELORA_LIBRARIAN_FAULT=<stage>
 // (stage-created|staged|verified|fsynced|renamed|link-created|flipped) makes the process _exit(137) there. Story 5.8:
 // VELORA_LIBRARIAN_KILL=<point>@<n> sends the process SIGKILL at the n-th (1-based) time it reaches <point>, a stage name as above or
@@ -34,18 +41,112 @@
 
 #include "velora/librarian/batch.hpp"
 #include "velora/librarian/category_suggest.hpp"
+#include "velora/librarian/install.hpp"
+#include "velora/librarian/trust.hpp"
 
 using namespace velora::librarian;
+
+namespace {
+
+#ifdef VELORA_LIBRARIAN_TEST_HOOKS
+int g_copy_kill_at = 0;  // VELORA_LIBRARIAN_KILL=copy-chunk@N
+// VELORA_LIBRARIAN_FAULT=<stage> _exit(137)s there; VELORA_LIBRARIAN_KILL=<stage>@<n> sends SIGKILL at the n-th arrival (installs: the stage points only).
+bool install_test_hooks(FaultInjection& f) {
+  if (const char* v = std::getenv("VELORA_LIBRARIAN_FAULT")) {
+    Stage at;
+    if (!parse_stage(v, at)) return false;
+    f.on_stage = [at](Stage s) {
+      if (s == at) ::_exit(137);
+      return HookAction::kContinue;
+    };
+  }
+  if (const char* v = std::getenv("VELORA_LIBRARIAN_KILL")) {
+    const std::string t = v;
+    const std::size_t at = t.find('@');
+    const std::string name = t.substr(0, at);
+    const int n = at == std::string::npos ? 1 : std::atoi(t.c_str() + at + 1);
+    if (!name.empty() && n > 0) {
+      auto count = std::make_shared<int>(0);
+      if (name == "copy-chunk") {  // mid-copy of the bundle into the staging directory
+        g_copy_kill_at = n;
+      } else {
+        auto prev = f.on_stage;
+        f.on_stage = [=](Stage s) {
+          if (name == to_string(s) && ++(*count) == n) ::kill(::getpid(), SIGKILL);
+          return prev ? prev(s) : HookAction::kContinue;
+        };
+      }
+    }
+  }
+  return true;
+}
+#endif
+
+int install_command(int argc, char** argv) {
+  auto usage = [&]() {
+    std::fprintf(stderr, "usage: %s install-protected <pack dir> --root DIR [--bundle FILE] [--wrapped-key FILE] [--library-id UUID] [--trust-list FILE]\n", argv[0]);
+    return 2;
+  };
+  InstallOptions opt;
+  std::string trust_list;
+  int i = 2;
+  if (i < argc && std::strncmp(argv[i], "--", 2) != 0) opt.source_dir = argv[i++];
+  for (; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (i + 1 >= argc) return usage();
+    if (a == "--root") opt.root = argv[++i];
+    else if (a == "--bundle") opt.bundle_path = argv[++i];
+    else if (a == "--wrapped-key") opt.wrapped_key_path = argv[++i];
+    else if (a == "--library-id") opt.expected_library_id = argv[++i];
+    else if (a == "--trust-list") trust_list = argv[++i];
+    else return usage();
+  }
+  if (opt.root.empty() || (opt.source_dir.empty() && opt.bundle_path.empty())) return usage();
+  velora::format::TrustedKeys trusted;
+  std::string err;
+  if (!resolve_trusted_keys(trust_list, trusted, err)) {
+    std::fprintf(stderr, "librarian: %s\n", err.c_str());
+    return 2;
+  }
+  opt.trusted = &trusted;
+#ifdef VELORA_LIBRARIAN_TEST_HOOKS
+  if (!install_test_hooks(opt.fault)) return usage();
+  if (g_copy_kill_at > 0) opt.on_copy_chunk = [](std::uint64_t chunk) {
+    if (static_cast<int>(chunk) == g_copy_kill_at) ::kill(::getpid(), SIGKILL);
+  };
+#endif
+  CliWriterGuard writer_guard(opt.root);
+  if (!writer_guard.ok()) {
+    std::fprintf(stderr, "librarian: %s\n", writer_guard.error().c_str());
+    return 1;
+  }
+  const std::string what = !opt.source_dir.empty() ? opt.source_dir : opt.bundle_path;
+  const InstallResult r = install_protected(opt);
+  if (r.ok()) {
+    std::printf("%s\nlibrary_id %s\nbundle_id %s\ninstruments %u\nblocks %llu\n", r.status == InstallStatus::kInstalled ? "installed" : "unchanged", r.library_id.c_str(),
+                r.bundle_id.c_str(), r.instruments, static_cast<unsigned long long>(r.blocks));
+    return 0;
+  }
+  if (r.status == InstallStatus::kRejected)
+    std::fprintf(stderr, "librarian: %s: rejected (%s): %s: nothing published\n", what.c_str(), to_string(r.reason), r.detail.c_str());
+  else
+    std::fprintf(stderr, "librarian: %s: %s: %s: nothing published\n", what.c_str(), to_string(r.status), r.detail.c_str());
+  return 1;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   auto usage = [&]() {
     std::fprintf(stderr,
                  "usage: %s import <file.sfz|file.sf2|dir>... --root DIR [--base DIR] [--category NAME] [--report FILE|-]\n"
                  "          [--checkpoint-timbres N] [--checkpoint-bytes N]\n"
-                 "       %s suggest-category [--table FILE] <name>...\n",
-                 argv[0], argv[0]);
+                 "       %s suggest-category [--table FILE] <name>...\n"
+                 "       %s install-protected <pack dir> --root DIR [--bundle FILE] [--wrapped-key FILE] [--library-id UUID] [--trust-list FILE]\n",
+                 argv[0], argv[0], argv[0]);
     return 2;
   };
+  if (argc >= 2 && std::strcmp(argv[1], "install-protected") == 0) return install_command(argc, argv);
   if (argc >= 2 && std::strcmp(argv[1], "suggest-category") == 0) {
     KeywordTable custom;
     const KeywordTable* table = &KeywordTable::embedded();

@@ -78,6 +78,9 @@ constexpr const char* kSchemaV2Ddl =
     " PRIMARY KEY(library_id, instrument_key));";
 static_assert(kMinCategoryId == 1 && kMaxCategoryId == 17, "the CHECK constraint above encodes the category range");
 
+// Schema 3 (Story 6.4): where a library comes from. Existing rows are user imports.
+constexpr const char* kSchemaV3Ddl = "ALTER TABLE libraries ADD COLUMN kind TEXT NOT NULL DEFAULT 'user' CHECK(kind IN ('user','factory'))";
+
 // A one-shot prepared statement.
 struct Stmt {
   sqlite3_stmt* st = nullptr;
@@ -396,6 +399,7 @@ CatalogStatus Catalog::init_schema() {
     if (st == CatalogStatus::kOk) st = exec("CREATE TABLE live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL)");
     if (st == CatalogStatus::kOk) st = exec("CREATE TABLE live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL)");
     if (st == CatalogStatus::kOk) st = exec(kSchemaV2Ddl);
+    if (st == CatalogStatus::kOk) st = exec(kSchemaV3Ddl);
     if (st == CatalogStatus::kOk)
       st = exec(("INSERT INTO meta(key, value) VALUES('schema_version', " + std::to_string(kCatalogSchemaVersion) + "), ('next_seq', 1)").c_str());
     if (st == CatalogStatus::kOk) st = exec(("PRAGMA user_version=" + std::to_string(kCatalogSchemaVersion)).c_str());
@@ -468,12 +472,21 @@ CatalogStatus Catalog::init_schema() {
 
 CatalogStatus Catalog::migrate_forward(std::uint32_t from) {
   // Forward only; each step is one transaction that also writes the new schema_version and user_version, so a crash leaves the old or the new
-  // version, never a mix. Step 1 -> 2 (Story 5.6) adds the libraries and instruments tables; favorites and recent rows are not touched.
+  // version, never a mix. Step 1 -> 2 (Story 5.6) adds the libraries and instruments tables; favorites and recent rows are not touched. Step 2 -> 3 (Story 6.4) adds libraries.kind.
   for (std::uint32_t v = from; v < kCatalogSchemaVersion; ++v) {
     CatalogStatus st = begin();
     if (st != CatalogStatus::kOk) return st == CatalogStatus::kSql ? CatalogStatus::kMigrationFailed : st;
     if (v == 1) {
       st = exec(kSchemaV2Ddl);
+    } else if (v == 2) {
+      // Tolerates a hand-edited version number on a file that already has the column (like the 1 -> 2 step with IF NOT EXISTS).
+      bool have_kind = false;
+      {
+        Stmt q;
+        int rc = sqlite3_prepare_v2(db_, "SELECT count(*) FROM pragma_table_info('libraries') WHERE name='kind'", -1, &q.st, nullptr);
+        if (rc == SQLITE_OK && sqlite3_step(q.st) == SQLITE_ROW) have_kind = sqlite3_column_int(q.st, 0) > 0;
+      }
+      st = have_kind ? CatalogStatus::kOk : exec(kSchemaV3Ddl);
     } else {
       last_error_ = "no migration from schema_version " + std::to_string(v);
       rollback();
@@ -752,7 +765,7 @@ CatalogStatus Catalog::get_library(const std::string& id, LibraryRecord& out, bo
   found = false;
   out = LibraryRecord{};
   Stmt q;
-  int rc = sqlite3_prepare_v2(db_, "SELECT library_id, name, source_kind, source_path, bundle_id, imported_seq FROM libraries WHERE library_id=?1", -1,
+  int rc = sqlite3_prepare_v2(db_, "SELECT library_id, name, source_kind, source_path, bundle_id, imported_seq, kind FROM libraries WHERE library_id=?1", -1,
                               &q.st, nullptr);
   if (rc != SQLITE_OK) return map_error(rc);
   bind_text(q.st, 1, id);
@@ -766,6 +779,7 @@ CatalogStatus Catalog::get_library(const std::string& id, LibraryRecord& out, bo
   r.source_path = col_text(q.st, 3);
   r.bundle_id = col_text(q.st, 4);
   r.imported_seq = sqlite3_column_int64(q.st, 5);
+  r.kind = col_text(q.st, 6) == "factory" ? LibraryKind::kFactory : LibraryKind::kUser;
   const CatalogStatus st = read_instruments(id, 0, 0, r.instruments);
   if (st != CatalogStatus::kOk) return st;
   out = std::move(r);
@@ -780,7 +794,7 @@ CatalogStatus Catalog::list_libraries(std::vector<LibraryRecord>& out, bool with
   {
     Stmt q;
     int rc = sqlite3_prepare_v2(db_,
-                                "SELECT library_id, name, source_kind, source_path, bundle_id, instrument_count, imported_seq FROM libraries "
+                                "SELECT library_id, name, source_kind, source_path, bundle_id, instrument_count, imported_seq, kind FROM libraries "
                                 "ORDER BY imported_seq, library_id",
                                 -1, &q.st, nullptr);
     if (rc != SQLITE_OK) return map_error(rc);
@@ -793,6 +807,7 @@ CatalogStatus Catalog::list_libraries(std::vector<LibraryRecord>& out, bool with
       r.bundle_id = col_text(q.st, 4);
       counts.push_back(static_cast<std::uint32_t>(sqlite3_column_int64(q.st, 5)));
       r.imported_seq = sqlite3_column_int64(q.st, 6);
+      r.kind = col_text(q.st, 7) == "factory" ? LibraryKind::kFactory : LibraryKind::kUser;
       rows.push_back(std::move(r));
     }
     if (rc != SQLITE_DONE) return map_error(rc);
@@ -856,8 +871,8 @@ CatalogStatus Catalog::publish_library(LibraryRecord& rec, bool& changed) {
   if (st == CatalogStatus::kOk) {
     Stmt ins;
     int rc = sqlite3_prepare_v2(db_,
-                                "INSERT INTO libraries(library_id, name, source_kind, source_path, bundle_id, instrument_count, imported_seq) "
-                                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                                "INSERT INTO libraries(library_id, name, source_kind, source_path, bundle_id, instrument_count, imported_seq, kind) "
+                                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                                 -1, &ins.st, nullptr);
     if (rc == SQLITE_OK) {
       bind_text(ins.st, 1, rec.library_id);
@@ -867,6 +882,7 @@ CatalogStatus Catalog::publish_library(LibraryRecord& rec, bool& changed) {
       bind_text(ins.st, 5, rec.bundle_id);
       sqlite3_bind_int64(ins.st, 6, rec.instrument_count());
       sqlite3_bind_int64(ins.st, 7, seq);
+      bind_text(ins.st, 8, to_string(rec.kind));
       rc = sqlite3_step(ins.st);
     }
     if (rc != SQLITE_DONE) st = map_error(rc);

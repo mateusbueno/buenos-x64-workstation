@@ -3,7 +3,7 @@
 Role: key hierarchy documentation, the dev key tool, and the trusted-key embedding for image variants (Story 6.1).
 
 Dependency rule: standalone host tooling; Python 3 standard library only (no `cryptography`, no OpenSSL binding, nothing to add to
-`THIRD_PARTY_NOTICES.md`). Nothing in `engine/core` may depend on it. The generated header is consumed by Stories 6.2, 6.3 and 6.5.
+`THIRD_PARTY_NOTICES.md`). Nothing in `engine/core` may depend on it. The generated header is consumed by Stories 6.2, 6.3, 6.4 (the librarian embeds the dev variant: `librarian/CMakeLists.txt`, cache variables `VELORA_LIBRARIAN_TRUST_VARIANT` and `VELORA_DEV_KEYS_DIR`) and 6.5.
 
 Read `KEY-HIERARCHY.md` first: roots, keys, holders, rotation, trust per image variant, dev key files and the `wrapped_key_v1` / `vault_entry_v1` formats.
 

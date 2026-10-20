@@ -23,6 +23,7 @@
 #include "velora/format/category.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/librarian/import.hpp"
+#include "velora/librarian/library_index.hpp"
 #include "velora/librarian/preflight.hpp"
 
 namespace velora::librarian {
@@ -134,6 +135,7 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
     });
     ReconcileOptions ro;
     ro.hook = [this](const char* p) { point(p, 0, 0); };
+    ro.trusted = &opts_.trusted_keys;
     const CatalogStatus rs = reconcile_libraries(*catalog_, opts_.data_dir, reconcile_report_, ro);
     if (rs != CatalogStatus::kOk) {
       err = std::string("reconcile: ") + to_string(rs);
@@ -223,6 +225,9 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
   wc.point_hook = [this](const char* p, std::uint64_t job, std::size_t item) { point(p, job, item); };
   wc.timbre_hook = opts_.import_timbre_hook;
   wc.options_hook = opts_.import_options_hook;
+  wc.trusted = opts_.trusted_keys;
+  wc.install_options_hook = opts_.install_options_hook;
+  wc.free_bytes_fn = opts_.free_bytes_fn;
   wc.source_gone = opts_.source_gone;
   wc.checkpoint_timbres = opts_.checkpoint_timbres;
   wc.checkpoint_bytes = opts_.checkpoint_bytes;
@@ -407,7 +412,7 @@ void LibraryService::process_frame(Client& c, const std::string& payload) {
     ack.set_request_id(msg.request_id());
     ws::v1::LibraryHelloAck* h = ack.mutable_hello_ack();
     h->set_version(kProtocolVersion);
-    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2", "preflight.v1", "import.checkpoints.v1"}) h->add_features(f);
+    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2", "preflight.v1", "import.checkpoints.v1", "install.protected.v1", "library.kind.v1"}) h->add_features(f);
     h->set_catalog_schema_version(catalog_->schema_version());
     send(c, ack);
     return;
@@ -702,6 +707,8 @@ void LibraryService::handle(Client& c, const ws::v1::LibraryClientMessage& msg) 
       return handle_list_instruments(c, rid, msg.list_instruments());
     case M::kCancelImport:
       return handle_cancel_import(c, rid, msg.cancel_import().job_id());
+    case M::kInstallProtected:
+      return handle_install_protected(c, rid, msg.install_protected());
     case M::kPreflightRequest:
       return handle_preflight_request(c, rid, msg.preflight_request());
     case M::kListPreflightRows:
@@ -808,6 +815,28 @@ ws::v1::LibraryServerMessage typed_error(std::uint64_t rid, ws::v1::LibraryError
   return m;
 }
 
+ws::v1::InstallReason install_reason_to_proto(InstallReason r) {
+  switch (r) {
+    case InstallReason::kNone: return ws::v1::INSTALL_REASON_NONE;
+    case InstallReason::kSignatureInvalid: return ws::v1::INSTALL_REASON_SIGNATURE_INVALID;
+    case InstallReason::kUntrustedKey: return ws::v1::INSTALL_REASON_UNTRUSTED_KEY;
+    case InstallReason::kBlockHashMismatch: return ws::v1::INSTALL_REASON_BLOCK_HASH_MISMATCH;
+    case InstallReason::kHashListMismatch: return ws::v1::INSTALL_REASON_HASH_LIST_MISMATCH;
+    case InstallReason::kCorruptBundle: return ws::v1::INSTALL_REASON_CORRUPT_BUNDLE;
+    case InstallReason::kWrappedKeyInvalid: return ws::v1::INSTALL_REASON_WRAPPED_KEY_INVALID;
+    case InstallReason::kAlreadyInstalled: return ws::v1::INSTALL_REASON_ALREADY_INSTALLED;
+    case InstallReason::kLibraryIdMismatch: return ws::v1::INSTALL_REASON_LIBRARY_ID_MISMATCH;
+    case InstallReason::kNotProtected: return ws::v1::INSTALL_REASON_NOT_PROTECTED;
+    case InstallReason::kUnsupportedVersion: return ws::v1::INSTALL_REASON_UNSUPPORTED_VERSION;
+    case InstallReason::kDowngrade: return ws::v1::INSTALL_REASON_DOWNGRADE;
+    case InstallReason::kCatalogMetaInvalid: return ws::v1::INSTALL_REASON_CATALOG_META_INVALID;
+    case InstallReason::kLibraryIdInUse: return ws::v1::INSTALL_REASON_LIBRARY_ID_IN_USE;
+    case InstallReason::kMissingFile: return ws::v1::INSTALL_REASON_MISSING_FILE;
+    case InstallReason::kIoError: return ws::v1::INSTALL_REASON_IO_ERROR;
+  }
+  return ws::v1::INSTALL_REASON_NONE;
+}
+
 std::int64_t mtime_ns(const struct stat& sb) {
 #ifdef __APPLE__
   return static_cast<std::int64_t>(sb.st_mtimespec.tv_sec) * 1000000000ll + sb.st_mtimespec.tv_nsec;
@@ -910,6 +939,19 @@ void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const w
       return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item cannot be read", p.string(), "item_unreadable");
     if (!seen.insert(p.string()).second)
       return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the item is listed twice", p.string(), "duplicate_item");
+    {  // Story 6.4: the user import path never touches an installed Factory library (the importer also refuses it at publish time)
+      const std::string lib_id = fmtlib::uuid_to_string(fmtlib::library_id_from_source(p.generic_string()));
+      LibraryRecord have;
+      bool found = false;
+      const bool factory_on_disk = factory_library_installed(opts_.data_dir, lib_id);  // also the window in which an install has no catalog row yet
+      if (factory_on_disk || (catalog_->get_library(lib_id, have, found) == CatalogStatus::kOk && found && have.kind == LibraryKind::kFactory)) {
+        auto e = typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_FACTORY_LIBRARY_PROTECTED, "library " + lib_id + " is a factory library; a user import cannot replace it", p.string(),
+                             "factory_library_protected");
+        (*e.mutable_error()->mutable_details())["library_id"] = lib_id;
+        send(c, e);
+        return;
+      }
+    }
     if (!valid_display_name(it.name()))
       return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "invalid display name", p.string(), "invalid_name");
     detail::JobItem ji;
@@ -1016,6 +1058,109 @@ void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const w
   trim_finished_jobs();
 }
 
+// Story 6.4: install a protected bundle. Everything that can be refused is refused here, before a job exists; the rest (signature, hashes, publish) runs on the
+// worker like an import and ends in the same terminal states.
+void LibraryService::handle_install_protected(Client& c, std::uint64_t rid, const ws::v1::InstallProtectedRequest& req) {
+  if (stopping_.load()) {
+    send(c, typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_SHUTTING_DOWN, "the service is stopping and accepts no new install", {}, {}));
+    return;
+  }
+  auto refuse = [&](ws::v1::LibraryErrorCode code, const std::string& message, const std::string& path, const std::string& reason) {
+    send(c, typed_error(rid, code, message, path, reason));
+  };
+  const bool has_dir = !req.source_dir().empty(), has_bundle = !req.bundle_path().empty();
+  if (has_dir == has_bundle)
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "an install names either source_dir or bundle_path", {}, "install_target");
+  for (const std::string* p : {&req.source_dir(), &req.bundle_path(), &req.wrapped_key_path(), &req.catalog_meta_path(), &req.catalog_meta_seal_path()}) {
+    if (p->empty()) continue;
+    if (p->size() > 4096 || p->find('\0') != std::string::npos || p->front() != '/')
+      return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "a path of the install is not absolute, too long or holds a NUL byte", *p, "bad_path");
+  }
+  fmtlib::Uuid expected{};
+  if (!req.expected_library_id().empty() && !fmtlib::uuid_from_string(req.expected_library_id(), expected))
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "expected_library_id is not a canonical UUID", req.expected_library_id(), "invalid_library_id");
+  std::error_code ec;
+  detail::JobItem ji;
+  ji.install = true;
+  std::string bundle_file;
+  if (has_dir) {
+    const fs::path dir = fs::canonical(fs::path(req.source_dir()), ec);
+    if (ec) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the pack directory cannot be read: " + ec.message(), req.source_dir(), "source_missing");
+    if (!fs::is_directory(dir, ec)) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the pack path is not a directory", req.source_dir(), "not_a_directory");
+    ji.install_opt.source_dir = dir.string();
+    ji.path = dir.string();
+    bundle_file = (dir / kProtectedBundleFileName).string();
+  } else {
+    const fs::path b = fs::canonical(fs::path(req.bundle_path()), ec);
+    if (ec) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the bundle cannot be read: " + ec.message(), req.bundle_path(), "bundle_missing");
+    ji.install_opt.bundle_path = b.string();
+    ji.path = b.string();
+    bundle_file = b.string();
+  }
+  struct stat sb{};
+  if (::stat(bundle_file.c_str(), &sb) != 0 || !S_ISREG(sb.st_mode))
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the protected bundle file does not exist", bundle_file, "bundle_missing");
+  if (::access(bundle_file.c_str(), R_OK) != 0)
+    return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "the protected bundle file cannot be read", bundle_file, "source_unreadable");
+  for (const std::string* opt_path : {&req.wrapped_key_path(), &req.catalog_meta_path(), &req.catalog_meta_seal_path()}) {
+    if (opt_path->empty()) continue;
+    struct stat ob{};
+    if (::stat(opt_path->c_str(), &ob) != 0) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "a file of the pack does not exist", *opt_path, "source_missing");
+    if (!S_ISREG(ob.st_mode)) return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_SOURCE, "a file of the pack is not a regular file", *opt_path, "not_a_file");
+  }
+  ji.install_opt.wrapped_key_path = req.wrapped_key_path();
+  ji.install_opt.catalog_meta_path = req.catalog_meta_path();
+  ji.install_opt.catalog_meta_seal_path = req.catalog_meta_seal_path();
+  ji.install_opt.expected_library_id = req.expected_library_id();
+  ji.bytes = static_cast<std::uint64_t>(sb.st_size);
+  auto job = std::make_shared<detail::ImportJob>();
+  job->source = clean_utf8(ji.path);
+  job->bytes_total = ji.bytes;
+  job->items.push_back(std::move(ji));
+  job->timbres_total = 1;
+  const std::uint64_t required = required_install_bytes(job->bytes_total);
+  std::uint64_t free_now = 0;
+  const bool free_known = free_bytes(free_now);
+  if (free_known && (required > free_now || reserved_bytes_ > free_now - required)) {
+    auto e = typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_INSUFFICIENT_SPACE, "not enough free space for this install", {}, "space");
+    (*e.mutable_error()->mutable_details())["required_bytes"] = std::to_string(required);
+    (*e.mutable_error()->mutable_details())["free_bytes"] = std::to_string(free_now);
+    (*e.mutable_error()->mutable_details())["reserved_bytes"] = std::to_string(reserved_bytes_);
+    send(c, e);
+    return;
+  }
+  job->id = next_job_id_;
+  job->owner = c.id;
+  std::size_t ahead = 0;
+  if (!worker_ || !worker_->enqueue(job, opts_.max_queued_jobs, ahead)) {
+    if (stopping_.load() || (worker_ && worker_->stopping())) {
+      send(c, typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_SHUTTING_DOWN, "the service is stopping and accepts no new install", {}, {}));
+      return;
+    }
+    auto e = typed_error(rid, ws::v1::LIBRARY_ERROR_CODE_QUEUE_FULL, "too many import jobs are waiting", {}, {});
+    (*e.mutable_error()->mutable_details())["limit"] = std::to_string(opts_.max_queued_jobs);
+    send(c, e);
+    return;
+  }
+  ++next_job_id_;
+  job->reserved = required;
+  reserved_bytes_ += required;
+  jobs_[job->id] = job;
+  ws::v1::LibraryServerMessage m;
+  m.set_request_id(rid);
+  ws::v1::ImportAccepted* a = m.mutable_import_accepted();
+  a->set_job_id(job->id);
+  a->set_item_count(1);
+  a->set_bytes_total(job->bytes_total);
+  a->set_queue_position(static_cast<std::uint32_t>(ahead));
+  a->set_required_bytes(required);
+  a->set_free_bytes(free_known ? free_now : 0);
+  a->set_free_known(free_known);
+  send(c, m);
+  push_job_event(*job, nullptr);  // QUEUED
+  trim_finished_jobs();
+}
+
 void LibraryService::release_reservation(detail::ImportJob& job) {
   reserved_bytes_ -= std::min(job.reserved, reserved_bytes_);
   job.reserved = 0;
@@ -1079,6 +1224,7 @@ void LibraryService::handle_list_libraries(Client& c, std::uint64_t rid, const w
     li->set_bundle_id(rows[i].bundle_id);
     li->set_instrument_count(rows[i].instrument_count());
     li->set_imported_seq(static_cast<std::uint64_t>(rows[i].imported_seq));
+    li->set_kind(rows[i].kind == LibraryKind::kFactory ? ws::v1::LIBRARY_KIND_FACTORY : ws::v1::LIBRARY_KIND_USER);
     bytes += li->ByteSizeLong() + 2;
     if (bytes > opts_.reply_budget_bytes && l->libraries_size() > 1) {  // keep the reply a frame the peer accepts (at least one entry: progress); `more` says ask again
       l->mutable_libraries()->RemoveLast();
@@ -1293,7 +1439,55 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
     po->set_message(clean_utf8(o.message, kMaxReportString));
   }
   bool final_row = false;  // the catalog lists the item's last published bundle
-  if (r.ok()) {
+  if (m.is_install) {
+    // Story 6.4: the outcome of a protected-bundle install. Installed / unchanged: the bundle is in place, the Factory row goes in now (one transaction).
+    const InstallResult& in = m.install;
+    ir.set_install_reason(install_reason_to_proto(in.reason));
+    switch (in.status) {
+      case InstallStatus::kInstalled:
+      case InstallStatus::kUnchanged:
+        if (!m.have_record) {
+          ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
+          ir.set_detail(clean_utf8("the installed bundle could not be described: " + m.describe_error, 1024));
+          ir.set_install_reason(ws::v1::INSTALL_REASON_NONE);
+        } else {
+          cur_job_ = job.id;
+          cur_item_ = m.index;
+          bool changed = false;
+          const CatalogStatus st = catalog_->publish_library(m.record, changed);
+          sync_counters();
+          if (st != CatalogStatus::kOk) {
+            ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
+            ir.set_detail(std::string("the library is installed but the catalog write failed (") + to_string(st) + "); the next start lists it");
+            ir.set_install_reason(ws::v1::INSTALL_REASON_NONE);
+          } else {
+            final_row = true;
+            job.checkpoint_error.clear();
+            point("catalog-committed", job.id, m.index);
+            ir.set_status(in.status == InstallStatus::kInstalled ? ws::v1::IMPORT_ITEM_IMPORTED : ws::v1::IMPORT_ITEM_UNCHANGED);
+            ir.set_instruments(m.record.instrument_count());
+            ir.set_wrapped_key_updated(in.wrapped_key_updated);
+            if (!in.detail.empty()) ir.set_detail(clean_utf8(in.detail, 1024));
+          }
+        }
+        break;
+      case InstallStatus::kAborted:
+        ir.set_status(ws::v1::IMPORT_ITEM_CANCELLED);
+        break;
+      case InstallStatus::kDriveRemoved:
+        ir.set_status(ws::v1::IMPORT_ITEM_DRIVE_REMOVED);
+        ir.set_detail(clean_utf8(in.detail.empty() ? std::string("the source drive was removed") : in.detail, 1024));
+        job.drive_removed = true;
+        break;
+      default: {
+        ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
+        std::string why = in.status == InstallStatus::kRejected ? to_string(in.reason) : in.status == InstallStatus::kInsufficientSpace ? "insufficient_space" : to_string(in.status);
+        if (!in.detail.empty()) why += ": " + in.detail;
+        ir.set_detail(clean_utf8(why, 1024));
+        break;
+      }
+    }
+  } else if (r.ok()) {
     if (!m.have_record) {
       ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
       ir.set_detail(clean_utf8("the published bundle could not be described: " + m.describe_error, 1024));

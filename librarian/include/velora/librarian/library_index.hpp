@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "velora/format/category.hpp"
+#include "velora/format/protected_verify.hpp"
 #include "velora/librarian/library_records.hpp"
 
 namespace velora::librarian {
@@ -60,9 +61,23 @@ struct DescribeResult {
   std::string why;
   bool from_meta = false; // a valid catalog.meta was found
 };
+// Story 6.4. A PROTECTED bundle directory holds `bundle.vlrp` (kProtectedBundleFileName) instead of `bundle.vlb`, plus `wrapped-key.bin`, `catalog.meta` and
+// `catalog.meta.sig`. Its catalog row is Factory. It is described WITHOUT decrypting: the manifest is read through ProtectedBundleView (which verifies the
+// signature against `trusted`), the names and categories come from catalog.meta, and catalog.meta is accepted only when its detached seal verifies for this
+// bundle_id (see protected_format.hpp, "catalog.meta binding"). Without trusted keys, or with a signature that does not verify, the bundle is kUnreadable
+// (a row it already has is kept, like any bundle that cannot be examined).
+inline constexpr const char* kProtectedBundleFileName = "bundle.vlrp";
+inline constexpr const char* kWrappedKeyFileName = "wrapped-key.bin";
+inline constexpr std::size_t kWrappedKeyBlobSize = 105;  // wrapped_key_v1 (tools/keys/KEY-HIERARCHY.md section 6)
+// Story 6.4: true when `<data_root>/lib/<library_id>/` holds ANY protected bundle (a `<bundle_id>/bundle.vlrp`), whether `current` names it or not: the library is a
+// Factory library and a user import must never touch it. Looks at the file system only (so it also covers the window between an install and its catalog row).
+bool factory_library_installed(const std::string& data_root, const std::string& library_id);
+struct DescribeOptions {
+  const velora::format::TrustedKeys* trusted = nullptr;  // content-manifest keys of this image variant; needed for protected bundles
+};
 // Reads `<bundle_dir>/bundle.vlb` (header, manifest, index; no sample blocks) and the metadata files. `bundle_dir` = <root>/lib/<library_id>/<bundle_id>.
 // Names come from catalog.meta, else from the manifest; categories from catalog.meta, else the legacy `category` file (Story 5.5, via
 // read_category_file); a bundle without any valid category for some instrument is kUncategorised.
-DescribeResult describe_bundle(const std::string& bundle_dir);
+DescribeResult describe_bundle(const std::string& bundle_dir, const DescribeOptions& opt = {});
 
 }  // namespace velora::librarian

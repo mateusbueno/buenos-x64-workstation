@@ -260,7 +260,7 @@ std::size_t scan_files(const std::vector<std::string>& files, const Needles& n) 
 // The five (or four) files of a pack directory, relative to `dir`, as the set `changed_since` must report.
 std::set<std::string> pack_files(const fs::path& dir, bool wrapped) {
   std::set<std::string> v;
-  for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "pack.json"}) v.insert((dir / f).string());
+  for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "catalog.meta.sig", "pack.json"}) v.insert((dir / f).string());
   if (wrapped)
     for (const fs::path& p : files_under(dir))
       if (p.filename().string().rfind("wrapped-key.", 0) == 0) v.insert(p.string());
@@ -597,7 +597,7 @@ void test_sf2(const fs::path& work) {
   const Snap before = snapshot();
   CHECK_CODE(run_pack(req, rep), Code::kOk);
   const auto changed = changed_since(before);
-  CHECK(std::set<std::string>(changed.begin(), changed.end()) == pack_files(rep.dir, false) && changed.size() == 4);
+  CHECK(std::set<std::string>(changed.begin(), changed.end()) == pack_files(rep.dir, false) && changed.size() == 5);
   CHECK(rep.instruments == 6);
   lib::CatalogMeta meta;
   CHECK(lib::parse_catalog_meta(read_text(fs::path(rep.dir) / "catalog.meta"), meta));
@@ -612,7 +612,7 @@ void test_sf2(const fs::path& work) {
   Key32 k{};
   CHECK(vault_entry_open(keys.kek, read_all(fs::path(rep.dir) / "content-key.vault"), d.library_id, k));
   needles.key = k;
-  CHECK(scan_files(changed, needles) == 4);
+  CHECK(scan_files(changed, needles) == 5);
   fmt::ContentKey ck;
   ck.bytes = k;
   const fmt::PublicKey pub = keys.sign_pub();
@@ -669,7 +669,7 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
     const Snap before = snapshot();
     CHECK_CODE(run_pack(r, rp), Code::kOk);
     const auto ch = changed_since(before);
-    CHECK(std::set<std::string>(ch.begin(), ch.end()) == pack_files(rp.dir, true) && ch.size() == 4 + r.device_pubs.size());
+    CHECK(std::set<std::string>(ch.begin(), ch.end()) == pack_files(rp.dir, true) && ch.size() == 5 + r.device_pubs.size());
     Key32 k{};
     CHECK(vault_entry_open(*r.kek, read_all(fs::path(rp.dir) / "content-key.vault"), r.desc.library_id, k));
     needles.key = k;
@@ -686,7 +686,7 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
   const fs::path pack_dir = work / "out1" / lib_id;
   CHECK(rep.dir == pack_dir.string() && rep.library_id == lib_id && rep.instruments == 1 && rep.blocks > 0);
   const std::string wrapped_name = "wrapped-key." + hex(fmt::key_id_of_public(keys.dev_pub)) + ".bin";
-  CHECK(fs::exists(pack_dir / wrapped_name) && files_under(pack_dir).size() == 5 && monitored.size() == 5);
+  CHECK(fs::exists(pack_dir / wrapped_name) && files_under(pack_dir).size() == 6 && monitored.size() == 6);
   for (const auto& [name, bytes] : monitored) CHECK(read_all(pack_dir / name) == bytes);
   CHECK(std::distance(fs::directory_iterator(work / "out1"), fs::directory_iterator()) == 1);  // no staging leftovers
 
@@ -732,6 +732,27 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
   CHECK(meta.library_name == "Vendor Piano" && meta.instruments.size() == 1 && meta.instruments[0].key == "pack.sfz" &&
         meta.instruments[0].category == fmt::Category::kPiano);
   CHECK(meta.source_path == "pack.sfz" && meta_text.find(work.string()) == std::string::npos && meta_text.find("src_a") == std::string::npos);
+  {  // Story 6.4: catalog.meta.sig binds the catalog.meta to this bundle with the bundle's signing key; the verifier accepts it and rejects any altered byte
+    const Bytes seal = read_all(pack_dir / "catalog.meta.sig");
+    const Bytes meta_bytes = read_all(pack_dir / "catalog.meta");
+    auto view = fmt::ProtectedBundleView::open_file((pack_dir / "bundle.vlrp").string(), trusted);
+    CHECK(view.ok() && seal.size() == fmt::kCatalogMetaSealSize);
+    if (view.ok()) {
+      const fmt::Digest256 bid = view.value().info().bundle_id;
+      std::uint32_t rev = 0;
+      CHECK(fmt::verify_catalog_meta_seal(trusted, bid, meta_bytes, seal, nullptr, &rev) == fmt::Error::kNone && rev == 1);  // the default pack revision
+      Bytes bad_meta = meta_bytes;
+      bad_meta[bad_meta.size() / 2] ^= 1;
+      CHECK(fmt::verify_catalog_meta_seal(trusted, bid, bad_meta, seal) == fmt::Error::kSignatureInvalid);
+      Bytes bad_seal = seal;
+      bad_seal[40] ^= 1;
+      CHECK(fmt::verify_catalog_meta_seal(trusted, bid, meta_bytes, bad_seal) == fmt::Error::kSignatureInvalid);
+      fmt::Digest256 other = bid;
+      other[0] ^= 1;
+      CHECK(fmt::verify_catalog_meta_seal(trusted, other, meta_bytes, seal) == fmt::Error::kSignatureInvalid);
+      CHECK(fmt::verify_catalog_meta_seal(fmt::TrustedKeys{}, bid, meta_bytes, seal) == fmt::Error::kUntrustedKey);
+    }
+  }
   const std::string report_json = read_text(pack_dir / "pack.json");
   CHECK(report_json.find(lib_id) != std::string::npos && report_json.find(rep.bundle_id) != std::string::npos && report_json.find("category.piano") != std::string::npos);
   CHECK(report_json.find(hex(vaulted)) == std::string::npos && report_json.find(work.string()) == std::string::npos);
@@ -755,8 +776,23 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
   third.out_dir = (work / "out3").string();
   PackReport rep3;
   watched(third, rep3);
-  for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "pack.json"}) CHECK(read_all(fs::path(rep3.dir) / f) == read_all(fs::path(rep2.dir) / f));
+  for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "catalog.meta.sig", "pack.json"}) CHECK(read_all(fs::path(rep3.dir) / f) == read_all(fs::path(rep2.dir) / f));
   CHECK(read_all(fs::path(rep3.dir) / "bundle.vlrp") == read_all(pack_dir / "bundle.vlrp"));
+  {  // Story 6.4: --revision N signs the pack revision into catalog.meta.sig; the bundle itself does not change
+    fs::create_directories(work / "out_rev");
+    PackRequest r5 = again;
+    r5.out_dir = (work / "out_rev").string();
+    r5.revision = 5;
+    PackReport rep5r;
+    watched(r5, rep5r);
+    CHECK(read_all(fs::path(rep5r.dir) / "bundle.vlrp") == read_all(pack_dir / "bundle.vlrp"));
+    CHECK(read_all(fs::path(rep5r.dir) / "catalog.meta.sig") != read_all(pack_dir / "catalog.meta.sig"));
+    auto view = fmt::ProtectedBundleView::open_file((fs::path(rep5r.dir) / "bundle.vlrp").string(), trusted);
+    std::uint32_t rev = 0;
+    CHECK(view.ok() && fmt::verify_catalog_meta_seal(trusted, view.value().info().bundle_id, read_all(fs::path(rep5r.dir) / "catalog.meta"),
+                                                     read_all(fs::path(rep5r.dir) / "catalog.meta.sig"), nullptr, &rev) == fmt::Error::kNone && rev == 5);
+    CHECK(read_text(fs::path(rep5r.dir) / "pack.json").find("\"pack_revision\": 5") != std::string::npos);
+  }
   {  // a copy of the source tree elsewhere: every file identical
     const fs::path copy = work / "src_copy";
     fs::create_directories(copy);
@@ -769,7 +805,7 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
     r4.out_dir = (work / "out4").string();
     PackReport rep4;
     watched(r4, rep4);
-    for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "pack.json"}) CHECK(read_all(fs::path(rep4.dir) / f) == read_all(fs::path(rep2.dir) / f));
+    for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "catalog.meta.sig", "pack.json"}) CHECK(read_all(fs::path(rep4.dir) / f) == read_all(fs::path(rep2.dir) / f));
   }
   {  // a fresh random key: another bundle
     fs::create_directories(work / "out5");
@@ -795,7 +831,7 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
   again.overwrite = true;
   CHECK_CODE(run_pack(again, rep2), Code::kOk);
   CHECK(read_all(fs::path(rep2.dir) / "bundle.vlrp") == read_all(pack_dir / "bundle.vlrp"));
-  CHECK(rep2.kept_old.empty() && files_under(work / "out2").size() == 4 && std::distance(fs::directory_iterator(work / "out2"), fs::directory_iterator()) == 1);
+  CHECK(rep2.kept_old.empty() && files_under(work / "out2").size() == 5 && std::distance(fs::directory_iterator(work / "out2"), fs::directory_iterator()) == 1);
   // ... but another key must not destroy the only copy of the old one: the old directory is kept, with its vault entry
   {
     PackRequest r6 = base_request(keys, d, (work / "out2").string(), no_register);
@@ -886,6 +922,7 @@ void test_cli(const fs::path& work, const fs::path& src_a, const Source& source)
   CHECK(run_cmd(exe + " pack") == 2);
   CHECK(run_cmd(exe + " pack --content-key 00") == 2);  // a key never comes through argv
   CHECK(run_cmd(exe + " bogus") == 2);
+  CHECK(run_cmd(exe + " pack --description x --out y --revision 0") == 2 && run_cmd(exe + " pack --description x --out y --revision abc") == 2);  // revisions start at 1
   // bad description
   put(work / "bad.json", "{ nope");
   CHECK(run_cmd(env + exe + " pack --description '" + (work / "bad.json").string() + "'" + o + devkeys + regarg, &out) == 3);
@@ -959,11 +996,11 @@ void test_cli(const fs::path& work, const fs::path& src_a, const Source& source)
     CHECK(run_cmd(env + exe + " pack --description " + dev_desc + " --out '" + (work / "repro_a").string() + "'" + devkeys + regarg + reuse, &out) == 0);
     CHECK(run_cmd(env + exe + " pack --description '" + (work / "dev_copy.json").string() + "' --out '" + (work / "repro_b").string() + "'" + devkeys + regarg + reuse, &out) == 0);
     std::size_t same = 0;
-    for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "pack.json"}) {
+    for (const char* f : {"bundle.vlrp", "content-key.vault", "catalog.meta", "catalog.meta.sig", "pack.json"}) {
       CHECK(read_all(work / "repro_a" / dev_id / f) == read_all(work / "repro_b" / dev_id / f));
       ++same;
     }
-    CHECK(same == 4 && read_all(work / "repro_a" / dev_id / "bundle.vlrp") == read_all(pack / "bundle.vlrp"));
+    CHECK(same == 5 && read_all(work / "repro_a" / dev_id / "bundle.vlrp") == read_all(pack / "bundle.vlrp"));
     // the wrapped keys differ (fresh ephemeral key and nonce per wrap) and both unwrap to the same key
     const std::string wname = "wrapped-key." + hex(fmt::key_id_of_public(dev.dev_pub)) + ".bin";
     CHECK(read_all(work / "repro_a" / dev_id / wname) != read_all(work / "repro_b" / dev_id / wname));

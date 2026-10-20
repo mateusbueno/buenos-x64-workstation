@@ -205,6 +205,10 @@ Failure run_pack(const PackRequest& req, PackReport& report) {
     wrapped.push_back(std::move(w));
   }
 
+  // 6b. Story 6.4: catalog.meta is not in the signed manifest, so it gets a detached seal (catalog.meta.sig) bound to this bundle_id with the same key.
+  auto meta_seal = fmt::sign_catalog_meta(*req.signing_seed, info.bundle_id, as_bytes(catalog_meta), req.revision);
+  if (!meta_seal) return fail(Code::kBundleFailed, std::string("cannot seal catalog.meta: ") + fmt::to_string(meta_seal.error()));
+
   // 7. Report.
   lib::CatalogMeta meta;
   if (!lib::parse_catalog_meta(catalog_meta, meta)) return fail(Code::kInternal, "the importer's catalog.meta does not parse");
@@ -227,7 +231,7 @@ Failure run_pack(const PackRequest& req, PackReport& report) {
     }
     json += first ? "}" : "\n  }";
   }
-  json += ",\n  \"root\": " + json_str(to_string(d.root)) + ",\n  \"source\": " + json_str(fs::path(d.source).filename().string()) +
+  json += ",\n  \"pack_revision\": " + std::to_string(req.revision) + ",\n  \"root\": " + json_str(to_string(d.root)) + ",\n  \"source\": " + json_str(fs::path(d.source).filename().string()) +
           ",\n  \"bundle\": {\n    \"file\": " + json_str(kBundleFileName) + ",\n    \"bundle_id\": " + json_str(report.bundle_id) +
           ",\n    \"unprotected_bundle_id\": " + json_str(report.plain_bundle_id) + ",\n    \"format_version\": " + std::to_string(info.format_version) +
           ",\n    \"nonce\": " + json_str(report.nonce_hex) + ",\n    \"signer_key_id\": " + json_str(report.signer_key_id) +
@@ -261,6 +265,7 @@ Failure run_pack(const PackRequest& req, PackReport& report) {
   if (!f) f = put(kVaultEntryFileName, vault, 0600);
   for (std::size_t i = 0; !f && i < wrapped.size(); ++i) f = put(wrapped[i].name, wrapped[i].blob, 0600);
   if (!f) f = put(kCatalogMetaFileName, as_bytes(catalog_meta), 0644);
+  if (!f) f = put(fmt::kCatalogMetaSealFileName, meta_seal.value(), 0644);
   if (!f) f = put(kPackReportFileName, as_bytes(json), 0644);
   if (!f && !fsync_dir(stage)) f = fail(Code::kOutputFailed, stage + ": fsync failed");
   if (f) {

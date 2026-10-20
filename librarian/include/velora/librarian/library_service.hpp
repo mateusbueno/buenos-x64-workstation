@@ -37,8 +37,10 @@
 #include <vector>
 
 #include "library_api.pb.h"
+#include "velora/format/protected_verify.hpp"
 #include "velora/librarian/catalog.hpp"
 #include "velora/librarian/import.hpp"
+#include "velora/librarian/install.hpp"
 #include "velora/librarian/library_reconcile.hpp"
 #include "velora/librarian/preflight.hpp"
 
@@ -93,6 +95,12 @@ struct LibraryServiceOptions {
   std::function<void(const char* point, std::uint64_t job_id, std::size_t timbre)> import_timbre_hook;
   // Test hook: adjusts the ImportOptions of every item on the worker thread just before it runs (fault injection: a failing byte source, a corrupted staged bundle).
   std::function<void(std::uint64_t job_id, std::size_t item, ImportOptions&)> import_options_hook;
+  // Story 6.4. The trusted content-signing public keys protected bundles are verified against (installs, the startup reconcile, the Factory rows). The shipped
+  // `librarian-service` fills it from the keys embedded for its image variant (tools/keys); tests inject their own. An empty list trusts nothing: every install is
+  // refused `untrusted_key`, and the Factory libraries already on disk are not re-examined (their rows are kept).
+  velora::format::TrustedKeys trusted_keys;
+  // Test hook like import_options_hook, for the item of an InstallProtectedRequest.
+  std::function<void(std::uint64_t job_id, std::size_t item, InstallOptions&)> install_options_hook;
 };
 
 class LibraryService {
@@ -163,6 +171,7 @@ class LibraryService {
   void handle_list_libraries(Client& c, std::uint64_t rid, const ws::v1::ListLibraries& req);
   void handle_list_instruments(Client& c, std::uint64_t rid, const ws::v1::ListInstruments& req);
   void handle_cancel_import(Client& c, std::uint64_t rid, std::uint64_t job_id);
+  void handle_install_protected(Client& c, std::uint64_t rid, const ws::v1::InstallProtectedRequest& req);  // Story 6.4
   // Story 5.7
   void handle_preflight_request(Client& c, std::uint64_t rid, const ws::v1::PreflightRequest& req);
   void handle_list_preflight_rows(Client& c, std::uint64_t rid, const ws::v1::ListPreflightRows& req);

@@ -1,7 +1,10 @@
 // librarian-service (Story 4.11): the librarian host process. Serves the Library API (proto/library_api.proto) on a Unix domain socket and owns
 // the SQLite catalog `<data>/catalog.db`. On the board it runs as the systemd unit librarian/systemd/velora-librarian.service.
 //
-//   librarian-service --data DIR --socket PATH [--catalog-dir DIR] [--socket-group NAME] [--checkpoint-timbres N] [--checkpoint-bytes N]
+//   librarian-service --data DIR --socket PATH [--catalog-dir DIR] [--socket-group NAME] [--checkpoint-timbres N] [--checkpoint-bytes N] [--trust-list FILE]
+//
+// Story 6.4: the service installs protected vendor bundles (InstallProtectedRequest) and verifies them against the trusted content-signing public keys embedded for
+// its image variant (tools/keys); `--trust-list FILE` (dev variant only) names a `*.pub-list` instead. It never decrypts anything.
 //
 // Story 5.8: a SoundFont import publishes the timbres finished so far every N timbres (default 10) or N bytes of decoded PCM (default 20 GiB), whichever
 // comes first, and again at the end of the file; a job whose source disappears ends DRIVE_REMOVED (librarian/README.md).
@@ -24,9 +27,10 @@
 #include <string>
 
 #include "velora/librarian/library_service.hpp"
+#include "velora/librarian/trust.hpp"
 
 int main(int argc, char** argv) {
-  std::string data, socket_path, socket_group, catalog_dir;
+  std::string data, socket_path, socket_group, catalog_dir, trust_list;
   unsigned long long checkpoint_timbres = 0, checkpoint_bytes = 0;
   auto number = [](const char* v, unsigned long long& out) {
     char* end = nullptr;
@@ -43,6 +47,8 @@ int main(int argc, char** argv) {
       catalog_dir = argv[++i];
     } else if (!std::strcmp(argv[i], "--socket-group") && i + 1 < argc) {
       socket_group = argv[++i];
+    } else if (!std::strcmp(argv[i], "--trust-list") && i + 1 < argc) {
+      trust_list = argv[++i];
     } else if (!std::strcmp(argv[i], "--checkpoint-timbres") && i + 1 < argc) {
       if (!number(argv[++i], checkpoint_timbres) || checkpoint_timbres > 0xFFFFFFFFull) {
         std::fprintf(stderr, "librarian-service: --checkpoint-timbres needs a whole number of at least 1\n");
@@ -54,7 +60,7 @@ int main(int argc, char** argv) {
         return 2;
       }
     } else {
-      std::fprintf(stderr, "usage: librarian-service --data DIR --socket PATH [--catalog-dir DIR] [--socket-group NAME] [--checkpoint-timbres N] [--checkpoint-bytes N]\n");
+      std::fprintf(stderr, "usage: librarian-service --data DIR --socket PATH [--catalog-dir DIR] [--socket-group NAME] [--checkpoint-timbres N] [--checkpoint-bytes N] [--trust-list FILE]\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
@@ -77,6 +83,13 @@ int main(int argc, char** argv) {
   opts.socket_group = socket_group;
   opts.checkpoint_timbres = static_cast<std::uint32_t>(checkpoint_timbres);
   opts.checkpoint_bytes = checkpoint_bytes;
+  {
+    std::string terr;
+    if (!velora::librarian::resolve_trusted_keys(trust_list, opts.trusted_keys, terr)) {
+      std::fprintf(stderr, "librarian-service: %s\n", terr.c_str());
+      return 2;
+    }
+  }
   velora::librarian::LibraryService service(opts);
   std::string err;
   velora::librarian::CatalogStatus st = velora::librarian::CatalogStatus::kOk;

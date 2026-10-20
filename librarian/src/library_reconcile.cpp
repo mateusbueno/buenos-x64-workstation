@@ -6,12 +6,14 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <exception>
 #include <climits>
 #include <filesystem>
 #include <map>
 #include <set>
 
 #include "velora/format/bundle.hpp"
+#include "velora/format/protected_verify.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/librarian/import.hpp"
 #include "velora/librarian/library_index.hpp"
@@ -54,7 +56,9 @@ Cur current_bundle_dir(const fs::path& lib_dir, const ReconcileOptions& opt, std
   if (!is_bundle_id(target)) return Cur::kAbsent;
   const fs::path dir = lib_dir / target;
   struct stat bs;
-  if (::stat((dir / host::kBundleFileName).c_str(), &bs) != 0) {
+  int rc = ::stat((dir / host::kBundleFileName).c_str(), &bs);
+  if (rc != 0 && (errno == ENOENT || errno == ENOTDIR)) rc = ::stat((dir / kProtectedBundleFileName).c_str(), &bs);  // Story 6.4: a protected bundle
+  if (rc != 0) {
     if (errno == ENOENT || errno == ENOTDIR) return Cur::kAbsent;
     why = dir.string() + ": " + std::strerror(errno);
     return Cur::kError;
@@ -170,7 +174,9 @@ CatalogStatus reconcile_libraries(Catalog& cat, const std::string& data_dir, Rec
   // 4. Add or refresh the rows of every library on disk; remember which are valid.
   std::set<std::string> valid;
   for (const OnDisk& d : disk) {
-    DescribeResult dr = describe_bundle(d.bundle_dir);
+    DescribeOptions dopt;
+    dopt.trusted = opt.trusted;
+    DescribeResult dr = describe_bundle(d.bundle_dir, dopt);
     if (dr.status != DescribeStatus::kOk) {
       rep.skipped.push_back(d.library_id + ": " + dr.why);
       if (dr.status == DescribeStatus::kUnreadable || dr.status == DescribeStatus::kMetaUnreadable) keep.insert(d.library_id);  // not a definite "no": keep the row
@@ -186,8 +192,18 @@ CatalogStatus reconcile_libraries(Catalog& cat, const std::string& data_dir, Rec
       continue;
     }
     if (opt.verify_new_rows) {
-      auto rd = fmt::BundleReader::open_file(d.bundle_dir + "/" + host::kBundleFileName);
-      const fmt::Error e = rd ? rd.value().verify_all() : rd.error();
+      fmt::Error e = fmt::Error::kNone;
+      try {
+        if (dr.record.kind == LibraryKind::kFactory) {  // ciphertext block hashes only; nothing is decrypted
+          auto pv = fmt::ProtectedBundleView::open_file(d.bundle_dir + "/" + kProtectedBundleFileName, *opt.trusted);
+          e = pv ? pv.value().verify_all_blocks() : pv.error();
+        } else {
+          auto rd = fmt::BundleReader::open_file(d.bundle_dir + "/" + host::kBundleFileName);
+          e = rd ? rd.value().verify_all() : rd.error();
+        }
+      } catch (const std::exception&) {  // out of memory while examining: not verified, not cataloged
+        e = fmt::Error::kIo;
+      }
       if (e != fmt::Error::kNone) {
         rep.skipped.push_back(d.library_id + ": the bundle fails verification (" + fmt::to_string(e) + ")");
         continue;
@@ -228,7 +244,11 @@ CatalogStatus rebuild_libraries(Catalog& cat, const std::string& data_dir, Recon
     return st;
   }
   std::size_t dropped = 0;
+  const bool can_examine_factory = opt.trusted && opt.trusted->size() > 0;
   for (const auto& r : rows) {
+    // Story 6.4: a Factory row is dropped only when it can be rebuilt from its bundle, i.e. when there are trusted keys to examine a protected bundle with.
+    // Without them the pass would list nothing for it and the library would vanish from the catalog.
+    if (r.kind == LibraryKind::kFactory && !can_examine_factory) continue;
     bool removed = false;
     st = cat.remove_library(r.library_id, removed);
     if (st != CatalogStatus::kOk) {

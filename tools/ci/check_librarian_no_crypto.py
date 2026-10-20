@@ -86,7 +86,9 @@ def check_links(path):
             if item.startswith("UNRESOLVED:"):
                 bad.append(item)  # CMake could not resolve this name to a target, path or flag: the link-line check would not cover it
                 continue
-            if SHARED_CRYPTO_RE.search(item):
+            # CMake lists a PRIVATE dependency of a static library as $<LINK_ONLY:name> in its link interface (Story 6.4: velora_format_verify -> OpenSSL::Crypto).
+            bare = re.sub(r"^\$<LINK_ONLY:(.*)>$", r"\1", item)
+            if SHARED_CRYPTO_RE.search(bare):
                 continue  # Story 6.2: a shared libcrypto for signature verification; the symbol scan forbids its cipher entry points
             low = item.lower()
             if any(w in low for w in LINK_WORDS) or any(re.search(p, item, re.I) for p in LINK_PATTERNS):
@@ -128,11 +130,11 @@ def self_test(cc, nm):
             f.write("/usr/lib/libsqlite3.dylib\n/opt/homebrew/opt/openssl@3/lib/libcrypto.a\n-lmbedtls\n-lssl\n")
         expect(len(check_links(lf)) == 3, "a link list naming libcrypto / mbedtls / -lssl fails: %s" % check_links(lf))
         with open(lf, "w") as f:
-            f.write("/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib\n/usr/lib/x86_64-linux-gnu/libcrypto.so.3\n-lcrypto\nOpenSSL::Crypto\n")
+            f.write("/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib\n/usr/lib/x86_64-linux-gnu/libcrypto.so.3\n-lcrypto\nOpenSSL::Crypto\n$<LINK_ONLY:OpenSSL::Crypto>\n")
         expect(check_links(lf) == [], "a shared libcrypto (verification) passes the link-line check: %s" % check_links(lf))
         with open(lf, "w") as f:
-            f.write("/usr/lib/x86_64-linux-gnu/libcrypto.a\n/usr/lib/libssl.so.3\n/opt/homebrew/lib/libcrypto.a\nOpenSSL::SSL\n")
-        expect(len(check_links(lf)) == 4, "a static libcrypto, libssl and OpenSSL::SSL still fail: %s" % check_links(lf))
+            f.write("/usr/lib/x86_64-linux-gnu/libcrypto.a\n/usr/lib/libssl.so.3\n/opt/homebrew/lib/libcrypto.a\nOpenSSL::SSL\n$<LINK_ONLY:OpenSSL::SSL>\n")
+        expect(len(check_links(lf)) == 5, "a static libcrypto, libssl and OpenSSL::SSL still fail: %s" % check_links(lf))
         with open(lf, "w") as f:
             f.write("velora_format\nUNRESOLVED:mystery\n")
         expect(check_links(lf) == ["UNRESOLVED:mystery"], "an unresolved name fails the link-line check")
@@ -185,6 +187,9 @@ def main():
         print("nothing to check (give --link-libs, --binary or --lib)")
         return 2
     if not nm:
+        if os.environ.get("CI"):  # in CI a missing nm must not turn the proof into a skip
+            print("FAIL: `nm` not found in CI: the symbol check could not run")
+            return 1
         print("SKIP: `nm` not found, symbol check not run")
         return 1 if failed else 77
     for t in targets:

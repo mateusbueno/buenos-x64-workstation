@@ -47,7 +47,11 @@ using SealVerifier = std::function<Error(const ParsedBundle& partial)>;
 // want_protected = false: formats 1 and 2 (kUnsupportedVersion for 3 and above, as before Story 6.2).
 // want_protected = true: format 3 only (kNotProtected for an unprotected bundle, kUnsupportedVersion otherwise);
 // `verify` must be set.
-Result<ParsedBundle> parse_bundle(ByteSource& src, bool want_protected, const SealVerifier* verify);
+// Story 6.4: called with the signer's key id right after the seal was read and BEFORE the manifest and the index are allocated and hashed (a file signed by
+// an untrusted key costs a header and a seal read, nothing more).
+using SealPrecheck = std::function<Error(const KeyId& signer)>;
+
+Result<ParsedBundle> parse_bundle(ByteSource& src, bool want_protected, const SealVerifier* verify, const SealPrecheck* precheck = nullptr);
 
 std::unique_ptr<ByteSource> make_memory_source(std::span<const std::uint8_t> bytes);
 Result<std::unique_ptr<ByteSource>> make_file_source(const std::string& path);

@@ -56,6 +56,13 @@ class TrustedKeys {
 // S >= L, a non-canonical R or A (y >= p), a small-order A, and checks cofactorless ([S]B == R + [k]A exactly).
 bool ed25519_verify_strict(const PublicKey& pub, std::span<const std::uint8_t> message, const Signature& sig);
 
+// Story 6.4: checks the detached seal of a catalog.meta (protected_format.hpp, "catalog.meta binding") for the bundle `bundle_id`: kCatalogMetaInvalid for a
+// malformed seal, kUntrustedKey when the signer is not in `trusted`, kSignatureInvalid when the signature does not verify (catalog.meta or seal altered, or
+// made for another bundle).
+// `signer_out` / `revision_out` (optional) receive the seal's signer key id and pack_revision once it decodes.
+Error verify_catalog_meta_seal(const TrustedKeys& trusted, const Digest256& bundle_id, std::span<const std::uint8_t> meta_bytes,
+                               std::span<const std::uint8_t> seal_bytes, KeyId* signer_out = nullptr, std::uint32_t* revision_out = nullptr);
+
 struct ProtectedInfo {
   std::uint32_t format_version = 0;  // major, 3
   std::uint32_t format_minor = 0;

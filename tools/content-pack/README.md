@@ -45,6 +45,7 @@ velora-content-pack check-register [--register-file FILE]
   so differs between runs; `--deterministic-vault` derives it from the key and library id (HMAC-SHA256, `vault_nonce_deterministic`). With
   `--reuse-vault-entry ... --deterministic-vault`, **every file of the output directory is identical between runs except `wrapped-key.*`**, whose ephemeral key and nonce are
   fresh on every wrap (KEY-HIERARCHY.md); both blobs unwrap to the same key. A release is verified by repeating that command and comparing all other files.
+* **`--revision N`** (Story 6.4, default 1): the pack revision signed into `catalog.meta.sig` (it does not change `bundle.vlrp`). It must rise with every release of a library: a device installs a revision only if it is not lower than the installed one, and the same revision only for the same bundle. A deliberate vendor rollback is a NEW, higher revision carrying the old content. `pack.json` records `pack_revision`.
 * **`--overwrite`** replaces an existing `<out>/<library_id>/` only when its `content-key.vault` opens with this KEK to the SAME content key as the new pack (a rebuild
   with `--reuse-vault-entry`); an existing pack with another key, or one whose vault entry does not open, is kept as `<out>/.old-<library_id>.<time>.<pid>` so the only
   copy of a key is never deleted by a rebuild (`pack.json` is unaffected; the CLI prints nothing special, look for `.old-*`).
@@ -97,6 +98,7 @@ are skipped exactly as for users (`import_skipped`, with the importer's reasons)
 | `content-key.vault` | `vault_entry_v1` (72 bytes), the content key under the root's KEK |
 | `wrapped-key.<device key id>.bin` | `wrapped_key_v1` (105 bytes) per `--device-pub` |
 | `catalog.meta` | library name and per-instrument names and categories (the format the librarian's catalog reads) |
+| `catalog.meta.sig` | Story 6.4: an 84-byte detached Ed25519 seal that binds `catalog.meta` and the **pack revision** to this `bundle_id` with the bundle's own signing key (`VCM2`, algorithm, revision, key id, signature over `"velora/catalog-meta/v1" 0x00 \|\| bundle_id \|\| SHA-256(catalog.meta) \|\| key id \|\| revision`); the librarian installs a pack only when it verifies |
 | `pack.json` | report: ids, nonce, signer and KEK key ids, sizes, hashes, instruments. Never a key |
 
 ## Vendor ID register (`vendor-ids`)
