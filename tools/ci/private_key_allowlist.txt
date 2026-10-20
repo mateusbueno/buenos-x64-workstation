@@ -1,0 +1,3 @@
+# Reviewed exceptions for tools/ci/check_no_private_keys.py: one repository-relative path glob (fnmatch) per line, `#` starts a comment.
+# Only add a path after a human confirmed the file holds no private key material (a public certificate named *.pem, for example).
+# Every change to this file needs review: it switches the secret check off for the matching paths.

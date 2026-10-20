@@ -1,0 +1,3 @@
+# Trusted content-manifest public keys of the DEV root (public keys only; Story 6.1).
+# Format: <root> <role> <key_id hex16> <public_key hex64>. Dev images trust only these (plus a local --dev-keys-dir).
+# A developer's own key from `velora_keys.py generate` is passed with --dev-keys-dir (CMake DEV_KEYS_DIR) instead of being committed.

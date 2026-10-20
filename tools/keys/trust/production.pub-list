@@ -1,0 +1,4 @@
+# Trusted content-manifest public keys of the PRODUCTION root (public keys only; Story 6.1).
+# Deliberately EMPTY: the production root is generated in an offline HSM at the Story 6.10 ceremony and only its public key is added here.
+# While this list is empty, a production variant cannot be built (embed_trusted_keys.py / velora_embed_trusted_keys refuse).
+# Format: <root> <role> <key_id hex16> <public_key hex64>. Entries labelled `dev` are rejected here.

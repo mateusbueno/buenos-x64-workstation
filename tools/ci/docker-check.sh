@@ -8,11 +8,11 @@ docker build -q -t "$IMAGE" tools/ci/docker >/dev/null
 job="${1:-all}"
 run() { # builds in a container-local copy so the host tree stays untouched
   docker run --rm -v "$PWD":/src:ro "$IMAGE" bash -euc "
-    mkdir /work/s && cd /src && tar --exclude=./build --exclude=./.git --exclude=./tools/oracle/.work -cf - . | tar -xf - -C /work/s && cd /work/s
+    mkdir /work/s && cd /src && tar --exclude=./build --exclude=./.git --exclude='__pycache__' --exclude=./tools/oracle/.work -cf - . | tar -xf - -C /work/s && cd /work/s
     $1"
 }
 case "$job" in purity|all)
-  echo "== purity"; run "python3 tools/ci/check_core_deps.py && python3 tools/ci/check_core_deps.py --self-test && python3 tools/ci/check_third_party_notices.py && python3 tools/ci/check_third_party_notices.py --self-test";; esac
+  echo "== purity"; run "python3 tools/ci/check_core_deps.py && python3 tools/ci/check_core_deps.py --self-test && python3 tools/ci/check_third_party_notices.py && python3 tools/ci/check_third_party_notices.py --self-test && python3 tools/ci/check_no_private_keys.py && python3 tools/ci/check_no_private_keys.py --self-test";; esac
 case "$job" in gcc|all)
   echo "== linux-gcc"; run "CC=gcc CXX=g++ cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build --output-on-failure --no-tests=error";; esac
 case "$job" in rtsan|all)

@@ -18,6 +18,7 @@ add_subdirectory(formatlib)
 add_subdirectory(librarian)
 add_subdirectory(tools/offline-render)
 add_subdirectory(tools/library-gen)
+add_subdirectory(tools/keys)
 add_subdirectory(tools/spikes)
 
 # Dependency-purity gate for engine/core (see tools/ci/check_core_deps.py).
@@ -32,6 +33,13 @@ if(Python3_Interpreter_FOUND)
                    --root ${CMAKE_SOURCE_DIR})
   add_test(NAME core_deps_purity_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_core_deps.py
+                   --self-test)
+  # Story 6.1 (AR34/NFR23): no private key material in the git index / working tree.
+  add_test(NAME no_private_keys
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_private_keys.py
+                   --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME no_private_keys_selftest
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_private_keys.py
                    --self-test)
 else()
   message(STATUS "Python3 not found: core purity tests not registered")

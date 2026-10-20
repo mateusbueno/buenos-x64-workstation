@@ -173,8 +173,8 @@ development_status:
   5-21-storage-library-free-space-installed-libraries-and-removal: backlog
   epic-5-retrospective: optional
 
-  epic-6: backlog
-  6-1-signing-and-content-key-hierarchy-with-dev-roots: backlog
+  epic-6: in-progress
+  6-1-signing-and-content-key-hierarchy-with-dev-roots: done
   6-2-protected-bundle-format-in-formatlib: backlog
   6-3-content-pack-tool: backlog
   6-4-librarian-verifies-and-installs-protected-bundles: backlog

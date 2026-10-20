@@ -1,0 +1,2 @@
+# Trusted content-manifest public keys of the FACTORY-TEST root (public keys only; Story 6.1).
+# Empty until the factory-test root exists (Story 6.13). Format: <root> <role> <key_id hex16> <public_key hex64>.
