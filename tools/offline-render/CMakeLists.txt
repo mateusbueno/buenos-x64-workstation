@@ -12,6 +12,33 @@ target_link_libraries(velora_offline PUBLIC velora_core velora_host velora_contr
 
 add_executable(velora-offline-render src/render_main.cpp)
 target_link_libraries(velora-offline-render PRIVATE velora_offline)
+# Story 6.5: protected bundles through the dev key provider (--dev-device-key, --wrapped-key, --trust-list). Dev builds only: the target does not exist in a
+# configuration that refuses VELORA_DEV_KEY_PROVIDER (engine/host/CMakeLists.txt), and without it the flags answer an error.
+if(VELORA_DEV_KEY_PROVIDER)
+  target_link_libraries(velora-offline-render PRIVATE velora_host_protected velora_host_dev_keys)
+  target_compile_definitions(velora-offline-render PRIVATE VELORA_OFFLINE_DEV_KEYS=1)
+
+  # Story 6.5: a protected and an unprotected bundle of the same library render the same MIDI suite bit-identically; typed refusals; no plaintext on disk.
+  add_executable(protected_render_test tests/protected_render_test.cpp)
+  target_link_libraries(protected_render_test PRIVATE velora_offline velora_host_protected velora_host_dev_keys velora_format_protected_writer OpenSSL::Crypto)
+  target_compile_definitions(protected_render_test PRIVATE
+    RENDER_EXE="$<TARGET_FILE:velora-offline-render>"
+    OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+  add_dependencies(protected_render_test velora-offline-render)
+  add_test(NAME protected_render_test COMMAND protected_render_test)
+  set_tests_properties(protected_render_test PROPERTIES TIMEOUT 600)
+
+  # The whole sample-engine suite (every case's SFZ and MIDI) protected vs unprotected, bit-identical.
+  add_executable(protected_suite_test tests/protected_suite_test.cpp)
+  target_link_libraries(protected_suite_test PRIVATE velora_librarian velora_format_protected_writer OpenSSL::Crypto)
+  target_compile_definitions(protected_suite_test PRIVATE
+    SUITE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/sample_suite"
+    RENDER_EXE="$<TARGET_FILE:velora-offline-render>"
+    OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+  add_dependencies(protected_suite_test velora-offline-render)
+  add_test(NAME protected_suite_test COMMAND protected_suite_test)
+  set_tests_properties(protected_suite_test PROPERTIES TIMEOUT 900)
+endif()
 
 add_executable(velora-null-test src/null_test_main.cpp)
 target_link_libraries(velora-null-test PRIVATE velora_offline)

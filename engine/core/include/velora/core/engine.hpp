@@ -164,6 +164,9 @@ class Engine {
   // True for an engine whose voices the arbiter must never choose as steal victims (the tonewheel organ).
   // Its cost is reserved ahead of every engine floor through LiveSetConfig::organ_rotary_cost.
   virtual bool steal_protected() const noexcept { return false; }
+  // Story 6.5: how many times a voice of this engine met a damaged block of a protected library (a voice faded to silence for it). Monotone, written by the
+  // audio thread, readable from any thread; 0 for an engine that plays no protected content.
+  virtual std::uint64_t content_integrity_events() const noexcept { return 0; }
 
   // Setup-time: attach the pool arbiter. Without one (standalone use in tests) the engine hands out
   // its first free slot and reports kPoolExhausted when none is left.

@@ -12,6 +12,11 @@ target_link_libraries(velora_host_macos PUBLIC velora_host
 add_executable(engine-host main.cpp)
 target_link_libraries(engine-host PRIVATE velora_host_macos velora_control velora_library_client)
 target_compile_definitions(engine-host PRIVATE VELORA_DEV_CONFIG_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../dev/engine-dev.json")
+# Story 6.5: protected libraries through the dev key provider (--trust-list, --dev-device-key). Dev builds only (see engine/host/CMakeLists.txt).
+if(VELORA_DEV_KEY_PROVIDER)
+  target_link_libraries(engine-host PRIVATE velora_host_protected velora_host_dev_keys)
+  target_compile_definitions(engine-host PRIVATE VELORA_ENGINE_DEV_KEYS=1)
+endif()
 
 add_executable(coremidi_virtual_test coremidi_virtual_test.cpp)
 target_link_libraries(coremidi_virtual_test PRIVATE velora_host_macos)
@@ -64,3 +69,13 @@ target_link_libraries(engine_host_assign_smoke PRIVATE velora_control)
 add_dependencies(engine_host_assign_smoke engine-host)
 add_test(NAME engine_host_assign_smoke COMMAND engine_host_assign_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/switch ${_ehs_dir}/root)
 set_tests_properties(engine_host_assign_smoke PROPERTIES TIMEOUT 120)
+
+# engine-host protected-library smoke test (Story 6.5): a subprocess with --trust-list / --dev-device-key plays a PROTECTED library laid out as the librarian installs it,
+# refuses another device's key with the typed cause, and reports a block damaged on disk through State.content (found by the I/O edge thread). --no-audio.
+if(VELORA_DEV_KEY_PROVIDER)
+  add_executable(engine_host_protected_smoke engine_host_protected_smoke.cpp)
+  target_link_libraries(engine_host_protected_smoke PRIVATE velora_control velora_format_protected_writer OpenSSL::Crypto)
+  add_dependencies(engine_host_protected_smoke engine-host)
+  add_test(NAME engine_host_protected_smoke COMMAND engine_host_protected_smoke $<TARGET_FILE:engine-host>)
+  set_tests_properties(engine_host_protected_smoke PROPERTIES TIMEOUT 120)
+endif()

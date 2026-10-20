@@ -6,6 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(VELORA_RTSAN "Build RealtimeSanitizer tests (needs clang >= 20 with -fsanitize=realtime)" ON)
+option(VELORA_PRODUCTION "this configuration builds a shippable image: no dev-only code (dev trust variant, dev key provider) may be built into it" OFF)
+# Story 6.5: the dev key provider reads a developer's device private key from a file and unwraps content keys with it (engine/host/dev_keys). The board uses the
+# OP-TEE provider (Story 6.6) behind the same port. It defaults to ON only for a plain development configuration: a single-config generator with an empty or Debug
+# CMAKE_BUILD_TYPE and no VELORA_PRODUCTION. Any other configuration (Release, MinSizeRel, RelWithDebInfo, a custom type, a multi-config generator) defaults to OFF and
+# needs an explicit -DVELORA_DEV_KEY_PROVIDER=ON; a Release / MinSizeRel / RelWithDebInfo / VELORA_PRODUCTION one refuses it (engine/host/CMakeLists.txt).
+if(NOT VELORA_PRODUCTION AND NOT CMAKE_CONFIGURATION_TYPES AND (CMAKE_BUILD_TYPE STREQUAL "" OR CMAKE_BUILD_TYPE STREQUAL "Debug"))
+  set(_velora_dev_keys_default ON)
+else()
+  set(_velora_dev_keys_default OFF)
+endif()
+option(VELORA_DEV_KEY_PROVIDER "build the dev key provider (a developer's device key from a file) and the dev flags of engine-host and velora-offline-render that use it" ${_velora_dev_keys_default})
 
 enable_testing()
 
@@ -72,6 +83,27 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME librarian_dev_trust_refused_in_release
            COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/release_refusal_probe -DCMAKE_BUILD_TYPE=Release)
   set_tests_properties(librarian_dev_trust_refused_in_release PROPERTIES PASS_REGULAR_EXPRESSION "must not be built into a Release")
+  # Story 6.5: the dev key provider (a developer's device key read from a file) never reaches a production-like configuration.
+  add_test(NAME dev_key_provider_refused_in_production
+           COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/dev_keys_production_probe -DVELORA_PRODUCTION=ON -DVELORA_DEV_KEY_PROVIDER=ON)
+  set_tests_properties(dev_key_provider_refused_in_production PROPERTIES PASS_REGULAR_EXPRESSION "developer's device key")
+  add_test(NAME dev_key_provider_refused_in_relwithdebinfo
+           COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/dev_keys_rwdi_probe -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVELORA_DEV_KEY_PROVIDER=ON)
+  set_tests_properties(dev_key_provider_refused_in_relwithdebinfo PROPERTIES PASS_REGULAR_EXPRESSION "developer's device key")
+  add_test(NAME dev_key_provider_default_off_in_release
+           COMMAND ${CMAKE_COMMAND} -DMODE=default_off_release -DSRC=${CMAKE_SOURCE_DIR} -DBIN=${CMAKE_BINARY_DIR}/dev_keys_default_probe -P ${CMAKE_SOURCE_DIR}/tools/ci/dev_keys_probe.cmake)
+  if(VELORA_DEV_KEY_PROVIDER)
+    set(_dev_bins $<TARGET_FILE:velora-offline-render>)
+    if(APPLE)
+      list(APPEND _dev_bins $<TARGET_FILE:engine-host>)
+    endif()
+    add_test(NAME dev_key_provider_absent_when_off
+             COMMAND ${CMAKE_COMMAND} -DMODE=absent_when_off -DSRC=${CMAKE_SOURCE_DIR} -DBIN=${CMAKE_BINARY_DIR}/dev_keys_off_probe -DPYTHON=${Python3_EXECUTABLE}
+                     "-DDEV_BINS=${_dev_bins}" -P ${CMAKE_SOURCE_DIR}/tools/ci/dev_keys_probe.cmake)
+    set_tests_properties(dev_key_provider_absent_when_off PROPERTIES TIMEOUT 1800)
+  endif()
+  add_test(NAME no_dev_keys_selftest
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_no_dev_keys.py --self-test)
   add_test(NAME format_no_decrypt_selftest
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py --self-test --cc ${CMAKE_C_COMPILER})
   add_test(NAME format_no_decrypt_probe

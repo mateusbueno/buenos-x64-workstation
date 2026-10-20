@@ -8,6 +8,7 @@
 // until the source is destroyed. The engine borrows them (it copies nothing), so the source must
 // outlive the engine's use of it. Streaming and locked/partial residency are later stories
 // (1.16, 1.17) and will extend this port, not change these structs.
+#include <atomic>
 #include <cstdint>
 #include <span>
 
@@ -84,12 +85,22 @@ struct SampleRegionDesc {
 // One sample's PCM. channels is 1 or 2; `right` is used only when channels == 2. A sample whose
 // data is absent (null pointer, zero frames) makes every region using it unplayable: the engine
 // skips such regions and counts them, it never plays garbage.
+//
+// Story 6.5 (content integrity). A protected library's blocks are hash-checked and decrypted by non-real-time threads only (the loader, and the I/O edge
+// threads that re-read blocks). When such a thread finds a block of a sample damaged it sets that block's flag in `damaged_blocks`; the audio thread only
+// READS the flags (one relaxed byte load per voice per frame) and answers a damaged block with a short fade to silence and a content_integrity count --
+// it never hashes, decrypts or waits. nullptr (every unprotected sample) = no damage map, the render is exactly the Story 1.15 one, bit for bit.
+// Block b covers frames [b * damaged_block_frames, (b + 1) * damaged_block_frames) of the sample; a frame beyond the map counts as undamaged. The map is
+// owned by the source and must outlive its use, like the PCM.
 struct SamplePcm {
   std::uint32_t sample_rate = 48000;
   std::uint8_t channels = 1;
   std::uint64_t frames = 0;
   const float* left = nullptr;
   const float* right = nullptr;
+  const std::atomic<std::uint8_t>* damaged_blocks = nullptr;  // one byte per block, nonzero = damaged; nullptr = none
+  std::uint32_t damaged_block_frames = 0;                     // frames per block of the map (formatlib kBlockFrames = 4096)
+  std::uint32_t damaged_block_count = 0;                      // entries in the map
 };
 
 struct InstrumentView {

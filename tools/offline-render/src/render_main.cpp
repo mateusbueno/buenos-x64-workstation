@@ -10,6 +10,8 @@
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
+//                         [--dev-device-key KEYFILE --wrapped-key BLOB --trust-list FILE]   (Story 6.5, dev builds only: B is a PROTECTED bundle (bundle.vlrp); the content key
+//                                                                                              is unwrapped with the dev device key, decrypted on this thread, nothing is written to disk)
 //                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N]
 //                         [--assign-mode] [--encoder-at SECONDS:ENC:DELTA]... [--seed N] [--tail-seconds S]]
 //                         (Live Set mode, Story 4.3: --midi, --out; no other engine option; --switch-at is Story 4.5; --assign-mode / --encoder-at Story 4.10)
@@ -21,6 +23,14 @@
 #include <vector>
 
 #include "events_file.hpp"
+#ifdef VELORA_OFFLINE_DEV_KEYS
+#include <sys/resource.h>
+
+#include "velora/format/protected_verify.hpp"
+#include "velora/host/dev_key_provider.hpp"
+#include "velora/host/protected_head_provider.hpp"
+#include "velora/host/trust_list.hpp"
+#endif
 #include "parse_util.hpp"
 #include "render.hpp"
 #include "render_live_set.hpp"
@@ -63,6 +73,7 @@ int main(int argc, char** argv) {
   bool master_eq_seen = false, master_comp_seen = false, reverb_seen = false, reverb_time_seen = false, reverb_level_seen = false, rev_master_seen = false;
   bool delay_seen[7] = {false, false, false, false, false, false, false}, tempo_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
   std::string line_in_path, aux_out_path, live_set_path, library_root;
+  std::string dev_device_key, wrapped_key_path, trust_list_path;  // Story 6.5 (dev builds)
   bool seed_given = false;
   std::vector<SceneRecallAt> scene_recalls;
   std::vector<SwitchAt> switches;
@@ -400,6 +411,11 @@ int main(int argc, char** argv) {
     } else if (a == "--live-set" && val(v)) live_set_path = v;
     else if (a == "--library-root" && val(v)) library_root = v;
     else if (a == "--bundle" && val(v)) bundle_path = v;
+#ifdef VELORA_OFFLINE_DEV_KEYS  // dev builds only: the option names are not even in the binary of a build without the dev key provider
+    else if (a == "--dev-device-key" && val(v)) dev_device_key = v;
+    else if (a == "--wrapped-key" && val(v)) wrapped_key_path = v;
+    else if (a == "--trust-list" && val(v)) trust_list_path = v;
+#endif
     else if (a == "--instrument" && val(v)) instrument_key = v;
     else if (a == "--interpolation" && val(v)) { interp = v; sample_opts = true; }
     else if (a == "--oracle-block-frames" && val(v)) {
@@ -442,6 +458,55 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: --switch-load-blocks needs --switch-at\n");
     return 2;
   }
+  const bool protected_flags = !dev_device_key.empty() || !wrapped_key_path.empty() || !trust_list_path.empty();
+  if (protected_flags) {
+#ifdef VELORA_OFFLINE_DEV_KEYS
+    if (dev_device_key.empty() || trust_list_path.empty()) {
+      std::fprintf(stderr, "error: protected bundles need --dev-device-key and --trust-list (and --wrapped-key for --bundle)\n");
+      return 2;
+    }
+    if (live_set_path.empty() && wrapped_key_path.empty()) {
+      std::fprintf(stderr, "error: --dev-device-key with --bundle needs --wrapped-key\n");
+      return 2;
+    }
+    if (!live_set_path.empty() && !wrapped_key_path.empty()) {
+      std::fprintf(stderr, "error: --wrapped-key goes with --bundle; a Live Set finds wrapped-key.bin in each library\n");
+      return 2;
+    }
+#else
+    std::fprintf(stderr, "error: this build has no dev key provider\n");
+    return 2;
+#endif
+  }
+#ifdef VELORA_OFFLINE_DEV_KEYS
+  // Story 6.5: the dev key provider, the trusted keys and the protected head provider. The process writes no core file (the content key and the decoded PCM are in its memory).
+  std::unique_ptr<velora::host::DevKeyProvider> dev_keys;
+  std::shared_ptr<const velora::format::TrustedKeys> trusted;
+  std::unique_ptr<velora::host::ProtectedHeadProvider> protected_heads;
+  velora::host::DamageRegistry damage;
+  if (protected_flags) {
+    if (!velora::host::disable_core_dumps()) {
+      std::fprintf(stderr, "error: cannot disable core dumps (RLIMIT_CORE); refusing to hold content keys\n");
+      return 1;
+    }
+    struct rlimit core_rl;
+    ::getrlimit(RLIMIT_CORE, &core_rl);
+    std::printf("core_limit=%llu/%llu\n", (unsigned long long)core_rl.rlim_cur, (unsigned long long)core_rl.rlim_max);
+    std::string kerr;
+    velora::format::TrustedKeys tk;
+    if (!velora::host::load_trust_list_file(trust_list_path, tk, kerr)) {
+      std::fprintf(stderr, "error: %s\n", kerr.c_str());
+      return 1;
+    }
+    trusted = std::make_shared<const velora::format::TrustedKeys>(std::move(tk));
+    dev_keys = velora::host::DevKeyProvider::from_file(dev_device_key, {}, kerr);
+    if (!dev_keys) {
+      std::fprintf(stderr, "error: %s\n", kerr.c_str());
+      return 1;
+    }
+    protected_heads = std::make_unique<velora::host::ProtectedHeadProvider>(velora::host::make_posix_fs(), *dev_keys, &damage);
+  }
+#endif
   if (!live_set_path.empty() || !library_root.empty()) {
     // Live Set mode (Story 4.3): the Live Set decides the engines, the routing and the instruments.
     if (live_set_path.empty() || library_root.empty() || midi.empty() || out.empty()) return usage();
@@ -467,6 +532,12 @@ int main(int argc, char** argv) {
     lo.switch_load_blocks = static_cast<std::uint32_t>(switch_load_blocks);
     lo.encoders = encoder_turns;
     lo.assign_mode = assign_mode;
+#ifdef VELORA_OFFLINE_DEV_KEYS
+    if (protected_flags) {
+      lo.heads = protected_heads.get();
+      lo.protected_trust = trusted;
+    }
+#endif
     WavData lwav;
     LiveSetRenderReport lrep;
     std::string lerr;
@@ -556,6 +627,8 @@ int main(int argc, char** argv) {
   opt.interpolation = interp == "linear" ? velora::core::SampleInterpolation::kLinear
                                          : velora::core::SampleInterpolation::kHermite3;
   std::unique_ptr<velora::host::BundleInstrument> instrument;
+  std::shared_ptr<const velora::host::BundleInstrument> protected_instrument;  // Story 6.5: from a protected bundle (it owns the content key until it dies)
+  const velora::host::BundleInstrument* inst = nullptr;
   std::unique_ptr<velora::format::BundleReader> reader;
   if (engine == "sample") {
     if (bundle_path.empty() || instrument_key.empty()) {
@@ -563,22 +636,60 @@ int main(int argc, char** argv) {
       return 2;
     }
     if (!voices_given) opt.voices = 64;
-    auto opened = velora::format::BundleReader::open_file(bundle_path);
-    if (!opened.ok()) {
-      std::fprintf(stderr, "error: %s: cannot open bundle (%s)\n", bundle_path.c_str(),
-                   velora::format::to_string(opened.error()));
-      return 1;
+    if (protected_flags) {
+#ifdef VELORA_OFFLINE_DEV_KEYS
+      auto view = velora::format::ProtectedBundleView::open_file(bundle_path, *trusted);
+      if (!view.ok()) {
+        std::fprintf(stderr, "error: %s: cannot open protected bundle (%s)\n", bundle_path.c_str(), velora::format::to_string(view.error()));
+        return 1;
+      }
+      auto shared_view = std::make_shared<const velora::format::ProtectedBundleView>(view.take());
+      std::size_t index = shared_view->instruments().size();
+      for (std::size_t i = 0; i < shared_view->instruments().size(); ++i)
+        if (shared_view->instruments()[i].key == instrument_key) index = i;
+      if (index == shared_view->instruments().size()) {
+        std::fprintf(stderr, "error: %s: instrument '%s': %s\n", bundle_path.c_str(), instrument_key.c_str(), velora::host::to_string(velora::host::LoadStatus::kInstrumentNotFound));
+        return 1;
+      }
+      std::vector<std::uint8_t> blob;
+      {
+        std::FILE* f = std::fopen(wrapped_key_path.c_str(), "rb");
+        if (!f) {
+          std::fprintf(stderr, "error: %s: cannot be read\n", wrapped_key_path.c_str());
+          return 1;
+        }
+        std::uint8_t buf[512];
+        std::size_t n;
+        while ((n = std::fread(buf, 1, sizeof buf, f)) > 0 && blob.size() < 4096) blob.insert(blob.end(), buf, buf + n);
+        std::fclose(f);
+      }
+      const std::string lib_text = velora::format::uuid_to_string(shared_view->info().library_id);
+      const velora::host::LoadStatus st = protected_heads->load_with_blob(shared_view, lib_text, index, blob, protected_instrument);
+      if (st != velora::host::LoadStatus::kOk) {
+        std::fprintf(stderr, "error: %s: instrument '%s': %s\n", bundle_path.c_str(), instrument_key.c_str(), velora::host::to_string(st));
+        return 1;
+      }
+      inst = protected_instrument.get();
+#endif
+    } else {
+      auto opened = velora::format::BundleReader::open_file(bundle_path);
+      if (!opened.ok()) {
+        std::fprintf(stderr, "error: %s: cannot open bundle (%s)\n", bundle_path.c_str(),
+                     velora::format::to_string(opened.error()));
+        return 1;
+      }
+      reader = std::make_unique<velora::format::BundleReader>(opened.take());
+      auto loaded = velora::host::load_instrument(*reader, instrument_key);
+      if (!loaded.ok()) {
+        std::fprintf(stderr, "error: %s: instrument '%s': %s\n", bundle_path.c_str(), instrument_key.c_str(),
+                     velora::host::to_string(loaded.status));
+        return 1;
+      }
+      instrument = std::move(loaded.instrument);
+      inst = instrument.get();
     }
-    reader = std::make_unique<velora::format::BundleReader>(opened.take());
-    auto loaded = velora::host::load_instrument(*reader, instrument_key);
-    if (!loaded.ok()) {
-      std::fprintf(stderr, "error: %s: instrument '%s': %s\n", bundle_path.c_str(), instrument_key.c_str(),
-                   velora::host::to_string(loaded.status));
-      return 1;
-    }
-    instrument = std::move(loaded.instrument);
     opt.engine = EngineKind::kSample;
-    opt.instrument = instrument.get();
+    opt.instrument = inst;
   } else if (engine == "organ") {
     // handled above
   } else if (!bundle_path.empty() || !instrument_key.empty() || sample_opts) {
@@ -619,9 +730,9 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
     return 1;
   }
-  if (engine == "sample" && stats.unplayable_regions >= instrument->region_count()) {
+  if (engine == "sample" && stats.unplayable_regions >= inst->region_count()) {
     std::fprintf(stderr, "error: instrument '%s' has no playable region (%zu regions, all lack usable sample data or have invalid parameters); nothing written\n",
-                 instrument_key.c_str(), instrument->region_count());
+                 instrument_key.c_str(), inst->region_count());
     return 1;
   }
   if (!write_wav(out, wav, err)) {
@@ -635,7 +746,7 @@ int main(int argc, char** argv) {
   if (engine == "sample") {
     std::printf("sample engine: %zu samples resident (%zu bytes, %zu failed), %u unplayable regions, "
                 "%llu unplayable starts skipped, %llu pool exhausted\n",
-                instrument->sample_count(), instrument->resident_bytes(), instrument->failed_samples(),
+                inst->sample_count(), inst->resident_bytes(), inst->failed_samples(),
                 stats.unplayable_regions, static_cast<unsigned long long>(stats.skipped_unplayable_starts),
                 static_cast<unsigned long long>(stats.pool_exhausted));
   }

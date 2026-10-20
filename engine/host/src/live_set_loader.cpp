@@ -57,12 +57,15 @@ LoadStatus HeadProvider::load_controlled(const ResolveResult& resolved, std::sha
 }
 
 std::uint64_t HeadProvider::estimate_bytes(const ResolveResult& resolved) const {
-  return resolved.ok() && resolved.bundle ? instrument_head_bytes(*resolved.bundle, resolved.instrument) : 0;
+  if (!resolved.ok()) return 0;
+  if (resolved.protected_view) return instrument_head_bytes(resolved.protected_view->instruments(), resolved.protected_view->samples(), resolved.instrument);
+  return resolved.bundle ? instrument_head_bytes(*resolved.bundle, resolved.instrument) : 0;
 }
 
 namespace {
 // The instrument keeps the opened bundle (the BundleLease: its file descriptor) until the last generation holding it is freed.
 LoadStatus ram_load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks* hooks) {
+  if (resolved.ok() && resolved.protected_view) return LoadStatus::kProtectedUnsupported;  // Story 6.5: this provider has no key provider (see ProtectedHeadProvider)
   if (!resolved.ok() || !resolved.bundle) return LoadStatus::kInstrumentNotFound;
   LoadResult r = load_instrument_by_index(*resolved.bundle, resolved.instrument, hooks);
   if (!r.ok()) return r.status;
@@ -184,6 +187,19 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
       }
       ResolveResult rr = resolver_.resolve(lp.timbre().library_id(), lp.timbre().instrument_key());
       rep.resolve = rr.status;
+      rep.resolve_error = rr.bundle_error;
+      // Story 6.5: a PROTECTED library that fails verification (signature, trust, hash list, damaged header / manifest / index, a planted bundle.vlb beside it) is not
+      // "missing": the load is refused with the typed cause, like a block that fails its hash. A host with no protected support at all (kProtectedUnsupported) and
+      // ordinary absence or I/O trouble still leave the part silent with Missing library.
+      const bool refused_protected = rr.status == ResolveStatus::kProtectedDowngrade ||
+                                     (rr.from_protected && rr.status == ResolveStatus::kBundleError && rr.bundle_error != format::Error::kIo);
+      if (refused_protected) {
+        LiveSetLoadResult f = failure(LiveSetLoadStatus::kInstrumentLoadFailed, "part " + std::to_string(pi) + ": " + (rr.status == ResolveStatus::kProtectedDowngrade ? "protected_downgrade" : to_string(load_status_from(rr.bundle_error))));
+        f.failed_part = pi;
+        f.load_status = rr.status == ResolveStatus::kProtectedDowngrade ? LoadStatus::kProtectedDowngrade : load_status_from(rr.bundle_error);
+        f.bundle_error = rr.bundle_error;
+        return f;  // nothing was published, nothing was reserved
+      }
       if (!rr.ok()) {
         rep.state = pc.state = core::PartState::kMissingLibrary;  // unresolved library or instrument: silent, never a substitute
         continue;

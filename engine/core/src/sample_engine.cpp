@@ -146,6 +146,14 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
       r.frames = pcm.frames;
       r.left = pcm.left;
       r.right = pcm.right;
+      r.damage = pcm.damaged_blocks;
+      r.damage_block_frames = pcm.damaged_block_frames;
+      r.damage_block_count = pcm.damaged_block_count;
+      if (r.damage != nullptr && (r.damage_block_frames == 0 || r.damage_block_count == 0)) r.damage = nullptr;  // a map that cannot be indexed is no map
+      if (r.damage != nullptr && (r.damage_block_frames & (r.damage_block_frames - 1)) == 0) {
+        r.damage_shift = 0;
+        while ((std::uint32_t{1} << r.damage_shift) < r.damage_block_frames) ++r.damage_shift;
+      }
       r.stereo = pcm.channels == 2;
       r.speed = pcm.sample_rate == 0 ? 0.0f
                                      : static_cast<float>(static_cast<double>(pcm.sample_rate) /
@@ -613,6 +621,8 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
   const float cl = r.chan_l * gain_, cr = r.chan_r * gain_;
 
   const std::uint64_t oracle_n = cfg_.oracle_block_frames;
+  // Story 6.5: how far ahead of the playhead (in sample frames) the integrity fade looks, so the fade has finished when a damaged block is reached.
+  const std::int64_t integ_look = r.damage != nullptr ? static_cast<std::int64_t>(std::ceil(static_cast<double>(v.ratio) * kIntegrityFadeFrames)) + 1 : 0;
   for (std::uint32_t f = 0; f < frames; ++f) {
     float fade = 1.0f;
     if (v.stolen) {  // steal ramp: gain fade_left/fade_total, strictly falling; 0 frees the voice
@@ -691,6 +701,53 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
             sr_ = sl;
         }
       }
+    }
+
+    if (r.damage != nullptr) {  // Story 6.5: a protected sample. Fade out before a damaged block is reached, back in after it; count each entry once.
+      const auto block_of = [&r](std::int64_t i) noexcept { return r.damage_shift >= 0 ? (i >> r.damage_shift) : i / static_cast<std::int64_t>(r.damage_block_frames); };
+      const auto damaged_block = [&r](std::int64_t b) noexcept {
+        return b >= 0 && b < static_cast<std::int64_t>(r.damage_block_count) && r.damage[b].load(std::memory_order_relaxed) != 0;
+      };
+      // Frames from the read position to the first damaged block in the look-ahead window [idx, idx + integ_look] (0 = the playhead is inside one); integ_look + 1 =
+      // none. Walked block by block, bounded by look / block size + 1 steps; the window wraps through the loop point of a looping voice.
+      const auto first_damaged_start = [&](std::int64_t from, std::int64_t to, std::int64_t& start) noexcept {
+        for (std::int64_t b = block_of(from) + 1; b <= block_of(to); ++b)
+          if (damaged_block(b)) {
+            start = r.damage_shift >= 0 ? (b << r.damage_shift) : b * static_cast<std::int64_t>(r.damage_block_frames);
+            return true;
+          }
+        return false;
+      };
+      std::int64_t dist = integ_look + 1;
+      if (idx >= 0 && damaged_block(block_of(idx))) {
+        dist = 0;
+      } else {
+        const std::int64_t from = idx < 0 ? 0 : idx;
+        const std::int64_t hi = idx + integ_look;
+        std::int64_t start = 0;
+        if (first_damaged_start(from, hi, start)) dist = std::max<std::int64_t>(0, start - idx);
+        if (looping && hi > r.loop_end) {
+          const std::int64_t wrapped = r.loop_start + (hi - r.loop_start) % r.loop_size;
+          if (damaged_block(block_of(r.loop_start))) dist = std::min(dist, std::max<std::int64_t>(0, r.loop_end + 1 - idx));
+          else if (first_damaged_start(r.loop_start, wrapped, start)) dist = std::min(dist, std::max<std::int64_t>(0, (r.loop_end + 1 - idx) + (start - r.loop_start)));
+        }
+      }
+      const bool bad = dist <= integ_look;
+      // The gain the distance allows: a voice that is already inside the window (it started there, or the flag was set late) may not play the damaged block at
+      // full gain, so the gain is capped at dist / look -- 0 when the block is reached.
+      const float limit = bad ? std::min(1.0f, static_cast<float>(dist) / static_cast<float>(std::max<std::int64_t>(integ_look, 1))) : 1.0f;
+      if (!v.integ_seen) {  // first look: start at the allowed gain (a voice that starts inside a damaged block starts silent)
+        v.integ_seen = true;
+        v.integ_gain = limit;
+      }
+      if (bad != v.integ_bad) {
+        v.integ_bad = bad;
+        if (bad) integrity_events_.fetch_add(1, std::memory_order_relaxed);
+      }
+      constexpr float kStep = 1.0f / static_cast<float>(kIntegrityFadeFrames);
+      v.integ_gain = bad ? std::min(limit, std::max(0.0f, v.integ_gain - kStep)) : std::min(1.0f, v.integ_gain + kStep);
+      sl *= v.integ_gain;
+      sr_ *= v.integ_gain;
     }
 
     if (!has_xf && !filtered) {  // the plain voice: exactly the Story 1.15 arithmetic (bit-exact bypass)

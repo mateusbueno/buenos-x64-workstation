@@ -52,6 +52,8 @@ const char* to_string(ResolveStatus s) {
     case ResolveStatus::kBundleError: return "bundle_error";
     case ResolveStatus::kInvalidLink: return "invalid_link";
     case ResolveStatus::kIdentityMismatch: return "identity_mismatch";
+    case ResolveStatus::kProtectedDowngrade: return "protected_downgrade";
+    case ResolveStatus::kProtectedUnsupported: return "protected_unsupported";
   }
   return "?";
 }
@@ -144,10 +146,19 @@ ResolveResult LibraryResolver::resolve(std::string_view library_id,
   int fd = -1;
   std::uint64_t size = 0;
   const FsStatus os = fs_->open_read(bundle_dir + "/" + kBundleFileName, fd, size);
+  if (os == FsStatus::kNotFound) return resolve_protected(library_id, want_lib, bundle_dir, bundle_dir_name, key.value());
   if (os != FsStatus::kOk) {
     res.status = ResolveStatus::kBundleError;
     res.bundle_error = format::Error::kIo;
     return res;
+  }
+  // Story 6.5: a bundle.vlb beside a protected bundle's files is a planted unprotected copy of a factory library (a downgrade): refused, typed, before it is read.
+  for (const char* protected_name : {kProtectedBundleFileName, kWrappedKeyFileName}) {
+    if (fs_->lstat(bundle_dir + "/" + protected_name).status != FsStatus::kNotFound) {
+      fs_->close(fd);
+      res.status = ResolveStatus::kProtectedDowngrade;
+      return res;
+    }
   }
   auto opened = format::BundleReader::open_source(std::make_unique<PortSource>(fs_, fd, size));
   if (!opened) {
@@ -174,6 +185,52 @@ ResolveResult LibraryResolver::resolve(std::string_view library_id,
   }
   res.instrument = static_cast<std::size_t>(it - ins.begin());
   res.bundle = std::move(bundle);
+  res.bundle_dir = bundle_dir;
+  res.library_id = std::string(library_id);
+  res.status = ResolveStatus::kOk;
+  return res;
+}
+
+// Story 6.5: the directory has no bundle.vlb. Is there a protected bundle.vlrp? (One more op, only on this path: an unprotected library never gets here.)
+ResolveResult LibraryResolver::resolve_protected(std::string_view library_id, const format::Uuid& want_lib, const std::string& bundle_dir,
+                                                 const std::string& bundle_dir_name, const std::string& instrument_key) const {
+  ResolveResult res;
+  res.from_protected = true;
+  int fd = -1;
+  std::uint64_t size = 0;
+  const FsStatus os = fs_->open_read(bundle_dir + "/" + kProtectedBundleFileName, fd, size);
+  if (os != FsStatus::kOk) {  // neither file: exactly the verdict an absent bundle.vlb always had
+    res.status = ResolveStatus::kBundleError;
+    res.bundle_error = format::Error::kIo;
+    return res;
+  }
+  auto source = std::make_unique<PortSource>(fs_, fd, size);  // closes fd on every path below
+  if (!trusted_) {  // nothing is opened on trust: this host plays no protected library
+    res.status = ResolveStatus::kProtectedUnsupported;
+    return res;
+  }
+  auto opened = format::ProtectedBundleView::open_source(std::move(source), *trusted_);
+  if (!opened) {
+    res.status = ResolveStatus::kBundleError;
+    res.bundle_error = opened.error();
+    return res;
+  }
+  auto view = std::make_shared<const format::ProtectedBundleView>(opened.take());
+  if (view->info().library_id != want_lib || format::to_hex(view->info().bundle_id) != bundle_dir_name) {
+    res.status = ResolveStatus::kIdentityMismatch;
+    return res;
+  }
+  const auto ins = view->instruments();
+  const auto it = std::find_if(ins.begin(), ins.end(), [&](const format::InstrumentInfo& i) { return i.key == instrument_key; });
+  if (it == ins.end()) {
+    res.status = ResolveStatus::kMissingInstrument;
+    return res;
+  }
+  res.instrument = static_cast<std::size_t>(it - ins.begin());
+  res.from_protected = false;
+  res.protected_view = std::move(view);
+  res.bundle_dir = bundle_dir;
+  res.library_id = std::string(library_id);
   res.status = ResolveStatus::kOk;
   return res;
 }

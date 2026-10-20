@@ -12,6 +12,8 @@
 
 #include "smf.hpp"
 #include "velora/core/snapshot.hpp"
+#include "velora/format/protected_verify.hpp"
+#include "velora/host/live_set_loader.hpp"
 #include "wav.hpp"
 
 namespace velora::offline {
@@ -54,6 +56,10 @@ struct LiveSetRenderOptions {
   std::uint32_t switch_load_blocks = 0;      // simulated load time of every switch, in 64-frame blocks
   std::vector<EncoderAt> encoders;           // sorted by frame (stable) by render_live_set()
   bool assign_mode = false;                  // the encoder mode flag is ASSIGN from the first frame (else PART, the default: encoder turns do nothing)
+  // Story 6.5: protected (factory) libraries. `heads` (optional, borrowed) replaces the RAM head provider -- a ProtectedHeadProvider over the dev key provider --
+  // and `protected_trust` is the set of content-manifest keys the resolver trusts for bundle.vlrp. Both unset: protected libraries stay unresolved.
+  velora::host::HeadProvider* heads = nullptr;
+  std::shared_ptr<const velora::format::TrustedKeys> protected_trust;
 };
 
 struct LiveSetRenderReport {

@@ -7,10 +7,15 @@ add_library(velora_host STATIC
   src/posix_fs.cpp
   src/library_resolver.cpp
   src/sample_bundle_loader.cpp
+  src/secure_memory.cpp
+  src/damage_registry.cpp
+  src/trust_list.cpp
   src/mcu_frame.cpp)
 add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
-target_link_libraries(velora_host PUBLIC velora_core velora_ports velora_format velora_mcu_common)
+# velora_format_verify (Story 6.5): the resolver VERIFIES protected bundles (Ed25519 signature, hash list, index). It holds no cipher: the decrypting code is only in
+# velora_host_protected below (tools/ci/check_format_no_decrypt.py scans the librarian, which links this library, and keeps proving it).
+target_link_libraries(velora_host PUBLIC velora_core velora_ports velora_format velora_format_verify velora_mcu_common)
 
 # --- control plane (Story 2.1): ws.v1 over a Unix domain socket, parameter registry, snapshots ------------
 # protobuf lives only here (engine/host), in proto/ and in tools; engine/core never sees it.
@@ -53,6 +58,85 @@ target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${V
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
 # The generated protobuf sources are not ours to police for warnings.
 set_source_files_properties(${VELORA_PB_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+
+# --- protected libraries in the engine (Story 6.5) ----------------------------------------------------------------------------------------------------
+# velora_host_protected is the ONLY engine-side target that links the decrypting reader (velora_format_decrypt, OpenSSL): the ProtectedHeadProvider (key through
+# the engine/ports key-provider port, hash-check + AES-CTR decrypt on the loading thread) and the EdgeBlockReader (the same on an I/O edge thread). engine/core never
+# links it; velora_host and the librarian do not either.
+add_library(velora_host_protected STATIC protected/protected_head_provider.cpp)
+add_library(velora::host_protected ALIAS velora_host_protected)
+target_link_libraries(velora_host_protected PUBLIC velora_control velora_host velora_format_decrypt)
+target_compile_options(velora_host_protected PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+
+# The dev key provider: unwraps wrapped_key_v1 with a developer's device key read from an injected path. Never in a shippable configuration.
+if(VELORA_DEV_KEY_PROVIDER AND (VELORA_PRODUCTION OR CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel|RelWithDebInfo)$"))
+  message(FATAL_ERROR "engine: the dev key provider (a developer's device key read from a file, and the --dev-device-key flags) must not be built into a Release / MinSizeRel / "
+                      "VELORA_PRODUCTION configuration. Set -DVELORA_DEV_KEY_PROVIDER=OFF (the board uses the OP-TEE provider, Story 6.6).")
+endif()
+# Same OpenSSL discovery as formatlib (imported targets are directory scoped; this directory is configured before formatlib). The tests use it for the vendor side of
+# the wrap (fixtures), the dev key provider for the engine side.
+if(APPLE AND NOT OPENSSL_ROOT_DIR)
+  foreach(_ossl /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3)
+    if(EXISTS "${_ossl}/include/openssl/evp.h")
+      set(OPENSSL_ROOT_DIR "${_ossl}")
+      break()
+    endif()
+  endforeach()
+endif()
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+set_target_properties(OpenSSL::Crypto PROPERTIES IMPORTED_GLOBAL TRUE)  # the protected tests of tools/ (offline-render) use it too
+
+# Story 6.5 tests that hold no device key and need no dev key provider: they are built and run with VELORA_DEV_KEY_PROVIDER=OFF as well (SecureKeyHandle, the
+# DamageRegistry, the trust-list parser, the resolver's verification of bundle.vlrp and of the downgrade by a planted bundle.vlb).
+add_executable(protected_keyless_test tests/protected_keyless_test.cpp)
+target_link_libraries(protected_keyless_test PRIVATE velora_host velora_format_protected_writer OpenSSL::Crypto)
+target_compile_options(protected_keyless_test PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+add_test(NAME protected_keyless_test COMMAND protected_keyless_test)
+set_tests_properties(protected_keyless_test PROPERTIES TIMEOUT 300)
+
+if(VELORA_DEV_KEY_PROVIDER)
+  add_library(velora_host_dev_keys STATIC dev_keys/dev_key_provider.cpp)
+  add_library(velora::host_dev_keys ALIAS velora_host_dev_keys)
+  target_link_libraries(velora_host_dev_keys PUBLIC velora_host PRIVATE OpenSSL::Crypto)
+  target_compile_options(velora_host_dev_keys PRIVATE
+    $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+
+  # Story 6.5 tests (they use the dev key provider, the protected writer and OpenSSL directly for the vendor side of the wrap).
+  # The engine over protected libraries: key provider vectors and tamper matrix, key memory, resolver verification, typed refusals, the key tied to the generation,
+  # damaged blocks found by an edge thread, no plaintext on disk.
+  add_executable(protected_engine_test tests/protected_engine_test.cpp)
+  target_link_libraries(protected_engine_test PRIVATE velora_host_protected velora_host_dev_keys velora_format_protected_writer OpenSSL::Crypto)
+  target_compile_options(protected_engine_test PRIVATE
+    $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+  add_test(NAME protected_engine_test COMMAND protected_engine_test)
+  set_tests_properties(protected_engine_test PROPERTIES TIMEOUT 300)
+
+  # The audio path over a protected instrument beside an I/O edge thread that decrypts and checks the same blocks: the same traffic without the sanitizer (macOS runs
+  # the logic) and, below, with RealtimeSanitizer (docker-check, clang-20). The RTSan job also runs the negative control: a decrypt inside a nonblocking function is reported.
+  add_executable(protected_rt_traffic_test tests/rtsan_protected_test.cpp)
+  target_link_libraries(protected_rt_traffic_test PRIVATE velora_host_protected velora_host_dev_keys velora_format_protected_writer OpenSSL::Crypto Threads::Threads)
+  add_test(NAME protected_rt_traffic_test COMMAND protected_rt_traffic_test)
+  set_tests_properties(protected_rt_traffic_test PROPERTIES TIMEOUT 600)
+  if(VELORA_RTSAN AND VELORA_HAVE_RTSAN)
+    add_executable(rtsan_protected_test tests/rtsan_protected_test.cpp)
+    target_link_libraries(rtsan_protected_test PRIVATE velora_host_protected velora_host_dev_keys velora_format_protected_writer OpenSSL::Crypto Threads::Threads)
+    target_compile_options(rtsan_protected_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_protected_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_protected_test COMMAND rtsan_protected_test)
+    set_tests_properties(rtsan_protected_test PROPERTIES TIMEOUT 600)
+
+    add_executable(rtsan_decrypt_unsafe_test tests/rtsan_decrypt_unsafe_test.cpp)
+    target_link_libraries(rtsan_decrypt_unsafe_test PRIVATE velora_format_decrypt velora_format_protected_writer OpenSSL::Crypto)
+    target_compile_options(rtsan_decrypt_unsafe_test PRIVATE -fsanitize=realtime -g -O0)
+    target_link_options(rtsan_decrypt_unsafe_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_decrypt_unsafe_test COMMAND rtsan_decrypt_unsafe_test)
+    # Passes only on RTSan's own report of the violation (its real text: "ERROR: RealtimeSanitizer: unsafe-library-call" / "blocking-call" and "Intercepted call to
+    # real-time unsafe function"), not on any non-zero exit.
+    set_tests_properties(rtsan_decrypt_unsafe_test PROPERTIES PASS_REGULAR_EXPRESSION "ERROR: RealtimeSanitizer: (unsafe-library-call|blocking-call).*Intercepted call to real-time unsafe function")
+  endif()
+endif()
 
 # Library API client (Story 4.11): a portable UDS client that tells the librarian service which Live Set became active and whether the engine is performing.
 # It needs only the generated Library API code (proto/), protobuf and threads: no engine/core, no formatlib.
@@ -233,6 +317,16 @@ if(VELORA_RTSAN AND VELORA_HAVE_RTSAN)
   target_link_options(rtsan_switch_test PRIVATE -fsanitize=realtime)
   add_test(NAME rtsan_switch_test COMMAND rtsan_switch_test)
   set_tests_properties(rtsan_switch_test PROPERTIES TIMEOUT 300)
+endif()
+
+# Story 6.5 negative control of the damage path (no key, no provider): REPORTING a damaged block inside a nonblocking function is reported by RTSan.
+if(VELORA_RTSAN AND VELORA_HAVE_RTSAN)
+  add_executable(rtsan_damage_report_unsafe_test tests/rtsan_damage_report_unsafe_test.cpp)
+  target_link_libraries(rtsan_damage_report_unsafe_test PRIVATE velora_host)
+  target_compile_options(rtsan_damage_report_unsafe_test PRIVATE -fsanitize=realtime -g -O0)
+  target_link_options(rtsan_damage_report_unsafe_test PRIVATE -fsanitize=realtime)
+  add_test(NAME rtsan_damage_report_unsafe_test COMMAND rtsan_damage_report_unsafe_test)
+  set_tests_properties(rtsan_damage_report_unsafe_test PROPERTIES PASS_REGULAR_EXPRESSION "ERROR: RealtimeSanitizer: (unsafe-library-call|blocking-call).*Intercepted call to real-time unsafe function")
 endif()
 
 if(APPLE)

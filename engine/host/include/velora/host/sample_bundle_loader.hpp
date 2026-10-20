@@ -29,8 +29,32 @@ enum class LoadStatus : std::uint8_t {
   kInstrumentIndex,     // index out of range
   kBundleInconsistent,  // the instrument's sample range lies outside the bundle's sample list
   kCancelled,           // Story 4.5: the load was cancelled (LoadHooks); nothing is left resident
+  // Story 6.5 (protected libraries). Typed reasons a protected instrument is refused; none of them carries key material or plaintext.
+  kContentIntegrity,     // `content_integrity`: a block failed its hash check or did not decode while the instrument was made resident
+  kWrongContentKey,      // `wrong_content_key`: the unwrapped key does not belong to this bundle (its key check fails)
+  kSignatureInvalid,     // `signature_invalid`: the manifest signature does not verify (or the hash list / index does not match the signed manifest)
+  kUntrustedKey,         // `untrusted_key`: the bundle is signed by a key this engine does not trust
+  kKeyUnavailable,       // `key_unavailable`: the key provider could not unwrap the key (another device or library, a modified blob, no provider)
+  kProtectedUnsupported, // `protected_unsupported`: the host was built or configured without protected-library support
+  kProtectedDowngrade,   // `protected_downgrade`: an unprotected bundle.vlb stands beside the files of a protected bundle
 };
 const char* to_string(LoadStatus s);
+// Story 6.5: the typed refusal for a formatlib error met while opening or reading a PROTECTED bundle. kBundleInconsistent for anything that is not one of
+// the integrity classes.
+LoadStatus load_status_from(velora::format::Error e);
+
+// What the resident loader needs of an opened bundle: its instrument and sample tables and frames decoded from it. The unprotected BundleReader and the
+// protected, decrypting reader (engine/host/protected) both come through here, so there is ONE loader and the audio thread cannot tell them apart.
+class InstrumentSource {
+ public:
+  virtual ~InstrumentSource() = default;
+  virtual std::span<const velora::format::InstrumentInfo> instruments() const = 0;
+  virtual std::span<const velora::format::SampleInfo> samples() const = 0;
+  // Frames [first, first + count) of flat sample `sample` as exchange PCM. Runs on the loading thread (not real-time safe).
+  virtual velora::format::Error read_frames(std::size_t sample, std::uint64_t first, std::uint64_t count, std::span<std::int32_t> out) const = 0;
+  // True for a protected bundle: the loader then gives every sample a block-damage map (ports::SamplePcm::damaged_blocks) for the I/O edge threads to set.
+  virtual bool protected_source() const { return false; }
+};
 
 class BundleInstrument final : public velora::ports::SampleSource {
  public:
@@ -42,9 +66,28 @@ class BundleInstrument final : public velora::ports::SampleSource {
   // regions that use them instead of playing garbage.
   std::size_t failed_samples() const { return failed_samples_; }
   std::size_t resident_bytes() const { return resident_bytes_; }
+  // The first formatlib error met while reading a sample (kNone when none). For a protected bundle this is the typed cause of a refused load.
+  velora::format::Error first_error() const { return first_error_; }
+  // Story 6.5: an opaque object the loader's caller hangs on the instrument so that it lives and dies with it -- for a protected instrument the reader that
+  // holds the content key. The instrument is what every generation that plays it shares (SampleBank::owner), so whatever is attached here is released,
+  // and the key wiped, when the last generation is freed after its last voice ended. Set once, before the instrument is shared.
+  void attach_context(std::shared_ptr<const void> ctx) { context_ = std::move(ctx); }
+  const std::shared_ptr<const void>& context() const { return context_; }
+
+  // Story 6.5. Protected instruments only (has_damage_maps()): the per-sample block-damage flags the audio thread reads. Any non-real-time thread (the I/O
+  // edge threads) may mark a block damaged; the flag is sticky until the instrument is reloaded. `sample` is the instrument-local index (as in instrument().samples).
+  bool has_damage_maps() const { return !damage_.empty(); }
+  // True only on the 0 -> 1 transition (this call marked it), so a block is reported once however often it is found bad.
+  bool mark_block_damaged(std::size_t sample, std::uint64_t block) const noexcept;
+  bool block_damaged(std::size_t sample, std::uint64_t block) const noexcept;
+  std::uint64_t damaged_blocks() const noexcept;  // total flagged blocks
 
  private:
   friend struct BundleInstrumentLoader;
+  std::vector<std::unique_ptr<std::atomic<std::uint8_t>[]>> damage_;  // one map per sample (empty vector: an unprotected instrument)
+  std::vector<std::uint32_t> damage_count_;
+  std::shared_ptr<const void> context_;
+  velora::format::Error first_error_ = velora::format::Error::kNone;
   std::vector<velora::ports::SampleRegionDesc> regions_;
   std::vector<velora::ports::SamplePcm> pcm_;
   std::vector<std::vector<float>> data_;  // one buffer per sample: left then (stereo) right
@@ -71,12 +114,16 @@ inline constexpr std::uint64_t kLoadChunkFrames = 1u << 16;
 
 // Loads the instrument at `index` / the instrument whose key is `key` (exact match, as minted by formatlib).
 LoadResult load_instrument_by_index(const velora::format::BundleReader& bundle, std::size_t index, const LoadHooks* hooks = nullptr);
+// The same over any InstrumentSource (Story 6.5: protected bundles). A sample whose frames cannot be read stays empty and is counted in failed_samples();
+// first_error() then says why.
+LoadResult load_instrument_by_index(const InstrumentSource& source, std::size_t index, const LoadHooks* hooks = nullptr);
 LoadResult load_instrument(const velora::format::BundleReader& bundle, std::string_view key);
 
 // The decoded size, in bytes, that loading the instrument at `index` will make resident, computed from the bundle index only (no sample
 // block is read): for every sample with a usable format and at least one frame, frames x channels x 4. Equals BundleInstrument::resident_bytes()
 // of a load without failures. 0 for an index out of range or an inconsistent sample range.
 std::uint64_t instrument_head_bytes(const velora::format::BundleReader& bundle, std::size_t index);
+std::uint64_t instrument_head_bytes(std::span<const velora::format::InstrumentInfo> instruments, std::span<const velora::format::SampleInfo> samples, std::size_t index);
 
 // Interleaved exchange PCM -> planar float (left then right in `out`, 2 * frames values for stereo).
 // False (and `out` unspecified) for bits outside 1..32, a float format that is not 32 bit, an

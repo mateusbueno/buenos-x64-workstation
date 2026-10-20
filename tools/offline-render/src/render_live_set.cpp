@@ -39,7 +39,9 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
   host::ControlEventQueue unused_events;  // parameter commands never come through here
   host::ControlPlane plane(br->snapshots(), br->last_values(), unused_events, [] { return std::uint64_t{0}; });
   host::LibraryResolver resolver(host::make_posix_fs(), opt.library_root);
-  host::RamHeadProvider heads;
+  host::RamHeadProvider ram_heads;
+  host::HeadProvider& heads = opt.heads ? *opt.heads : static_cast<host::HeadProvider&>(ram_heads);
+  if (opt.protected_trust) resolver.set_protected_trust(opt.protected_trust);
   host::SceneController scenes(plane);
   host::LiveSetLoaderOptions lo;
   lo.scenes = &scenes;

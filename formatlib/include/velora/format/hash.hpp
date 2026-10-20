@@ -15,6 +15,10 @@ using Digest160 = std::array<std::uint8_t, 20>;
 class Sha256 {
  public:
   Sha256();
+  ~Sha256() { wipe(); }  // Story 6.5: the state of an HMAC keyed with a secret holds key-derived words; it is cleared on every path
+  Sha256(const Sha256&) = default;
+  Sha256& operator=(const Sha256&) = default;
+  void wipe() noexcept;  // zeroes the chaining state, the block buffer and the length (not elided by the compiler)
   void update(const void* data, std::size_t n);
   void update(std::span<const std::uint8_t> d) { update(d.data(), d.size()); }
   Digest256 finish();  // object must not be reused afterwards without reset()

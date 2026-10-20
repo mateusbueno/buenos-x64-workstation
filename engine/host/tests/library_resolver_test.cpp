@@ -194,9 +194,10 @@ void test_hit_and_ops() {
     CHECK(n.ok() && n.value() == velora::format::kBlockFrames);
   }
   const FsOpCounts c = env.counting->counts();
-  // lstat(current), lstat(bundle dir) | readlink | open | pread header, manifest, index | close.
-  // The pread of block 0 above is test code, so it is counted here too.
-  CHECK(c.lstat == 2);
+  // lstat(current), lstat(bundle dir) | readlink | open | lstat(bundle.vlrp), lstat(wrapped-key.bin) (Story 6.5: nothing protected beside an unprotected bundle) |
+  // pread header, manifest, index | close. The pread of block 0 above is test code, so it is counted here too. Still a constant: 4 lstats, 1 readlink, 1 open,
+  // 3 preads and 1 close = 10 ops of the resolver, whatever the number or size of libraries.
+  CHECK(c.lstat == 4);
   CHECK(c.readlink == 1);
   CHECK(c.open == 1);
   CHECK(c.pread == 4);
@@ -252,7 +253,7 @@ void test_scale() {
   }
   for (const Scale& s : res) {
     CHECK(s.ops == res[0].ops);
-    CHECK(s.ops.total() == 2 + 1 + 1 + 3 + 1);
+    CHECK(s.ops.total() == 4 + 1 + 1 + 3 + 1);  // Story 6.5: two more lstats (no protected files beside an unprotected bundle)
   }
 }
 

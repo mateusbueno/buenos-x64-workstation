@@ -278,6 +278,7 @@ ControlPlane::ControlPlane(core::SnapshotExchange& exchange, const core::LastVal
     : exchange_(exchange), live_(live), rt_events_(rt_events), clock_(std::move(now_ns)) {}
 
 ControlPlane::~ControlPlane() {
+  if (damage_) damage_->set_listener({});  // an edge thread must not call into a plane that is gone
   for (core::Snapshot* g : generations_) delete g;
 }
 
@@ -406,9 +407,28 @@ void ControlPlane::fill_encoders(ws::v1::State* out) const {
     for (std::size_t k = 0; k < core::kAssignSlotCount; ++k) e->add_assign(current_->assign[k]);
 }
 
+// Story 6.5: the RT content_integrity counter and the libraries the edge threads reported damaged.
+void ControlPlane::fill_content(ws::v1::State* out) const {
+  ws::v1::ContentStatus* c = out->mutable_content();
+  c->set_content_integrity(live_.load_content_integrity());
+  if (!damage_) return;
+  const std::vector<std::string> ids = damage_->damaged_libraries();
+  c->set_damaged_library_count(static_cast<std::uint32_t>(ids.size()));
+  for (std::size_t i = 0; i < ids.size() && i < 16; ++i) c->add_damaged_library_ids(ids[i]);
+  c->set_damage_reports(damage_->reports());
+  c->set_io_errors(damage_->io_errors());
+}
+
+void ControlPlane::set_damage_registry(DamageRegistry* registry) {
+  if (damage_) damage_->set_listener({});
+  damage_ = registry;
+  if (damage_) damage_->set_listener([this] { bump_revision(); });
+}
+
 void ControlPlane::fill_state(ws::v1::State* out) const {
   if (current_) fill_from(*current_, out);
   fill_encoders(out);
+  fill_content(out);
   if (switch_handler_) switch_handler_->fill_status(out);
   if (setlist_handler_) setlist_handler_->fill_status(out);
   if (edit_handler_) edit_handler_->fill_status(out);

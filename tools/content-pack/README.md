@@ -158,11 +158,14 @@ Errors go to stderr as `error: <name>: <message>`.
 * the register under concurrency: two processes packing one id under two names (one wins, the other exits 6 and publishes nothing), a failed append withdraws the pack;
 * reproducibility (API and CLI: every file but `wrapped-key.*` identical between two runs and between two source locations with a reused key and `--deterministic-vault`; different
   bytes with a fresh key; the overwrite rules incl. keeping an old pack with another key);
-* render: the library is decrypted with the vaulted key and rebuilt without protection. **Evidence:** the rebuilt bundle is byte-identical to the unprotected bundle the importer
-  itself makes for the same vendor id (its own `finalize()` and, on disk, a normal published import with that `library_id`), so renders of the two are identical by
-  construction; `velora-offline-render` on a short MIDI suite then renders both and the WAVs are bit-identical to those of the user import of the same library (and not
-  silent). A negative control with one altered PCM value (still a valid bundle) renders to a different WAV. SF2 sources are covered by the decrypt/PCM tests, not by a render
-  comparison. Rendering straight from the protected bundle needs the engine's protected reader, which is Story 6.5;
+* render: **Story 6.5 closes the substitute of this story.** The pack's `bundle.vlrp` is rendered STRAIGHT by `velora-offline-render --bundle bundle.vlrp --dev-device-key <dev device key>
+  --wrapped-key <the pack's wrapped-key blob> --trust-list <the signer's pub-list>` (the engine's protected path: signature verified, key unwrapped by the dev key provider into locked
+  memory, blocks hash-checked and decrypted in the renderer's process) and the WAV is byte-identical to the render of a normal published import of the same library, with the scratch
+  tree gaining only that WAV (no decrypted block, no key on any disk); another device's key refuses it with `key_unavailable`. The Story 6.3 evidence stays as the cross-check that does
+  not use the engine's reader: the library decrypted with the vaulted key and rebuilt without protection is byte-identical to the unprotected bundle the importer itself makes for the
+  same vendor id (its own `finalize()` and, on disk, a normal published import with that `library_id`), and `velora-offline-render` on a short MIDI suite renders both to identical WAVs
+  (not silent); a negative control with one altered PCM value (still a valid bundle) renders to a different WAV. SF2 sources are covered by the decrypt/PCM tests, not by a render
+  comparison. The general protected-vs-unprotected render test (MIDI suite, both interpolations, Live Set path, typed refusals) is `tools/offline-render/tests/protected_render_test.cpp`;
 * the importer's additive options (a vendor `library_id` also decides the `current`/Import-again lookup of a published SF2 import; build-only SF2 import never checkpoints and
   writes nothing even with a non-empty root) and the CLI's exit codes, including `verify` on a tampered bundle, an untrusted signer, a wrong KEK and missing files;
 * ctest `content_pack_not_linked` (`tools/ci/check_content_pack_not_linked.py`): no CMake file outside `tools/content-pack` links `velora_content_pack`.

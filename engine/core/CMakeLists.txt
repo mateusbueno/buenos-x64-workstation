@@ -34,6 +34,11 @@ add_executable(sample_engine_tests tests/sample_engine_test.cpp)
 target_link_libraries(sample_engine_tests PRIVATE velora_core)
 add_test(NAME sample_engine_tests COMMAND sample_engine_tests)
 
+# Story 6.5: content integrity on the real-time side (damage map of a protected sample: fade to silence, content_integrity counter, bit-exact when undamaged).
+add_executable(content_integrity_tests tests/content_integrity_test.cpp)
+target_link_libraries(content_integrity_tests PRIVATE velora_core)
+add_test(NAME content_integrity_tests COMMAND content_integrity_tests)
+
 # Story 5.2: keyswitches, CC crossfades and filters of the sample engine (the sfizz parity is in tools/offline-render).
 add_executable(sample_features_tests tests/sample_features_test.cpp)
 target_link_libraries(sample_features_tests PRIVATE velora_core)
@@ -133,6 +138,11 @@ set_tests_properties(part_router_traffic_test PROPERTIES TIMEOUT 300)
 
 # Keyswitch changes, controller sweeps and filtered / crossfaded regions beside dense traffic and generation changes (Story 5.2) without the sanitizer, so
 # macOS runs its logic too (and checks determinism); the RTSan build is below.
+# Story 6.5: voices over protected samples while an edge thread flips damage flags under them (the same without the sanitizer on macOS; the RTSan build is below).
+add_executable(integrity_traffic_test tests/rtsan_integrity_test.cpp)
+target_link_libraries(integrity_traffic_test PRIVATE velora_core)
+add_test(NAME integrity_traffic_test COMMAND integrity_traffic_test)
+set_tests_properties(integrity_traffic_test PROPERTIES TIMEOUT 300)
 add_executable(sample_features_traffic_test tests/rtsan_sample_features_test.cpp)
 target_link_libraries(sample_features_traffic_test PRIVATE velora_core)
 add_test(NAME sample_features_traffic_test COMMAND sample_features_traffic_test)
@@ -212,6 +222,12 @@ if(VELORA_RTSAN)
     target_compile_options(rtsan_sample_engine_test PRIVATE -fsanitize=realtime -g)
     target_link_options(rtsan_sample_engine_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_sample_engine_test COMMAND rtsan_sample_engine_test)
+    add_executable(rtsan_integrity_test tests/rtsan_integrity_test.cpp)
+    target_link_libraries(rtsan_integrity_test PRIVATE velora_core)
+    target_compile_options(rtsan_integrity_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_integrity_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_integrity_test COMMAND rtsan_integrity_test)
+    set_tests_properties(rtsan_integrity_test PROPERTIES TIMEOUT 300)
     add_executable(rtsan_arbiter_test tests/rtsan_arbiter_test.cpp)
     target_link_libraries(rtsan_arbiter_test PRIVATE velora_core)
     target_compile_definitions(rtsan_arbiter_test PRIVATE VELORA_ARBITER_TEST_HOOKS)

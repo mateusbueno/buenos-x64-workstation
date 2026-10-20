@@ -848,7 +848,8 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
   // 5. Render. HEADLINE EVIDENCE: the library decrypted with the vaulted key and rebuilt without protection is byte-identical to the unprotected bundle the importer
   //    itself makes for the same vendor id (its own finalize() and, on disk, a normal published import with that library_id), so every render of the two
   //    is identical by construction. The renders below confirm it end to end; SF2 sources are covered by the decrypt/PCM tests above but not by a render
-  //    comparison. Rendering straight from the protected bundle is Story 6.5 (the engine cannot read format 3 yet).
+  //    comparison. Story 6.5: the engine's protected path now renders STRAIGHT from the pack's bundle.vlrp (step 6 below); the rebuilt bundle remains as the headline
+  //    evidence for the SF2-free, key-free comparison.
   const Bytes rebuilt = rebuild_plain(pack_dir / "bundle.vlrp", unwrapped, trusted);
   CHECK(!rebuilt.empty());
   {
@@ -892,6 +893,31 @@ void test_pack(const fs::path& work, const fs::path& src_a, const Source& source
     CHECK(run_cmd(common + "'" + (work / "render/altered.wav").string() + "' --bundle '" + (work / "render/altered.vlb").string() + "'", &out) == 0);
     CHECK(read_all(work / "render/altered.wav") != wp);
   }
+
+#ifdef RENDER_HAS_DEV_KEYS
+  // 6. Story 6.5: the offline renderer plays the pack's PROTECTED bundle directly -- the content key is unwrapped with the dev device key from the pack's wrapped-key blob,
+  //    blocks are hash-checked and decrypted in the renderer's process, nothing is rebuilt or written -- and the audio is bit-identical to the render of the unprotected
+  //    import of the same library (this replaces the Story 6.3 substitute above as the end-to-end proof).
+  {
+    const fmt::KeyId sid = fmt::key_id_of_public(pub);
+    put(work / "render/trust.pub-list", "dev content-manifest " + hex(sid) + " " + hex(pub) + "\n");
+    const std::string flags = " --bundle '" + (pack_dir / "bundle.vlrp").string() + "' --dev-device-key '" + (work / "keys/device.x25519.priv").string() + "' --wrapped-key '" +
+                              (pack_dir / wrapped_name).string() + "' --trust-list '" + (work / "render/trust.pub-list").string() + "'";
+    const auto before = snapshot();
+    CHECK(run_cmd(common + "'" + (work / "render/direct.wav").string() + "'" + flags, &out) == 0);
+    CHECK(read_all(work / "render/direct.wav") == wp);
+    CHECK(fmt::to_hex(fmt::Sha256::hash(read_all(work / "render/direct.wav"))) == fmt::to_hex(fmt::Sha256::hash(wu)));
+    const auto ch = changed_since(before);  // the render wrote its WAV and nothing else: no decrypted block, no key, anywhere under the scratch tree
+    CHECK(ch.size() == 1 && ch[0] == (work / "render/direct.wav").string());
+    // The pack's wrapped key is for ITS device: another device key cannot play it.
+    Key32 other_priv = seq<32>(0x70);
+    put_bytes(work / "render/other.priv", other_priv, 0600);
+    CHECK(run_cmd(common + "'" + (work / "render/never.wav").string() + "' --bundle '" + (pack_dir / "bundle.vlrp").string() + "' --dev-device-key '" + (work / "render/other.priv").string() +
+                      "' --wrapped-key '" + (pack_dir / wrapped_name).string() + "' --trust-list '" + (work / "render/trust.pub-list").string() + "'",
+                  &out) == 1);
+    CHECK(out.find("key_unavailable") != std::string::npos && !fs::exists(work / "render/never.wav"));
+  }
+#endif
 }
 
 void test_cli(const fs::path& work, const fs::path& src_a, const Source& source) {

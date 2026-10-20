@@ -27,8 +27,9 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
   - Layout (root is a parameter, default `/data`): `<root>/lib/<library_id>/current -> <bundle_id>` (relative symlink,
     one component, 64 lowercase hex) and `<root>/lib/<library_id>/<bundle_id>/bundle.vlb` (`kBundleFileName`, shared with
     `tools/library-gen`). `library_id` is a canonical lowercase UUID string.
-  - No-scan rule: the resolver only does `lstat(current)`, `readlink`, `lstat(<bundle_id>)`, `open(bundle.vlb)` and three
-    preads (header, manifest, index): a constant 8 filesystem ops regardless of library count or size, zero directory
+  - No-scan rule: the resolver only does `lstat(current)`, `readlink`, `lstat(<bundle_id>)`, `open(bundle.vlb)`, two `lstat`s (Story 6.5: no
+    `bundle.vlrp` or `wrapped-key.bin` may stand beside an unprotected bundle: `protected_downgrade`) and three
+    preads (header, manifest, index): a constant 10 filesystem ops (the `close` included) regardless of library count or size, zero directory
     listings, no sample blocks read. All access goes through `FsPort`; `CountingFs` counts ops so tests assert this.
   - Results: `kOk`, `kInvalidId` (rejected before any fs access: non-UUID, `..`, `/`, empty), `kMissingLibrary`
     (absent/dangling `current`), `kMissingInstrument`, `kBundleError` (+ formatlib `Error`), `kInvalidLink` (not a symlink
@@ -287,10 +288,117 @@ cmake -S . -B build && cmake --build build
 build/engine/host/macos/engine-host                 # runs until q + Enter or Ctrl-C
 build/engine/host/macos/engine-host --duration 2    # headless short run, prints stats and exits 0
 build/engine/host/macos/engine-host --socket /tmp/e.sock --config engine/host/dev/engine-dev.json
+# protected (factory) libraries, dev builds only (Story 6.5). my-dev.pub-list is YOUR list: the committed tools/keys/trust/dev.pub-list is empty by design, so write one line
+# `dev content-manifest <key_id> <public key hex>` for the dev content-manifest key `tools/keys/velora_keys.py generate` made (see tools/keys/README.md):
+build/engine/host/macos/engine-host --live-set X.liveset --library-root ROOT --trust-list my-dev.pub-list --dev-device-key ~/.velora-dev-keys/device.x25519.priv
 ```
 
 Notes arriving from any MIDI source play the engine test tone. It exits non-zero with a message if there is no output
 device or the device cannot run at 48 kHz (the engine never resamples).
+
+## Protected libraries (Story 6.5, `velora_host` + `velora_host_protected` + `velora_host_dev_keys`)
+
+The engine plays a PROTECTED (factory) library exactly like a user library: the same resident PCM, the same banks, the same voices. What differs is how the PCM is
+obtained and how the key is handled. FR30, FR31 (load), FR32, AR19, AR20, NFR17.
+
+**Where things live.** `velora_host` stays free of cipher code (the librarian links it): `secure_memory`, `damage_registry`, `trust_list`, the resolver's verification
+of `bundle.vlrp` (it links `velora_format_verify`: the Ed25519 check and hashes, no decrypt). Everything that decrypts is in **`velora_host_protected`**
+(`protected/`, links `velora_format_decrypt` and OpenSSL): `ProtectedHeadProvider` and `EdgeBlockReader`. The only code that reads a device key from a file is
+**`velora_host_dev_keys`** (`dev_keys/`): `DevKeyProvider`, built only when `VELORA_DEV_KEY_PROVIDER` is ON. **The option defaults to ON only for a plain development configuration**
+(a single-config generator with an empty or `Debug` `CMAKE_BUILD_TYPE` and no `VELORA_PRODUCTION`); every other configuration (Release, MinSizeRel, RelWithDebInfo, a custom type,
+a multi-config generator) defaults to OFF and needs an explicit `-DVELORA_DEV_KEY_PROVIDER=ON`, and Release / MinSizeRel / RelWithDebInfo / `VELORA_PRODUCTION` refuse it (message
+"the dev key provider (a developer's device key ...) must not be built into a Release ..."). The librarian's dev trust variant has the same refusal list. ctest proves it:
+`dev_key_provider_refused_in_production`, `dev_key_provider_refused_in_relwithdebinfo`, `dev_key_provider_default_off_in_release`, and `dev_key_provider_absent_when_off`, which builds
+`velora-offline-render` (and `engine-host` on macOS) with the provider OFF and scans them (`tools/ci/check_no_dev_keys.py`: symbols and the option / key-file names) -- the option
+names are compiled out of such a binary -- with the dev build scanned as the negative control. `docker-check.sh` configures with the option ON explicitly.
+`tools/ci/check_core_deps.py` keeps `engine/core` and `engine/ports` free of OpenSSL; `check_format_no_decrypt.py` keeps proving the librarian binaries hold no cipher.
+
+**Key-provider port** (`engine/ports/include/velora/ports/key_provider.hpp`): `KeyProvider::unwrap_content_key(library_id, wrapped_blob) -> KeyResult`; the result is a
+`shared_ptr<const ContentKeyHandle>` that owns the key memory. `SecureKeyHandle` (`secure_memory.hpp`) is the host's handle: one anonymous page of its own, locked
+(`mlock`; if the lock fails the key is refused with `memory_lock_failed`, never kept in swappable memory), excluded from core dumps (`madvise(MADV_DONTDUMP)` on
+Linux; where `madvise` fails the key is refused too), the key written into it in place by the provider (no other copy; the unwrap temporaries -- shared secret and
+wrapping key -- sit in the free part of the same page, so ONE locked page holds everything secret about an unwrap), and wiped (`explicit_bzero` / `memset_s`, not optimised away) when the last reference is
+released, before the page is unlocked and unmapped. `PR_SET_DUMPABLE` is process-wide (it also blocks ptrace and `/proc/<pid>/mem` for the whole engine), so it is not
+used; the host calls `disable_core_dumps()` once at start instead (`RLIMIT_CORE` 0, soft and hard: `engine-host` and `velora-offline-render` do it before the first
+key exists), which holds on macOS too, where there is no per-region exclusion. OpenSSL copies key material into its own contexts for the duration of one block
+or one unwrap and cleanses them when it frees them; the engine itself keeps no copy. **RLIMIT_MEMLOCK:** every live content key holds one page (4 KiB; 16 KiB on some boards) and the dev provider's device key one more, so a host that plays N protected
+instruments at once needs about (N + 2) pages locked; Docker's default `ulimit -l` is 64 KiB, macOS gives unprivileged processes 64 KiB or unlimited depending on the release.
+`memlock_budget_bytes()` reads the limit and `engine-host` checks it before the first key exists (refuses below 4 pages, warns below 64). A test hook (`SecureKeyHandle::Options::on_wipe`) reports the release AFTER the
+wipe and before the unmap, with a pointer to the very memory the key lived in, so tests observe the zeros without touching freed memory.
+
+**`DevKeyProvider`** (`velora/host/dev_key_provider.hpp`) implements `wrapped_key_v1` of `tools/keys/KEY-HIERARCHY.md` section 6 exactly: magic, algorithm, length and
+recipient key id are checked first; `shared = X25519(device_private, ephemeral_public)` (all-zero refused); `HKDF-SHA256(IKM = shared, salt = ephemeral || device_public,
+info = "velora/wrapped_key_v1/" || library_id)`; AES-256-GCM with AAD `blob[0:45] || library_id`. The device private key comes from an injected PATH (a
+`device.x25519.priv`, 32 raw bytes, `tools/keys/velora_keys.py generate`), is held in a `SecureKeyHandle` and is never embedded or defaulted. The library id must be the canonical lower-case UUID text (`invalid_argument` otherwise; `Options::require_uuid_library_id` switches it off for the free-form pinned vector). The
+shared secret and the wrapping key live in the free part of the content key's own locked page and are wiped on every path. Refusals are `KeyStatus` values (`malformed_blob`, `wrong_device`, `unwrap_failed`: another
+library, a modified blob, a forged ephemeral key, a low-order key; `invalid_argument`, `memory_lock_failed`) and carry no key material. The tests pin both vectors of the
+hierarchy document, flip every one of the 840 bits of a blob (each is refused, with the refusal class of its field), and check wrong library, wrong device and lock failure.
+
+**Resolution.** `LibraryResolver` finds `<root>/lib/<library_id>/<bundle_id>/bundle.vlrp` (+ `wrapped-key.bin`), exactly as the librarian installs it, by the same exact paths
+and only when `bundle.vlb` does not exist (an unprotected library costs exactly the ops it always did; a protected one adds one `open`), and VERIFIES it before it hands
+out the instrument: header, manifest and index hashes, the signer against the **injected trusted keys** (`set_protected_trust(shared_ptr<const TrustedKeys>)`; without them
+`kBundleError` / `untrusted_key`: nothing is opened on trust), the Ed25519 signature, the hash-list root, and the identity (the bundle's library id and bundle id must be the
+ones its path claims). `ResolveResult` gains `protected_view`, `bundle_dir`, `library_id`, `is_protected()`. `load_trust_list_file()` reads a `tools/keys/trust/<root>.pub-list`;
+the production image will pass its embedded set (Story 6.9 onwards) the same way. **Failures are typed and refuse the load.** A protected library that fails verification (signature, untrusted signer, hash list, damaged header / manifest / index) makes
+`LiveSetLoader` refuse the Live Set (`kInstrumentLoadFailed`, `failed_part`, `load_status` = `signature_invalid` / `untrusted_key`, `LiveSetLoadResult::bundle_error` = the exact
+formatlib cause, `PartLoadReport::resolve_error`), the previous generation keeps playing; a host with NO trusted keys configured resolves it to `kProtectedUnsupported` and the
+part is silent with "Missing library" (it plays no protected library at all); plain absence and I/O trouble stay "Missing library" as for any library. **Downgrade:** an
+unprotected `bundle.vlb` standing beside `bundle.vlrp` or `wrapped-key.bin` in a bundle directory is refused (`kProtectedDowngrade`, `protected_downgrade`, also a load refusal)
+before it is read -- the resolver does two `lstat`s for it, so the resolver's constant is 10 ops (4 `lstat`, `readlink`, `open`, 3 `pread`, `close`), asserted by ctest.
+
+**Loading (head loader).** `ProtectedHeadProvider` is a `HeadProvider` (it passes unprotected instruments to the RAM provider unchanged). For a protected one it reads
+`wrapped-key.bin`, obtains the content key through the port, opens a `ProtectedBundleReader` over the verified view **borrowing** the key (`open_view`; the reader's key
+check refuses a key that is not the bundle's: `wrong_content_key`), and makes the instrument resident through the ONE loader (`load_instrument_by_index(InstrumentSource&)`):
+every ciphertext block is hash-checked, AES-CTR decrypted and decoded on the loading thread, and the audio thread later reads decoded float PCM from RAM. The estimate for
+the head budget comes from the index alone, as for any library. Typed refusals (`LoadStatus`, spelled `to_string`): `content_integrity` (a block fails its hash or does
+not decode; the load is refused at the first bad block and nothing partial stays resident), `wrong_content_key`, `signature_invalid` / `untrusted_key` (also
+`load_status_from(format::Error)` for callers that open a bundle themselves), `key_unavailable` (the provider refused: wrong device, another library, a modified or missing
+blob; `last_key_status()` says which), `protected_unsupported` (a host with the plain RAM provider meets a protected instrument). They surface as
+`LiveSetLoadStatus::kInstrumentLoadFailed` with `load_status` set and the cause in `detail`; the previous generation keeps playing.
+
+**The key belongs to the generation (AD-23).** The reader (which holds the key handle) is hung on the `BundleInstrument` (`attach_context`), and the instrument is what every
+generation that plays it shares (`SampleBank::owner`). So the control thread obtains the key when the generation is prepared, the generation keeps it for as long as any
+voice can read from it, and `reclaim()` frees the generation on the control thread after its last voice ended, which destroys the instrument, the reader and the handle:
+the key page is wiped then (test: the wipe observer fires exactly once, after the note ended and `reclaim()` ran, with all-zero memory, and not before).
+
+**I/O edge threads.** `EdgeBlockReader` does the same decrypt + decode block by block on a thread of its own (`read_block_pcm`: how the streamer of Story 1.17 fills its
+buffers; `check_block`, `scrub`: re-verify a resident instrument against the signed index). A block that fails its integrity check is marked damaged in the instrument's
+damage map (`BundleInstrument::mark_block_damaged`, one atomic byte per block, `ports::SamplePcm::damaged_blocks`), reported to the `DamageRegistry` and the error returned;
+an I/O error says nothing about the block: it marks nothing, but it is **counted and shown** (`ScrubResult::io_errors`, `DamageRegistry::report_io_error`,
+`State.content.io_errors`), not dropped. Only the **first** detection of a block (`mark_block_damaged` returns true on the 0 -> 1 transition) is reported, so repeated scrub passes over
+the same damage leave every counter stable and cause exactly one State push; a library that loads cleanly again (reload, reinstall) is cleared (`DamageRegistry::clear_library`, another push).
+The reader holds its instrument WEAKLY and takes a reference for one block at a time: a scrub never keeps a generation, and with it the content key, alive. When the generation is
+freed (even from another thread while a scrub runs) the key is wiped at once and the scrub ends with `generation_gone` (test `test_reclaim_during_scrub`). Every block's decoded int32
+copy is wiped on every return path. `engine-host --scrub-interval-ms N` (default 30000) runs a scrub of every resident protected instrument on such a thread (over
+`ProtectedHeadProvider::live_weak()`).
+
+**Streaming deviation (read this).** Streaming itself -- Stories 1.16/1.17, the head loader and the NVMe streamer -- is board work that does not exist yet. Today instruments are fully
+resident, so the AES-CTR decrypt and hash check happen at load, on the loading thread. What this story therefore delivers for "a block whose hash fails *during streaming*" is the
+mechanism, driven by the scrub as a substitute: the damage map, the RT fade and the `content_integrity` count, the report and the State push, and `EdgeBlockReader::read_block_pcm`
+(the decrypt-and-decode call a streamer will make per block). NOT covered, and for Story 1.17 to add: detection triggered by a *read* of the block the voice needs (a streamer finding
+the bad block as it refills its ring buffer), and failure of a *refill* (the streamer's own error path). A block damaged on disk after the load is found at the next scrub, not at
+the moment the voice reads it; until then the resident, already verified PCM keeps playing.
+
+**Integrity at run time.** The audio thread never hashes, decrypts or waits: each voice over a protected sample reads a few relaxed bytes per frame. It fades to silence over
+`core::kIntegrityFadeFrames` (64) output frames BEFORE it reaches a damaged block, is silent through it, fades back in after it; a voice that starts, or whose block is flagged late, inside
+the look-ahead window is capped at `distance / look-ahead` of full gain (so it never plays a damaged block at full gain; the cap can force one step instead of a ramp), and a voice that starts inside one starts
+silent; each entry counts one `content_integrity` event (`SampleEngine::content_integrity_events()`, published once per block to `LastValueTable`). The control plane shows
+it in the additive `State.content` (`ContentStatus`: `content_integrity`, `damaged_library_count`, `damaged_library_ids`, `damage_reports`, `io_errors`; `ControlPlane::set_damage_registry`
+bumps the revision on every visible change and the control tick pushes the State to subscribers). A damaged library stays reported until it is reloaded or the engine restarts.
+
+**Tests.** `protected_keyless_test` (no key, no dev provider, so it also runs with `VELORA_DEV_KEY_PROVIDER=OFF`: `SecureKeyHandle` incl. `/proc/self/smaps` VmFlags `lo`/`dd` on Linux, the `DamageRegistry`, the
+trust-list parser and its rejection branches, the resolver's exact `bundle_error` per damaged region -- magic, index field, manifest, index, seal key id, seal signature -- the downgrade by a planted `bundle.vlb`,
+the 10-op constant), `protected_engine_test` (key provider vectors and bit-flip matrix, which thread decrypts -- loader and edge threads, never the audio thread, via `ProtectedBundleReader::set_decrypt_observer` -- the typed cause surfacing at
+`LiveSetLoader`, repeated scrub passes, I/O errors, reclaim during a scrub, resident-float needles, key files and lock failure, core limit, resolver verification incl. flipped bits in header, manifest,
+index and seal, a bundle under another library id, typed refusals, bit-identical residency against the unprotected load, the edge decrypt equal to the loader's, the key wiped
+exactly when the generation is freed, a refused load publishes nothing, damage found on disk after the load: fade shape, counts, `State.content`, and "no plaintext on disk":
+the needles are real (found in an unprotected copy), the protected tree is byte for byte unchanged and the process temp directory gained nothing; every file the engine opened was
+inside the library tree through the read-only `FsPort`, which has no write operation at all; the process-level write monitor, `ulimit -f 0`, is in
+`tools/offline-render/tests/protected_render_test.cpp`), `protected_rt_traffic_test` / `rtsan_protected_test` (a real protected instrument rendered inside a nonblocking function
+with dense note traffic while a real edge thread decrypts and scrubs the same blocks and later marks some damaged), `rtsan_decrypt_unsafe_test` (negative control: a decrypt inside a
+nonblocking function IS reported by RealtimeSanitizer), `engine_host_protected_smoke` (the real `engine-host` over a protected library: ready, the wrong device refused with
+`key_unavailable`, a block damaged on disk reported through `State.content` by the edge thread), and on the engine/core side `content_integrity_tests` and
+`rtsan_integrity_test`. The RTSan tests run only where RealtimeSanitizer exists (`tools/ci/docker-check.sh`).
 
 ## Rules
 

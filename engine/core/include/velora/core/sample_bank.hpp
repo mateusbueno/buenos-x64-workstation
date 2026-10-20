@@ -9,6 +9,7 @@
 // Lifetime: the bank keeps the PCM source alive through `owner` (an opaque shared pointer, e.g. host::BundleInstrument), so the
 // engine's borrowed spans stay valid for as long as any generation, or any sounding voice's generation, references the bank.
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -42,6 +43,11 @@ struct SampleBankRegion {
   bool has_xfade = false;
   bool filtered = false;
   SampleFilterCoeffs filter;
+  // Story 6.5: the damage map of the region's sample (SamplePcm::damaged_blocks), nullptr for every unprotected sample. Read only, with relaxed loads;
+  // set by non-real-time threads that found a block of a protected library damaged.
+  const std::atomic<std::uint8_t>* damage = nullptr;
+  std::uint32_t damage_block_frames = 0, damage_block_count = 0;
+  std::int32_t damage_shift = -1;  // log2(damage_block_frames) when it is a power of two (the block index is then a shift), else -1 (a division)
 };
 
 struct SampleBank {

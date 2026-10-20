@@ -35,7 +35,7 @@ Each root has four keys.
 
 The per-device key pair (X25519) is **not** a root key: each device has its own, generated inside OP-TEE on the unit (Stories 1.7, 6.5) and its public
 half is registered in the vendor device registry (Story 6.8). The dev root additionally provides a *dev device key pair* so the wrap/unwrap code of 6.3,
-6.5 and 6.8 can be tested on the Mac.
+6.5 and 6.8 can be tested on the Mac. (Story 6.5 implements the engine side of the unwrap on the Mac with it: `engine/host/dev_keys`, `DevKeyProvider`, behind the key-provider port; the board's provider is the OP-TEE TA of Story 6.6.)
 
 ### Holder, storage and rotation, per key and root
 

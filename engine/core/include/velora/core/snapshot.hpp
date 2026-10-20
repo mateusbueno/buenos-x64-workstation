@@ -159,12 +159,17 @@ class LastValueTable {
   // value may be a recall or a switch RT has not applied yet, not a change the player made.
   void store_adopted_revision(std::uint64_t rev) noexcept VELORA_NONBLOCKING { adopted_revision_.store(rev, std::memory_order_release); }
   std::uint64_t load_adopted_revision() const noexcept { return adopted_revision_.load(std::memory_order_acquire); }
+  // Story 6.5: the engines' content_integrity count (voices that faded to silence for a damaged block of a protected library), summed over the engines and
+  // stored by RT once per block; read lock-free by the control thread (State.content). Monotone.
+  void store_content_integrity(std::uint64_t n) noexcept VELORA_NONBLOCKING { content_integrity_.store(n, std::memory_order_release); }
+  std::uint64_t load_content_integrity() const noexcept { return content_integrity_.load(std::memory_order_acquire); }
 
  private:
   std::array<std::atomic<std::uint32_t>, params::kPerfSlotCount> v_;
   std::array<std::atomic<std::uint32_t>, kGainReductionSlots> gr_;
   std::atomic<std::uint32_t> fence_ack_{0};
   std::atomic<std::uint64_t> adopted_revision_{0};
+  std::atomic<std::uint64_t> content_integrity_{0};
   EncoderState encoder_;
 };
 

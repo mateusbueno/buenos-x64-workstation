@@ -68,7 +68,7 @@ class HeadProvider {
 // The Mac path: whole instruments in RAM (load_instrument_by_index). A sample that fails to decode makes the load fail (kBundleInconsistent):
 // a part with holes in its instrument is not "resident". The returned instrument keeps the opened bundle (its file descriptor, the BundleLease)
 // alive: the lease is released when the last generation that holds the instrument is freed.
-class RamHeadProvider final : public HeadProvider {
+class RamHeadProvider : public HeadProvider {
  public:
   LoadStatus load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) override;
   LoadStatus load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) override;
@@ -94,6 +94,8 @@ struct PartLoadReport {
   core::PartState state = core::PartState::kReady;
   // The resolver's verdict for a part that has a timbre and a sample engine (kInvalidId = not attempted).
   ResolveStatus resolve = ResolveStatus::kInvalidId;
+  // Story 6.5: the formatlib cause when the resolver's kBundleError came from a bundle (kNone otherwise).
+  format::Error resolve_error = format::Error::kNone;
   std::size_t resident_bytes = 0;  // PCM made resident for this part (shared instruments count once, for the first part that loaded them)
 };
 const char* to_string(core::PartState s);
@@ -104,7 +106,9 @@ struct LiveSetLoadResult {
   liveset::ValidationReport report;                  // kInvalidLiveSet: the issues
   liveset::Status read_status = liveset::Status::kOk;  // kReadFailed
   std::uint32_t failed_part = 0xFFFFFFFFu;           // kInstrumentLoadFailed: the part
-  LoadStatus load_status = LoadStatus::kOk;          // kInstrumentLoadFailed: the provider's verdict
+  LoadStatus load_status = LoadStatus::kOk;          // kInstrumentLoadFailed: the provider's verdict (Story 6.5: also the typed refusal of a protected library whose signature,
+                                                     // trust, hash list or identity fails at resolve: signature_invalid, untrusted_key, protected_downgrade, ...)
+  format::Error bundle_error = format::Error::kNone;  // Story 6.5, with kInstrumentLoadFailed from the resolver: the formatlib cause
   core::VoiceArbiter::ReserveStatus reserve_status = core::VoiceArbiter::ReserveStatus::kOk;  // kArbiterRejected
   std::uint64_t revision = 0;                        // kOk: the generation published
   std::size_t resident_bytes = 0;                    // kOk: total PCM resident

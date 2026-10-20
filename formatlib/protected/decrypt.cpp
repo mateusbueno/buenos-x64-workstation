@@ -4,6 +4,7 @@
 #include <openssl/crypto.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 #include "layout.hpp"
@@ -17,12 +18,12 @@ struct CipherDeleter {
 };
 
 // AES-256-CTR decryption of one block: counter block = nonce || BE32(global block index) || BE32(0).
-Error decrypt_block(const std::array<std::uint8_t, 32>& key, const Nonce& nonce, std::uint32_t global_block,
+Error decrypt_block(const std::uint8_t* key, const Nonce& nonce, std::uint32_t global_block,
                     std::span<std::uint8_t> data) {
   const CounterBlock iv = counter_block(nonce, global_block);
   std::unique_ptr<EVP_CIPHER_CTX, CipherDeleter> ctx(EVP_CIPHER_CTX_new());
   if (!ctx) return Error::kIo;
-  if (EVP_DecryptInit_ex(ctx.get(), EVP_aes_256_ctr(), nullptr, key.data(), iv.data()) != 1) return Error::kIo;
+  if (EVP_DecryptInit_ex(ctx.get(), EVP_aes_256_ctr(), nullptr, key, iv.data()) != 1) return Error::kIo;
   int outl = 0;
   if (EVP_DecryptUpdate(ctx.get(), data.data(), &outl, data.data(), static_cast<int>(data.size())) != 1 ||
       static_cast<std::size_t>(outl) != data.size())
@@ -30,13 +31,26 @@ Error decrypt_block(const std::array<std::uint8_t, 32>& key, const Nonce& nonce,
   return Error::kNone;
 }
 
+std::atomic<ProtectedBundleReader::DecryptObserver> g_decrypt_observer{nullptr};
+
 }  // namespace
 
+void ProtectedBundleReader::set_decrypt_observer(DecryptObserver fn) noexcept { g_decrypt_observer.store(fn, std::memory_order_release); }
+
 struct ProtectedBundleReader::Impl {
-  ProtectedBundleView view;
-  ContentKey key;
-  explicit Impl(ProtectedBundleView v, const ContentKey& k) : view(std::move(v)), key(k) {}
-  ~Impl() { OPENSSL_cleanse(key.bytes.data(), key.bytes.size()); }
+  std::shared_ptr<const ProtectedBundleView> view;
+  // The key: either a private copy (open_memory / open_source / open_file: `owned`, wiped with the reader) or, from open_view(), the caller's memory
+  // (the engine's mlocked handle), which `key_owner` keeps alive and which this reader never copies.
+  ContentKey owned;
+  bool has_owned = false;
+  const std::uint8_t* key_ptr = nullptr;  // 32 bytes
+  std::shared_ptr<const void> key_owner;
+  Impl(std::shared_ptr<const ProtectedBundleView> v, const ContentKey& k) : view(std::move(v)), owned(k), has_owned(true) { key_ptr = owned.bytes.data(); }
+  Impl(std::shared_ptr<const ProtectedBundleView> v, const std::uint8_t* k, std::shared_ptr<const void> owner)
+      : view(std::move(v)), key_ptr(k), key_owner(std::move(owner)) {}
+  ~Impl() {
+    if (has_owned) OPENSSL_cleanse(owned.bytes.data(), owned.bytes.size());
+  }
 };
 
 ProtectedBundleReader::ProtectedBundleReader() = default;
@@ -44,14 +58,25 @@ ProtectedBundleReader::ProtectedBundleReader(ProtectedBundleReader&&) noexcept =
 ProtectedBundleReader& ProtectedBundleReader::operator=(ProtectedBundleReader&&) noexcept = default;
 ProtectedBundleReader::~ProtectedBundleReader() = default;
 
-const ProtectedBundleView& ProtectedBundleReader::view() const { return impl_->view; }
+const ProtectedBundleView& ProtectedBundleReader::view() const { return *impl_->view; }
+std::shared_ptr<const ProtectedBundleView> ProtectedBundleReader::shared_view() const { return impl_->view; }
 
 Result<ProtectedBundleReader> ProtectedBundleReader::finish(Result<ProtectedBundleView> v, const ContentKey& key) {
   if (!v) return v.error();
   const KeyCheck want = key_check_value(key.bytes, v.value().info().nonce);
   if (!ct_equal(want, v.value().info().key_check)) return Error::kWrongContentKey;
   ProtectedBundleReader r;
-  r.impl_ = std::make_unique<Impl>(v.take(), key);
+  r.impl_ = std::make_unique<Impl>(std::make_shared<const ProtectedBundleView>(v.take()), key);
+  return r;
+}
+
+Result<ProtectedBundleReader> ProtectedBundleReader::open_view(std::shared_ptr<const ProtectedBundleView> view, std::span<const std::uint8_t, 32> key,
+                                                               std::shared_ptr<const void> key_owner) {
+  if (!view) return Error::kInvalidArgument;
+  const KeyCheck want = key_check_value(key, view->info().nonce);
+  if (!ct_equal(want, view->info().key_check)) return Error::kWrongContentKey;
+  ProtectedBundleReader r;
+  r.impl_ = std::make_unique<Impl>(std::move(view), key.data(), std::move(key_owner));
   return r;
 }
 
@@ -70,18 +95,19 @@ Result<ProtectedBundleReader> ProtectedBundleReader::open_file(const std::string
 
 Result<std::uint32_t> ProtectedBundleReader::read_block(std::size_t sample, std::uint64_t block,
                                                         std::span<std::int32_t> out, BlockDecoder& dec) const {
-  auto ref = impl_->view.locate(sample, block);
+  auto ref = impl_->view->locate(sample, block);
   if (!ref) return ref.error();
-  const SampleInfo& s = impl_->view.samples()[sample];
+  const SampleInfo& s = impl_->view->samples()[sample];
   if (out.size() < std::size_t(ref.value().frames) * s.format.channels) return Error::kBufferTooSmall;
   std::vector<std::uint8_t> bytes;
-  if (Error e = impl_->view.read_ciphertext(ref.value().global, bytes); e != Error::kNone) return e;  // hash first
-  if (Error e = decrypt_block(impl_->key.bytes, impl_->view.info().nonce,
+  if (Error e = impl_->view->read_ciphertext(ref.value().global, bytes); e != Error::kNone) return e;  // hash first
+  if (Error e = decrypt_block(impl_->key_ptr, impl_->view->info().nonce,
                               static_cast<std::uint32_t>(ref.value().global), bytes);
       e != Error::kNone) {
     OPENSSL_cleanse(bytes.data(), bytes.size());
     return e;
   }
+  if (const auto obs = g_decrypt_observer.load(std::memory_order_acquire)) obs(ref.value().global);
   // Decode into scratch so `out` stays untouched when the plaintext fails the decoder's integrity checks.
   std::vector<std::int32_t> tmp(std::size_t(ref.value().frames) * s.format.channels);
   const Error derr = BundleReader::decode_block_bytes(dec, s.format, ref.value().frames, bytes, tmp);
@@ -94,7 +120,7 @@ Result<std::uint32_t> ProtectedBundleReader::read_block(std::size_t sample, std:
 
 Error ProtectedBundleReader::read_frames(std::size_t sample, std::uint64_t first, std::uint64_t count,
                                          std::span<std::int32_t> out) const {
-  const auto samples = impl_->view.samples();
+  const auto samples = impl_->view->samples();
   if (sample >= samples.size()) return Error::kOutOfRange;
   const SampleInfo& s = samples[sample];
   if (first > s.frame_count || count > s.frame_count - first) return Error::kOutOfRange;
@@ -121,7 +147,7 @@ Error ProtectedBundleReader::read_frames(std::size_t sample, std::uint64_t first
 Error ProtectedBundleReader::verify_all() const {
   BlockDecoder dec;
   std::vector<std::int32_t> tmp;
-  const auto samples = impl_->view.samples();
+  const auto samples = impl_->view->samples();
   for (std::size_t si = 0; si < samples.size(); ++si) {
     const SampleInfo& s = samples[si];
     tmp.assign(std::size_t(kBlockFrames) * s.format.channels, 0);

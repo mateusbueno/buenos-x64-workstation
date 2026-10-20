@@ -17,9 +17,64 @@ const char* to_string(LoadStatus s) {
     case LoadStatus::kInstrumentIndex: return "instrument index out of range";
     case LoadStatus::kBundleInconsistent: return "instrument samples outside the bundle";
     case LoadStatus::kCancelled: return "cancelled";
+    case LoadStatus::kContentIntegrity: return "content_integrity";
+    case LoadStatus::kWrongContentKey: return "wrong_content_key";
+    case LoadStatus::kSignatureInvalid: return "signature_invalid";
+    case LoadStatus::kUntrustedKey: return "untrusted_key";
+    case LoadStatus::kKeyUnavailable: return "key_unavailable";
+    case LoadStatus::kProtectedUnsupported: return "protected_unsupported";
+    case LoadStatus::kProtectedDowngrade: return "protected_downgrade";
   }
   return "?";
 }
+
+LoadStatus load_status_from(fmt::Error e) {
+  switch (e) {
+    case fmt::Error::kBlockHashMismatch:
+    case fmt::Error::kCorruptBlock:
+    case fmt::Error::kPcmHashMismatch:
+      return LoadStatus::kContentIntegrity;
+    case fmt::Error::kWrongContentKey: return LoadStatus::kWrongContentKey;
+    case fmt::Error::kSignatureInvalid:
+    case fmt::Error::kHashListMismatch:
+    case fmt::Error::kCorruptIndex:
+    case fmt::Error::kCorruptManifest:
+    case fmt::Error::kCorruptHeader:
+      return LoadStatus::kSignatureInvalid;
+    case fmt::Error::kUntrustedKey: return LoadStatus::kUntrustedKey;
+    default: return LoadStatus::kBundleInconsistent;
+  }
+}
+
+bool BundleInstrument::mark_block_damaged(std::size_t sample, std::uint64_t block) const noexcept {
+  if (sample >= damage_.size() || block >= damage_count_[sample]) return false;
+  return damage_[sample][block].exchange(1, std::memory_order_relaxed) == 0;
+}
+bool BundleInstrument::block_damaged(std::size_t sample, std::uint64_t block) const noexcept {
+  return sample < damage_.size() && block < damage_count_[sample] && damage_[sample][block].load(std::memory_order_relaxed) != 0;
+}
+std::uint64_t BundleInstrument::damaged_blocks() const noexcept {
+  std::uint64_t n = 0;
+  for (std::size_t s = 0; s < damage_.size(); ++s)
+    for (std::uint32_t b = 0; b < damage_count_[s]; ++b) n += damage_[s][b].load(std::memory_order_relaxed) != 0 ? 1u : 0u;
+  return n;
+}
+
+namespace {
+// Adapts the unprotected reader to the loader's source interface.
+class PlainSource final : public InstrumentSource {
+ public:
+  explicit PlainSource(const fmt::BundleReader& r) : r_(r) {}
+  std::span<const fmt::InstrumentInfo> instruments() const override { return r_.instruments(); }
+  std::span<const fmt::SampleInfo> samples() const override { return r_.samples(); }
+  fmt::Error read_frames(std::size_t sample, std::uint64_t first, std::uint64_t count, std::span<std::int32_t> out) const override {
+    return r_.read_frames(sample, first, count, out);
+  }
+
+ private:
+  const fmt::BundleReader& r_;
+};
+}  // namespace
 
 ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   ports::SampleRegionDesc d;
@@ -96,7 +151,7 @@ bool pcm_to_float(const fmt::PcmFormat& f, std::span<const std::int32_t> in, std
 }
 
 struct BundleInstrumentLoader {
-  static LoadResult load(const fmt::BundleReader& bundle, std::size_t index, const LoadHooks* hooks) {
+  static LoadResult load(const InstrumentSource& bundle, std::size_t index, const LoadHooks* hooks) {
     LoadResult res;
     const auto instruments = bundle.instruments();
     if (index >= instruments.size()) return res;
@@ -111,6 +166,15 @@ struct BundleInstrumentLoader {
     for (const fmt::Region& r : info.regions) out->regions_.push_back(to_port_region(r));
     out->pcm_.resize(info.sample_count);
     out->data_.resize(info.sample_count);
+    if (bundle.protected_source()) {  // Story 6.5: every sample gets a block-damage map the I/O edge threads can set and the audio thread reads
+      out->damage_.resize(info.sample_count);
+      out->damage_count_.assign(info.sample_count, 0);
+      for (std::size_t s = 0; s < info.sample_count; ++s) {
+        const std::uint32_t blocks = bundle.samples()[info.first_sample + s].block_count;
+        out->damage_count_[s] = blocks;
+        if (blocks != 0) out->damage_[s] = std::make_unique<std::atomic<std::uint8_t>[]>(blocks);  // value-initialised: all zero
+      }
+    }
 
     const auto samples = bundle.samples();
     std::vector<std::int32_t> tmp;
@@ -138,8 +202,15 @@ struct BundleInstrumentLoader {
         bool read_ok = true;
         for (std::uint64_t at = 0; at < frames && read_ok;) {  // chunked, so a cancel is seen within one chunk
           const std::uint64_t n = std::min<std::uint64_t>(kLoadChunkFrames, frames - at);
-          read_ok = bundle.read_frames(info.first_sample + s, at, n, std::span<std::int32_t>(tmp).subspan(static_cast<std::size_t>(at) * ch, static_cast<std::size_t>(n) * ch)) ==
-                    fmt::Error::kNone;
+          const fmt::Error rerr = bundle.read_frames(info.first_sample + s, at, n, std::span<std::int32_t>(tmp).subspan(static_cast<std::size_t>(at) * ch, static_cast<std::size_t>(n) * ch));
+          read_ok = rerr == fmt::Error::kNone;
+          if (!read_ok && out->first_error_ == fmt::Error::kNone) out->first_error_ = rerr;
+          if (!read_ok && bundle.protected_source() && load_status_from(rerr) != LoadStatus::kBundleInconsistent) {
+            // Story 6.5: a protected instrument with a block that fails its hash or does not decode is REFUSED with the typed cause; whatever was made resident
+            // dies with `out`, and the cause is not recoverable by playing the other samples.
+            res.status = load_status_from(rerr);
+            return res;
+          }
           at += n;
           if (read_ok && !proceed(n * ch * sizeof(float))) {
             out->data_[s] = std::vector<float>();
@@ -165,6 +236,11 @@ struct BundleInstrumentLoader {
       pcm.frames = frames;
       pcm.left = left;
       pcm.right = right;
+      if (!out->damage_.empty() && out->damage_count_[s] != 0) {
+        pcm.damaged_blocks = out->damage_[s].get();
+        pcm.damaged_block_frames = fmt::kBlockFrames;
+        pcm.damaged_block_count = out->damage_count_[s];
+      }
       out->resident_bytes_ += buf.size() * sizeof(float);
     }
     res.status = LoadStatus::kOk;
@@ -174,14 +250,21 @@ struct BundleInstrumentLoader {
 };
 
 LoadResult load_instrument_by_index(const fmt::BundleReader& bundle, std::size_t index, const LoadHooks* hooks) {
-  return BundleInstrumentLoader::load(bundle, index, hooks);
+  const PlainSource src(bundle);
+  return BundleInstrumentLoader::load(src, index, hooks);
+}
+
+LoadResult load_instrument_by_index(const InstrumentSource& source, std::size_t index, const LoadHooks* hooks) {
+  return BundleInstrumentLoader::load(source, index, hooks);
 }
 
 std::uint64_t instrument_head_bytes(const fmt::BundleReader& bundle, std::size_t index) {
-  const auto instruments = bundle.instruments();
+  return instrument_head_bytes(bundle.instruments(), bundle.samples(), index);
+}
+
+std::uint64_t instrument_head_bytes(std::span<const fmt::InstrumentInfo> instruments, std::span<const fmt::SampleInfo> samples, std::size_t index) {
   if (index >= instruments.size()) return 0;
   const fmt::InstrumentInfo& info = instruments[index];
-  const auto samples = bundle.samples();
   if (info.first_sample > samples.size() || info.sample_count > samples.size() - info.first_sample) return 0;
   std::uint64_t bytes = 0;
   for (std::size_t s = 0; s < info.sample_count; ++s) {
@@ -196,7 +279,7 @@ std::uint64_t instrument_head_bytes(const fmt::BundleReader& bundle, std::size_t
 LoadResult load_instrument(const fmt::BundleReader& bundle, std::string_view key) {
   const auto instruments = bundle.instruments();
   for (std::size_t i = 0; i < instruments.size(); ++i)
-    if (instruments[i].key == key) return BundleInstrumentLoader::load(bundle, i, nullptr);
+    if (instruments[i].key == key) return load_instrument_by_index(bundle, i, nullptr);
   LoadResult res;
   res.status = LoadStatus::kInstrumentNotFound;
   return res;

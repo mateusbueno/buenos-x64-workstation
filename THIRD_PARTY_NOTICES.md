@@ -351,8 +351,8 @@ See https://www.sqlite.org/copyright.html.
 ## 7. OpenSSL 3 (libcrypto) — Apache License 2.0
 
 Build and link dependency of the protected-bundle targets of `formatlib` (Story 6.2: Ed25519 signature verification in `velora_format_verify`, AES-256-CTR in
-`velora_format_decrypt` and `velora_format_protected_writer`; Story 6.3: AES-256-GCM, X25519 and the CSPRNG in the offline `tools/content-pack`, which is never shipped), linked dynamically from the system package (Homebrew `openssl@3`; Debian/Ubuntu `libssl-dev` +
-`libssl3`); not vendored in this repository. `engine/core` does not use it, and the librarian links at most the signature-verification part (never a cipher).
+`velora_format_decrypt` and `velora_format_protected_writer`; Story 6.3: AES-256-GCM, X25519 and the CSPRNG in the offline `tools/content-pack`, which is never shipped; Story 6.5: the engine decrypts protected bundles through `velora_format_decrypt` (`engine/host/protected`, linked by `engine-host` and `velora-offline-render`) and the dev key provider (`engine/host/dev_keys`: X25519 and AES-256-GCM, built only in development configurations) uses it for the `wrapped_key_v1` unwrap), linked dynamically from the system package (Homebrew `openssl@3`; Debian/Ubuntu `libssl-dev` +
+`libssl3`); not vendored in this repository. `engine/core` and `engine/ports` do not use it (the content key reaches the engine through the key-provider port), and the librarian links at most the signature-verification part (never a cipher).
 Only libcrypto is used (no libssl, no TLS). OpenSSL 3.0 and later are licensed under the Apache License, Version 2.0; the full license text is reproduced in
 section 2 of this file (Abseil) and applies unchanged.
 

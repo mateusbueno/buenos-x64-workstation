@@ -22,7 +22,7 @@ include(${PROJECT_SOURCE_DIR}/tools/keys/TrustedKeys.cmake)
 set(VELORA_LIBRARIAN_TRUST_VARIANT "dev" CACHE STRING "image variant whose trusted content-signing keys the librarian embeds: dev | factory-test | production")
 set(VELORA_DEV_KEYS_DIR "" CACHE PATH "dev variant only: a local dev key directory (tools/keys/velora_keys.py generate) whose content-manifest public key is trusted too")
 option(VELORA_PRODUCTION "this configuration builds a shippable image: the librarian must not embed the dev trust variant" OFF)
-if(VELORA_LIBRARIAN_TRUST_VARIANT STREQUAL "dev" AND (VELORA_PRODUCTION OR CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel)$"))
+if(VELORA_LIBRARIAN_TRUST_VARIANT STREQUAL "dev" AND (VELORA_PRODUCTION OR CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel|RelWithDebInfo)$"))
   message(FATAL_ERROR "librarian: the dev trust variant (a developer's keys, and --trust-list) must not be built into a Release / MinSizeRel / VELORA_PRODUCTION configuration. "
                       "Set -DVELORA_LIBRARIAN_TRUST_VARIANT=factory-test or production.")
 endif()

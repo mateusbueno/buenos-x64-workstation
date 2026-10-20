@@ -178,7 +178,7 @@ development_status:
   6-2-protected-bundle-format-in-formatlib: done
   6-3-content-pack-tool: done
   6-4-librarian-verifies-and-installs-protected-bundles: done
-  6-5-engine-decrypts-protected-bundles-on-i-o-edge-threads: backlog
+  6-5-engine-decrypts-protected-bundles-on-i-o-edge-threads: done
   6-6-op-tee-content-key-trusted-application-on-the-board: backlog
   6-7-a-copied-or-tampered-library-does-not-play-elsewhere: backlog
   6-8-device-registry-and-content-key-vault: backlog

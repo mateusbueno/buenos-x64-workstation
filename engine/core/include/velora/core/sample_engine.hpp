@@ -13,6 +13,7 @@
 // not run concurrently with start_voice/stop_voice/render. start_voice, stop_voice, set_param,
 // render and voice_info never allocate, lock or block.
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -39,6 +40,9 @@ enum class SampleInterpolation : std::uint8_t {
 // `sample_bench` (tests/sample_bench.cpp, -O3 host figures, see engine/core/README.md); still to be calibrated on the board.
 inline constexpr std::uint32_t kSampleFilterCostUnits = 2;
 inline constexpr std::uint32_t kSampleCrossfadeCostUnits = 1;
+// Story 6.5: the length, in frames of engine output, of the fade to silence a voice makes before it reaches a damaged block of a protected library (and of the
+// fade back in after it). It is a straight gain ramp; the voice reads the block-damage flags that non-real-time threads set (ports::SamplePcm::damaged_blocks).
+inline constexpr std::uint32_t kIntegrityFadeFrames = 64;
 constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q, bool extended = false) noexcept {
   return (q == SampleInterpolation::kLinear ? 3u : 5u) + (extended ? kSampleFilterCostUnits + kSampleCrossfadeCostUnits : 0u);
 }
@@ -136,6 +140,8 @@ class SampleEngine final : public Engine {
   std::uint64_t skipped_unplayable_starts() const noexcept { return skipped_unplayable_; }
   // Voices that started with a filter or a CC crossfade on an engine that did not declare Config::extended_voices (budgeted at the plain cost).
   std::uint64_t undeclared_extended_voices() const noexcept { return undeclared_extended_; }
+  // Story 6.5: times a voice met a damaged block (a rising edge per voice: it faded out for that block). Written by the audio thread, readable anywhere.
+  std::uint64_t content_integrity_events() const noexcept override { return integrity_events_.load(std::memory_order_relaxed); }
   std::uint32_t region_count() const noexcept { return default_bank_ ? static_cast<std::uint32_t>(default_bank_->regions.size()) : 0u; }
 
   // Envelope states, exposed for tests (order matters: >= kRelease means released).
@@ -174,6 +180,9 @@ class SampleEngine final : public Engine {
     float base_gain = 0.0f;
     SampleFilterState fl, fr;
     float xf_cur = 1.0f, xf_tgt = 1.0f, xf_step = 0.0f;
+    // Story 6.5: the integrity fade of a voice over a protected sample (used only when the region has a damage map).
+    float integ_gain = 1.0f;
+    bool integ_seen = false, integ_bad = false;
   };
 
   // A part's keyswitch state (sw_last / sw_previous / held keys).
@@ -227,6 +236,7 @@ class SampleEngine final : public Engine {
   std::uint32_t unplayable_regions_ = 0;
   std::uint64_t skipped_unplayable_ = 0;
   std::uint64_t undeclared_extended_ = 0;
+  std::atomic<std::uint64_t> integrity_events_{0};
   std::array<KeyState, 16> ks_{};                       // per part (channel) keyswitch state
   std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units
   std::int32_t xf_frames_ = 240;                        // CC crossfade smoothing time in frames (sfizz xfadeSmoothing = 5 ms)

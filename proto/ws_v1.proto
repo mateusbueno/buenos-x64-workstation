@@ -122,6 +122,19 @@ message State {
   SetlistStatus setlists = 11;           // Story 4.6: the loaded setlist and the stepping position; additive
   EditStatus edits = 12;                 // Story 4.9: unsaved edits (dirty flag per Live Set, change summary of the current one); additive
   EncoderStatus encoders = 13;           // Story 4.10: the encoder mode, the selected part, the ASSIGN maps; additive
+  ContentStatus content = 14;            // Story 6.5: protected-library integrity (counter and damaged libraries); additive
+}
+
+// Story 6.5: the integrity of protected (factory) libraries. `content_integrity` counts, since the engine started, the voices that faded to silence because
+// the block they were about to read was damaged (it failed its hash check on an I/O edge thread); it is the real-time plane's counter, read lock-free.
+// `damaged_library_ids` lists (at most 16, sorted; `damaged_library_count` is the true number) the libraries reported damaged: a damaged library stays reported
+// until the engine restarts or the library is reloaded, and its damaged blocks stay silent. `damage_reports` counts the damaged blocks found (each block once, on its first detection; a repeated pass over the same damage adds nothing). `io_errors` counts reads of the edge threads that failed for a reason that says nothing about the block (nothing is marked damaged).
+message ContentStatus {
+  uint64 content_integrity = 1;
+  uint32 damaged_library_count = 2;
+  repeated string damaged_library_ids = 3;
+  uint64 damage_reports = 4;
+  uint64 io_errors = 5;
 }
 
 // Story 4.10: ASSIGN and the encoders. `mode` / `selected_part` are what the last SetEncoderMode / SelectPart commanded; `rt_mode` / `rt_selected_part` are

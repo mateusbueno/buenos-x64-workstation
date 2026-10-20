@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "velora/core/snapshot.hpp"
+#include "velora/host/damage_registry.hpp"
 #include "velora/host/midi_ingest.hpp"
 #include "ws_v1.pb.h"
 
@@ -118,7 +119,7 @@ class ControlPlane {
                Clock now_ns);
   // Frees every remaining generation: destroy only after the RT side has stopped.
   ~ControlPlane();
-  ControlPlane(const ControlPlane&) = delete;
+  ControlPlane(const ControlPlane&) = delete;  // (the destructor also detaches the damage registry's listener)
   ControlPlane& operator=(const ControlPlane&) = delete;
 
   // Validates `config` (the dev configuration, or any State) on top of the registry defaults and publishes
@@ -149,6 +150,18 @@ class ControlPlane {
   void set_setlist_handler(SetlistHandler* h) noexcept { setlist_handler_ = h; }
   // Edits and Write (Story 4.9): the EditSession registers itself here (and unregisters in its destructor). Control thread only.
   void set_edit_handler(EditHandler* h) noexcept { edit_handler_ = h; }
+
+  // Story 6.5: the registry the I/O edge threads report damaged protected-library blocks to. State.content shows its libraries and the RT content_integrity
+  // counter; every report bumps the revision so subscribers get a State push. Control thread only to set (null detaches); the registry outlives the plane's use.
+  void set_damage_registry(DamageRegistry* registry);
+  // True once per new damage report since the last call: the control tick uses it to push the State (State.content) to subscribers. Control thread only.
+  bool take_content_changed() noexcept {
+    if (!damage_) return false;
+    const std::uint64_t n = damage_->seq();
+    if (n == content_pushed_) return false;
+    content_pushed_ = n;
+    return true;
+  }
 
   // Control->RT fence (Story 4.9, AR12). raise_fence() queues a fence event behind every parameter event sent so far on the control lane and returns its
   // sequence number (false: the lane is full, nothing was queued). RT acknowledges it after applying everything sent before it
@@ -203,6 +216,9 @@ class ControlPlane {
  private:
   bool commit(const core::Snapshot& work, ControlFail& fail);
   void fill_encoders(ws::v1::State* out) const;
+  void fill_content(ws::v1::State* out) const;
+  DamageRegistry* damage_ = nullptr;
+  std::uint64_t content_pushed_ = 0;
   ws::v1::EncoderMode enc_mode_req_ = ws::v1::ENCODER_MODE_PART;
   std::uint32_t sel_part_req_ = 0;
   PublishStatus fault_ = PublishStatus::kOk;

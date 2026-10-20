@@ -529,6 +529,10 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   }
   pending_count_ = remaining;
   reap_generation_refs();
+  // Story 6.5: publish the engines' content-integrity counts (voices that faded for a damaged block of a protected library) to the control side.
+  std::uint64_t integrity = 0;
+  for (std::size_t i = 0; i < registry_.size(); ++i) integrity += registry_.at(i)->content_integrity_events();
+  last_.store_content_integrity(integrity);
 }
 
 }  // namespace velora::core

@@ -34,6 +34,15 @@ void finish_pad(Self& s, std::uint8_t* buf, std::size_t& len, std::uint64_t tota
 
 Sha256::Sha256() { reset(); }
 
+__attribute__((noinline)) void Sha256::wipe() noexcept {
+  volatile std::uint8_t* v = reinterpret_cast<volatile std::uint8_t*>(h_);
+  for (std::size_t i = 0; i < sizeof h_; ++i) v[i] = 0;
+  volatile std::uint8_t* b = buf_;
+  for (std::size_t i = 0; i < sizeof buf_; ++i) b[i] = 0;
+  buf_len_ = 0;
+  total_ = 0;
+}
+
 void Sha256::reset() {
   static constexpr std::uint32_t init[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                                             0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
@@ -262,8 +271,9 @@ void wipe(void* p, std::size_t n) {
 Digest256 hmac_sha256(std::span<const std::uint8_t> key, std::span<const std::uint8_t> data) {
   std::uint8_t k[64] = {};
   if (key.size() > 64) {
-    const Digest256 d = Sha256::hash(key);
+    Digest256 d = Sha256::hash(key);
     std::memcpy(k, d.data(), 32);
+    wipe(d.data(), d.size());
   } else if (!key.empty()) {
     std::memcpy(k, key.data(), key.size());
   }
@@ -275,11 +285,14 @@ Digest256 hmac_sha256(std::span<const std::uint8_t> key, std::span<const std::ui
   Sha256 in;
   in.update(ipad, 64);
   in.update(data);
-  const Digest256 inner = in.finish();
+  Digest256 inner = in.finish();
   Sha256 out;
   out.update(opad, 64);
   out.update(inner.data(), 32);
   const Digest256 mac = out.finish();
+  in.wipe();
+  out.wipe();
+  wipe(inner.data(), inner.size());
   wipe(k, sizeof k);
   wipe(ipad, sizeof ipad);
   wipe(opad, sizeof opad);

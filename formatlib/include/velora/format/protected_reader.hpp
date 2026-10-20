@@ -21,11 +21,24 @@ class ProtectedBundleReader {
   static Result<ProtectedBundleReader> open_file(const std::string& path, const TrustedKeys& trusted,
                                                  const ContentKey& key);
 
+  // Story 6.5: a reader over an already verified view (shared, e.g. the one the library resolver opened) that BORROWS the content key instead of copying it:
+  // `key` points at memory the caller owns (the engine's mlocked, non-dumpable key handle) and `key_owner` keeps that memory alive for as long as the reader
+  // lives. kWrongContentKey when the key does not match the manifest's key check. The reader never stores a copy of such a key (the cipher context of one
+  // block is created and freed per call; OpenSSL cleanses it).
+  static Result<ProtectedBundleReader> open_view(std::shared_ptr<const ProtectedBundleView> view, std::span<const std::uint8_t, 32> key,
+                                                 std::shared_ptr<const void> key_owner);
+
+  // Test hook (Story 6.5): called, on the calling thread, once for every block any reader decrypts (after the AES-CTR pass). Tests use it to prove WHICH thread
+  // decrypts: the loading thread and the I/O edge threads, never the audio thread. nullptr (the default) = no observer. The function must be thread-safe.
+  using DecryptObserver = void (*)(std::uint64_t global_block);
+  static void set_decrypt_observer(DecryptObserver fn) noexcept;
+
   ProtectedBundleReader(ProtectedBundleReader&&) noexcept;
   ProtectedBundleReader& operator=(ProtectedBundleReader&&) noexcept;
-  ~ProtectedBundleReader();  // wipes the key copy
+  ~ProtectedBundleReader();  // wipes its own key copy (none when the key is borrowed)
 
   const ProtectedBundleView& view() const;
+  std::shared_ptr<const ProtectedBundleView> shared_view() const;
   const ProtectedInfo& info() const { return view().info(); }
   std::span<const InstrumentInfo> instruments() const { return view().instruments(); }
   std::span<const SampleInfo> samples() const { return view().samples(); }

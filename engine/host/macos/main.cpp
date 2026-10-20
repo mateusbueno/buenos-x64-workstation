@@ -1,11 +1,13 @@
 // engine-host: macOS developer app. Plays the engine test tone from CoreMIDI notes through
 // CoreAudio. Timing figures are for the developer's Mac only: "host, not representative".
 #include <poll.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <atomic>
+#include <thread>
 #include <chrono>
 #include <cerrno>
 #include <cmath>
@@ -40,6 +42,12 @@
 #include "velora/host/scene_controller.hpp"
 #include "velora/host/setlist_controller.hpp"
 #include "velora/host/setlist_store.hpp"
+#ifdef VELORA_ENGINE_DEV_KEYS
+#include "velora/host/dev_key_provider.hpp"
+#include "velora/host/protected_head_provider.hpp"
+#include "velora/host/secure_memory.hpp"
+#include "velora/host/trust_list.hpp"
+#endif
 
 namespace {
 std::atomic<bool> g_quit{false};
@@ -54,6 +62,8 @@ int main(int argc, char** argv) {
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false, no_audio = false;
   std::string live_set_path, library_root, live_set_dir, data_dir, library_socket;
+  std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
+  long scrub_interval_ms = 30000;               // Story 6.5: how often an I/O edge thread re-verifies the resident protected instruments (0 = never)
   long library_idle_ms = 3000, inject_note_after_ms = -1;  // --library-playing-idle-ms; hidden --test-inject-note-after-ms (smoke tests: a note without MIDI)
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--duration") && i + 1 < argc) {
@@ -88,6 +98,19 @@ int main(int argc, char** argv) {
       }
     } else if (!std::strcmp(argv[i], "--test-inject-note-after-ms") && i + 1 < argc) {
       inject_note_after_ms = std::strtol(argv[++i], nullptr, 10);  // test only: counts as a note this many ms after start
+#ifdef VELORA_ENGINE_DEV_KEYS  // dev builds only: the option names are not even in the binary of a build without the dev key provider
+    } else if (!std::strcmp(argv[i], "--trust-list") && i + 1 < argc) {
+      trust_list_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--dev-device-key") && i + 1 < argc) {
+      dev_device_key = argv[++i];
+    } else if (!std::strcmp(argv[i], "--scrub-interval-ms") && i + 1 < argc) {
+      char* end = nullptr;
+      scrub_interval_ms = std::strtol(argv[++i], &end, 10);
+      if (*end != '\0' || scrub_interval_ms < 0) {
+        std::fprintf(stderr, "engine-host: --scrub-interval-ms needs a number of milliseconds (0 = off)\n");
+        return 2;
+      }
+#endif
     } else if (!std::strcmp(argv[i], "--library-socket") && i + 1 < argc) {
       library_socket = argv[++i];  // Story 4.11: tell the librarian service which Live Set became active and when the engine is performing
     } else {
@@ -98,6 +121,11 @@ int main(int argc, char** argv) {
                    "                                                              seamlessly, loading in the background; without --live-set the first by name loads at start)\n"
                    "                   [--data-dir DIR --library-root DIR]   (the persisted data root: DIR/live_sets/ holds the Live Sets, DIR/setlists/ the setlists, tags and the\n"
                    "                                                          default ASSIGN map; ws.v1 setlist commands and LIVE SET stepping; replaces --live-set-dir)\n"
+#ifdef VELORA_ENGINE_DEV_KEYS
+                   "                   [--trust-list FILE --dev-device-key FILE [--scrub-interval-ms N]]   (dev builds only: play PROTECTED libraries -- the content-manifest keys to trust\n"
+                   "                                                              (tools/keys/trust/<root>.pub-list format) and the dev device private key (device.x25519.priv) that unwraps\n"
+                   "                                                              their content keys; an I/O edge thread re-verifies resident protected instruments every N ms, default 30000)\n"
+#endif
                    "                   [--library-socket PATH [--library-playing-idle-ms N]]   (report the active Live Set and the performing state to the librarian service's Library API;\n"
                    "                                                                           performing = a note within the last N ms, default 3000; default off)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
@@ -116,6 +144,12 @@ int main(int argc, char** argv) {
       }
     }
   }
+#ifdef VELORA_ENGINE_DEV_KEYS
+  if (!trust_list_path.empty() != !dev_device_key.empty()) {
+    std::fprintf(stderr, "engine-host: --trust-list and --dev-device-key go together\n");
+    return 2;
+  }
+#endif
   if ((live_set_path.empty() && live_set_dir.empty()) != library_root.empty()) {
     std::fprintf(stderr, "engine-host: --live-set / --live-set-dir and --library-root go together\n");
     return 2;
@@ -160,6 +194,8 @@ int main(int argc, char** argv) {
 
   // Control plane: the first snapshot generation comes from the committed dev configuration and is
   // published before audio runs; an invalid file stops the engine here with a clear error.
+  host::DamageRegistry damage;  // Story 6.5: damaged blocks of protected libraries found by the I/O edge threads; shown in State.content. Declared BEFORE the plane: the plane
+                                // detaches its listener from it when it is destroyed.
   host::ControlPlane plane(renderer->snapshots(), renderer->last_values(), *control_queue,
                            [] { return host::macos::now_ns(); });
   // With --live-set the Live Set is the first generation (below); the dev configuration is not published first.
@@ -179,7 +215,47 @@ int main(int argc, char** argv) {
   core::SampleEngine sample(sample_cfg);
   core::OrganEngine organ;
   host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);
-  host::RamHeadProvider heads;
+  host::RamHeadProvider ram_heads;
+  host::HeadProvider* head_provider = &ram_heads;
+#ifdef VELORA_ENGINE_DEV_KEYS
+  std::unique_ptr<host::DevKeyProvider> dev_keys;
+  std::unique_ptr<host::ProtectedHeadProvider> protected_heads;
+  if (!trust_list_path.empty()) {
+    // Core dumps off before any key exists in this process (the content key and the decoded PCM must not reach a core file).
+    if (!host::disable_core_dumps()) {
+      std::fprintf(stderr, "engine-host: cannot disable core dumps (RLIMIT_CORE); refusing to hold content keys\n");
+      return 1;
+    }
+    struct rlimit core_rl;
+    ::getrlimit(RLIMIT_CORE, &core_rl);
+    std::printf("core_limit=%llu/%llu\n", (unsigned long long)core_rl.rlim_cur, (unsigned long long)core_rl.rlim_max);
+    // Every live content key holds one locked page and the dev provider's device key one more: check RLIMIT_MEMLOCK before the first key exists.
+    const std::size_t memlock = host::memlock_budget_bytes(), page = host::secure_page_bytes();
+    if (memlock < 4 * page) {
+      std::fprintf(stderr, "engine-host: RLIMIT_MEMLOCK is %zu bytes; protected libraries need about (instruments + 2) locked pages of %zu bytes (raise `ulimit -l`)\n", memlock, page);
+      return 1;
+    }
+    if (memlock < 64 * page) std::fprintf(stderr, "engine-host: warning: RLIMIT_MEMLOCK is %zu bytes (about %zu protected instruments at once)\n", memlock, memlock / page - 2);
+    velora::format::TrustedKeys trusted;
+    std::string kerr;
+    if (!host::load_trust_list_file(trust_list_path, trusted, kerr)) {
+      std::fprintf(stderr, "engine-host: %s\n", kerr.c_str());
+      return 1;
+    }
+    resolver.set_protected_trust(std::make_shared<const velora::format::TrustedKeys>(std::move(trusted)));
+    dev_keys = host::DevKeyProvider::from_file(dev_device_key, {}, kerr);
+    if (!dev_keys) {
+      std::fprintf(stderr, "engine-host: %s\n", kerr.c_str());
+      return 1;
+    }
+    protected_heads = std::make_unique<host::ProtectedHeadProvider>(host::make_posix_fs(), *dev_keys, &damage);
+    head_provider = protected_heads.get();
+    plane.set_damage_registry(&damage);
+    std::printf("protected libraries: on (dev key provider, device key id %02x%02x%02x%02x%02x%02x%02x%02x)\n", dev_keys->device_key_id()[0], dev_keys->device_key_id()[1],
+                dev_keys->device_key_id()[2], dev_keys->device_key_id()[3], dev_keys->device_key_id()[4], dev_keys->device_key_id()[5], dev_keys->device_key_id()[6],
+                dev_keys->device_key_id()[7]);
+  }
+#endif
   std::unique_ptr<host::SceneController> scenes;  // Story 4.4: ws.v1 RecallScene / NextScene / PreviousScene; destroyed before the plane
   std::unique_ptr<host::LiveSetLoader> loader;     // kept for the run: the switcher commits through it
   std::unique_ptr<host::LiveSetSwitcher> switcher; // Story 4.5: ws.v1 JumpToLiveSet / CancelLoad; destroyed before the loader and the plane
@@ -200,7 +276,7 @@ int main(int argc, char** argv) {
     lopt.is_rendering = [&audio_running] { return audio_running.load(); };
     scenes = std::make_unique<host::SceneController>(plane);
     lopt.scenes = scenes.get();
-    loader = std::make_unique<host::LiveSetLoader>(*renderer, plane, resolver, heads, &sample, lopt);
+    loader = std::make_unique<host::LiveSetLoader>(*renderer, plane, resolver, *head_provider, &sample, lopt);
     if (bootstrap) {
       // No Live Set to load: the flat FX reservation of the dev configuration (as without --live-set); the first jump replaces it seamlessly.
       core::VoiceArbiter::LiveSetConfig reservation;
@@ -340,7 +416,7 @@ int main(int argc, char** argv) {
     // The control tick: loading status at least once per second, commit of a finished load, the setlist position following jumps, and the edit session
     // (live values captured into the edits, the dirty flags).
     // Story 4.11: the Live Set that sounds is reported to the librarian (Recent) when it changes; the client never blocks this thread.
-    control.set_tick([sw, sc, ed, lc = library_client.get(), last = std::string()]() mutable {
+    control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string()]() mutable {
       if (lc && !sw->sounding_id().empty() && sw->sounding_id() != last) {
         last = sw->sounding_id();
         lc->report_active(last);
@@ -348,7 +424,8 @@ int main(int argc, char** argv) {
       const bool a = sw->tick();
       const bool b = sc ? sc->tick() : false;
       const bool c = ed ? ed->tick() : false;
-      return a || b || c;
+      const bool d = pl->take_content_changed();  // Story 6.5: an I/O edge thread reported a damaged block of a protected library: push State.content
+      return a || b || c || d;
     });
   }
   if (setlists) {
@@ -384,6 +461,26 @@ int main(int argc, char** argv) {
   }
   std::printf("running; play notes on a MIDI source. Press q + Enter or Ctrl-C to quit.\n");
 
+#ifdef VELORA_ENGINE_DEV_KEYS
+  // Story 6.5: the I/O edge thread of the protected libraries. It re-reads, hash-checks and decrypts the blocks of every resident protected instrument against the
+  // signed index (EdgeBlockReader::scrub) and hands any block that fails to the instrument's damage map (the voices fade to silence for it) and to the damage
+  // registry (State.content). The audio thread never takes part in it.
+  std::atomic<bool> scrub_stop{false};
+  std::thread scrub_thread;
+  if (protected_heads && scrub_interval_ms > 0) {
+    scrub_thread = std::thread([&] {
+      while (!scrub_stop.load(std::memory_order_acquire)) {
+        for (long waited = 0; waited < scrub_interval_ms && !scrub_stop.load(std::memory_order_acquire); waited += 20) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        for (const auto& inst : protected_heads->live_weak()) {  // weak: a scrub never keeps a generation (and its key) alive
+          if (scrub_stop.load(std::memory_order_acquire)) break;
+          host::EdgeBlockReader edge(inst);
+          const host::ScrubResult r = edge.scrub(&scrub_stop);
+          if (r.damaged != 0) std::fprintf(stderr, "engine-host: protected library: %llu damaged block(s) found; their voices are silent\n", (unsigned long long)r.damaged);
+        }
+      }
+    });
+  }
+#endif
   const auto t_start = std::chrono::steady_clock::now();
   auto last_scan = t_start;
   std::uint64_t last_notes = 0;
@@ -435,6 +532,10 @@ int main(int argc, char** argv) {
     if (duration_s > 0 && std::chrono::duration<double>(now - t_start).count() >= duration_s) break;
   }
 
+#ifdef VELORA_ENGINE_DEV_KEYS
+  scrub_stop.store(true, std::memory_order_release);
+  if (scrub_thread.joinable()) scrub_thread.join();
+#endif
   if (library_client) {
     if (performing) library_client->set_playing(false);  // the engine is leaving: Recent may be written now
     library_client->stop();                              // bounded attempt to deliver it

@@ -41,5 +41,8 @@ target_compile_definitions(content_pack_test PRIVATE
   CP_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}"
   VELORA_CP_COMMITTED_REGISTER="${CMAKE_CURRENT_SOURCE_DIR}/vendor-ids")
 add_dependencies(content_pack_test velora-content-pack velora-offline-render)
+if(VELORA_DEV_KEY_PROVIDER)  # Story 6.5: the renderer can play the pack's protected bundle directly (dev key provider flags)
+  target_compile_definitions(content_pack_test PRIVATE RENDER_HAS_DEV_KEYS=1)
+endif()
 add_test(NAME content_pack_test COMMAND content_pack_test)
 set_tests_properties(content_pack_test PROPERTIES TIMEOUT 600)
