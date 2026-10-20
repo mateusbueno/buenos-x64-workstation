@@ -54,6 +54,15 @@ target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::li
 # The generated protobuf sources are not ours to police for warnings.
 set_source_files_properties(${VELORA_PB_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 
+# Library API client (Story 4.11): a portable UDS client that tells the librarian service which Live Set became active and whether the engine is performing.
+# It needs only the generated Library API code (proto/), protobuf and threads: no engine/core, no formatlib.
+add_library(velora_library_client STATIC src/library_client.cpp)
+add_library(velora::library_client ALIAS velora_library_client)
+target_include_directories(velora_library_client PUBLIC include)
+target_link_libraries(velora_library_client PUBLIC velora_library_api Threads::Threads)
+target_compile_options(velora_library_client PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+
 # Story 5.5: the generated Category enum equals the formatlib header (ids and names).
 add_executable(category_pb_test tests/category_pb_test.cpp)
 target_link_libraries(category_pb_test PRIVATE velora_control)

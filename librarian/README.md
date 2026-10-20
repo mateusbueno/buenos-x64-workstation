@@ -151,3 +151,69 @@ Tests: `librarian_category_test` (tokenizer, table parse errors and embedded-equ
 Sonatina / Pianobook / PT-BR / ES / SF2 General MIDI names, each category at least once, 13 rows expected `none` with a precision gate that no `none` row may get a category,
 the three Flow 2 examples, precedence and tie rules, metadata scan, `import --category` spellings, `none` and unknown names refused with nothing written, SF2 preset-name
 suggestion, the report field and the CLI). The fixtures are added to by appending rows; an expectation is written from the instrument, never copied from the output.
+
+## Service, catalog and Library API (Story 4.11)
+
+`librarian-service` is the host process of the `librarian` (a systemd unit on the board, `systemd/velora-librarian.service`: delivered as a documented file only, not tested on the
+board; the Mac runs the binary directly). It owns the SQLite catalog and serves the **Library API** (`proto/library_api.proto`, package `ws.v1`) on a Unix domain socket.
+
+```
+build/librarian/librarian-service --data DIR --socket PATH     # DIR must exist; SIGTERM / SIGINT = orderly stop
+```
+
+Exit codes: 0 orderly stop, 1 could not start (another service holds the catalog, the catalog is damaged / foreign / newer than this build, the socket is taken by a live
+listener or is not a socket), 2 usage. Targets: `velora_librarian_service` (catalog + service, links only SQLite, protobuf and threads: not formatlib), `librarian-service`.
+SQLite is a build dependency: the system `libsqlite3` (macOS SDK or Homebrew; `libsqlite3-dev` in `tools/ci/docker/Dockerfile`); a missing one is a configure-time FATAL_ERROR with the
+install hint. It is public domain, recorded in `THIRD_PARTY_NOTICES.md` and `tools/ci/third_party_manifest.json` (`Public-Domain` is on the license allow-list).
+
+**Catalog** (`catalog.hpp`, `<data>/catalog.db`, `PRAGMA journal_mode=WAL`, `synchronous=FULL`, `PRAGMA user_version=1`). Only the tables of this story: `meta(key, value)` holding
+`schema_version` (1) and `next_seq`, `live_set_favorites(live_set_id PRIMARY KEY, added_seq)`, `live_set_recent(live_set_id PRIMARY KEY, last_played_seq)`. Ordering uses sequence
+numbers from the persisted `next_seq` counter, never wall-clock time (the unit has no RTC). The instrument/library tables are Story 5.6. `Catalog` is an RAII class with typed
+`CatalogStatus` results (no exception crosses the API), prepared statements, a busy timeout and one transaction per write (a committed write is fsynced through the WAL; a process
+killed mid-write leaves the previous committed state, recovered at the next open). Version policy: a `schema_version` newer than the build is refused (`kSchemaTooNew`) and left
+untouched; an older one is migrated forward after a `PRAGMA quick_check` (the only integrity check; version 1 is the only version, so the migration is a stub); a foreign file, a SQLite database that holds any object (table, view, index, trigger) but no catalog `meta`, or one with a newer schema is refused (`kNotACatalog` /
+`kCorrupt` / `kSchemaTooNew`) **before anything is written**: the file is inspected read-only (immutable, or on a private copy when a non-empty `-wal` exists), so a refused
+file stays byte-identical with no `-wal`/`-shm` created; the schema is created only in a file whose `sqlite_master` is entirely empty. A missing `next_seq` row is rebuilt above
+everything stored. Live Set ids are 1..64 bytes of `[A-Za-z0-9._-]` (UUIDs are the intended ids).
+
+**Single writer (AD-9).** Only `librarian` writes the catalog: `Catalog::open` takes an exclusive `flock` on `<data>/catalog.lock` for its lifetime; a second service or catalog on the
+same directory (same or another process) gets `kBusy`, and the service exits 1. The engine and the UI are clients; engine/UI never open `catalog.db`. The data directory
+`/data/catalog` on the board is owned by the librarian's service user (the systemd unit creates it).
+
+**Library API** (framing and closing rules of the engine's ControlServer: 4-byte big-endian length + protobuf, handshake first, a framing violation / wrong first message / unsupported
+version / late handshake closes the connection after the error reply, an unparsable frame or invalid command after the handshake gets an error reply and the connection stays; largest
+frame 262144 bytes). Handshake: `LibraryHello{version=1, features, client_name}` -> `LibraryHelloAck{version, features, catalog_schema_version}`.
+Commands: `AddLiveSetFavorite`, `RemoveLiveSetFavorite` (idempotent; answer `LibraryAck{changed}`), `GetFavoritesAndRecent` (answers `LibraryState`), `ReportLiveSetActive`,
+`LiveSetDeleted`, `Reconcile{existing_live_set_ids}`, `SetPlaying{playing}`, `FlushRecent` (answers `FlushReply{written}`), `LibrarySubscribe{enable}`. A subscriber gets the current
+`LibraryState` right away and then `FavoritesChanged{favorites}` / `RecentChanged{recent}` after every change ("the favorite set changes and is published to `ui`"). Errors are the closed
+`LibraryErrorCode` (`INVALID_ID`, `LIMIT_REACHED` at 2048 favorites (sized so a full list of 64-byte ids and Recent always fit one frame), `STORAGE_FAILED` with `details.reason`, and the framing codes); a refused command changes nothing. Concurrent
+clients are serialised on the single service thread.
+
+**Favorites** are explicit user commands: written immediately (one WAL transaction) and published. They list in the order they were added (oldest first; a re-added favorite goes last).
+
+**Recent** lists the last 20 Live Sets, most recent first, deduplicated. `ReportLiveSetActive` updates the in-RAM list at once and publishes `RecentChanged`. The write to SQLite
+(one transaction replacing the table) happens only at an *idle-safe moment*, defined by the `SetPlaying` flag the engine/UI feeds: while `playing` is true Recent is never written
+(`recent_unwritten` in `LibraryState` says so); it is written when `playing` becomes false, at once when a report arrives while not playing, on an explicit `FlushRecent`
+(the caller asserts the moment is safe, so it is honoured even while playing) and at orderly shutdown. A service killed with `kill -9` while playing loses the unwritten Recent
+(never the favorites). **Deletion:** `LiveSetDeleted{id}` and `Reconcile{ids that exist}` (reconcile covers every recent row, not only the 20 listed) remove the favorite row at once, remove the id from the RAM Recent and from SQLite with the same
+rule as any Recent write (deferred while playing; when idle both tables are cleaned in one transaction), and publish the change. Sending them is the engine's/UI's job (the engine-side wiring of
+deletion is out of scope of this story; `engine-host --library-socket` only reports the active Live Set and the performing state).
+
+Tests (no timing assertions; waits are bounded polls for an event): `librarian_catalog_test` (schema, version policy, favorites idempotence and order, Recent order / dedupe / cap 20,
+persistence across reopen, the lock in the same and another process, corrupt and foreign files, delete cascade, fault injection, crash recovery by fork + `_exit`/`SIGKILL` inside a
+write), `librarian_service_test` (a real UDS client: handshake and version mismatch, every message and every bad id, pushes, 8 concurrent clients, malformed / oversize / late frames,
+the no-write-while-playing test with an injected write counter and the SQLite files unchanged across 3600 simulated switches then exactly one write, deletion reconcile, single writer,
+stale sockets, kill of the service process mid-flush), `librarian_client_test` (the engine-side `LibraryClient`), `librarian_service_smoke` (the real binary, SIGTERM and SIGKILL,
+exit codes), `engine_host_library_smoke` (engine-host `--library-socket`, macOS).
+
+**Reconcile safety.** An empty `existing_live_set_ids` list while favorites or Recent exist is refused (`INVALID_COMMAND`, `details.reason=empty_reconcile`) unless the message sets
+`allow_empty`, so a failed or truncated listing cannot wipe the catalog. Long lists are sent in chunks: every chunk but the last sets `more`; the ids accumulate on the connection
+(at most 100000) and the final chunk (`more=false`) applies the union; a connection that closes first applies nothing; a bad id drops the accumulation.
+
+**Playing is a lease.** `SetPlaying(true)` is owned by the connection that sent it: when that connection closes (the engine/UI exited or crashed) `playing` becomes false and the
+pending Recent is written. `LibraryServiceOptions::playing_lease_ms` (default 0 = off) also ends it that long after the last `SetPlaying(true)` (tested on an injected clock). A peer
+that sends a command and then closes or half-closes still has its buffered commands applied and answered. A failed storage write answers `STORAGE_FAILED` with `details.reason`, leaves
+RAM equal to SQLite, keeps unwritten Recent marked `recent_unwritten`, and is retried at the next idle-safe moment.
+
+**Socket access.** Default mode 0600 (dev). `--socket-group NAME` (`LibraryServiceOptions::socket_group`) sets the socket's group and mode 0660; the systemd unit passes `velora`
+(its `/run/velora` directory is 0750, group velora). An unknown group refuses to start. The unit is untested on the board.

@@ -22,7 +22,8 @@ import subprocess
 import sys
 import tempfile
 
-ALLOWED = {"BSD-2-Clause", "BSD-3-Clause", "MIT", "Apache-2.0", "ISC", "Zlib", "CC0-1.0"}
+# "Public-Domain": a dedication with no conditions (SQLite, Story 4.11); allowed like CC0-1.0.
+ALLOWED = {"BSD-2-Clause", "BSD-3-Clause", "MIT", "Apache-2.0", "ISC", "Zlib", "CC0-1.0", "Public-Domain"}
 SKIP_TOP = {".git", "_bmad", "_bmad-output", "tools", "build"}  # exempt at the repository root only
 SKIP_ANY = {"tests"}  # test directories are exempt at any depth
 SFIZZ_REF = re.compile(r"sfizz", re.I)

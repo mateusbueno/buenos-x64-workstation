@@ -254,6 +254,16 @@ panel, Velora Studio) talk to it with `ws.v1` (`proto/ws_v1.proto`) over a Unix 
 - Requires `protoc` + libprotobuf (`brew install protobuf`; `protobuf-compiler libprotobuf-dev`). The library links Homebrew's
   abseil next to formatlib's vendored abseil only in the `engine-host` binary; the two use different inline namespaces.
 
+## Library API client (Story 4.11)
+
+`LibraryClient` (`velora/host/library_client.hpp`, target `velora_library_client`: the generated Library API code, protobuf and threads only) tells the `librarian` service which Live Set
+became active and whether the engine is performing, so the librarian can keep Recent (AD-9: only the librarian writes the catalog). `report_active(id)` and `set_playing(bool)` never
+block the caller: they push into a bounded queue (default 64; when full the OLDEST `report_active` is dropped and counted in `dropped()`, a `set_playing` only when nothing else is
+queued) and a worker thread connects to the service's Unix socket, handshakes, sends and discards the replies. When the service is absent or goes away the worker reconnects with
+exponential backoff (50 ms doubling to 2 s); queued messages wait; the latest `set_playing` value is re-sent first after every reconnect. `engine-host --library-socket PATH` wires it
+(default off, every existing smoke test is unchanged): the Live Set that sounds is reported from the control tick when it changes, and `set_playing(true)` follows MIDI notes, `false`
+after `--library-playing-idle-ms` (default 3000) without one, and on exit (`set_playing(false)` then a bounded flush in `stop()`); a hidden `--test-inject-note-after-ms N` counts as a note for the smoke test. The client also re-sends the last reported Live Set after a reconnect when no newer report is queued, and never evicts the item it is sending. Nothing else in `LiveSetSwitcher` / `EditSession` is touched.
+
 ## macOS only (`macos/`, built only when `APPLE`)
 
 - `CoreAudioLineIn` (Story 2.7, `ports::LineInSource`): optional capture of the default CoreAudio input device as 48 kHz stereo float into a lock-free ring that the engine drains once per block; mixed into the

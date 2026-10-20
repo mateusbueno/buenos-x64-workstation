@@ -26,6 +26,7 @@ Role: the single owner of parameter ids and of the `ws.v1` wire schema (Story 2.
 - `setlist.proto` -- the persisted setlists, setlist tags and default ASSIGN map (Story 4.6; package `velora.setlist.v1`, same conventions as `live_set.proto`: grows only by addition, N / N-1 readers, unknown fields preserved). Layout and rules: `engine/host/README.md` ("Setlists, setlist tags and Live Set stepping").
 - `category.proto` -- the 17 instrument categories plus the explicit `CATEGORY_NONE` sentinel (Story 5.5; package `velora.library.v1`; ids 1..17 stable, grow by addition only,
   none is never stored on an instrument). Hand maintained next to its C++ twin `formatlib/include/velora/format/category.hpp`; see `formatlib/README.md` ("Categories and locale catalog").
+- `library_api.proto` -- the Library API of the `librarian` service (Story 4.11; package `ws.v1`, same conventions as `ws_v1.proto`). Messages whose name exists in `ws_v1.proto` carry a `Library` prefix (`LibraryHello`, `LibraryHelloAck`, `LibraryError`, `LibrarySubscribe`, `LibraryState`, `LibraryAck`) so both files link into one program; the envelope is `LibraryClientMessage` / `LibraryServerMessage`. Built as `velora_library_api` (protobuf only). Semantics: `librarian/README.md`.
 - `tests/test_gen_params.py` -- ctest `params_generator_tests`: runs the generator on bad definitions and checks determinism.
 
 ## Parameter classes

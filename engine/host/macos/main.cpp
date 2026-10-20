@@ -33,6 +33,7 @@
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/live_set_loader.hpp"
+#include "velora/host/library_client.hpp"
 #include "velora/host/live_set_switcher.hpp"
 #include "velora/host/midi_ingest.hpp"
 #include "velora/host/render_driver.hpp"
@@ -52,7 +53,8 @@ int main(int argc, char** argv) {
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false, no_audio = false;
-  std::string live_set_path, library_root, live_set_dir, data_dir;
+  std::string live_set_path, library_root, live_set_dir, data_dir, library_socket;
+  long library_idle_ms = 3000, inject_note_after_ms = -1;  // --library-playing-idle-ms; hidden --test-inject-note-after-ms (smoke tests: a note without MIDI)
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--duration") && i + 1 < argc) {
       const char* arg = argv[++i];
@@ -78,6 +80,16 @@ int main(int argc, char** argv) {
       data_dir = argv[++i];
     } else if (!std::strcmp(argv[i], "--library-root") && i + 1 < argc) {
       library_root = argv[++i];
+    } else if (!std::strcmp(argv[i], "--library-playing-idle-ms") && i + 1 < argc) {
+      library_idle_ms = std::strtol(argv[++i], nullptr, 10);
+      if (library_idle_ms <= 0) {
+        std::fprintf(stderr, "engine-host: --library-playing-idle-ms needs a positive number\n");
+        return 2;
+      }
+    } else if (!std::strcmp(argv[i], "--test-inject-note-after-ms") && i + 1 < argc) {
+      inject_note_after_ms = std::strtol(argv[++i], nullptr, 10);  // test only: counts as a note this many ms after start
+    } else if (!std::strcmp(argv[i], "--library-socket") && i + 1 < argc) {
+      library_socket = argv[++i];  // Story 4.11: tell the librarian service which Live Set became active and when the engine is performing
     } else {
       std::fprintf(stderr,
                    "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in] [--no-audio (dev/test only)]\n"
@@ -85,7 +97,9 @@ int main(int argc, char** argv) {
                    "                   [--live-set-dir DIR --library-root DIR]   (the Live Sets of a directory (<id>.liveset) that ws.v1 JumpToLiveSet can switch to,\n"
                    "                                                              seamlessly, loading in the background; without --live-set the first by name loads at start)\n"
                    "                   [--data-dir DIR --library-root DIR]   (the persisted data root: DIR/live_sets/ holds the Live Sets, DIR/setlists/ the setlists, tags and the\n"
-                   "                                                          default ASSIGN map; ws.v1 setlist commands and LIVE SET stepping; replaces --live-set-dir)\n");
+                   "                                                          default ASSIGN map; ws.v1 setlist commands and LIVE SET stepping; replaces --live-set-dir)\n"
+                   "                   [--library-socket PATH [--library-playing-idle-ms N]]   (report the active Live Set and the performing state to the librarian service's Library API;\n"
+                   "                                                                           performing = a note within the last N ms, default 3000; default off)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
@@ -309,6 +323,15 @@ int main(int argc, char** argv) {
                 midi.connected_sources(),
                 midi.connected_sources() ? "" : " (none yet; new sources are picked up automatically)");
   }
+  // Story 4.11 (optional, default off): the thin Library API client. Reconnects with backoff when the librarian service is absent.
+  std::unique_ptr<host::LibraryClient> library_client;
+  if (!library_socket.empty()) {
+    host::LibraryClientOptions lo;
+    lo.socket_path = library_socket;
+    library_client = std::make_unique<host::LibraryClient>(lo);
+    library_client->start();
+    std::printf("library: Library API client on %s (reconnects when the librarian service is down)\n", library_socket.c_str());
+  }
   host::ControlServer control(plane, socket_path);
   if (switcher) {
     host::LiveSetSwitcher* sw = switcher.get();
@@ -316,7 +339,12 @@ int main(int argc, char** argv) {
     host::EditSession* ed = edits.get();
     // The control tick: loading status at least once per second, commit of a finished load, the setlist position following jumps, and the edit session
     // (live values captured into the edits, the dirty flags).
-    control.set_tick([sw, sc, ed] {
+    // Story 4.11: the Live Set that sounds is reported to the librarian (Recent) when it changes; the client never blocks this thread.
+    control.set_tick([sw, sc, ed, lc = library_client.get(), last = std::string()]() mutable {
+      if (lc && !sw->sounding_id().empty() && sw->sounding_id() != last) {
+        last = sw->sounding_id();
+        lc->report_active(last);
+      }
       const bool a = sw->tick();
       const bool b = sc ? sc->tick() : false;
       const bool c = ed ? ed->tick() : false;
@@ -358,6 +386,9 @@ int main(int argc, char** argv) {
 
   const auto t_start = std::chrono::steady_clock::now();
   auto last_scan = t_start;
+  std::uint64_t last_notes = 0;
+  auto last_note_at = t_start;
+  bool performing = false, injected = false;
   bool stdin_open = true;
   while (!g_quit.load()) {
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, false);
@@ -382,9 +413,32 @@ int main(int argc, char** argv) {
       const std::size_t added = midi.rescan();
       if (added) std::printf("midi: %zu new source(s) connected\n", added);
     }
+    if (library_client) {
+      // "Performing" = a note arrived within the last library_idle_ms; the librarian writes Recent only while this is false.
+      const std::uint64_t notes = ingest.counters().notes.load();
+      bool note = notes != last_notes;
+      last_notes = notes;
+      if (inject_note_after_ms >= 0 && !injected && now - t_start >= std::chrono::milliseconds(inject_note_after_ms)) {
+        injected = note = true;
+      }
+      if (note) {
+        last_note_at = now;
+        if (!performing) {
+          performing = true;
+          library_client->set_playing(true);
+        }
+      } else if (performing && now - last_note_at > std::chrono::milliseconds(library_idle_ms)) {
+        performing = false;
+        library_client->set_playing(false);
+      }
+    }
     if (duration_s > 0 && std::chrono::duration<double>(now - t_start).count() >= duration_s) break;
   }
 
+  if (library_client) {
+    if (performing) library_client->set_playing(false);  // the engine is leaving: Recent may be written now
+    library_client->stop();                              // bounded attempt to deliver it
+  }
   audio.stop();
   renderer->set_line_in(nullptr);
   line_in.stop();

@@ -10,7 +10,7 @@ target_link_libraries(velora_host_macos PUBLIC velora_host
   ${CORE_AUDIO} ${AUDIO_TOOLBOX} ${CORE_MIDI} ${CORE_FOUNDATION})
 
 add_executable(engine-host main.cpp)
-target_link_libraries(engine-host PRIVATE velora_host_macos velora_control)
+target_link_libraries(engine-host PRIVATE velora_host_macos velora_control velora_library_client)
 target_compile_definitions(engine-host PRIVATE VELORA_DEV_CONFIG_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../dev/engine-dev.json")
 
 add_executable(coremidi_virtual_test coremidi_virtual_test.cpp)
@@ -41,6 +41,13 @@ target_link_libraries(engine_host_setlist_smoke PRIVATE velora_control)
 add_dependencies(engine_host_setlist_smoke engine-host)
 add_test(NAME engine_host_setlist_smoke COMMAND engine_host_setlist_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/switch ${_ehs_dir}/root b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71)
 set_tests_properties(engine_host_setlist_smoke PROPERTIES TIMEOUT 120)
+
+# engine-host librarian wiring smoke test (Story 4.11): `--library-socket` reports the sounding Live Set to the real librarian-service, which comes up after the engine.
+add_executable(engine_host_library_smoke engine_host_library_smoke.cpp)
+target_link_libraries(engine_host_library_smoke PRIVATE velora_control velora_library_api)
+add_dependencies(engine_host_library_smoke engine-host librarian-service)
+add_test(NAME engine_host_library_smoke COMMAND engine_host_library_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:librarian-service> ${_ehs_dir}/switch ${_ehs_dir}/root b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71)
+set_tests_properties(engine_host_library_smoke PROPERTIES TIMEOUT 120)
 
 # engine-host edit smoke test (Story 4.9): ws.v1 edits, the dirty flag, Write (the fence is acknowledged by the blocks engine-host renders while it waits),
 # no autosave across a restart, Save as new. Runs engine-host --no-audio.

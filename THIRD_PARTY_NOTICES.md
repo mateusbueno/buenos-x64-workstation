@@ -335,6 +335,19 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+## 6. SQLite 3 (libsqlite3) — Public Domain
+
+Build and link dependency of `librarian` (the catalog `catalog.db`, Story 4.11), installed from the system package (the macOS SDK or Homebrew
+`sqlite`; Debian/Ubuntu `libsqlite3-dev` + `libsqlite3-0`); not vendored in this repository. `engine/core` does not use it.
+
+The author disclaimed copyright to the SQLite source code. In place of a legal notice, SQLite carries this blessing:
+
+    May you do good and not evil.
+    May you find forgiveness for yourself and forgive others.
+    May you share freely, never taking more than you give.
+
+See https://www.sqlite.org/copyright.html.
+
 ## Not shipped: test oracle
 
 The sfizz renderer (`sfizz_render`, sfizz 1.2.3, commit 4e70dc0b) used by the null tests (Story 1.15) is neither vendored in this

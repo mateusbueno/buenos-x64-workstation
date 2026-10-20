@@ -1,0 +1,120 @@
+// Library API (Story 4.11, AR25 partial): the ws.v1 protocol between the `librarian` service and its clients (ui, engine-host, Velora Studio)
+// over a Unix domain socket. Same conventions as ws_v1.proto: package ws.v1, PascalCase messages, snake_case fields, the schema only grows by
+// addition and numbers are never reused, framing = 4-byte big-endian length + protobuf (LibraryClientMessage from the client,
+// LibraryServerMessage from the server), the first message on every connection is the handshake (version + features), errors carry a code from
+// a closed enum. Messages whose natural name already exists in ws_v1.proto (Hello, HelloAck, Error, Subscribe, State, Ack) carry a Library
+// prefix so both files can be linked into one program. The largest frame is 262144 bytes (long Reconcile lists are chunked).
+syntax = "proto3";
+
+package ws.v1;
+
+enum LibraryProtocolVersion {
+  LIBRARY_PROTOCOL_VERSION_UNSPECIFIED = 0;
+  LIBRARY_PROTOCOL_VERSION_1 = 1;
+}
+
+enum LibraryErrorCode {
+  LIBRARY_ERROR_CODE_UNSPECIFIED = 0;
+  LIBRARY_ERROR_CODE_UNSUPPORTED_VERSION = 1;  // the handshake named a version the server does not speak (connection closes)
+  LIBRARY_ERROR_CODE_HANDSHAKE_REQUIRED = 2;   // first message was not LibraryHello (connection closes)
+  LIBRARY_ERROR_CODE_MALFORMED_MESSAGE = 3;    // the frame did not parse as a message
+  LIBRARY_ERROR_CODE_FRAME_TOO_LARGE = 4;      // length prefix above the limit (framing violation, connection closes)
+  LIBRARY_ERROR_CODE_INVALID_COMMAND = 5;      // no command set, or a command that is not valid here
+  LIBRARY_ERROR_CODE_INVALID_ID = 6;           // a Live Set id that is empty, longer than 64 bytes or holds characters outside [A-Za-z0-9._-]
+  LIBRARY_ERROR_CODE_LIMIT_REACHED = 7;        // too many favorites (details: limit)
+  LIBRARY_ERROR_CODE_STORAGE_FAILED = 8;       // the catalog could not be written (details: reason); nothing changed
+  LIBRARY_ERROR_CODE_INTERNAL = 9;
+  // INVALID_COMMAND with details.reason=empty_reconcile: a Reconcile whose list is empty while the catalog is not (see Reconcile).
+}
+
+message LibraryError {
+  LibraryErrorCode code = 1;
+  string message = 2;                // human-readable, English, not for matching
+  map<string, string> details = 3;
+}
+
+// --- handshake ------------------------------------------------------------------------------------
+message LibraryHello {
+  uint32 version = 1;                // = LIBRARY_PROTOCOL_VERSION_1
+  repeated string features = 2;
+  string client_name = 3;
+}
+
+message LibraryHelloAck {
+  uint32 version = 1;
+  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1"
+  uint32 catalog_schema_version = 3;
+}
+
+// --- commands -------------------------------------------------------------------------------------
+message LibrarySubscribe {           // after this the server pushes FavoritesChanged / RecentChanged (and the current LibraryState right away)
+  bool enable = 1;
+}
+message AddLiveSetFavorite { string live_set_id = 1; }
+message RemoveLiveSetFavorite { string live_set_id = 1; }
+message GetFavoritesAndRecent {}
+message ReportLiveSetActive { string live_set_id = 1; }  // a Live Set became active; recorded in Recent (RAM now, SQLite at an idle-safe moment)
+message LiveSetDeleted { string live_set_id = 1; }       // reconcile trigger: removes its favorite and recent rows
+// Removes the favorite and recent rows of every Live Set not listed. Safety: an EMPTY list (after all chunks) while favorites or Recent exist is refused
+// (INVALID_COMMAND, details reason=empty_reconcile) unless allow_empty is set, so a truncated or failed listing cannot wipe the catalog. A list too long for one
+// frame is sent in chunks: every chunk but the last sets more=true; the ids accumulate on the connection (at most 100000) and the union is applied by the final
+// chunk (more=false). A connection that closes before the final chunk applies nothing.
+message Reconcile {
+  repeated string existing_live_set_ids = 1;
+  bool allow_empty = 2;
+  bool more = 3;
+}
+message SetPlaying { bool playing = 1; }                 // the engine/ui says it is performing: Recent is not written while true
+message FlushRecent {}                                   // an explicit safe-flush: writes Recent now if it has unwritten changes
+
+// --- replies and pushes ---------------------------------------------------------------------------
+message LibraryAck {
+  bool changed = 1;                  // the command changed something (an idempotent add/remove that found nothing to do answers false)
+}
+
+message LibraryState {
+  repeated string favorites = 1;     // in the order they were added (oldest first)
+  repeated string recent = 2;        // most recent first, at most 20
+  uint32 catalog_schema_version = 3;
+  bool playing = 4;
+  bool recent_unwritten = 5;         // Recent holds changes not yet written to SQLite
+  uint64 recent_writes = 6;          // transactions that wrote Recent since the service started
+  uint64 favorite_writes = 7;        // transactions that wrote favorites
+}
+
+message FavoritesChanged { repeated string favorites = 1; }
+message RecentChanged { repeated string recent = 1; }
+
+message FlushReply {
+  bool written = 1;                  // a write happened (false: nothing was pending)
+  uint64 recent_writes = 2;
+}
+
+message LibraryClientMessage {
+  uint64 request_id = 1;
+  oneof body {
+    LibraryHello hello = 2;
+    LibrarySubscribe subscribe = 3;
+    AddLiveSetFavorite add_favorite = 4;
+    RemoveLiveSetFavorite remove_favorite = 5;
+    GetFavoritesAndRecent get_favorites_and_recent = 6;
+    ReportLiveSetActive report_active = 7;
+    LiveSetDeleted live_set_deleted = 8;
+    Reconcile reconcile = 9;
+    SetPlaying set_playing = 10;
+    FlushRecent flush_recent = 11;
+  }
+}
+
+message LibraryServerMessage {
+  uint64 request_id = 1;             // echoes the request; 0 for pushes
+  oneof body {
+    LibraryHelloAck hello_ack = 2;
+    LibraryError error = 3;
+    LibraryAck ack = 4;
+    LibraryState state = 5;
+    FavoritesChanged favorites_changed = 6;
+    RecentChanged recent_changed = 7;
+    FlushReply flush_reply = 8;
+  }
+}

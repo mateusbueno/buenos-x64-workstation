@@ -35,6 +35,13 @@
       "license": "BSD-3-Clause",
       "notice_marker": "## 5. Protocol Buffers",
       "build_dependency": true
+    },
+    {
+      "name": "sqlite",
+      "version": "3",
+      "license": "Public-Domain",
+      "notice_marker": "## 6. SQLite",
+      "build_dependency": true
     }
   ]
 }

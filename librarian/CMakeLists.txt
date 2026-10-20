@@ -73,3 +73,53 @@ target_compile_definitions(librarian_category_test PRIVATE LIBRARIAN_EXE="$<TARG
   LIBRARIAN_FIXTURES_TSV="${CMAKE_CURRENT_SOURCE_DIR}/tests/category_fixtures.tsv")
 add_dependencies(librarian_category_test librarian)
 add_test(NAME librarian_category_test COMMAND librarian_category_test)
+
+# --- Story 4.11: the librarian service (catalog + Library API) -----------------------------------------------------------------
+# SQLite is a build dependency: the system libsqlite3 (macOS SDK / Homebrew; libsqlite3-dev on Debian/Ubuntu). It is public domain; see THIRD_PARTY_NOTICES.md.
+# The service library links only SQLite, protobuf (through velora_library_api) and threads: not formatlib, whose vendored abseil must not meet Homebrew's.
+find_package(Threads REQUIRED)
+find_package(SQLite3)
+if(NOT SQLite3_FOUND)
+  message(FATAL_ERROR "librarian: SQLite3 (libsqlite3 with headers) is required for the catalog. Install it: macOS ships it in the SDK (or `brew install sqlite`); Debian/Ubuntu: `apt-get install libsqlite3-dev`.")
+endif()
+# CMake >= 4.2 names the imported target SQLite3::SQLite3 and deprecates SQLite::SQLite3 (the only name on older CMake, e.g. the Ubuntu 24.04 image).
+if(TARGET SQLite3::SQLite3)
+  set(VELORA_SQLITE_TARGET SQLite3::SQLite3)
+else()
+  set(VELORA_SQLITE_TARGET SQLite::SQLite3)
+endif()
+message(STATUS "librarian: SQLite ${SQLite3_VERSION}")
+
+add_library(velora_librarian_service STATIC src/catalog.cpp src/library_service.cpp)
+add_library(velora::librarian_service ALIAS velora_librarian_service)
+target_include_directories(velora_librarian_service PUBLIC include)
+target_link_libraries(velora_librarian_service PUBLIC velora_library_api ${VELORA_SQLITE_TARGET} Threads::Threads)
+target_compile_options(velora_librarian_service PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+
+add_executable(librarian-service src/service_main.cpp)
+target_link_libraries(librarian-service PRIVATE velora_librarian_service)
+
+# Catalog unit tests: schema, version policy, favorites, Recent, persistence, single writer, bad files, delete cascade, crash recovery (fork + kill).
+add_executable(librarian_catalog_test tests/catalog_test.cpp)
+target_link_libraries(librarian_catalog_test PRIVATE velora_librarian_service)
+add_test(NAME librarian_catalog_test COMMAND librarian_catalog_test)
+set_tests_properties(librarian_catalog_test PROPERTIES TIMEOUT 120)
+
+# Service tests over a real UDS client, the idle-safe Recent write rule, crash injection in the service, and the LibraryClient.
+add_executable(librarian_service_test tests/library_service_test.cpp)
+target_link_libraries(librarian_service_test PRIVATE velora_librarian_service)
+add_test(NAME librarian_service_test COMMAND librarian_service_test)
+set_tests_properties(librarian_service_test PROPERTIES TIMEOUT 180)
+
+add_executable(librarian_client_test tests/library_client_test.cpp)
+target_link_libraries(librarian_client_test PRIVATE velora_librarian_service velora_library_client)
+add_test(NAME librarian_client_test COMMAND librarian_client_test)
+set_tests_properties(librarian_client_test PROPERTIES TIMEOUT 180)
+
+# Smoke test of the real binary (like the engine-host smoke tests; no audio needed).
+add_executable(librarian_service_smoke tests/service_smoke.cpp)
+target_link_libraries(librarian_service_smoke PRIVATE velora_library_api Threads::Threads)
+add_dependencies(librarian_service_smoke librarian-service)
+add_test(NAME librarian_service_smoke COMMAND librarian_service_smoke $<TARGET_FILE:librarian-service>)
+set_tests_properties(librarian_service_smoke PROPERTIES TIMEOUT 120)
