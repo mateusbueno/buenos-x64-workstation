@@ -24,6 +24,7 @@
 // `none`, `detail` names the Status. `failing_path` is empty unless the reason is damaged.
 // Nothing of a skipped file is published. All strings are valid UTF-8 (invalid bytes become U+FFFD).
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,11 @@ struct BatchOptions {
   std::string base_dir;             // as ImportOptions::base_dir (default: each SFZ's own directory)
   std::string category;
   FaultInjection fault;
+  // Story 5.8: as ImportOptions (0 = the default). A file that ends with Status::kDriveRemoved stops the batch: the files after it are not attempted
+  // (the drive is gone); it is reported as `failed` with the detail "drive removed".
+  std::uint32_t checkpoint_timbres = 0;
+  std::uint64_t checkpoint_bytes = 0;
+  std::function<bool()> source_gone;
 };
 
 struct FileReport {

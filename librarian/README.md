@@ -246,7 +246,7 @@ to import (each its own library, Story 5.1), each needs a category 1..17; an SF2
 key. The reply `ImportAccepted{job_id, item_count, bytes_total, queue_position}` is synchronous; `ImportProgress` events (job id, `event_seq` growing by one, state
 QUEUED/RUNNING/PUBLISHED/FAILED/CANCELLED, counters, `current_item`, bytes, and on the event that finishes an item an `ImportItemResult` with status imported/unchanged/skipped/failed/cancelled,
 the Story 5.1 reason `unsupported_features`/`damaged`, offenders `file:line`, `failing_path`, messages) go to the requesting connection and to every `LibrarySubscribe` subscriber.
-The last event of a job is terminal: PUBLISHED = at least one item reached the catalog (others may be skipped), FAILED = none did (**an all-skipped or all-failed job ends FAILED**), CANCELLED. A request holds at most 1000 items (the whole request is validated on the service thread, so a UI splits a bigger import), and every string that comes from the file system in an event or list reply is made valid UTF-8 (bad bytes become U+FFFD) and bounded; an item result keeps at most 100 offenders and 100 messages of at most 400 bytes each (the rest is summarised as `... N more`), so a progress frame stays far below the 262144 byte limit. `ListLibraries` and
+The last event of a job is terminal: PUBLISHED = at least one item reached the catalog (others may be skipped), FAILED = none did (**an all-skipped or all-failed job ends FAILED**), CANCELLED, DRIVE_REMOVED (Story 5.8: the source disappeared; see the last section). A request holds at most 1000 items (the whole request is validated on the service thread, so a UI splits a bigger import), and every string that comes from the file system in an event or list reply is made valid UTF-8 (bad bytes become U+FFFD) and bounded; an item result keeps at most 100 offenders and 100 messages of at most 400 bytes each (the rest is summarised as `... N more`), so a progress frame stays far below the 262144 byte limit. `ListLibraries` and
 `ListInstruments{library_id}` page (`offset`, `limit`, `total`, `more`; `ListInstruments` is ordered by `instrument_key`; a reply is also cut at `reply_budget_bytes`, 200000 by default, always with at least one entry, and then `more` is set: ask again from offset + size), `CancelImport{job_id}`, `ImportStatusRequest{job_id}` (latest event). **Refusals happen before anything is
 written or queued, as typed errors:** `CATEGORY_REQUIRED` (no items, or a category that is missing, `none` or unknown; `category` is an `optional` field so presence is known: `details.reason` is `missing` when it is not set, `none` when it is set to 0, `unknown` for an id above 17), `INVALID_SOURCE` (missing or unreadable
 source or item, not .sfz/.sf2, item outside the source, an item twice), `QUEUE_FULL` (more than `max_queued_jobs` = 16 waiting), `UNKNOWN_JOB`, `UNKNOWN_LIBRARY`. An override whose instrument key is not in the file is not imported: that item fails with `unknown_instrument_key` before anything is written. A re-import of unchanged
@@ -269,8 +269,8 @@ CLI imports keep their exact old bytes.
 `.current.tmp.*` links in every library directory; (2) lists every library directory whose `current` names an existing bundle; (3) adds or refreshes the catalog row of each from the bundle alone (after `verify_all`;
 a bundle that fails is not cataloged) and removes the rows of libraries with no usable `current`, so the catalog and `<data>/lib` agree and no partial library is listed. A bundle without `catalog.meta` (Epic 1
 demo bundles, CLI imports) is listed with the instrument names of its manifest and the category of its legacy `category` file (`read_category_file`); one with no valid category is **not cataloged**
-(reported in `ReconcileReport::skipped`, left on disk). The pass is idempotent and crash safe (a kill inside it just repeats it). It never deletes a bundle directory (non-`current` bundles are the engine's
-leases, Story 5.8). **Only a definite absence removes a row** (`ENOENT`, a `current` that is not a link or is dangling): any other error while examining `lib/` or resolving a `current` (EACCES, EIO...) is recorded in
+(reported in `ReconcileReport::skipped`, left on disk). The pass is idempotent and crash safe (a kill inside it just repeats it). It never deletes a bundle directory except non-`current` ones that still carry the Story 5.8 checkpoint marker (non-`current` bundles are otherwise the engine's
+leases). **Only a definite absence removes a row** (`ENOENT`, a `current` that is not a link or is dangling): any other error while examining `lib/` or resolving a `current` (EACCES, EIO...) is recorded in
 `ReconcileReport::errors` and the whole pass removes no row; a bundle that cannot be opened or whose `catalog.meta` is unreadable, oversized, malformed or from a newer format keeps its existing row (the legacy `category`
 file is NOT used as a fallback then, it would rewrite the categories) and is reported in `skipped`; the index checks the manifest's sample ranges before using them. `rebuild_libraries` drops every library row first (tested: the result equals what the service wrote).
 
@@ -314,7 +314,7 @@ requester disconnecting, or by the service stopping). The scanner itself is `pre
   path) and the catalog must hold that library with that `instrument_key`. The default `action` of a row is IMPORT for `ready`/`needs_category` and SKIP for everything else.
 - **Import again.** `ImportItem.action` (additive): DEFAULT (0) imports exactly as in 5.6; IMPORT is the explicit "Import again" on an `already imported` row; SKIP leaves the item out
   (no category required, no space counted, `ImportAccepted.skipped_count`); a request whose items are all SKIP is `INVALID_COMMAND` `details.reason=nothing_to_import`. Re-importing an
-  unchanged source ends `unchanged`; replacing a changed timbre in place is Story 5.8. The action is per file: an SF2 is one item, so all its preset rows share one action.
+  unchanged source ends `unchanged`; a changed source is replaced in place by a new bundle (Story 5.8, below). The action is per file: an SF2 is one item, so all its preset rows share one action.
 - **Headers only.** An SFZ is parsed as text (formatlib parser) and each sample is examined through a RIFF chunk walk with `pread` (format chunk, the data chunk's declared size against
   the file size); an SF2 is parsed over a counting byte source, which reads the `pdta` tables and the referenced sample headers but not the sample words. `PreflightDone.bytes_read` counts
   what the scan read; the test reads 1.4 KB for an SFZ whose WAV holds 64 MiB (sparse) plus an SF2.
@@ -345,3 +345,91 @@ and the exact boundary, symlink escapes, truncation cap, headers-only byte count
 - *Remaining service-thread work.* Finishing a scan reads the whole catalog once (`list_libraries` with instruments: bounded by the size of the catalog) and then does set lookups per row; no file is stat'ed there (the worker captured size and mtime). A scan holds at most 50000 rows and the service keeps the newest 3 results.
 - *Names.* A file whose name is not valid UTF-8 is listed with the bad bytes shown as U+FFFD; that sanitised path cannot be opened, so such a file cannot be imported through the API (rename it). A link to a file inside the source is an alias and is not listed (the file is, once, under its own name); links leaving the source are skipped; a sample link leaving the source makes its SFZ `skipped_damaged` in the scan although the importer itself would follow it (the one deliberate divergence from the importer, asserted in the parity table of the tests). FIFOs and devices are never read (opened non-blocking and refused unless regular).
 - *Limits.* At most 4 scans wait for the worker, at most 2 per connection (`QUEUE_FULL` `details.reason=per_client`). `detail` of a skipped row never quotes a file outside the source (only that one has a problem). `ImportItem.action` outside DEFAULT/IMPORT/SKIP is `INVALID_COMMAND` `details.reason=unknown_action`.
+
+## Checkpoints, drive removal and Import again (Story 5.8)
+
+A long import must survive a pulled drive and a power cut: what finished stays, the timbre in progress is discarded whole, and no library is ever half-written.
+A **timbre** is the unit: an SF2 preset, or an SFZ file (one file = one library = one timbre, Story 5.1; it is published as soon as it is finished, so the interval
+below changes nothing for SFZ files).
+
+**Checkpoints (an SF2 import).** While a SoundFont is converted preset by preset, every `checkpoint_timbres` finished timbres (default 10) or `checkpoint_bytes` of decoded PCM
+(default 20 GiB), whichever comes first, the timbres finished so far are published as a NEW immutable bundle of the same library with the whole Story 1.13 protocol (stage, bit-exact
+verification, fsync, rename into `<library_id>/<bundle_id>`, atomic flip of `current`); the last bundle, with every timbre, is published at the end of the file (no extra checkpoint
+when the last timbre ends the file). Every checkpoint bundle holds the first k timbres of the file, bit for bit what the final bundle holds for them (checked at publish against the previous
+checkpoint), has its own `catalog.meta` and is never modified. **A superseded checkpoint is deleted** as soon as the next bundle of the run is current (and the catalog row follows): the engine's lease on a bundle is an open file descriptor, which survives the unlink, so a reader that already resolved it keeps reading it; only a resolver call that races the flip can miss it and retries. Every bundle of a first-time SF2 import carries a `checkpoint` marker file (inside the staging directory, part of the atomic publish) that is removed once the last bundle of the run is current; the startup reconcile deletes every non-current bundle that still carries it (a superseded checkpoint or an unflipped publish that a kill left) and clears the marker of a current one. Bundles without the marker (final bundles, SFZ, Import again) are never pruned: they are the leases of earlier imports. The one thing a kill can still leave behind is the complete, unmarked bundle of a library that already had a `current` (Import again killed between rename and flip): it is verified, harmless and kept like any older bundle. The service writes the catalog rows of a checkpoint
+(`ImportProgress.checkpoints` counts them, the event has no `item`) before the next timbre is converted. Configuration: `LibraryServiceOptions::{checkpoint_timbres, checkpoint_bytes}`,
+`librarian-service --checkpoint-timbres N --checkpoint-bytes N`, `librarian import ... --checkpoint-timbres N --checkpoint-bytes N` (whole numbers of at least 1; tests use 1..3). The byte
+figure of a timbre is its decoded PCM size (`checkpoint_size_fn` injects sizes in tests).
+
+*A library that already has a `current` bundle is never checkpointed* (Import again, or the partial bundle a crashed run left): its old bundle stays current until the whole new
+bundle is verified, so a reimport can never shrink a library that was complete. **The way back after a pulled drive** therefore is: the library holds the finished timbres (the preflight lists them `already imported`, default action Skip, the others `ready`); "Import again" of the file converts it whole and publishes the complete bundle in one step (no checkpoints on the way: a second removal during it publishes nothing and the partial library stays as it was). `librarian_checkpoint_test` runs exactly this sequence (removal, a second removal on the retry, preflight, Import again) and checks the result equals a clean import.
+
+**Space.** Checkpoints do not raise the Story 5.7 requirement: the peak is the current checkpoint (at most P, the decoded size of the timbres so far) plus the next one being staged (at most P), then the old one is deleted; `required = 2 x P + 256 MiB` already covers that, and the reservation of the job is held for its whole life. The rewrite cost (every checkpoint writes the bundle again) is time and flash wear, not space.
+
+*Hard links: not possible with this bundle format, and not used.* The story suggests hard-linking the verified sample data of the previous bundle into the new directory. A bundle is one
+file (`header | manifest | index | blocks`, see `formatlib/README.md`); a bigger bundle has a different manifest and index in front of its blocks, so it cannot share bytes with a smaller
+one. Instead the `BundleWriter` keeps the verified encoded blocks of the finished timbres in memory (the import already holds the whole bundle in memory), so a checkpoint re-reads
+nothing from the source and re-encodes nothing, and writes the file again; the cost is writing the bundle once per checkpoint (O(n^2 / interval) bytes). The consequence: no
+hard-link-or-copy fallback exists to test. Changing that needs a format change (a block store separate from the manifest), which is out of this story.
+
+**Drive removal.** The job ends with the new terminal state `IMPORT_STATE_DRIVE_REMOVED` (the story's `drive_removed`) when the source disappears at ANY point of an item. Detection, in order of strength:
+the worker's built-in probe (the job's source folder or file can no longer be `stat`ed with ENOENT/ENOTDIR/ENXIO/ENODEV/EIO/ESTALE, or sits on another device than when the job started) and the explicit signal
+`LibraryServiceOptions::source_gone(source)` (the board's unmount event; tests) are trusted and polled before each timbre, after each sample read and whenever a parse, read or verification fails. An **I/O error**
+(`kIo` of an SF2 sample read, an SF2 parse or verification read, an SFZ sample load) is only *suspect*: it is confirmed by a stronger probe, once (list the source folder, read one byte of the source file again, and
+the file system must answer EIO/ENXIO/ENODEV/ESTALE/ENOTCONN, or the injected probe says gone). Confirmed: drive removal. Not confirmed (a bad file on a drive that still answers): that item fails
+(`Status::kIo`, item FAILED; an SFZ sample stays `damaged`) and the job goes on with the next item. A **short read** (`kTruncated`) is damaged data, never removal, unless the probe says the source is gone.
+Then: the timbre in progress is dropped whole from the writer (`BundleWriter::discard_last_instrument`) and nothing of it reaches staging; the timbres finished so far are published as the last bundle (a first-time
+import) and cataloged; the rest of the job is not started: each item after it gets a result of its own (`SKIPPED`, reason `IMPORT_REASON_DRIVE_REMOVED`, counted in `items_skipped` and `items_done`); earlier
+libraries are untouched (their bundles and rows are never rewritten). The final event carries the counts: `items_total`/`items_done`/`items_imported` and `timbres_total` (starts as one per file and grows
+when an SF2 is opened and its preset count is known; a file never opened counts 1), `timbres_imported` (timbres in a published bundle whose catalog row was written), `checkpoints`; `bytes_done` adds only the PCM that was
+converted of the removed item; the item that was running has status `IMPORT_ITEM_DRIVE_REMOVED` with `timbres` (published) and `timbres_total`. A removal before the first timbre finished publishes nothing (the library does not
+exist, `timbres_imported` 0); a removal during **Import again** publishes nothing and the old bundle stays current and intact. The SFZ path converts a failed verification into a removal only when no bundle
+was renamed into place yet. The CLI stops its batch at the file that hit the removal and reports `drive removed: N of M timbre(s) published` on stderr (exit 1). A cancel between two timbres keeps the checkpoints already published (the item ends `cancelled`).
+A client that did not list `import.checkpoints.v1` in its hello does not know the new enum values: it receives `FAILED` with `message = "drive_removed"` (and the item as `FAILED`, detail naming the removal) instead of `DRIVE_REMOVED`,
+also in the answer to `ImportStatusRequest`.
+
+**Partial libraries (the contract).** An SF2 item that ends in any state other than imported/unchanged AFTER a checkpoint (cancelled, skipped as damaged, failed on a verification or an I/O error, drive removed) leaves the
+timbres of its last published bundle published, cataloged and playable. Its `ImportItemResult` says so: `timbres` > 0 and `partial = true`. A job in which no item reached the end still ends `FAILED`/`CANCELLED`
+(`PUBLISHED` means at least one item finished) while the catalog holds the prefix; "Import again" completes it. `ImportProgress.checkpoint_error` is set while the catalog rows of a checkpoint could not be written (the
+bundle is published; `timbres_imported` does not count it yet); the next checkpoint or the end of the item writes the row again and clears it.
+
+Interpretation worth knowing: the story says the librarian "publishes the timbres finished so far" on removal; this is done for ALL finished timbres, also when no checkpoint interval
+had been reached yet (6 timbres, interval 10, the drive goes at the 4th: the first 3 are published as one bundle).
+
+**Import again** (`ImportItem.action = IMPORT` on an `already imported` row). The file is converted again; if it differs, a new bundle is published and `current` flips to it, with the same
+`library_id` (UUIDv5 of the source path) and the same `instrument_key`s; the converted timbres that did not change are bit-identical in the new bundle (an SF2 is one item, so every preset is
+converted again from the source and compared by the identical encoder), the old bundle directory stays (leases). A Live Set only holds `(library_id, instrument_key)`, so the
+engine's `LibraryResolver` (which the Live Set loader calls per part) resolves the re-converted timbre without any edit of the Live Set; the test resolves through it. An unchanged source ends
+`unchanged`.
+
+**Crash campaign** (`librarian_crash_campaign`, second part): 50 SIGKILLs of a real process (`librarian_test_cli`, told by `VELORA_LIBRARIAN_KILL=<point>@<n>` to kill itself) importing a 7-timbre
+SoundFont with checkpoints of 2. The 45 named points of the pipeline (7 stage points x 4 publishes, `timbre-start` and `timbre-done` x 7, `checkpoint-published` x 3) are each hit once in a seeded
+shuffle, plus 5 repeats drawn from the same seed; a kill that does not land (the process exits normally) fails the test. Every kill runs on a fresh root; after each: the catalog opens, the reconcile pass
+runs and is idempotent, the Story 5.6 invariants hold (rows match bundles, no staging leftovers, no orphan temp links), only the current bundle is left under the library (no lease exists in the campaign; the chain keeps unmarked bundles of earlier runs) and it verifies and holds the first k timbres
+of the clean import bit for bit, the catalog lists the library iff it has a `current` bundle and names it, and a completed re-run ends with `current` = the clean import's bundle id (the content hash) and
+a catalog row naming it. A chain of 10 kills on ONE root and 20 SIGKILLs of the service process (timbre, stage and catalog points, `import_timbre_hook`) follow the same checks. The test CLI's
+`VELORA_LIBRARIAN_SOURCE_GONE=<point>@<n>` makes the source vanish at a point instead (the real drive-removal path of the importer); neither variable exists in the shipped `librarian`.
+
+**Tests.** `librarian_checkpoint_test` (beyond the list: removal on the 2nd sample of a 3-sample timbre equals a clean import of the prefix file, injected I/O errors and short reads through a fault `ByteSource`, the partial-library contract for cancel / damaged / verification failure after a checkpoint, a failed checkpoint catalog write, checkpoint naming with interval 1, the old-client downgrade, removal twice then preflight then Import again, the real `librarian-service` flags, the shipped `librarian` ignoring the kill variables, reconcile pruning): checkpoint boundaries (interval 1; 3 with a remainder; an exact multiple; 11 timbres; the default 10 with 6 and 12 timbres; an interval larger than the
+file; the byte threshold with injected 10 GiB sizes, mixed sizes and a 1-byte limit; the count winning), every checkpoint verified, immutable and a prefix of the final bundle; no checkpoint for a library
+that is already published; removal before the first timbre finishes / after a checkpoint / before the first interval / during Import again / of an SFZ / a parse that fails because the source is gone
+(`damaged` stays `damaged` with a live drive) / an abort between timbres; Import again with the resolver; the service (catalog rows observed at each checkpoint through a second connection, DRIVE_REMOVED
+with the counts and earlier libraries untouched, with the injected probe and with the built-in stat probe by renaming the source folder, removal before anything, Import again through `ImportAction`);
+the CLI flags and bad values. Env-gated: `VELORA_TEST_DISK_IMAGE=1` (macOS) creates a `hdiutil` image, imports from it and `hdiutil detach -force`s it in the middle of the 5th timbre; without the variable, off
+macOS, or when `hdiutil` cannot attach an image the part reports "skipped" and passes. On the board the same path is the unmount event / `ENODEV` of a pulled USB drive (verify with a physical drive).
+
+Not in this story: the power-cut campaign on the board (Epic 8), the read-only mount and sandbox (Story 5.9).
+
+**Corrupted PCM before a removal publish.** When the source is gone the last bundle cannot be compared with it: the removal publish verifies the bundle's structure (`verify_all`: every block hash and the per-sample PCM
+hashes the writer computed from the PCM it was given), the instrument keys, names, region tables, sample counts, formats and lengths against what was parsed, and that the first timbres equal the previous checkpoint.
+It does NOT prove that the PCM the source returned before the removal was right (a flaky read that returned wrong bytes without an error would be encoded as given); only a publish with the source present
+(checkpoints and the final bundle) compares every new sample bit for bit with a fresh read.
+
+## Known limitations (Story 5.8)
+
+- **No hard links / shared block store.** A bundle is one file, so each checkpoint rewrites the finished timbres (time and flash wear grow with timbres squared over the interval). A block store separate from the manifest
+  would allow hard links and incremental checkpoints; it is a format change, deferred.
+- **Memory.** The whole converted library is held encoded in RAM until it is published (no streaming finalize): the peak is about twice the library (the encoded blocks and the bytes being written). The default byte threshold
+  of 20 GiB means "at most one checkpoint per 20 GiB of PCM" and does NOT bound RAM; the board's default must be lowered at integration (or the writer made streaming).
+- **Resolver-level Import again test.** Import again is tested through `LibraryResolver` (what the Live Set loader calls per part), not through a full `LiveSetLoader` load.
+- **Leases are not enumerated.** Deleting a superseded checkpoint relies on the lease being an open descriptor; a process that only knows the path (a resolver call racing the flip) retries.

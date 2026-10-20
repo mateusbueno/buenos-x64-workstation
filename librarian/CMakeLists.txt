@@ -208,6 +208,9 @@ set_tests_properties(librarian_import_service_test PROPERTIES TIMEOUT 300)
 add_executable(librarian_crash_campaign tests/crash_campaign_test.cpp)
 target_link_libraries(librarian_crash_campaign PRIVATE velora_librarian_service velora_librarian)
 target_include_directories(librarian_crash_campaign PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+# Story 5.8: part of the campaign SIGKILLs the test CLI (a real process, told where to die by VELORA_LIBRARIAN_KILL).
+target_compile_definitions(librarian_crash_campaign PRIVATE LIBRARIAN_TEST_EXE="$<TARGET_FILE:librarian_test_cli>")
+add_dependencies(librarian_crash_campaign librarian_test_cli)
 add_test(NAME librarian_crash_campaign COMMAND librarian_crash_campaign)
 set_tests_properties(librarian_crash_campaign PROPERTIES TIMEOUT 600)
 
@@ -217,3 +220,13 @@ target_link_libraries(librarian_preflight_test PRIVATE velora_librarian_service 
 target_include_directories(librarian_preflight_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
 add_test(NAME librarian_preflight_test COMMAND librarian_preflight_test)
 set_tests_properties(librarian_preflight_test PROPERTIES TIMEOUT 300)
+
+# Story 5.8: checkpointed publishing, drive removal (importer, service, CLI; the hdiutil case is env-gated: VELORA_TEST_DISK_IMAGE=1), Import again.
+add_executable(librarian_checkpoint_test tests/checkpoint_test.cpp)
+target_link_libraries(librarian_checkpoint_test PRIVATE velora_librarian_service velora_librarian)
+target_include_directories(librarian_checkpoint_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+target_compile_definitions(librarian_checkpoint_test PRIVATE LIBRARIAN_EXE="$<TARGET_FILE:librarian>" LIBRARIAN_TEST_EXE="$<TARGET_FILE:librarian_test_cli>"
+  LIBRARIAN_SERVICE_EXE="$<TARGET_FILE:librarian-service>")
+add_dependencies(librarian_checkpoint_test librarian librarian_test_cli librarian-service)
+add_test(NAME librarian_checkpoint_test COMMAND librarian_checkpoint_test)
+set_tests_properties(librarian_checkpoint_test PROPERTIES TIMEOUT 300)

@@ -137,6 +137,7 @@ class Client {
     ws::v1::LibraryClientMessage m;
     m.mutable_hello()->set_version(version);
     m.mutable_hello()->set_client_name(name);
+    m.mutable_hello()->add_features("import.checkpoints.v1");  // Story 5.8: a client that knows the DRIVE_REMOVED state
     auto r = call(m);
     return r && r->has_hello_ack();
   }

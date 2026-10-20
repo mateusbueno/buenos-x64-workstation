@@ -9,7 +9,8 @@
 //      (catalog.meta; a bundle that predates it, e.g. an Epic 1 demo bundle or a CLI import, is listed with the instrument names of its manifest
 //      and the category of its legacy `category` file; one without a valid category is NOT cataloged and reported in `skipped`).
 // The pass is idempotent (a second run changes nothing) and crash safe (every step is a file removal or one catalog transaction; running it again after a
-// kill converges). Bundle directories that are not `current` are left alone (leases, Story 5.8). Called by LibraryService::start() before it serves;
+// kill converges). Bundle directories that are not `current` are left alone (leases) EXCEPT those that still carry the checkpoint marker (Story 5.8: a superseded
+// checkpoint or a publish that was never flipped; see kCheckpointMarkerName): they are deleted. The marker of a `current` bundle is removed. Called by LibraryService::start() before it serves;
 // `rebuild_libraries` drops every library row first (the catalog rebuilt from bundles alone).
 #include <functional>
 #include <string>
@@ -32,12 +33,13 @@ struct ReconcileOptions {
 struct ReconcileReport {
   CatalogStatus status = CatalogStatus::kOk;
   int staging_removed = 0, tmp_links_removed = 0;
+  int bundles_pruned = 0;  // Story 5.8: non-current bundle directories that still carry the checkpoint marker (superseded checkpoints, unflipped publishes of a first-time import)
   std::size_t libraries_on_disk = 0;  // libraries with a usable `current` that is cataloged after the pass
   std::size_t rows_removed = 0, rows_added = 0, rows_updated = 0, rows_unchanged = 0;
   std::vector<std::string> skipped;   // "<library_id>: why" for a `current` bundle that was not cataloged
   std::vector<std::string> errors;    // I/O problems; a pass with an error never removes rows (it cannot tell absent from unreadable)
   bool uncertain = false;             // some library could not be judged: its row (if any) is kept
-  bool changed() const { return staging_removed || tmp_links_removed || rows_removed || rows_added || rows_updated; }
+  bool changed() const { return staging_removed || tmp_links_removed || bundles_pruned || rows_removed || rows_added || rows_updated; }
 };
 
 CatalogStatus reconcile_libraries(Catalog& catalog, const std::string& data_dir, ReconcileReport& report, const ReconcileOptions& opt = {});

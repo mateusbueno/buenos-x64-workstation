@@ -1048,7 +1048,60 @@ void test_regions() {
   }
 }
 
+// Story 5.8: discard_last_instrument() leaves the writer exactly as if the instrument had never been added.
+void test_discard_last_instrument() {
+  const PcmFormat f{1, 16, false, 48000};
+  const auto a = vt::make_int(f, 5000, Kind::kSine);
+  const auto b = vt::make_int(f, 9000, Kind::kNoise);
+  const auto c = vt::make_int(f, 300, Kind::kSine);
+  auto reference = [&]() {
+    BundleWriter w;
+    CHECK_ERR(w.set_source_id("/src/x.sf2"), Error::kNone);
+    auto i = w.add_instrument("A", "0:0");
+    CHECK(i.ok());
+    CHECK_ERR(w.add_sample(i.value(), {"a", f, a.size(), a}), Error::kNone);
+    auto fin = w.finalize();
+    CHECK(fin.ok());
+    return fin.ok() ? fin.take() : Bytes{};
+  }();
+  BundleWriter w;
+  CHECK_ERR(w.discard_last_instrument(), Error::kInvalidArgument);  // nothing to drop
+  CHECK_ERR(w.set_source_id("/src/x.sf2"), Error::kNone);
+  auto ia = w.add_instrument("A", "0:0");
+  CHECK_ERR(w.add_sample(ia.value(), {"a", f, a.size(), a}), Error::kNone);
+  auto ib = w.add_instrument("B", "0:1");
+  CHECK_ERR(w.add_sample(ib.value(), {"b1", f, b.size(), b}), Error::kNone);
+  CHECK_ERR(w.add_sample(ib.value(), {"b2", f, c.size(), c}), Error::kNone);
+  CHECK_ERR(w.discard_last_instrument(), Error::kNone);
+  auto fin = w.finalize();
+  CHECK(fin.ok() && fin.value() == reference);
+  // The key is free again, and the writer keeps working after the drop.
+  auto ib2 = w.add_instrument("B", "0:1");
+  CHECK(ib2.ok());
+  CHECK_ERR(w.add_sample(ib2.value(), {"b1", f, b.size(), b}), Error::kNone);
+  BundleWriter ref2;
+  CHECK_ERR(ref2.set_source_id("/src/x.sf2"), Error::kNone);
+  auto ra = ref2.add_instrument("A", "0:0");
+  CHECK_ERR(ref2.add_sample(ra.value(), {"a", f, a.size(), a}), Error::kNone);
+  auto rb = ref2.add_instrument("B", "0:1");
+  CHECK_ERR(ref2.add_sample(rb.value(), {"b1", f, b.size(), b}), Error::kNone);
+  auto f1 = w.finalize(), f2 = ref2.finalize();
+  CHECK(f1.ok() && f2.ok() && f1.value() == f2.value());
+  // An instrument without samples can be dropped too; one that is not at the tail of the block store cannot.
+  auto empty = w.add_instrument("E", "0:2");
+  CHECK(empty.ok());
+  CHECK_ERR(w.discard_last_instrument(), Error::kNone);
+  BundleWriter x;
+  auto xa = x.add_instrument("A", "k/a");
+  auto xb = x.add_instrument("B", "k/b");
+  CHECK_ERR(x.add_sample(xa.value(), {"a", f, a.size(), a}), Error::kNone);
+  CHECK_ERR(x.add_sample(xb.value(), {"b", f, b.size(), b}), Error::kNone);
+  CHECK_ERR(x.add_sample(xa.value(), {"a2", f, c.size(), c}), Error::kNone);  // A's blocks now follow B's
+  CHECK_ERR(x.discard_last_instrument(), Error::kInvalidArgument);
+}
+
 int main() {
+  test_discard_last_instrument();
   test_open_source();
   test_roundtrip_all_formats();
   test_silence_noise_lengths();

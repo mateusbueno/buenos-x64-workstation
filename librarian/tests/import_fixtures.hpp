@@ -64,4 +64,29 @@ inline fs::path write_sf2(const fs::path& path, unsigned variant = 0) {
   return path;
 }
 
+// Story 5.8: a SoundFont with `n` presets "0:0".."0:n-1", each its own instrument with `per` mono samples of `frames` frames, one per key band (preset k = timbre k).
+// `changed` (1-based, 0 = none) alters one sample point of that timbre's first sample: the same library, a changed timbre.
+inline fs::path write_many_sf2(const fs::path& path, unsigned n, unsigned changed = 0, std::size_t frames = 2200, unsigned per = 1) {
+  sf2b::Builder b;
+  for (unsigned i = 0; i < n; ++i) {
+    sf2b::Instrument ins;
+    ins.name = "I" + std::to_string(i);
+    for (unsigned j = 0; j < per; ++j) {
+      sf2b::Sample s;
+      s.name = "smp" + std::to_string(i) + "_" + std::to_string(j);
+      s.pcm = sf2b::wave(frames, 3 + static_cast<int>(i + j), false, 2 + static_cast<int>((i + j) % 3));
+      if (changed == i + 1 && j == 0) s.pcm[7] = static_cast<std::int32_t>(s.pcm[7] ^ 0x55);
+      b.samples.push_back(std::move(s));
+      const int idx = static_cast<int>(i * per + j);
+      if (per == 1) ins.zones.push_back(sf2b::izone(idx));
+      else ins.zones.push_back(sf2b::izone(idx, {sf2b::range(sf2b::keyRange, static_cast<int>(j * 30), static_cast<int>(j * 30 + 29))}));
+    }
+    b.instruments.push_back(std::move(ins));
+    sf2b::add_preset(b, ("Timbre " + std::to_string(i)).c_str(), 0, static_cast<int>(i), {sf2b::pzone(static_cast<int>(i))});
+  }
+  const auto bytes = b.build();
+  put(path, std::string(bytes.begin(), bytes.end()));
+  return path;
+}
+
 }  // namespace ifx

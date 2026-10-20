@@ -52,7 +52,7 @@ message LibraryHello {
 
 message LibraryHelloAck {
   uint32 version = 1;
-  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2" (Story 5.6), "preflight.v1" (Story 5.7)
+  repeated string features = 2;      // "library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2" (Story 5.6), "preflight.v1" (Story 5.7), "import.checkpoints.v1" (Story 5.8)
   uint32 catalog_schema_version = 3;
 }
 
@@ -158,20 +158,24 @@ enum ImportState {
   IMPORT_STATE_RUNNING = 2;
   IMPORT_STATE_PUBLISHED = 3;        // terminal: the job ran to the end and at least one item is in the catalog (other items may still be skipped, see their results)
   IMPORT_STATE_FAILED = 4;           // terminal: nothing from this job reached the catalog (every item skipped or failed: an all-skipped job ends FAILED)
-  IMPORT_STATE_CANCELLED = 5;        // terminal: cancelled; what was published before stays, nothing partial
+  IMPORT_STATE_CANCELLED = 5;        // terminal: cancelled; what was published before stays (earlier libraries; and the checkpoints of the SF2 that was running, see ImportItemResult.partial)
+  IMPORT_STATE_DRIVE_REMOVED = 6;    // terminal (Story 5.8): the source disappeared mid-import (I/O errors or unmount). What finished is published, the timbre in progress was
+                                     // discarded whole, earlier libraries are untouched; the final event carries the counts imported vs total (items_* and timbres_*)
 }
 enum ImportItemStatus {
   IMPORT_ITEM_STATUS_UNSPECIFIED = 0;
   IMPORT_ITEM_IMPORTED = 1;          // new bundle and/or `current` flipped
   IMPORT_ITEM_UNCHANGED = 2;         // the identical bundle was already current ("already imported")
-  IMPORT_ITEM_SKIPPED = 3;           // the Story 5.1 reason codes below; nothing published
-  IMPORT_ITEM_FAILED = 4;            // infrastructure problem (I/O, busy, verification, catalog); nothing partial is listed
+  IMPORT_ITEM_SKIPPED = 3;           // the Story 5.1 reason codes below; nothing published - except that an SF2 skipped (damaged sample, ...) AFTER a checkpoint keeps the prefix of timbres that checkpoint published (`partial`)
+  IMPORT_ITEM_FAILED = 4;            // infrastructure problem (I/O, busy, verification, catalog). Nothing of the failing bundle is published, but an SF2 that failed AFTER a checkpoint stays published as that prefix of its timbres (`partial`)
   IMPORT_ITEM_CANCELLED = 5;
+  IMPORT_ITEM_DRIVE_REMOVED = 6;     // Story 5.8: the source went away while this item ran; `timbres` of its timbres are published (0: nothing), the rest was discarded
 }
 enum ImportReason {                  // the closed set of the import report (Story 5.1)
   IMPORT_REASON_NONE = 0;
   IMPORT_REASON_UNSUPPORTED_FEATURES = 1;
   IMPORT_REASON_DAMAGED = 2;
+  IMPORT_REASON_DRIVE_REMOVED = 3;   // Story 5.8: an item that was not attempted because the source drive went away during an earlier item (status SKIPPED)
 }
 message ImportOffender {
   string opcode = 1;
@@ -195,6 +199,11 @@ message ImportItemResult {
   uint32 warning_count = 13;
   uint32 allowlisted_count = 14;
   uint32 suggested_category = 15;    // Story 5.5 suggestion (0 = none); informational
+  uint32 timbres = 16;               // Story 5.8: timbres (SF2 presets; 1 for an SFZ) of this file that are in the published bundle
+  uint32 timbres_total = 17;         // Story 5.8: timbres the file holds (0 when it could not be read)
+  // Story 5.8: true when the item did NOT finish (status other than IMPORTED / UNCHANGED) but `timbres` > 0: a checkpoint published that many leading timbres of the file
+  // before the item was cancelled, skipped, failed or the drive went away. They are in the catalog and playable; the rest is not; "Import again" completes the library.
+  bool partial = 18;
 }
 // Pushed to the requester (and to every LibrarySubscribe subscriber) at each change of a job. event_seq grows by one per event of the job; items_done,
 // the counters and bytes_done never decrease; the last event of a job has a terminal state and an empty current_item.
@@ -213,7 +222,16 @@ message ImportProgress {
   uint64 bytes_done = 12;
   ImportItemResult item = 13;        // set on the event that reports a finished item
   string message = 14;
-  uint32 items_cancelled = 15;       // an item that was stopped by a cancel before it was published (nothing of it is left)
+  uint32 items_cancelled = 15;       // an item stopped by a cancel before its last bundle was published (the timbres of its earlier checkpoints, if any, stay published: see ImportItemResult.partial)
+  // Story 5.8. Timbres are the unit of the checkpoints: an SF2 preset, or an SFZ file. timbres_total is counted when the job starts (an SF2 that cannot be
+  // read counts 1); timbres_imported = timbres that are in a published bundle of this job (imported, unchanged or published by a checkpoint). `checkpoints`
+  // counts the intermediate bundles published while an item was still converting (each also reaches the catalog); the event that reports one has no `item`.
+  uint32 timbres_total = 16;
+  uint32 timbres_imported = 17;
+  uint32 checkpoints = 18;
+  // Story 5.8: set while the catalog rows of a checkpoint could not be written (the bundle IS published; the next checkpoint or the end of the item retries the write,
+  // the next start's reconcile lists it otherwise). Empty when the last write succeeded.
+  string checkpoint_error = 19;
 }
 
 message ListLibraries {

@@ -154,10 +154,15 @@ BatchResult import_batch(const BatchOptions& opt) {
     o.base_dir = opt.base_dir;
     o.category = opt.category;
     o.fault = opt.fault;
+    o.checkpoint_timbres = opt.checkpoint_timbres;
+    o.checkpoint_bytes = opt.checkpoint_bytes;
+    o.source_gone = opt.source_gone;
     FileReport f;
     f.sfz_path = path;
     f.result = import_file(o);  // a skipped or failed file never stops the batch
+    const bool drive_gone = f.result.status == Status::kDriveRemoved;
     br.files.push_back(std::move(f));
+    if (drive_gone) break;  // Story 5.8: the source drive is gone, the other files cannot be read either
   }
   for (const auto& f : br.files) {
     const std::string s = file_status(f.result);

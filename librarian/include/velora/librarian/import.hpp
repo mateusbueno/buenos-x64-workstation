@@ -21,12 +21,25 @@
 // SF2 sample words instead of WAV files, and the verification compares every sample, region
 // table and key against a fresh parse of the source file. `import_file` picks the importer by
 // extension (.sf2, case-insensitive, else SFZ).
+//
+// Story 5.8, checkpoints and drive removal. One SF2 with many presets (timbres) is converted preset by preset. Every `checkpoint_timbres` finished
+// timbres (default 10) or `checkpoint_bytes` of decoded PCM (default 20 GiB), whichever comes first, the timbres finished so far are published as a
+// NEW immutable bundle of the same library (same protocol: stage, verify, fsync, rename, flip `current`), so a long import becomes visible in steps
+// and a pulled drive or a power cut loses at most the timbres after the last checkpoint. The bundle is a single file (header, manifest, index,
+// blocks), so a bigger bundle cannot share bytes with a smaller one by a hard link: the writer keeps the verified encoded blocks of the finished
+// timbres in memory and each checkpoint writes them again (no re-read of the source, no re-encode). A library that already has a `current` bundle
+// (Import again) is never checkpointed: its old bundle stays current until the whole new one is verified. When the source disappears (the injectable
+// `source_gone` probe says so, or reading a parsed file fails with an I/O error) the timbre in progress is discarded whole, the finished timbres are
+// published (unless the library was published before: the old bundle stays) and the result has Status::kDriveRemoved.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
 
+#include <memory>
+
+#include "velora/format/byte_source.hpp"
 #include "velora/format/category.hpp"
 #include "velora/format/error.hpp"
 
@@ -54,9 +67,23 @@ struct FaultInjection {
   std::function<HookAction(Stage)> on_stage;
   // Flip one bit in the staged bundle's block data before verification (must be detected).
   bool corrupt_staged_before_verify = false;
+  // Story 5.8: 0 = corrupt every staged bundle (the old behaviour); n > 0 = only the n-th bundle staged by this import (a verification failure AFTER a checkpoint).
+  int corrupt_round = 0;
+  mutable int rounds_seen = 0;
   // Behave as if the staging directory were on another filesystem than the destination.
   bool pretend_cross_device = false;
+  // Story 5.8: called at the boundaries of a timbre (an SF2 preset; an SFZ file is one timbre): "timbre-start" (before anything of it is read),
+  // "timbre-done" (converted, before any publish) and "checkpoint-published" (after an intermediate publish; `timbre` = timbres in the bundle).
+  // kAbort stops the import there (Status::kAborted); whatever was published before stays.
+  std::function<HookAction(const char* point, std::size_t timbre)> on_timbre;
+  // Tests: replaces the byte source an SF2 is parsed and read from (also for the verification re-parse), to inject I/O errors and short reads.
+  std::function<std::shared_ptr<const velora::format::ByteSource>(const std::string& path)> open_sf2;
 };
+
+inline constexpr std::uint32_t kDefaultCheckpointTimbres = 10;
+inline constexpr std::uint64_t kDefaultCheckpointBytes = 20ull << 30;
+
+struct ImportResult;
 
 struct ImportOptions {
   std::string sfz_path;   // the source file: an .sfz, or an .sf2 for import_sf2/import_file
@@ -78,6 +105,24 @@ struct ImportOptions {
     std::string key, name, category;  // name / category empty = keep the default
   };
   std::vector<InstrumentMeta> instrument_meta;
+  // Story 5.8. Checkpoint interval of a multi-timbre (SF2) import; 0 = the default. Decoded PCM bytes since the last publish; 0 = the default.
+  std::uint32_t checkpoint_timbres = 0;
+  std::uint64_t checkpoint_bytes = 0;
+  // Tests: the size counted for timbre `index` towards `checkpoint_bytes` (default: its decoded PCM size, `actual`).
+  std::function<std::uint64_t(std::size_t index, std::uint64_t actual)> checkpoint_size_fn;
+  // True once the source can no longer be read (volume unmounted / device gone). Polled between timbres, between samples and whenever a read or a
+  // verification fails; empty = never (an I/O error while reading a parsed SF2 still counts as removal).
+  std::function<bool()> source_gone;
+  // The folder a failed read is examined in (opendir + readdir) to tell a vanished drive from a bad file; default: the directory of `sfz_path`.
+  std::string source_root;
+  // Set by the importers, not by callers: the number of timbres of the SOURCE file (decides whether a one-timbre bundle is "single" for naming, so a checkpoint of
+  // one timbre keeps the file-stem library name), and whether the bundle being staged is an intermediate one of a checkpointed import (`checkpoint` marker file).
+  std::size_t source_timbres = 0;
+  bool mark_checkpoint = false;
+  // Called after an intermediate publish (a checkpoint) with the result so far (library_id, bundle_id, bundle_dir, timbres_published). It may block.
+  std::function<void(const ImportResult&)> on_checkpoint;
+  // Called once the number of timbres of the source is known (an SF2 parsed; not called for an SFZ or a file that does not parse).
+  std::function<void(std::size_t timbres)> on_timbres;
   FaultInjection fault;
 };
 
@@ -90,6 +135,7 @@ enum class Status : std::uint8_t {
   kCrossDevice,    // staging not on the destination filesystem
   kBusy,           // another import holds the lock
   kAborted,        // fault injection stopped the run
+  kDriveRemoved,   // Story 5.8: the source disappeared mid-import; the timbre in progress was discarded whole, `timbres_published` of `timbres_total` are published
 };
 const char* to_string(Status s);
 
@@ -158,6 +204,10 @@ struct ImportResult {
   // Story 5.5: the librarian's suggestion for this file (kNone = no confident suggestion). Never stored in the
   // bundle and never a substitute for the caller's explicit category.
   velora::format::Category suggested_category = velora::format::Category::kNone;
+  // Story 5.8: timbres (SF2 presets; 1 for an SFZ) of the file, and how many are in the published bundle (also with kDriveRemoved, kAborted or a
+  // failure after a checkpoint). `checkpoints` = intermediate publishes made (the final publish is not counted).
+  std::size_t timbres_total = 0, timbres_published = 0, checkpoints = 0;
+  std::uint64_t converted_bytes = 0;  // decoded PCM bytes of the timbres that were fully converted (finished); with kDriveRemoved: what the removed item got done
   bool ok() const { return status == Status::kOk; }
 };
 
@@ -197,5 +247,9 @@ class CliWriterGuard {
 inline constexpr const char* kLockFileName = ".lock";
 // Stale `.current.tmp.*` links are swept only in the directory of the library being imported.
 inline constexpr const char* kCategoryFileName = "category";
+// Story 5.8: written inside the staging directory of every bundle of a first-time SF2 import (so it is part of the atomic publish) and removed again once the LAST
+// bundle of the run is current. A bundle that still has it and is not `current` is a superseded checkpoint or an unflipped publish: the service deletes it
+// (in-run after the next bundle is current, and the startup reconcile for what a kill left). Bundles without it (final bundles, SFZ, Import again) are never pruned.
+inline constexpr const char* kCheckpointMarkerName = "checkpoint";
 
 }  // namespace velora::librarian

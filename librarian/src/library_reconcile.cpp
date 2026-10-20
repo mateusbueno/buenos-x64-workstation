@@ -64,6 +64,25 @@ Cur current_bundle_dir(const fs::path& lib_dir, const ReconcileOptions& opt, std
   return Cur::kFound;
 }
 
+// Story 5.8: deletes the bundle directories of a library that carry the checkpoint marker and are not `current`, and clears the marker of the current one.
+void prune_marked(const fs::path& lib_dir, const std::string& current_id, ReconcileReport& rep) {
+  std::error_code ec;
+  for (fs::directory_iterator it(lib_dir, ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string n = it->path().filename().string();
+    if (!is_bundle_id(n)) continue;
+    const fs::path marker = it->path() / kCheckpointMarkerName;
+    std::error_code e2;
+    if (!fs::exists(marker, e2)) continue;
+    if (n == current_id) {
+      fs::remove(marker, e2);
+      continue;
+    }
+    std::error_code rm;
+    fs::remove_all(it->path(), rm);
+    if (!rm) ++rep.bundles_pruned;
+  }
+}
+
 }  // namespace
 
 CatalogStatus reconcile_libraries(Catalog& cat, const std::string& data_dir, ReconcileReport& rep, const ReconcileOptions& opt) {
@@ -124,8 +143,13 @@ CatalogStatus reconcile_libraries(Catalog& cat, const std::string& data_dir, Rec
       }
       std::string cur, why;
       switch (current_bundle_dir(d, opt, cur, why)) {
-        case Cur::kFound: disk.push_back({d.filename().string(), cur}); break;
-        case Cur::kAbsent: break;
+        case Cur::kFound:
+          disk.push_back({d.filename().string(), cur});
+          prune_marked(d, fs::path(cur).filename().string(), rep);
+          break;
+        case Cur::kAbsent:
+          prune_marked(d, std::string(), rep);
+          break;
         case Cur::kError:
           rep.errors.push_back(why);
           rep.uncertain = true;

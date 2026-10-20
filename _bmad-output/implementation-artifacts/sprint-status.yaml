@@ -157,7 +157,7 @@ development_status:
   5-5-category-model-localized-labels-and-auto-suggestion: done
   5-6-librarian-libraries-catalog-import-api-and-atomic-publish: done
   5-7-import-preflight-batch-scan-free-space-and-duplicates: done
-  5-8-import-execution-survives-drive-removal-and-power-loss: backlog
+  5-8-import-execution-survives-drive-removal-and-power-loss: done
   5-9-sandboxed-librarian-and-read-only-usb-a-drives-on-the-board: backlog
   5-10-design-story-notice-toast-mockup: review
   5-11-design-story-category-picker-mockup: review

@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cerrno>
 #include <climits>
+#include <dirent.h>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -17,6 +18,7 @@
 
 #include "velora/format/bundle.hpp"
 #include "velora/format/category.hpp"
+#include "velora/format/hash.hpp"
 #include "velora/format/sf2_import.hpp"
 #include "velora/format/sfz_import.hpp"
 #include "velora/format/wav_source.hpp"
@@ -94,6 +96,7 @@ const char* to_string(Status s) {
     case Status::kCrossDevice: return "staging on another filesystem";
     case Status::kBusy: return "another import is running";
     case Status::kAborted: return "aborted";
+    case Status::kDriveRemoved: return "drive removed";
   }
   return "?";
 }
@@ -202,6 +205,52 @@ bool sample_matches(const fmt::BundleReader& r, std::size_t sample, const fmt::W
   return true;
 }
 
+
+// Story 5.8.
+bool gone(const ImportOptions& o) { return o.source_gone && o.source_gone(); }
+
+// The source disappeared: nothing of the current timbre is kept. `res` keeps what an earlier checkpoint published.
+ImportResult& removed(ImportResult& res, const std::string& where) {
+  res.status = Status::kDriveRemoved;
+  res.reason_code = ReasonCode::kNone;
+  res.offenders.clear();
+  res.failing_path.clear();
+  res.reasons.push_back("the source drive was removed" + (where.empty() ? std::string() : " (" + where + ")") + "; the timbre in progress was discarded");
+  return res;
+}
+
+// Errors that mean "the device is gone or failing" (not "this path does not exist").
+bool io_errno(int e) { return e == EIO || e == ENXIO || e == ENODEV || e == ESTALE || e == ENOTCONN; }
+
+// The stronger probe for a read that failed with an I/O error (or a parse/verification that failed): list the source folder and read one byte of the source file
+// again. true only when the file system itself reports a dead device (EIO, ENXIO, ENODEV, ESTALE...) or the injected probe says gone; a bad file on a healthy
+// drive, or a plain missing path, is not removal.
+bool confirmed_gone(const ImportOptions& o) {
+  if (gone(o)) return true;
+  const std::string root = !o.source_root.empty() ? o.source_root : fs::path(o.sfz_path).parent_path().string();
+  if (DIR* d = ::opendir(root.empty() ? "." : root.c_str())) {
+    errno = 0;
+    while (::readdir(d)) {
+    }
+    const int e = errno;
+    ::closedir(d);
+    if (e != 0 && io_errno(e)) return true;
+  } else if (io_errno(errno)) {
+    return true;
+  }
+  const int fd = ::open(o.sfz_path.c_str(), O_RDONLY);
+  if (fd < 0) return io_errno(errno);
+  char b;
+  const ssize_t n = ::pread(fd, &b, 1, 0);
+  const int e = errno;
+  ::close(fd);
+  return n < 0 && io_errno(e);
+}
+
+bool timbre_hook(const ImportOptions& o, const char* point, std::size_t timbre) {  // true = abort
+  return o.fault.on_timbre && o.fault.on_timbre(point, timbre) == HookAction::kAbort;
+}
+
 }  // namespace
 
 int reconcile_staging(const std::string& root) {
@@ -249,7 +298,7 @@ std::string build_catalog_meta(const ImportOptions& opt, const fmt::BundleReader
   meta.source_path = ec ? opt.sfz_path : abs.generic_string();
   meta.source_kind = is_sf2_path(opt.sfz_path) ? "sf2" : "sfz";
   const auto def_cat = fmt::parse_assignable_category(opt.category);
-  const bool single = rd.instruments().size() == 1;
+  const bool single = opt.source_timbres ? opt.source_timbres == 1 : rd.instruments().size() == 1;
   for (const auto& ins : rd.instruments()) {
     CatalogMetaInstrument mi;
     mi.key = ins.key;
@@ -345,6 +394,10 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
     cleanup();
     return fail(Status::kIo, err_text("write category"));
   }
+  if (opt.mark_checkpoint && !write_file_atomic(stage_dir, kCheckpointMarkerName, "1\n")) {
+    cleanup();
+    return fail(Status::kIo, err_text("write checkpoint marker"));
+  }
   if (fmt::Error e = writer.finalize_to_file(staged); e != fmt::Error::kNone) {
     cleanup();
     return fail(Status::kIo, std::string("cannot write bundle: ") + fmt::to_string(e));
@@ -356,7 +409,8 @@ ImportResult& stage_and_publish(const ImportOptions& opt, ImportResult& res, Roo
   VELORA_HOOK(Stage::kStaged);
 
   // 5. Verify bit-exact from the staged bytes.
-  if (opt.fault.corrupt_staged_before_verify) {
+  ++opt.fault.rounds_seen;
+  if (opt.fault.corrupt_staged_before_verify && (opt.fault.corrupt_round == 0 || opt.fault.rounds_seen == opt.fault.corrupt_round)) {
     Fd f(::open(staged.c_str(), O_RDWR));
     struct stat st;
     std::uint8_t b = 0;
@@ -491,10 +545,13 @@ ImportResult import_sfz(const ImportOptions& opt) {
   }
 
   // 1. Parse (no audio, no filesystem writes).
+  res.timbres_total = 1;  // an SFZ file is one timbre
+  if (timbre_hook(opt, "timbre-start", 0)) return fail(Status::kAborted, "stopped at timbre-start");
   fmt::SfzParseResult parsed = fmt::parse_sfz_file(opt.sfz_path);
   res.source_region_count = parsed.source_region_count;
   for (const auto& a : parsed.allowlisted) res.allowlisted.push_back({a.opcode, a.file, a.line});
   for (const auto& w : parsed.warnings) res.warnings.push_back({"ignored_opcode", w.opcode, w.file, w.line, w.message, {}});
+  if (!parsed.ok() && confirmed_gone(opt)) return removed(res, "reading " + opt.sfz_path);
   if (!parsed.ok()) {
     res.status = Status::kSkipped;
     bool damaged = false;
@@ -550,6 +607,9 @@ ImportResult import_sfz(const ImportOptions& opt) {
   for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
     const auto& s = parsed.samples[i];
     auto w = fmt::load_wav_file(s.path, kStrictWav);
+    // A read that failed because the drive is gone is not a damaged sample. An I/O error is confirmed by the stronger probe first (a bad file on a healthy drive
+    // stays damaged); a short read (truncated) is damaged unless the probe says the source is gone.
+    if (gone(opt) || (!w && w.error() == fmt::Error::kIo && confirmed_gone(opt))) return removed(res, "reading " + s.path);
     if (!w) {
       audio_problems.push_back(audio_problem(s.path, w.error(), s));
       continue;
@@ -610,6 +670,7 @@ ImportResult import_sfz(const ImportOptions& opt) {
   }
   res.sample_count = parsed.samples.size();
   res.region_count = regions.size();
+  if (timbre_hook(opt, "timbre-done", 0)) return fail(Status::kAborted, "stopped at timbre-done");
 
   // 4-8. Stage, verify, publish, flip.
   auto verify_content = [&](const fmt::BundleReader& rd) -> std::string {
@@ -624,7 +685,16 @@ ImportResult import_sfz(const ImportOptions& opt) {
     }
     return {};
   };
-  return stage_and_publish(opt, res, rl, writer, verify_content);
+  stage_and_publish(opt, res, rl, writer, verify_content);
+  if ((res.status == Status::kVerifyFailed || res.status == Status::kIo) && !res.bundle_created && confirmed_gone(opt)) {
+    res.reasons.clear();  // the staging directory is already removed by the failed publish
+    res.library_id.clear();
+    res.bundle_id.clear();
+    res.bundle_dir.clear();
+    return removed(res, "verifying " + opt.sfz_path);
+  }
+  if (res.status == Status::kOk) res.timbres_published = 1;
+  return res;
 }
 
 
@@ -654,7 +724,12 @@ ImportResult import_sf2(const ImportOptions& opt) {
   // The suggestion from the name and folders is there even when the file turns out damaged (as for SFZ); a
   // successful parse refines it with the preset names below.
   res.suggested_category = suggest_category(suggest_input_for_path(opt.sfz_path, {})).value_or(fmt::Category::kNone);
-  fmt::Sf2ParseResult parsed = fmt::parse_sf2_file(opt.sfz_path);
+  auto parse_source = [&]() -> fmt::Sf2ParseResult {
+    if (!opt.fault.open_sf2) return fmt::parse_sf2_file(opt.sfz_path);
+    auto src = opt.fault.open_sf2(opt.sfz_path);
+    return src ? fmt::parse_sf2(src) : fmt::parse_sf2_file(opt.sfz_path);
+  };
+  fmt::Sf2ParseResult parsed = parse_source();
   auto skip = [&](ReasonCode rc, std::string why) -> ImportResult& {
     res.status = Status::kSkipped;
     res.reason_code = rc;
@@ -662,6 +737,9 @@ ImportResult import_sf2(const ImportOptions& opt) {
     res.reasons.push_back(opt.sfz_path + ": " + std::move(why));
     return res;
   };
+  res.timbres_total = parsed.presets.empty() ? 1 : parsed.presets.size();
+  if (parsed.ok() && !parsed.presets.empty() && opt.on_timbres) opt.on_timbres(parsed.presets.size());
+  if (!parsed.ok() && confirmed_gone(opt)) return removed(res, "reading " + opt.sfz_path);
   if (!parsed.ok()) {
     res.status = Status::kSkipped;
     const bool damaged = parsed.damaged();
@@ -701,18 +779,146 @@ ImportResult import_sf2(const ImportOptions& opt) {
   RootLock rl;
   if (!lock_root(opt, res, rl)) return res;
 
-  // 3. Build the bundle: one instrument per preset; each sample read once, encoded, dropped again.
+  // 3. Build the bundle: one instrument per preset (timbre); each sample read once, encoded, dropped again. Story 5.8: every `every` finished timbres
+  // (or `every_bytes` of PCM) the timbres finished so far are published as a bundle of their own (a checkpoint); see import.hpp.
+  const std::size_t n_presets = parsed.presets.size();
+  res.timbres_total = n_presets;
+  const std::size_t every = opt.checkpoint_timbres ? opt.checkpoint_timbres : kDefaultCheckpointTimbres;
+  const std::uint64_t every_bytes = opt.checkpoint_bytes ? opt.checkpoint_bytes : kDefaultCheckpointBytes;
+  // A library that already has a `current` bundle (Import again, or what a crashed run published) is replaced only by a complete, verified bundle: no
+  // checkpoints, and a removal leaves the old bundle current.
+  bool has_previous = false;
+  {
+    const std::string cur = rl.lib_root + "/" + fmt::uuid_to_string(fmt::library_id_from_source(abs.generic_string())) + "/" + host::kCurrentLinkName;
+    char buf[PATH_MAX];
+    has_previous = ::readlink(cur.c_str(), buf, sizeof buf - 1) > 0;
+  }
   fmt::BundleWriter writer;
   if (writer.set_source_id(abs.generic_string()) != fmt::Error::kNone)
     return fail(Status::kInvalidArgument, "empty source id");
   std::vector<std::int32_t> pcm;
-  std::size_t samples = 0, regions = 0;
-  for (const auto& p : parsed.presets) {
+  std::size_t samples = 0, regions = 0;       // of the finished timbres
+  std::size_t finished = 0, pub_count = 0;    // timbres in the writer / in the last published bundle
+  std::size_t pend = 0;
+  std::uint64_t pend_bytes = 0;
+  std::string prev_file;                      // bundle.vlb of the last published bundle of this run
+  bool any_created = false, any_flipped = false, is_removed = false;
+
+  // What a bundle of the first `n` timbres must hold: the first `carried` against the previous bundle of this run (it was verified against the source
+  // when it was published), the others against a fresh parse of the source, or - when the source is gone - against what was parsed and converted.
+  auto verify_for = [&](std::size_t n, std::size_t carried, bool against_source, std::string prev) {
+    return [&, n, carried, against_source, prev](const fmt::BundleReader& rd) -> std::string {
+      if (rd.instruments().size() != n) return "staged bundle has the wrong instrument count";
+      if (carried > 0) {
+        auto pr = fmt::BundleReader::open_file(prev);
+        if (!pr || pr.value().instruments().size() != carried) return "the previous checkpoint bundle does not open or has another instrument count";
+        for (std::size_t i = 0; i < carried; ++i) {
+          const auto& a = rd.instruments()[i];
+          const auto& b = pr.value().instruments()[i];
+          if (a.key != b.key || a.name != b.name || a.regions != b.regions || a.sample_count != b.sample_count)
+            return "finished timbre " + a.key + " differs from the previous checkpoint";
+          for (std::size_t k = 0; k < a.sample_count; ++k) {
+            const auto& sa = rd.samples()[a.first_sample + k];
+            const auto& sb = pr.value().samples()[b.first_sample + k];
+            if (!(sa.format == sb.format) || sa.frame_count != sb.frame_count || sa.pcm_sha256 != sb.pcm_sha256)
+              return "sample '" + sa.name + "' of " + a.key + " differs from the previous checkpoint";
+          }
+        }
+      }
+      std::optional<fmt::Sf2ParseResult> fresh;
+      if (against_source) {
+        fresh.emplace(parse_source());
+        if (!fresh->ok() || fresh->presets.size() != parsed.presets.size()) return "the SF2 file changed while it was imported";
+      }
+      std::vector<std::int32_t> want, got;
+      for (std::size_t i = carried; i < n; ++i) {
+        const auto& pp = parsed.presets[i];
+        const auto& ins = rd.instruments()[i];
+        if (ins.key != pp.key || ins.name != pp.name) return "staged instrument " + pp.key + " has the wrong key or name";
+        if (ins.regions != pp.regions) return "staged region table of " + pp.key + " differs from the parsed zones";
+        if (ins.sample_count != pp.samples.size()) return "staged instrument " + pp.key + " has the wrong sample count";
+        for (std::size_t k = 0; k < pp.samples.size(); ++k) {
+          const auto& si = rd.samples()[ins.first_sample + k];
+          if (!(si.format == pp.samples[k].format) || si.frame_count != pp.samples[k].frames)
+            return "sample '" + pp.samples[k].name + "' of " + pp.key + " has the wrong format or length";
+        }
+        if (!fresh) continue;
+        const auto& fp = fresh->presets[i];
+        if (ins.key != fp.key || ins.name != fp.name) return "staged instrument " + fp.key + " has the wrong key or name";
+        if (ins.regions != fp.regions || fp.regions != pp.regions) return "staged region table of " + fp.key + " differs from the parsed zones";
+        for (std::size_t k = 0; k < fp.samples.size(); ++k) {
+          const auto& si = rd.samples()[ins.first_sample + k];
+          if (!(si.format == fp.samples[k].format) || si.frame_count != fp.samples[k].frames)
+            return "sample '" + fp.samples[k].name + "' of " + fp.key + " has the wrong format or length";
+          if (fresh->samples->read(fp.samples[k], want) != fmt::Error::kNone) return "cannot re-read sample '" + fp.samples[k].name + "'";
+          got.assign(want.size(), 0);
+          if (rd.read_frames(ins.first_sample + k, 0, want.size(), got) != fmt::Error::kNone || got != want)
+            return "sample '" + fp.samples[k].name + "' of " + fp.key + " is not bit-identical to its source";
+        }
+      }
+      return {};
+    };
+  };
+  // Publishes the first `finished` timbres as one bundle (the whole protocol, from staging to the flip of `current`).
+  // `intermediate`: more bundles will follow (a checkpoint). Every bundle of a first-time import carries the checkpoint marker until the last one is current.
+  ImportOptions ropt = opt;
+  ropt.source_timbres = n_presets;
+  bool prev_intermediate = false;
+  auto round = [&](bool against_source) -> ImportResult {
+    ImportResult r = res;
+    r.bundle_created = r.current_flipped = false;
+    r.sample_count = samples;
+    r.region_count = regions;
+    ropt.mark_checkpoint = !has_previous;
+    stage_and_publish(ropt, r, rl, writer, verify_for(finished, pub_count, against_source, prev_file));
+    return r;
+  };
+  // A bundle is published and current. `last`: no more bundles follow in this run - its marker goes; otherwise the previous marked bundle is superseded and removed
+  // (a lease is an open file descriptor of the engine, which survives the unlink; the new bundle is current before the old one goes).
+  auto merge = [&](const ImportResult& r, bool last) {
+    const std::string old_dir = prev_intermediate ? fs::path(prev_file).parent_path().string() : std::string();
+    res = r;
+    any_created |= r.bundle_created;
+    any_flipped |= r.current_flipped;
+    pub_count = finished;
+    prev_file = r.bundle_dir + "/" + host::kBundleFileName;
+    res.timbres_published = finished;
+    if (!old_dir.empty() && old_dir != r.bundle_dir) {
+      std::error_code rm;
+      fs::remove_all(old_dir, rm);
+    }
+    if (last) {
+      ::unlink((r.bundle_dir + "/" + kCheckpointMarkerName).c_str());
+      fsync_path(r.bundle_dir, true);
+    }
+    prev_intermediate = !last && !has_previous;
+  };
+  auto source_failure = [&](const ImportResult& r) {
+    return (r.status == Status::kVerifyFailed || r.status == Status::kIo) && !r.bundle_created && confirmed_gone(opt);
+  };
+
+  for (std::size_t pi = 0; pi < n_presets && !is_removed; ++pi) {
+    const auto& p = parsed.presets[pi];
+    if (timbre_hook(opt, "timbre-start", pi)) return fail(Status::kAborted, "stopped at timbre-start");
+    if (gone(opt)) {
+      is_removed = true;
+      break;
+    }
     auto inst = writer.add_instrument(p.name, p.key);
     if (!inst) return fail(Status::kInvalidArgument, "instrument key " + p.key + ": " + fmt::to_string(inst.error()));
+    std::size_t t_samples = 0;
+    std::uint64_t t_bytes = 0;
     for (const auto& s : p.samples) {
-      if (fmt::Error e = parsed.samples->read(s, pcm); e != fmt::Error::kNone)
-        return skip(ReasonCode::kDamaged, "preset " + p.key + ": sample '" + s.name + "': cannot read its data (" + fmt::to_string(e) + ")");
+      const fmt::Error re = parsed.samples->read(s, pcm);
+      // A parsed file whose sample data cannot be read (EIO, ENXIO, a short read of a pulled drive) or a probe that says the source is gone: removal.
+      if (gone(opt) || (re == fmt::Error::kIo && confirmed_gone(opt))) {
+        is_removed = true;
+        break;
+      }
+      if (re == fmt::Error::kIo)  // an I/O error on a drive that still answers: this item fails (nothing of it is kept), the job goes on
+        return fail(Status::kIo, "preset " + p.key + ": sample '" + s.name + "': I/O error while reading the source");
+      if (re != fmt::Error::kNone)
+        return skip(ReasonCode::kDamaged, "preset " + p.key + ": sample '" + s.name + "': cannot read its data (" + fmt::to_string(re) + ")");
       fmt::SampleInput in;
       in.name = s.name;
       in.format = s.format;
@@ -724,44 +930,70 @@ ImportResult import_sf2(const ImportOptions& opt) {
         if (st == Status::kSkipped) return skip(rc, "preset " + p.key + ": sample '" + s.name + "': " + fmt::to_string(e));
         return fail(st, "preset " + p.key + ": cannot add sample '" + s.name + "': " + fmt::to_string(e));
       }
-      ++samples;
+      ++t_samples;
+      t_bytes += s.frames * s.format.channels * (s.format.bits_per_sample / 8u);
+    }
+    if (is_removed) {
+      // The timbre in progress is dropped whole (its instrument and every sample block already encoded for it).
+      if (writer.discard_last_instrument() != fmt::Error::kNone) return fail(Status::kIo, "cannot discard the timbre in progress");
+      break;
     }
     for (const auto& r : p.regions) {
       if (writer.add_region(inst.value(), r) != fmt::Error::kNone)
         return skip(ReasonCode::kDamaged, "preset " + p.key + ": a region does not fit the instrument model");
-      ++regions;
+    }
+    regions += p.regions.size();
+    samples += t_samples;
+    res.converted_bytes += t_bytes;
+    ++finished;
+    if (timbre_hook(opt, "timbre-done", pi)) return fail(Status::kAborted, "stopped at timbre-done");
+    ++pend;
+    pend_bytes += opt.checkpoint_size_fn ? opt.checkpoint_size_fn(pi, t_bytes) : t_bytes;
+    if (!has_previous && finished < n_presets && regions > 0 && (pend >= every || pend_bytes >= every_bytes)) {
+      ImportResult r = round(true);
+      if (r.status == Status::kOk) {
+        merge(r, false);
+        ++res.checkpoints;
+        pend = 0;
+        pend_bytes = 0;
+        if (opt.on_checkpoint) opt.on_checkpoint(res);
+        if (timbre_hook(opt, "checkpoint-published", finished)) return fail(Status::kAborted, "stopped at checkpoint-published");
+      } else if (source_failure(r)) {
+        is_removed = true;  // the staging directory is already removed; the finished timbres are published below without the source
+      } else {
+        return r;  // earlier checkpoints stay published
+      }
     }
   }
+
+  auto finish_removed = [&]() -> ImportResult {
+    if (!has_previous && finished > pub_count && regions > 0) {
+      ImportResult r = round(false);
+      if (r.status == Status::kOk) merge(r, true);
+      else if (r.status == Status::kAborted) return r;
+    }
+    res.bundle_created = any_created;
+    res.current_flipped = any_flipped;
+    res.sample_count = samples;
+    res.region_count = regions;
+    removed(res, "reading " + opt.sfz_path);
+    return res;
+  };
+  if (is_removed) return finish_removed();
   if (regions == 0) return skip(ReasonCode::kDamaged, "no regions in SF2 file");
   res.sample_count = samples;
   res.region_count = regions;
 
   // 4-8. Stage, verify against a fresh parse of the source, publish, flip.
-  auto verify_content = [&](const fmt::BundleReader& rd) -> std::string {
-    fmt::Sf2ParseResult fresh = fmt::parse_sf2_file(opt.sfz_path);
-    if (!fresh.ok() || fresh.presets.size() != parsed.presets.size()) return "the SF2 file changed while it was imported";
-    if (rd.instruments().size() != fresh.presets.size()) return "staged bundle has the wrong instrument count";
-    std::vector<std::int32_t> want, got;
-    for (std::size_t i = 0; i < fresh.presets.size(); ++i) {
-      const auto& fp = fresh.presets[i];
-      const auto& ins = rd.instruments()[i];
-      if (ins.key != fp.key || ins.name != fp.name) return "staged instrument " + fp.key + " has the wrong key or name";
-      if (ins.regions != fp.regions || fp.regions != parsed.presets[i].regions)
-        return "staged region table of " + fp.key + " differs from the parsed zones";
-      if (ins.sample_count != fp.samples.size()) return "staged instrument " + fp.key + " has the wrong sample count";
-      for (std::size_t k = 0; k < fp.samples.size(); ++k) {
-        const auto& si = rd.samples()[ins.first_sample + k];
-        if (!(si.format == fp.samples[k].format) || si.frame_count != fp.samples[k].frames)
-          return "sample '" + fp.samples[k].name + "' of " + fp.key + " has the wrong format or length";
-        if (fresh.samples->read(fp.samples[k], want) != fmt::Error::kNone) return "cannot re-read sample '" + fp.samples[k].name + "'";
-        got.assign(want.size(), 0);
-        if (rd.read_frames(ins.first_sample + k, 0, want.size(), got) != fmt::Error::kNone || got != want)
-          return "sample '" + fp.samples[k].name + "' of " + fp.key + " is not bit-identical to its source";
-      }
-    }
-    return {};
-  };
-  return stage_and_publish(opt, res, rl, writer, verify_content);
+  ImportResult last = round(true);
+  if (last.status == Status::kOk) {
+    merge(last, true);
+    res.bundle_created = any_created;
+    res.current_flipped = any_flipped;
+    return res;
+  }
+  if (source_failure(last)) return finish_removed();
+  return last;
 }
 
 CliWriterGuard::CliWriterGuard(const std::string& root) {

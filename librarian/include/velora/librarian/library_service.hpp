@@ -22,6 +22,9 @@
 // (import_file: convert, stage, verify bit-exact, fsync, rename, flip `current`) and hands every finished item back to the service thread, which
 // writes the catalog rows (one transaction) only after that, then pushes ImportProgress events to the requester and to subscribers. Catalog access
 // stays on the service thread; the worker never touches SQLite.
+//
+// Story 5.8: an SF2 import publishes checkpoint bundles (the timbres finished so far) whose catalog rows are written as they come, and a job whose source disappears
+// ends IMPORT_STATE_DRIVE_REMOVED (see LibraryServiceOptions::checkpoint_* / source_gone and librarian/README.md).
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -35,6 +38,7 @@
 
 #include "library_api.pb.h"
 #include "velora/librarian/catalog.hpp"
+#include "velora/librarian/import.hpp"
 #include "velora/librarian/library_reconcile.hpp"
 #include "velora/librarian/preflight.hpp"
 
@@ -75,6 +79,20 @@ struct LibraryServiceOptions {
   std::size_t max_preflights_per_client = 2;  // queued or running scans of one connection (QUEUE_FULL details.reason=per_client)
   // Test hook: called on the worker thread at the start of every preflight scan (a test blocks here to cancel a scan that is queued or running).
   std::function<void()> preflight_start_hook;
+  // Story 5.8. A SoundFont import publishes the timbres finished so far every `checkpoint_timbres` timbres (0 = 10) or `checkpoint_bytes` bytes of decoded PCM
+  // (0 = 20 GiB), whichever comes first, as a new bundle of the same library (import.hpp); the catalog rows follow each one. Flags of librarian-service.
+  std::uint32_t checkpoint_timbres = 0;
+  std::uint64_t checkpoint_bytes = 0;
+  // Tests: the size counted for timbre `index` towards `checkpoint_bytes` (default: its decoded PCM size).
+  std::function<std::uint64_t(std::size_t index, std::uint64_t actual)> checkpoint_size_fn;
+  // Drive removal: a job ends DRIVE_REMOVED when its source (folder or file) can no longer be stat'ed or sits on another device, or when reading it fails with an I/O
+  // error. This probe adds an explicit signal (the board's unmount event, a test's injected fault): true = `source` is gone. Runs on the worker thread.
+  std::function<bool(const std::string& source)> source_gone;
+  // Test hook, like import_point_hook but for the timbre boundaries of the worker thread: "timbre-start", "timbre-done" (third argument = the timbre index) and
+  // "checkpoint-published" (= the number of timbres in the new bundle). Kept apart from import_point_hook so its point list stays what Story 5.6 documents.
+  std::function<void(const char* point, std::uint64_t job_id, std::size_t timbre)> import_timbre_hook;
+  // Test hook: adjusts the ImportOptions of every item on the worker thread just before it runs (fault injection: a failing byte source, a corrupted staged bundle).
+  std::function<void(std::uint64_t job_id, std::size_t item, ImportOptions&)> import_options_hook;
 };
 
 class LibraryService {
@@ -115,6 +133,7 @@ class LibraryService {
     std::uint64_t id = 0;
     std::vector<std::string> reconcile_acc;  // ids of the chunks of an open chunked Reconcile
     bool handshaken = false, subscribed = false, closing = false, dead = false, eof = false;
+    bool checkpoints_v1 = false;  // the hello listed `import.checkpoints.v1`: it understands IMPORT_STATE_DRIVE_REMOVED and the Story 5.8 item fields
     std::chrono::steady_clock::time_point accepted = std::chrono::steady_clock::now();
   };
 
@@ -154,6 +173,7 @@ class LibraryService {
   bool free_bytes(std::uint64_t& out) const;
   void process_worker();
   void on_worker_msg(detail::WorkerMsg& m);
+  void on_checkpoint_msg(detail::ImportJob& job, detail::WorkerMsg& m);  // Story 5.8
   void push_job_event(detail::ImportJob& job, const ws::v1::ImportItemResult* item);
   void finish_job(detail::ImportJob& job, bool all_items_processed);
   void trim_finished_jobs();

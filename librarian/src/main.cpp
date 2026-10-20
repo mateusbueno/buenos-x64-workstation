@@ -1,4 +1,5 @@
 // librarian import <file.sfz | file.sf2 | dir>... --root <data root> [--base DIR] [--category NAME] [--report FILE|-]
+//                         [--checkpoint-timbres N] [--checkpoint-bytes N]
 //
 // One SFZ or one SF2 is one library (an SF2's presets are its instruments). Several files and/or directories
 // (searched recursively for *.sfz and *.sf2) are
@@ -13,14 +14,21 @@
 // file (same format as librarian/data/category_keywords.json). Exit 0 for a usable table, 2 on usage or an unreadable --table, 3 if the embedded table is invalid. Control characters in names are echoed as \\xNN.
 // `import --category` takes a category key (category.piano), its slug or an English name, never "none".
 // Test builds only (-DVELORA_LIBRARIAN_TEST_HOOKS): VELORA_LIBRARIAN_FAULT=<stage>
-// (stage-created|staged|verified|fsynced|renamed|link-created|flipped) makes the process _exit(137) there.
+// (stage-created|staged|verified|fsynced|renamed|link-created|flipped) makes the process _exit(137) there. Story 5.8:
+// VELORA_LIBRARIAN_KILL=<point>@<n> sends the process SIGKILL at the n-th (1-based) time it reaches <point>, a stage name as above or
+// timbre-start|timbre-done|checkpoint-published; VELORA_LIBRARIAN_SOURCE_GONE=<point>@<n> makes the source "disappear" there instead (the importer then
+// ends with drive removed).
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -33,6 +41,7 @@ int main(int argc, char** argv) {
   auto usage = [&]() {
     std::fprintf(stderr,
                  "usage: %s import <file.sfz|file.sf2|dir>... --root DIR [--base DIR] [--category NAME] [--report FILE|-]\n"
+                 "          [--checkpoint-timbres N] [--checkpoint-bytes N]\n"
                  "       %s suggest-category [--table FILE] <name>...\n",
                  argv[0], argv[0]);
     return 2;
@@ -88,6 +97,16 @@ int main(int argc, char** argv) {
     else if (a == "--base") opt.base_dir = argv[++i];
     else if (a == "--category") opt.category = argv[++i];
     else if (a == "--report") report_path = argv[++i];
+    else if (a == "--checkpoint-timbres" || a == "--checkpoint-bytes") {
+      // Story 5.8: a SoundFont is published in steps of N finished presets / N bytes of decoded PCM (defaults 10 and 20 GiB). Plain decimal, at least 1.
+      char* end = nullptr;
+      const char* v = argv[++i];
+      errno = 0;
+      const unsigned long long n = std::strtoull(v, &end, 10);
+      if (errno != 0 || end == v || *end != '\0' || n == 0 || v[0] == '-' || (a == "--checkpoint-timbres" && n > 0xFFFFFFFFull)) return usage();
+      if (a == "--checkpoint-timbres") opt.checkpoint_timbres = static_cast<std::uint32_t>(n);
+      else opt.checkpoint_bytes = n;
+    }
     else return usage();
   }
   if (opt.root.empty()) return usage();
@@ -99,6 +118,43 @@ int main(int argc, char** argv) {
       if (s == at) ::_exit(137);
       return HookAction::kContinue;
     };
+  }
+  // <point>@<n>: counts the arrivals at a named point (stage names and the timbre points share one counter per name).
+  struct PointSpec {
+    std::string name;
+    int n = 0;
+    bool set = false;
+  };
+  auto parse_spec = [](const char* env) {
+    PointSpec p;
+    if (const char* v = std::getenv(env)) {
+      const std::string t = v;
+      const std::size_t at = t.find('@');
+      p.name = t.substr(0, at);
+      p.n = at == std::string::npos ? 1 : std::atoi(t.c_str() + at + 1);
+      p.set = !p.name.empty() && p.n > 0;
+    }
+    return p;
+  };
+  const PointSpec kill_at = parse_spec("VELORA_LIBRARIAN_KILL"), gone_at = parse_spec("VELORA_LIBRARIAN_SOURCE_GONE");
+  if (kill_at.set || gone_at.set) {
+    auto counts = std::make_shared<std::map<std::string, int>>();
+    auto gone_flag = std::make_shared<bool>(false);
+    auto arrive = [=](const char* name) {
+      const int c = ++(*counts)[name];
+      if (kill_at.set && kill_at.name == name && c == kill_at.n) ::kill(::getpid(), SIGKILL);
+      if (gone_at.set && gone_at.name == name && c == gone_at.n) *gone_flag = true;
+    };
+    auto prev_stage = opt.fault.on_stage;
+    opt.fault.on_stage = [=](Stage s) {
+      arrive(to_string(s));
+      return prev_stage ? prev_stage(s) : HookAction::kContinue;
+    };
+    opt.fault.on_timbre = [=](const char* point, std::size_t) {
+      arrive(point);
+      return HookAction::kContinue;
+    };
+    if (gone_at.set) opt.source_gone = [=]() { return *gone_flag; };
   }
 #endif
   // A single plain file keeps the Story 1.13 text output; anything else is a batch.
@@ -130,6 +186,10 @@ int main(int argc, char** argv) {
   }
   for (const auto& f : b.files) {
     const ImportResult& r = f.result;
+    if (r.status == Status::kDriveRemoved) {  // Story 5.8: the finished timbres are published, the one in progress was discarded whole
+      std::fprintf(stderr, "librarian: %s: drive removed: %zu of %zu timbre(s) published\n", f.sfz_path.c_str(), r.timbres_published, r.timbres_total);
+      continue;
+    }
     if (!r.ok()) {
       std::fprintf(stderr, "librarian: %s: %s%s%s: nothing published\n", f.sfz_path.c_str(), to_string(r.status),
                    r.reason_code == ReasonCode::kNone ? "" : " ", r.reason_code == ReasonCode::kNone ? "" : to_string(r.reason_code));

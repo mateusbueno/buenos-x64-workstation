@@ -93,6 +93,22 @@ Result<std::size_t> BundleWriter::add_instrument(std::string_view name,
   return instruments_.size() - 1;
 }
 
+Error BundleWriter::discard_last_instrument() {
+  if (instruments_.empty()) return Error::kInvalidArgument;
+  const InstrumentRec& ins = instruments_.back();
+  if (!ins.samples.empty()) {
+    const std::uint64_t first = ins.samples.front().first_block;
+    std::uint64_t count = 0;
+    for (const SampleRec& s : ins.samples) count += s.block_count;
+    if (first + count != blocks_.size()) return Error::kInvalidArgument;  // another instrument added blocks after this one
+    const std::size_t data_before = first < blocks_.size() ? static_cast<std::size_t>(blocks_[first].data_offset) : block_data_.size();
+    blocks_.resize(static_cast<std::size_t>(first));
+    block_data_.resize(data_before);
+  }
+  instruments_.pop_back();
+  return Error::kNone;
+}
+
 Error BundleWriter::add_sample(std::size_t instrument, const SampleInput& in) {
   if (instrument >= instruments_.size()) return Error::kInvalidArgument;
   if (in.name.size() > kMaxStringLen) return Error::kInvalidArgument;

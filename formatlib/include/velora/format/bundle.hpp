@@ -110,6 +110,12 @@ class BundleWriter {
   // Encodes immediately; `input.data` is not retained. Verifies the encoding by decoding.
   Error add_sample(std::size_t instrument, const SampleInput& input);
 
+  // Story 5.8: drops the instrument that was added LAST together with its samples, regions and encoded blocks, as if it had never been added (the
+  // librarian discards a timbre whose source vanished halfway). Allowed only while that instrument's blocks are the tail of the block store (nothing was
+  // added to another instrument after it); kInvalidArgument otherwise and when there is no instrument. Everything added before is untouched, so a
+  // later finalize() is byte-identical to a writer that never saw the dropped instrument.
+  Error discard_last_instrument();
+
   // Deterministic for a given libFLAC version: identical calls produce identical bytes. Encoded
   // FLAC frames may differ between libFLAC versions (bundle_id and bytes with them); decoded PCM,
   // PCM hashes and library_id never do. Only the STREAMINFO metadata block is emitted.

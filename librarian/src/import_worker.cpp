@@ -1,5 +1,10 @@
 #include "import_worker.hpp"
 
+#include <sys/stat.h>
+
+#include <cerrno>
+#include <cstring>
+
 #include "velora/format/category.hpp"
 #include "velora/librarian/library_index.hpp"
 
@@ -19,6 +24,26 @@ const char* point_name(Stage s) {
   }
   return "?";
 }
+
+// Story 5.8: the built-in "the source is gone" probe of a job. The source (a folder or a file) must stay stat-able on the device it was on when the job
+// started; ENOENT / ENOTDIR / ENXIO / ENODEV / EIO / ESTALE or another device count as removal (an unmount, a pulled USB drive, a detached image).
+struct SourceProbe {
+  std::string path;
+  dev_t dev = 0;
+  bool have_dev = false;
+  explicit SourceProbe(std::string p) : path(std::move(p)) {
+    struct stat st;
+    if (::stat(path.c_str(), &st) == 0) {
+      dev = st.st_dev;
+      have_dev = true;
+    }
+  }
+  bool gone() const {
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) return errno == ENOENT || errno == ENOTDIR || errno == ENXIO || errno == ENODEV || errno == EIO || errno == ESTALE;
+    return have_dev && st.st_dev != dev;
+  }
+};
 
 }  // namespace
 
@@ -153,6 +178,8 @@ void ImportWorker::run() {
       queue_.pop_front();
       running_ = job;
     }
+    SourceProbe probe(job->source);
+    auto source_gone = [&]() { return probe.gone() || (cfg_.source_gone && cfg_.source_gone(job->source)); };
     {
       WorkerMsg m;
       m.kind = WorkerMsg::Kind::kJobStarted;
@@ -177,7 +204,41 @@ void ImportWorker::run() {
       o.write_catalog_meta = true;
       o.library_name = it.name;
       o.instrument_meta = it.meta;
+      o.checkpoint_timbres = cfg_.checkpoint_timbres;
+      o.checkpoint_bytes = cfg_.checkpoint_bytes;
+      o.checkpoint_size_fn = cfg_.checkpoint_size_fn;
+      o.source_gone = source_gone;
+      if (job->source != it.path) o.source_root = job->source;
+      o.on_timbres = [&job](std::size_t n) {
+        if (n > 1) job->timbres_total.fetch_add(static_cast<std::uint32_t>(n - 1));  // the job counted this file as one timbre
+      };
       const std::uint64_t jid = job->id;
+      o.on_checkpoint = [&, i](const ImportResult& r) {
+        // An intermediate bundle is published: the service thread writes its catalog rows before the next timbre is converted ("published, then rows").
+        WorkerMsg cp;
+        cp.kind = WorkerMsg::Kind::kCheckpoint;
+        cp.job = job;
+        cp.index = i;
+        cp.result = r;
+        DescribeResult dr = describe_bundle(r.bundle_dir);
+        if (dr.status == DescribeStatus::kOk) {
+          cp.record = std::move(dr.record);
+          cp.have_record = true;
+        } else {
+          cp.describe_error = dr.why;
+        }
+        cp.ticket = std::make_shared<Ticket>();
+        std::shared_ptr<Ticket> tk = cp.ticket;
+        post(std::move(cp));
+        std::unique_lock<std::mutex> lk(tk->m);
+        tk->cv.wait(lk, [&] { return tk->done; });
+      };
+      o.fault.on_timbre = [&, jid](const char* point, std::size_t timbre) {
+        if (cfg_.timbre_hook) cfg_.timbre_hook(point, jid, timbre);
+        // A cancel takes effect before the next timbre is read; whatever a checkpoint published stays.
+        if (job->cancel.load() && std::strcmp(point, "timbre-start") == 0) return HookAction::kAbort;
+        return HookAction::kContinue;
+      };
       o.fault.on_stage = [&, jid, i](Stage s) {
         if (cfg_.point_hook) cfg_.point_hook(point_name(s), jid, i);
         // A cancel (or the service stopping) takes effect at the next safe point before the bundle is renamed into place.
@@ -185,13 +246,16 @@ void ImportWorker::run() {
           return HookAction::kAbort;
         return HookAction::kContinue;
       };
+      if (cfg_.options_hook) cfg_.options_hook(jid, i, o);
       WorkerMsg done;
       done.kind = WorkerMsg::Kind::kItemDone;
       done.job = job;
       done.index = i;
       done.result = import_file(o);
-      if (done.result.status == Status::kAborted) reconcile_staging(cfg_.data_dir);  // what the abort left in .staging
-      if (done.result.ok()) {
+      if (done.result.status == Status::kAborted || done.result.status == Status::kDriveRemoved)
+        reconcile_staging(cfg_.data_dir);  // what the abort left in .staging (a removal leaves nothing: the check is cheap and keeps the invariant)
+      const bool drive_removed = done.result.status == Status::kDriveRemoved;
+      if (done.result.ok() || (drive_removed && done.result.timbres_published > 0)) {
         DescribeResult dr = describe_bundle(done.result.bundle_dir);
         if (dr.status == DescribeStatus::kOk) {
           done.record = std::move(dr.record);
@@ -205,6 +269,7 @@ void ImportWorker::run() {
       post(std::move(done));
       std::unique_lock<std::mutex> lk(t->m);
       t->cv.wait(lk, [&] { return t->done; });
+      if (drive_removed) break;  // the drive is gone: the items after this one cannot be read either
     }
     {
       WorkerMsg m;

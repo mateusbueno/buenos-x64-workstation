@@ -27,6 +27,8 @@
 
 namespace velora::librarian {
 
+static void downgrade_for_old_client(ws::v1::ImportProgress& p);  // Story 5.8, defined next to push_job_event
+
 namespace {
 
 bool set_nonblocking(int fd) {
@@ -219,6 +221,12 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
   wc.data_dir = opts_.data_dir;
   wc.preflight_start_hook = opts_.preflight_start_hook;
   wc.point_hook = [this](const char* p, std::uint64_t job, std::size_t item) { point(p, job, item); };
+  wc.timbre_hook = opts_.import_timbre_hook;
+  wc.options_hook = opts_.import_options_hook;
+  wc.source_gone = opts_.source_gone;
+  wc.checkpoint_timbres = opts_.checkpoint_timbres;
+  wc.checkpoint_bytes = opts_.checkpoint_bytes;
+  wc.checkpoint_size_fn = opts_.checkpoint_size_fn;
   wc.wake = [this] {
     const char b = 1;
     [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
@@ -393,11 +401,13 @@ void LibraryService::process_frame(Client& c, const std::string& payload) {
       return;
     }
     c.handshaken = true;
+    for (const std::string& f : msg.hello().features())
+      if (f == "import.checkpoints.v1") c.checkpoints_v1 = true;
     ws::v1::LibraryServerMessage ack;
     ack.set_request_id(msg.request_id());
     ws::v1::LibraryHelloAck* h = ack.mutable_hello_ack();
     h->set_version(kProtocolVersion);
-    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2", "preflight.v1"}) h->add_features(f);
+    for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2", "preflight.v1", "import.checkpoints.v1"}) h->add_features(f);
     h->set_catalog_schema_version(catalog_->schema_version());
     send(c, ack);
     return;
@@ -704,6 +714,7 @@ void LibraryService::handle(Client& c, const ws::v1::LibraryClientMessage& msg) 
       ws::v1::LibraryServerMessage m;
       m.set_request_id(rid);
       *m.mutable_import_progress() = it->second->last_event;
+      if (!c.checkpoints_v1) downgrade_for_old_client(*m.mutable_import_progress());
       send(c, m);
       return;
     }
@@ -937,6 +948,7 @@ void LibraryService::handle_import_request(Client& c, std::uint64_t rid, const w
   }
   if (job->items.empty())
     return refuse(ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "every item of the request has the action skip", {}, "nothing_to_import");
+  job->timbres_total = static_cast<std::uint32_t>(job->items.size());  // one per file until the worker opens an SF2 and learns its preset count
   // Space (Story 5.7): the decoded size of what the request would write. A figure from the preflight is reused only while every file it depends on (sfz,
   // includes, samples) is unchanged; otherwise a headers-only estimate is made here, on the service thread, for at most kMaxEstimateMisses items per request
   // (more: LIMIT_REACHED reason estimate_budget, run a preflight first or split the request) and at most kMaxDepStats stats of cached dependencies. A file the
@@ -1121,6 +1133,23 @@ void LibraryService::handle_list_instruments(Client& c, std::uint64_t rid, const
   send(c, m);
 }
 
+// A client that did not list `import.checkpoints.v1` does not know DRIVE_REMOVED: it gets FAILED with the reason in `message` / the item's detail.
+static void downgrade_for_old_client(ws::v1::ImportProgress& p) {
+  if (p.state() == ws::v1::IMPORT_STATE_DRIVE_REMOVED) {
+    p.set_state(ws::v1::IMPORT_STATE_FAILED);
+    p.set_message("drive_removed");
+  }
+  if (p.has_item()) {
+    ws::v1::ImportItemResult* it = p.mutable_item();
+    if (it->status() == ws::v1::IMPORT_ITEM_DRIVE_REMOVED) it->set_status(ws::v1::IMPORT_ITEM_FAILED);
+    if (it->reason() == ws::v1::IMPORT_REASON_DRIVE_REMOVED) {
+      it->set_reason(ws::v1::IMPORT_REASON_NONE);
+      it->set_status(ws::v1::IMPORT_ITEM_FAILED);
+    }
+    if (it->detail().empty() && it->status() == ws::v1::IMPORT_ITEM_FAILED) it->set_detail("drive_removed");
+  }
+}
+
 void LibraryService::push_job_event(detail::ImportJob& job, const ws::v1::ImportItemResult* item) {
   ws::v1::ImportProgress p;
   p.set_job_id(job.id);
@@ -1133,15 +1162,33 @@ void LibraryService::push_job_event(detail::ImportJob& job, const ws::v1::Import
   p.set_items_skipped(job.skipped);
   p.set_items_failed(job.failed);
   p.set_items_cancelled(job.cancelled);
+  p.set_timbres_total(job.timbres_total.load());
+  p.set_timbres_imported(job.timbres_imported);
+  p.set_checkpoints(job.checkpoints);
   p.set_current_item(clean_utf8(job.current_item));
   p.set_bytes_total(job.bytes_total);
   p.set_bytes_done(job.bytes_done);
+  p.set_checkpoint_error(job.checkpoint_error);
   job.last_event = p;  // the status answer carries no item result
   if (item) *p.mutable_item() = *item;
   ws::v1::LibraryServerMessage m;
+  p.set_checkpoint_error(job.checkpoint_error);
   *m.mutable_import_progress() = std::move(p);
+  ws::v1::LibraryServerMessage old_m;
+  bool have_old = false;
   for (Client& c : clients_)
-    if (!c.dead && !c.closing && (c.id == job.owner || c.subscribed)) send(c, m);
+    if (!c.dead && !c.closing && (c.id == job.owner || c.subscribed)) {
+      if (c.checkpoints_v1) {
+        send(c, m);
+        continue;
+      }
+      if (!have_old) {
+        old_m = m;
+        downgrade_for_old_client(*old_m.mutable_import_progress());
+        have_old = true;
+      }
+      send(c, old_m);
+    }
 }
 
 void LibraryService::process_worker() {
@@ -1152,10 +1199,47 @@ void LibraryService::process_worker() {
 void LibraryService::finish_job(detail::ImportJob& job, bool all_items_processed) {
   release_reservation(job);
   job.current_item.clear();
-  if (!all_items_processed || job.cancelled > 0) job.state = ws::v1::IMPORT_STATE_CANCELLED;
+  if (job.drive_removed) job.state = ws::v1::IMPORT_STATE_DRIVE_REMOVED;  // Story 5.8: what finished is published, the rest was not read
+  else if (!all_items_processed || job.cancelled > 0) job.state = ws::v1::IMPORT_STATE_CANCELLED;
   else job.state = (job.imported + job.unchanged) > 0 ? ws::v1::IMPORT_STATE_PUBLISHED : ws::v1::IMPORT_STATE_FAILED;
   push_job_event(job, nullptr);
   point("job-finished", job.id, 0);
+}
+
+// Story 5.8: an intermediate bundle of a running item is published (verified, fsynced, renamed, `current` flipped). Its catalog rows go in now, in one
+// transaction, before the worker converts the next timbre; the progress event has no item result. A failed catalog write is not fatal: the library is
+// published and the item's own rows (or the next start's reconcile) list it.
+void LibraryService::on_checkpoint_msg(detail::ImportJob& job, detail::WorkerMsg& m) {
+  bool row_written = false;
+  if (m.have_record) {
+    cur_job_ = job.id;
+    cur_item_ = m.index;
+    bool changed = false;
+    const CatalogStatus st = catalog_->publish_library(m.record, changed);
+    sync_counters();
+    if (st == CatalogStatus::kOk) {
+      row_written = true;
+      job.checkpoint_error.clear();
+      point("catalog-committed", job.id, m.index);
+    } else {
+      job.checkpoint_error = std::string("catalog write of a checkpoint failed (") + to_string(st) + "); retried at the next checkpoint or the end of the item";
+    }
+  } else {
+    job.checkpoint_error = "a checkpoint bundle could not be described: " + m.describe_error + "; retried at the next checkpoint or the end of the item";
+  }
+  const std::uint32_t now = static_cast<std::uint32_t>(m.result.timbres_published);
+  if (row_written && now > job.cur_item_timbres) {  // counted only once the catalog lists them
+    job.timbres_imported += now - job.cur_item_timbres;
+    job.cur_item_timbres = now;
+  }
+  ++job.checkpoints;
+  job.state = ws::v1::IMPORT_STATE_RUNNING;
+  push_job_event(job, nullptr);
+  if (m.ticket) {
+    std::lock_guard<std::mutex> lk(m.ticket->m);
+    m.ticket->done = true;
+    m.ticket->cv.notify_all();
+  }
 }
 
 void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
@@ -1168,6 +1252,7 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
       return;
     case detail::WorkerMsg::Kind::kItemStarted:
       job.state = ws::v1::IMPORT_STATE_RUNNING;
+      job.cur_item_timbres = 0;
       job.current_item = job.items[m.index].path;
       push_job_event(job, nullptr);
       return;
@@ -1176,6 +1261,9 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
       return;
     case detail::WorkerMsg::Kind::kPreflightDone:
       return;  // handled above
+    case detail::WorkerMsg::Kind::kCheckpoint:
+      on_checkpoint_msg(job, m);
+      return;
     case detail::WorkerMsg::Kind::kItemDone:
       break;
   }
@@ -1192,6 +1280,7 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
   ir.set_warning_count(static_cast<std::uint32_t>(r.warnings.size()));
   ir.set_allowlisted_count(static_cast<std::uint32_t>(r.allowlisted.size()));
   ir.set_suggested_category(static_cast<std::uint32_t>(fmtlib::id(r.suggested_category)));
+  ir.set_timbres_total(static_cast<std::uint32_t>(r.timbres_total));
   // Bounded, valid UTF-8: a file with thousands of offenders must not make the ImportProgress frame exceed the frame limit.
   for (std::size_t i = 0; i < r.reasons.size() && i < kMaxReportEntries; ++i) ir.add_messages(clean_utf8(r.reasons[i], kMaxReportString));
   if (r.reasons.size() > kMaxReportEntries) ir.add_messages("... " + std::to_string(r.reasons.size() - kMaxReportEntries) + " more");
@@ -1203,6 +1292,7 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
     po->set_line(static_cast<std::uint32_t>(o.line));
     po->set_message(clean_utf8(o.message, kMaxReportString));
   }
+  bool final_row = false;  // the catalog lists the item's last published bundle
   if (r.ok()) {
     if (!m.have_record) {
       ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
@@ -1217,6 +1307,8 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
         ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
         ir.set_detail(std::string("the library is published but the catalog write failed (") + to_string(st) + "); the next start lists it");
       } else {
+        final_row = true;
+        job.checkpoint_error.clear();
         point("catalog-committed", job.id, m.index);
         ir.set_status(r.bundle_created || r.current_flipped ? ws::v1::IMPORT_ITEM_IMPORTED : ws::v1::IMPORT_ITEM_UNCHANGED);
         ir.set_instruments(m.record.instrument_count());
@@ -1228,21 +1320,62 @@ void LibraryService::on_worker_msg(detail::WorkerMsg& m) {
     ir.set_failing_path(clean_utf8(r.failing_path));
   } else if (r.status == Status::kAborted) {
     ir.set_status(ws::v1::IMPORT_ITEM_CANCELLED);
+  } else if (r.status == Status::kDriveRemoved) {
+    // The timbres finished before the drive went away are published (and, with a described bundle, cataloged); the one in progress is gone whole.
+    if (r.timbres_published > 0 && m.have_record) {
+      cur_job_ = job.id;
+      cur_item_ = m.index;
+      bool changed = false;
+      const CatalogStatus st = catalog_->publish_library(m.record, changed);
+      sync_counters();
+      if (st == CatalogStatus::kOk) {
+        final_row = true;
+        job.checkpoint_error.clear();
+        point("catalog-committed", job.id, m.index);
+        ir.set_instruments(m.record.instrument_count());
+      }
+    }
+    ir.set_status(ws::v1::IMPORT_ITEM_DRIVE_REMOVED);
+    ir.set_detail(clean_utf8(r.reasons.empty() ? std::string("the source drive was removed") : r.reasons.back(), 1024));
+    job.drive_removed = true;
   } else {
     ir.set_status(ws::v1::IMPORT_ITEM_FAILED);
     ir.set_detail(clean_utf8(std::string(to_string(r.status)) + (r.reasons.empty() ? std::string() : ": " + r.reasons.front()), 1024));
+  }
+  // Timbres of this item that are in a published bundle AND listed by the catalog (its checkpoints' rows, and the final row): counted once per job.
+  {
+    const std::uint32_t pub = static_cast<std::uint32_t>(r.timbres_published);
+    if (final_row && pub > job.cur_item_timbres) job.timbres_imported += pub - job.cur_item_timbres;
+    ir.set_timbres(pub);
+    // `partial`: the item did not finish but a checkpoint (or the removal publish) left a prefix of its timbres published.
+    ir.set_partial(pub > 0 && ir.status() != ws::v1::IMPORT_ITEM_IMPORTED && ir.status() != ws::v1::IMPORT_ITEM_UNCHANGED);
+    job.cur_item_timbres = 0;
   }
   switch (ir.status()) {
     case ws::v1::IMPORT_ITEM_IMPORTED: ++job.imported; break;
     case ws::v1::IMPORT_ITEM_UNCHANGED: ++job.unchanged; break;
     case ws::v1::IMPORT_ITEM_SKIPPED: ++job.skipped; break;
     case ws::v1::IMPORT_ITEM_CANCELLED: ++job.cancelled; break;
+    case ws::v1::IMPORT_ITEM_DRIVE_REMOVED: break;  // counted by the terminal state and the timbre counters; the item is `done` below
     default: ++job.failed; break;
   }
   ++job.done;
-  job.bytes_done += it.bytes;
+  job.bytes_done += ir.status() == ws::v1::IMPORT_ITEM_DRIVE_REMOVED ? std::min<std::uint64_t>(it.bytes, r.converted_bytes) : it.bytes;
   job.state = ws::v1::IMPORT_STATE_RUNNING;
   push_job_event(job, &ir);
+  if (ir.status() == ws::v1::IMPORT_ITEM_DRIVE_REMOVED) {
+    // The items after it are not attempted: each gets a result of its own (skipped, reason drive_removed) so a client can list what is missing.
+    for (std::size_t k = m.index + 1; k < job.items.size(); ++k) {
+      ws::v1::ImportItemResult sk;
+      sk.set_path(clean_utf8(job.items[k].path));
+      sk.set_status(ws::v1::IMPORT_ITEM_SKIPPED);
+      sk.set_reason(ws::v1::IMPORT_REASON_DRIVE_REMOVED);
+      sk.set_detail("not attempted: the source drive was removed");
+      ++job.skipped;
+      ++job.done;
+      push_job_event(job, &sk);
+    }
+  }
   if (m.ticket) {
     std::lock_guard<std::mutex> lk(m.ticket->m);
     m.ticket->done = true;
