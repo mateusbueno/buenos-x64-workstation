@@ -97,6 +97,11 @@ WK_BLOB = ("56574b3101aaa8fff703b50b225869aff450549732cbaaed5e5df9b30a6da31cb0e5
            "9eb9ebbe5dd3cc7205c0854c53b12f3a98da5488b008bb9b068e9230c82bb4809e6004e870a73f77e35234a13d20ce3a")
 VAULT_ENTRY = ("564b56319b660e663d66688ab0b1b2b3b4b5b6b7b8b9babbc3c14246058f2d5ef327ed33213b82046ed956fb90c000482b1fbae0556d2c4fee9f6c8b2270d1bca7a76c2f9658b9c4")
 
+WK_BLOB_UUID = ("56574b3101aaa8fff703b50b225869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67ba0a1a2a3a4a5a6a7a8a9aaab"
+                "b27952d3c6f1222c0cfd438d34d043034a13df431b860479b07ba77078486cc141bd3487091063b292da3d3b6643ee5d")
+VAULT_ENTRY_UUID = ("564b56319b660e663d66688ab0b1b2b3b4b5b6b7b8b9babbc3c14246058f2d5ef327ed33213b82046ed956fb90c000482b1fbae0556d2c4fe"
+                    "2b80d5f28f43d84b73e7b1212714196")
+
 
 class WrapFormats(unittest.TestCase):
     def test_wrapped_key_v1_pinned_vector_and_layout(self):
@@ -146,9 +151,19 @@ class WrapFormats(unittest.TestCase):
             with self.assertRaises(ValueError, msg="byte %d" % i):
                 wr.open_vault_entry_v1(KEK, bytes(bad), LIB)
 
+    def test_uuid_text_library_id_vectors(self):
+        """The vectors tools/content-pack pins (a real UUID-text library_id), regenerated here by the pure-Python reference."""
+        uuid = "3f1d6a52-9b7e-4c1a-8d2e-5a6b7c8d9e0f"
+        blob, _ = wr.wrap_key_v1(vk.x25519_public(DEV_PRIV), EPH_PRIV, NONCE, uuid, CK)
+        self.assertEqual(blob.hex(), WK_BLOB_UUID)
+        self.assertEqual(wr.unwrap_key_v1(DEV_PRIV, blob, uuid), CK)
+        e, _ = wr.vault_entry_v1(KEK, VNONCE, uuid, CK)
+        self.assertEqual(e.hex(), VAULT_ENTRY_UUID)
+        self.assertEqual(wr.open_vault_entry_v1(KEK, e, uuid), CK)
+
     def test_doc_pins_the_vectors(self):
         doc = slurp(os.path.join(KEYS, "KEY-HIERARCHY.md"), "r")
-        for v in (WK_BLOB, VAULT_ENTRY, "a84dc7c3c8f058b1b2dc4cd1e9b5dc0a7987f88b6a9564cde3391fc421159e77",
+        for v in (WK_BLOB, VAULT_ENTRY, WK_BLOB_UUID, VAULT_ENTRY_UUID, "a84dc7c3c8f058b1b2dc4cd1e9b5dc0a7987f88b6a9564cde3391fc421159e77",
                   "e665ab101a53dad94fd3ac2902d09f512ab0e6400c7631f11b8938559eca08bf"):
             self.assertIn(v, doc)
 

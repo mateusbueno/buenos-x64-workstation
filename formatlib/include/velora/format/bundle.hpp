@@ -137,6 +137,9 @@ class BundleWriter {
   // key can protect several bundle revisions of a library without reusing a counter block. Callers that
   // pick their own nonce must keep it unique per content key.
   Result<Nonce> derive_nonce() const;
+  // The same derivation from the SHA-256 of finalize()'s bytes, for a caller that already holds that digest (Story 6.3: the importer hashes its
+  // verified bundle once, so the content-pack tool need not build the unprotected bundle a second time).
+  static Nonce nonce_from_plain_digest(const Digest256& plain_sha256);
 
  private:
   Result<std::vector<std::uint8_t>> finalize_impl(const ProtectParams* prot) const;

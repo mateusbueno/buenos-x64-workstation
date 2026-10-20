@@ -3,3 +3,7 @@
 /tools/oracle/.work/
 __pycache__/
 *.pyc
+
+# Story 6.3: the content-pack tool locks the vendor ID register while it appends (and writes a temp file next to it)
+/tools/content-pack/vendor-ids.lock
+/tools/content-pack/vendor-ids.tmp

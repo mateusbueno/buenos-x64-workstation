@@ -188,6 +188,32 @@ std::string uuid_to_string(const Uuid& u) {
          "-" + h.substr(20, 12);
 }
 
+bool uuid_from_string(std::string_view text, Uuid& out) {
+  if (text.size() != 36) return false;
+  Uuid u{};
+  std::size_t n = 0;
+  int hi = -1;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (c != '-') return false;
+      continue;
+    }
+    int v;
+    if (c >= '0' && c <= '9') v = c - '0';
+    else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+    else return false;
+    if (hi < 0) hi = v;
+    else {
+      u[n++] = static_cast<std::uint8_t>(hi << 4 | v);
+      hi = -1;
+    }
+  }
+  out = u;
+  return n == 16;
+}
+
 const Uuid kLibraryNamespace = [] {
   const Uuid dns = {0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1,
                     0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8};

@@ -49,6 +49,8 @@ using Uuid = std::array<std::uint8_t, 16>;
 // RFC 4122 name-based UUID, version 5 (SHA-1).
 Uuid uuid_v5(const Uuid& ns, std::span<const std::uint8_t> name);
 std::string uuid_to_string(const Uuid& u);
+// Story 6.3: parses the canonical 8-4-4-4-12 form (hex digits of either case); false (out untouched) for anything else.
+bool uuid_from_string(std::string_view text, Uuid& out);
 std::string to_hex(std::span<const std::uint8_t> d);
 
 // Fixed namespace for Velora library fingerprints (itself a UUIDv5 of the DNS namespace).

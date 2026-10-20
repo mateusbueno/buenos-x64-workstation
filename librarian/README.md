@@ -425,6 +425,14 @@ hashes the writer computed from the PCM it was given), the instrument keys, name
 It does NOT prove that the PCM the source returned before the removal was right (a flaky read that returned wrong bytes without an error would be encoded as given); only a publish with the source present
 (checkpoints and the final bundle) compares every new sample bit for bit with a fresh read.
 
+## Additive import options for the content-pack tool (Story 6.3)
+
+`ImportOptions::library_id` (a canonical UUID) replaces the path-derived library id; `ImportOptions::bundle_sink` is a build-only mode: the source is parsed,
+loaded, encoded and verified bit for bit exactly as for a user import, but in memory, with no data root, lock, staging directory, rename or `current` flip,
+and the verified `BundleWriter` (plus the `catalog.meta` text) goes to the sink. `tools/content-pack` uses both and finalizes the writer as a protected bundle, so
+vendor content takes the same import path as user content without a plaintext bundle ever touching the disk. The librarian service and CLI never set either
+option, so user imports are unchanged (they stay unencrypted and path-identified, FR24), and the librarian still links no cipher.
+
 ## Known limitations (Story 5.8)
 
 - **No hard links / shared block store.** A bundle is one file, so each checkpoint rewrites the finished timbres (time and flash wear grow with timbres squared over the interval). A block store separate from the manifest

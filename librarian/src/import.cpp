@@ -295,7 +295,8 @@ std::string build_catalog_meta(const ImportOptions& opt, const fmt::BundleReader
   meta = CatalogMeta{};
   std::error_code ec;
   const fs::path abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
-  meta.source_path = ec ? opt.sfz_path : abs.generic_string();
+  // Build-only mode (content-pack): the catalog.meta of a vendor pack names the source file, never the packer's directory layout.
+  meta.source_path = opt.bundle_sink ? fs::path(opt.sfz_path).filename().string() : (ec ? opt.sfz_path : abs.generic_string());
   meta.source_kind = is_sf2_path(opt.sfz_path) ? "sf2" : "sfz";
   const auto def_cat = fmt::parse_assignable_category(opt.category);
   const bool single = opt.source_timbres ? opt.source_timbres == 1 : rd.instruments().size() == 1;
@@ -334,6 +335,62 @@ std::string meta_options_problem(const ImportOptions& opt) {
       if (c < 0x20 || c == 0x7f) return "invalid instrument name";
     if (const std::string why = category_problem(o.category); !why.empty()) return why;
   }
+  return {};
+}
+
+// Story 6.3, build-only mode (ImportOptions::bundle_sink): the same verification as the staged path (reopen, verify_all, `verify_content` against the
+// source), but on the bytes in memory, and the writer goes to the sink. Nothing touches the file system.
+ImportResult& finish_in_memory(const ImportOptions& opt, ImportResult& res, const fmt::BundleWriter& writer,
+                               const std::function<std::string(const fmt::BundleReader&)>& verify_content) {
+  BuiltBundle built;
+  built.writer = &writer;
+  {  // the unprotected bytes live only inside this scope: zeroed and freed before the sink (which holds the keys) runs
+    auto bytes = writer.finalize();
+    if (!bytes) return fail_res(res, Status::kIo, std::string("cannot build bundle: ") + fmt::to_string(bytes.error()));
+    std::vector<std::uint8_t>& plain = bytes.value();
+    auto scrub = [&plain] {
+      volatile std::uint8_t* p = plain.data();
+      for (std::size_t i = 0; i < plain.size(); ++i) p[i] = 0;
+    };
+    built.plain_sha256 = fmt::Sha256::hash(plain);
+    auto r = fmt::BundleReader::open_memory(plain);
+    if (!r) {
+      scrub();
+      return fail_res(res, Status::kVerifyFailed, std::string("built bundle does not open: ") + fmt::to_string(r.error()));
+    }
+    const fmt::BundleReader& rd = r.value();
+    std::string why;
+    if (fmt::Error e = rd.verify_all(); e != fmt::Error::kNone) why = std::string("built bundle failed verification: ") + fmt::to_string(e);
+    if (why.empty()) why = verify_content(rd);
+    if (why.empty() && opt.write_catalog_meta) {
+      CatalogMeta meta;
+      why = build_catalog_meta(opt, rd, meta);
+      if (why.empty()) built.catalog_meta = catalog_meta_text(meta);
+    }
+    if (!why.empty()) {
+      scrub();
+      return fail_res(res, Status::kVerifyFailed, why);
+    }
+    res.library_id = fmt::uuid_to_string(rd.library_id());
+    res.bundle_id = fmt::to_hex(rd.bundle_id());
+    scrub();
+  }
+  built.library_id = res.library_id;
+  built.plain_bundle_id = res.bundle_id;
+  if (fmt::Error e = opt.bundle_sink(built); e != fmt::Error::kNone)
+    return fail_res(res, Status::kIo, std::string("bundle sink failed: ") + fmt::to_string(e));
+  res.status = Status::kOk;
+  return res;
+}
+
+// Story 6.3: the vendor library id option, "" = fine. `out` is set only when an id was given.
+std::string library_id_problem(const ImportOptions& opt, fmt::Uuid& out, bool& given) {
+  given = !opt.library_id.empty();
+  if (!given) return {};
+  fmt::Uuid u{};
+  if (!fmt::uuid_from_string(opt.library_id, u)) return "library_id '" + opt.library_id + "' is not a canonical UUID";
+  if (u == fmt::Uuid{}) return "library_id must not be the nil UUID";
+  out = u;
   return {};
 }
 
@@ -530,15 +587,18 @@ ImportResult import_sfz(const ImportOptions& opt) {
     return res;
   };
 
-  if (opt.sfz_path.empty() || opt.root.empty())
+  if (opt.sfz_path.empty() || (opt.root.empty() && !opt.bundle_sink))
     return fail(Status::kInvalidArgument, "an SFZ file and a data root are required");
   if (const std::string why = category_problem(opt.category); !why.empty()) return fail(Status::kInvalidArgument, why);
   if (const std::string why = meta_options_problem(opt); !why.empty()) return fail(Status::kInvalidArgument, why);
+  fmt::Uuid vendor_id{};
+  bool has_vendor_id = false;
+  if (const std::string why = library_id_problem(opt, vendor_id, has_vendor_id); !why.empty()) return fail(Status::kInvalidArgument, why);
   // Suggestion only (Story 5.5): never stored; the caller decides the category.
   res.suggested_category =
       suggest_category(suggest_input_for_path(opt.sfz_path, sfz_metadata_strings(opt.sfz_path))).value_or(fmt::Category::kNone);
 
-  {
+  if (!opt.bundle_sink) {
     struct stat st;
     if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
       return fail(Status::kInvalidArgument, "the data root " + opt.root + " is not an existing directory");
@@ -592,12 +652,13 @@ ImportResult import_sfz(const ImportOptions& opt) {
 
   // 2. Directories and the exclusive lock.
   RootLock rl;
-  if (!lock_root(opt, res, rl)) return res;
+  if (!opt.bundle_sink && !lock_root(opt, res, rl)) return res;
 
   // 3. Build the bundle: load each sample once, encode, drop it again.
   fmt::BundleWriter writer;
   if (writer.set_source_id(sfz_abs.generic_string()) != fmt::Error::kNone)
     return fail(Status::kInvalidArgument, "empty source id");
+  if (has_vendor_id) writer.set_library_id(vendor_id);
   auto inst = writer.add_instrument(sfz_abs.stem().string(), rel.generic_string());
   if (!inst) return fail(Status::kInvalidArgument, std::string("instrument key: ") + fmt::to_string(inst.error()));
   std::vector<AudioProblem> audio_problems;
@@ -685,6 +746,11 @@ ImportResult import_sfz(const ImportOptions& opt) {
     }
     return {};
   };
+  if (opt.bundle_sink) {
+    finish_in_memory(opt, res, writer, verify_content);
+    if (res.status == Status::kOk) res.timbres_published = 1;
+    return res;
+  }
   stage_and_publish(opt, res, rl, writer, verify_content);
   if ((res.status == Status::kVerifyFailed || res.status == Status::kIo) && !res.bundle_created && confirmed_gone(opt)) {
     res.reasons.clear();  // the staging directory is already removed by the failed publish
@@ -710,11 +776,14 @@ ImportResult import_sf2(const ImportOptions& opt) {
   ImportResult res;
   res.sf2 = true;
   auto fail = [&](Status s, std::string why) -> ImportResult& { return fail_res(res, s, std::move(why)); };
-  if (opt.sfz_path.empty() || opt.root.empty())
+  if (opt.sfz_path.empty() || (opt.root.empty() && !opt.bundle_sink))
     return fail(Status::kInvalidArgument, "an SF2 file and a data root are required");
   if (const std::string why = category_problem(opt.category); !why.empty()) return fail(Status::kInvalidArgument, why);
   if (const std::string why = meta_options_problem(opt); !why.empty()) return fail(Status::kInvalidArgument, why);
-  {
+  fmt::Uuid vendor_id{};
+  bool has_vendor_id = false;
+  if (const std::string why = library_id_problem(opt, vendor_id, has_vendor_id); !why.empty()) return fail(Status::kInvalidArgument, why);
+  if (!opt.bundle_sink) {
     struct stat st;
     if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
       return fail(Status::kInvalidArgument, "the data root " + opt.root + " is not an existing directory");
@@ -777,7 +846,7 @@ ImportResult import_sf2(const ImportOptions& opt) {
 
   // 2. Directories and the exclusive lock.
   RootLock rl;
-  if (!lock_root(opt, res, rl)) return res;
+  if (!opt.bundle_sink && !lock_root(opt, res, rl)) return res;
 
   // 3. Build the bundle: one instrument per preset (timbre); each sample read once, encoded, dropped again. Story 5.8: every `every` finished timbres
   // (or `every_bytes` of PCM) the timbres finished so far are published as a bundle of their own (a checkpoint); see import.hpp.
@@ -787,15 +856,18 @@ ImportResult import_sf2(const ImportOptions& opt) {
   const std::uint64_t every_bytes = opt.checkpoint_bytes ? opt.checkpoint_bytes : kDefaultCheckpointBytes;
   // A library that already has a `current` bundle (Import again, or what a crashed run published) is replaced only by a complete, verified bundle: no
   // checkpoints, and a removal leaves the old bundle current.
-  bool has_previous = false;
-  {
-    const std::string cur = rl.lib_root + "/" + fmt::uuid_to_string(fmt::library_id_from_source(abs.generic_string())) + "/" + host::kCurrentLinkName;
+  bool has_previous = opt.bundle_sink != nullptr;  // build-only mode (Story 6.3): the whole bundle or nothing, no checkpoints
+  if (!opt.bundle_sink) {
+    // The library the bundle will be published as: the vendor id when one was given, else the path-derived one.
+    const fmt::Uuid will_be = has_vendor_id ? vendor_id : fmt::library_id_from_source(abs.generic_string());
+    const std::string cur = rl.lib_root + "/" + fmt::uuid_to_string(will_be) + "/" + host::kCurrentLinkName;
     char buf[PATH_MAX];
     has_previous = ::readlink(cur.c_str(), buf, sizeof buf - 1) > 0;
   }
   fmt::BundleWriter writer;
   if (writer.set_source_id(abs.generic_string()) != fmt::Error::kNone)
     return fail(Status::kInvalidArgument, "empty source id");
+  if (has_vendor_id) writer.set_library_id(vendor_id);
   std::vector<std::int32_t> pcm;
   std::size_t samples = 0, regions = 0;       // of the finished timbres
   std::size_t finished = 0, pub_count = 0;    // timbres in the writer / in the last published bundle
@@ -983,6 +1055,14 @@ ImportResult import_sf2(const ImportOptions& opt) {
   if (regions == 0) return skip(ReasonCode::kDamaged, "no regions in SF2 file");
   res.sample_count = samples;
   res.region_count = regions;
+
+  // Story 6.3: build-only mode verifies in memory against a fresh parse of the source and hands the writer to the sink.
+  if (opt.bundle_sink) {
+    ropt.source_timbres = n_presets;
+    finish_in_memory(ropt, res, writer, verify_for(finished, 0, true, std::string()));
+    if (res.status == Status::kOk) res.timbres_published = finished;
+    return res;
+  }
 
   // 4-8. Stage, verify against a fresh parse of the source, publish, flip.
   ImportResult last = round(true);

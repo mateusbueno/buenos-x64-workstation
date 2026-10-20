@@ -118,6 +118,8 @@ as code points, not bytes) or when the three locales do not have exactly the sam
 
 ## Protected bundles (Story 6.2: AR27, NFR13, FR30/FR31 format)
 
+Story 6.3: `tools/content-pack` is the producer of these bundles (it feeds the librarian importer's verified `BundleWriter` into `finalize_protected`); `BundleWriter::nonce_from_plain_digest` is the nonce derivation of `derive_nonce()` from an already computed digest of the unprotected bundle; `uuid_from_string` (hash.hpp) parses the vendor `library_id` it passes to `BundleWriter::set_library_id`.
+
 The protected variant of the block-indexed bundle is **format_version 3**. It is a separate major version, not a flag on version 2: the unprotected reader
 (`BundleReader`) answers a version 3 file with `kUnsupportedVersion` exactly as it does for any version it does not know, every existing unprotected bundle
 (versions 1 and 2, minors 0 and 1) is byte-identical to before and keeps its `bundle_id`, and the protected readers answer an unprotected bundle with

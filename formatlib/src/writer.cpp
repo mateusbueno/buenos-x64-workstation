@@ -173,7 +173,10 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_protected(const Protect
 Result<Nonce> BundleWriter::derive_nonce() const {
   auto plain = finalize();
   if (!plain) return plain.error();
-  const Digest256 content = Sha256::hash(plain.value());
+  return nonce_from_plain_digest(Sha256::hash(plain.value()));
+}
+
+Nonce BundleWriter::nonce_from_plain_digest(const Digest256& content) {
   static constexpr char kLabel[] = "velora/protected-nonce/v1";
   Sha256 h;
   h.update(kLabel, sizeof kLabel);  // includes the terminating 0x00

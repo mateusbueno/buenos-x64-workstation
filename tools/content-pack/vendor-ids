@@ -1,0 +1,11 @@
+# Vendor ID register (Story 6.3). One line per vendor library, TAB separated:
+#   library_id <TAB> name <TAB> owner <TAB> date (YYYY-MM-DD)
+# library_id is a lower-case canonical UUID. A library_id belongs to exactly one library name and a name to exactly one id: tools/content-pack refuses a
+# pack whose id is assigned to another name (error library_id_conflict) and a pack whose id is not listed here (library_id_unregistered). New ids are
+# appended only by `velora-content-pack register` (or `pack --register --owner NAME`), which locks this file and rewrites it atomically. Review the
+# resulting diff like any other change: an id, once released with a unit, is never reassigned or removed.
+#
+# Reserved range, never listed here: 00000000-0000-4000-8000-xxxxxxxxxxxx is the dev/test range. A pack for root `dev` may use an id in it without a
+# register entry; factory-test and production packs refuse it. Real vendor ids are random (version 4) UUIDs.
+# The register binds an id to a library NAME and a name to an id; there is no source column. Names compare trimmed, space-collapsed and ASCII case-folded.
+# Only random (version 4) ids are accepted; the dev range above cannot appear here (the tool refuses a register that lists it).

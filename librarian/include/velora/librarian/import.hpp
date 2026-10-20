@@ -42,8 +42,22 @@
 #include "velora/format/byte_source.hpp"
 #include "velora/format/category.hpp"
 #include "velora/format/error.hpp"
+#include "velora/format/hash.hpp"
+
+namespace velora::format {
+class BundleWriter;
+}
 
 namespace velora::librarian {
+
+// Story 6.3: what a `bundle_sink` receives (see ImportOptions::bundle_sink). The pointers are valid only during the call.
+struct BuiltBundle {
+  const velora::format::BundleWriter* writer = nullptr;  // the verified content; the sink finalizes it (e.g. as a protected bundle)
+  std::string library_id;                                // canonical UUID string (the override when ImportOptions::library_id is set)
+  std::string plain_bundle_id;                           // 64 hex: bundle_id of the UNPROTECTED bundle of the same content
+  velora::format::Digest256 plain_sha256{};              // SHA-256 of the unprotected bundle's bytes (BundleWriter::nonce_from_plain_digest)
+  std::string catalog_meta;                              // catalog.meta text (library_index.hpp) when write_catalog_meta was set, else empty
+};
 
 // Points of the publish protocol at which a fault can be injected (tests / VELORA_LIBRARIAN_FAULT).
 enum class Stage : std::uint8_t {
@@ -124,6 +138,17 @@ struct ImportOptions {
   // Called once the number of timbres of the source is known (an SF2 parsed; not called for an SFZ or a file that does not parse).
   std::function<void(std::size_t timbres)> on_timbres;
   FaultInjection fault;
+  // Story 6.3 (tools/content-pack). Both are additive; the librarian service and the CLI never set them, so user imports are unchanged.
+  // `library_id`: a vendor library id (canonical UUID text) used instead of the one derived from the source path. Empty = derived. An
+  // unparsable or all-zero id is kInvalidArgument. A path-derived id stays the rule for every user import (FR24).
+  std::string library_id;
+  // `bundle_sink`: build-only mode for the offline content-pack tool. The importer parses, loads and encodes exactly as for a user import and
+  // verifies the result bit for bit against the source, but IN MEMORY: no data root is needed or touched, nothing is staged, locked, written,
+  // renamed or flipped (so no plaintext bundle, block or PCM reaches the disk), there are no checkpoints, and the writer is handed to the
+  // sink instead of being published. A sink error is Status::kIo. The result is kOk with library_id and bundle_id (of the unprotected
+  // bundle) filled, bundle_created and current_flipped false, and bundle_dir empty. The librarian itself never links any cipher; the sink is where
+  // a tool plugs in its own.
+  std::function<velora::format::Error(const BuiltBundle&)> bundle_sink;
 };
 
 enum class Status : std::uint8_t {

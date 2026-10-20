@@ -176,7 +176,7 @@ development_status:
   epic-6: in-progress
   6-1-signing-and-content-key-hierarchy-with-dev-roots: done
   6-2-protected-bundle-format-in-formatlib: done
-  6-3-content-pack-tool: backlog
+  6-3-content-pack-tool: done
   6-4-librarian-verifies-and-installs-protected-bundles: backlog
   6-5-engine-decrypts-protected-bundles-on-i-o-edge-threads: backlog
   6-6-op-tee-content-key-trusted-application-on-the-board: backlog
