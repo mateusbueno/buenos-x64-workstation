@@ -181,7 +181,7 @@ development_status:
   6-5-engine-decrypts-protected-bundles-on-i-o-edge-threads: done
   6-6-op-tee-content-key-trusted-application-on-the-board: backlog
   6-7-a-copied-or-tampered-library-does-not-play-elsewhere: backlog
-  6-8-device-registry-and-content-key-vault: backlog
+  6-8-device-registry-and-content-key-vault: done
   6-9-factory-library-packaging: backlog
   6-10-production-signing-root-ceremony-in-an-offline-hsm: backlog
   6-11-read-only-root-filesystem-and-journaled-data-partition: backlog

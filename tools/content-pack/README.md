@@ -8,6 +8,8 @@ Dependency rule: host tooling, **never shipped**. It links the encrypting and si
 desktop build or the librarian may depend on it. `content_pack_flagged_by_no_decrypt_scan` (ctest) shows that `tools/ci/check_format_no_decrypt.py` flags
 its cipher calls, while `format_no_decrypt` and `librarian_no_crypto` keep proving the shipped targets are clean.
 
+The key-handling primitives (`vault_entry_v1`, `wrapped_key_v1`, X25519, AES-GCM, HKDF, secret hygiene) live in `tools/common/vault_crypto` (library `velora_vault_crypto`, moved here from `src/crypto.*` in Story 6.8 without behaviour change) and are shared with the device registry (`tools/registry`); this tool's tests still pin the vectors. `tools/ci/check_content_pack_not_linked.py` keeps both tools and the shared library out of every shipped target.
+
 Read `tools/keys/KEY-HIERARCHY.md` first (roots, keys, `vault_entry_v1`, `wrapped_key_v1`) and `formatlib/README.md` ("Protected bundles").
 
 ## Commands

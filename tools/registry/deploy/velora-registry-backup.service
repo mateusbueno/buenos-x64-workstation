@@ -1,0 +1,19 @@
+# Example unit (Story 6.8), UNTESTED on a server. One encrypted backup of the registry database into a directory on a SECOND disk or mount.
+[Unit]
+Description=Velora registry encrypted backup
+
+[Service]
+Type=oneshot
+User=velora-registry
+Group=velora-registry
+ExecStart=/opt/velora/bin/velora-registry backup \
+  --db /var/lib/velora-registry/registry.db \
+  --backup-key /etc/velora-registry/backup.key \
+  --kek /etc/velora-registry/kek.aes256 \
+  --dest-dir /mnt/registry-backup
+# Keep 30 days of backups; the audit chain is also checked by `velora-registry backup` (exit code 7 on a broken chain, after the backup was written).
+ExecStartPost=/usr/bin/find /mnt/registry-backup -name 'registry-*.vrb' -mtime +30 -delete
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/mnt/registry-backup /var/lib/velora-registry

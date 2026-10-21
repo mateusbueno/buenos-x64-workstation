@@ -1,0 +1,11 @@
+# Example unit (Story 6.8), UNTESTED on a server. Nightly at 02:30; a missed run (machine off) runs at the next boot.
+[Unit]
+Description=Nightly Velora registry backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

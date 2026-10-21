@@ -1,0 +1,32 @@
+# Example unit (Story 6.8), UNTESTED on a server. Adjust the paths; keep the key files 0600 and owned by the service user.
+[Unit]
+Description=Velora device registry and content-key vault
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=velora-registry
+Group=velora-registry
+ExecStart=/opt/velora/bin/velora-registry serve \
+  --db /var/lib/velora-registry/registry.db \
+  --vault-dir /var/lib/velora-registry/vault \
+  --kek /etc/velora-registry/kek.aes256 \
+  --root production --expect-ca-sha256 REPLACE_WITH_FACTORY_ROOT_SHA256 --expect-kek-id REPLACE_WITH_KEK_ID_HEX16 \
+  --revoked-certs /etc/velora-registry/revoked-certs.txt \
+  --anchor-dir /mnt/registry-backup --backup-key /etc/velora-registry/backup.key \
+  --server-cert /etc/velora-registry/server.crt \
+  --server-key /etc/velora-registry/server.pem \
+  --client-ca /etc/velora-registry/factory-root.crt \
+  --listen 0.0.0.0 --port 8443
+Restart=on-failure
+LimitCORE=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/velora-registry
+# the KEK lives on one mlock()ed page: the service refuses to start if it can not be locked (default limits are often 64K or less)
+LimitMEMLOCK=1M
+
+[Install]
+WantedBy=multi-user.target

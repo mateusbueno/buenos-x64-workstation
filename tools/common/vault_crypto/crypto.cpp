@@ -35,6 +35,49 @@ void append(Bytes& b, const void* p, std::size_t n) {
 }
 void append(Bytes& b, std::string_view s) { append(b, s.data(), s.size()); }
 
+PkeyPtr x25519_private(const Key32& priv) {
+  return PkeyPtr(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, priv.data(), priv.size()));
+}
+PkeyPtr x25519_public_key(const Key32& pub) {
+  return PkeyPtr(EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, pub.data(), pub.size()));
+}
+
+// X25519 shared secret; false on failure or an all-zero result (KEY-HIERARCHY.md section 6).
+bool x25519_shared(const Key32& priv, const Key32& peer_pub, Key32& out) {
+  PkeyPtr a = x25519_private(priv), b = x25519_public_key(peer_pub);
+  if (!a || !b) return false;
+  std::unique_ptr<EVP_PKEY_CTX, DerDel> ctx(EVP_PKEY_CTX_new(a.get(), nullptr));
+  std::size_t len = out.size();
+  if (!ctx || EVP_PKEY_derive_init(ctx.get()) != 1 || EVP_PKEY_derive_set_peer(ctx.get(), b.get()) != 1 ||
+      EVP_PKEY_derive(ctx.get(), out.data(), &len) != 1 || len != out.size()) {
+    wipe(out.data(), out.size());
+    return false;
+  }
+  std::uint8_t acc = 0;
+  for (std::uint8_t v : out) acc |= v;
+  if (acc == 0) return false;
+  return true;
+}
+
+Bytes wrap_aad(std::span<const std::uint8_t> header45, std::string_view library_id) {
+  Bytes aad(header45.begin(), header45.end());
+  append(aad, library_id);
+  return aad;
+}
+
+// Writes the wrapping key into `out` (the caller's Secret).
+void wrapping_key(const Key32& shared, const Key32& eph_pub, const Key32& device_pub, std::string_view library_id, Key32& out) {
+  Bytes salt;
+  append(salt, eph_pub.data(), eph_pub.size());
+  append(salt, device_pub.data(), device_pub.size());
+  Bytes info;
+  append(info, kWrapInfoTag, sizeof kWrapInfoTag - 1);
+  append(info, library_id);
+  hkdf32(shared, salt, info, out);
+}
+
+}  // namespace
+
 // AES-256-GCM, 12-byte nonce, 16-byte tag. seal: ct (same length as pt) and tag; open: false when the tag does not verify.
 bool gcm_seal(const Key32& key, const Nonce12& nonce, std::span<const std::uint8_t> aad, std::span<const std::uint8_t> pt,
               std::uint8_t* ct, std::uint8_t* tag) {
@@ -79,49 +122,6 @@ void hkdf32(std::span<const std::uint8_t> ikm, std::span<const std::uint8_t> sal
   wipe(okm.data(), okm.size());
   wipe(t.data(), t.size());
 }
-
-PkeyPtr x25519_private(const Key32& priv) {
-  return PkeyPtr(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, priv.data(), priv.size()));
-}
-PkeyPtr x25519_public_key(const Key32& pub) {
-  return PkeyPtr(EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, pub.data(), pub.size()));
-}
-
-// X25519 shared secret; false on failure or an all-zero result (KEY-HIERARCHY.md section 6).
-bool x25519_shared(const Key32& priv, const Key32& peer_pub, Key32& out) {
-  PkeyPtr a = x25519_private(priv), b = x25519_public_key(peer_pub);
-  if (!a || !b) return false;
-  std::unique_ptr<EVP_PKEY_CTX, DerDel> ctx(EVP_PKEY_CTX_new(a.get(), nullptr));
-  std::size_t len = out.size();
-  if (!ctx || EVP_PKEY_derive_init(ctx.get()) != 1 || EVP_PKEY_derive_set_peer(ctx.get(), b.get()) != 1 ||
-      EVP_PKEY_derive(ctx.get(), out.data(), &len) != 1 || len != out.size()) {
-    wipe(out.data(), out.size());
-    return false;
-  }
-  std::uint8_t acc = 0;
-  for (std::uint8_t v : out) acc |= v;
-  if (acc == 0) return false;
-  return true;
-}
-
-Bytes wrap_aad(std::span<const std::uint8_t> header45, std::string_view library_id) {
-  Bytes aad(header45.begin(), header45.end());
-  append(aad, library_id);
-  return aad;
-}
-
-// Writes the wrapping key into `out` (the caller's Secret).
-void wrapping_key(const Key32& shared, const Key32& eph_pub, const Key32& device_pub, std::string_view library_id, Key32& out) {
-  Bytes salt;
-  append(salt, eph_pub.data(), eph_pub.size());
-  append(salt, device_pub.data(), device_pub.size());
-  Bytes info;
-  append(info, kWrapInfoTag, sizeof kWrapInfoTag - 1);
-  append(info, library_id);
-  hkdf32(shared, salt, info, out);
-}
-
-}  // namespace
 
 void wipe(void* p, std::size_t n) { OPENSSL_cleanse(p, n); }
 void lock_memory(void* p, std::size_t n) { (void)::mlock(p, n); }  // best effort: a low RLIMIT_MEMLOCK must not stop an offline tool

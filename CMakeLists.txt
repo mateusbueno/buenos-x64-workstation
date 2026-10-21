@@ -30,7 +30,9 @@ add_subdirectory(librarian)
 add_subdirectory(tools/offline-render)
 add_subdirectory(tools/library-gen)
 add_subdirectory(tools/keys)
+add_subdirectory(tools/common/vault_crypto)
 add_subdirectory(tools/content-pack)
+add_subdirectory(tools/registry)
 add_subdirectory(tools/spikes)
 
 # Dependency-purity gate for engine/core (see tools/ci/check_core_deps.py).
@@ -127,6 +129,13 @@ if(Python3_Interpreter_FOUND)
                    --binary $<TARGET_FILE:velora-content-pack>
                    --expect-flagged EVP_aes_256_gcm --expect-flagged EVP_EncryptInit_ex --expect-flagged EVP_DecryptInit_ex)
   set_tests_properties(content_pack_flagged_by_no_decrypt_scan PROPERTIES SKIP_RETURN_CODE 77)
+  # Story 6.8: the registry (vault KEK, unwrap, wrap) is vendor-server code like the pack tool: the same scanner must flag its cipher calls, which proves a clean
+  # shipped scan is not an empty one and that nothing shipped can have picked the registry up.
+  add_test(NAME registry_flagged_by_no_decrypt_scan
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --binary $<TARGET_FILE:velora-registry>
+                   --expect-flagged EVP_aes_256_gcm --expect-flagged EVP_EncryptInit_ex --expect-flagged EVP_DecryptInit_ex)
+  set_tests_properties(registry_flagged_by_no_decrypt_scan PROPERTIES SKIP_RETURN_CODE 77)
   # The librarian scanner accepts the verify target (only the Ed25519 verification calls) ...
   add_test(NAME format_verify_librarian_scanner
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_librarian_no_crypto.py

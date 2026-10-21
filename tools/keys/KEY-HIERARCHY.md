@@ -34,7 +34,7 @@ Each root has four keys.
 | Content-key vault KEK | 256-bit AES key | the vendor vault's stored per-library content keys (Story 6.8) | not applicable: a secret, never trusted by a device; used only by the vendor registry/vault and the pack tool |
 
 The per-device key pair (X25519) is **not** a root key: each device has its own, generated inside OP-TEE on the unit (Stories 1.7, 6.5) and its public
-half is registered in the vendor device registry (Story 6.8). The dev root additionally provides a *dev device key pair* so the wrap/unwrap code of 6.3,
+half is registered in the vendor device registry (Story 6.8, `tools/registry`: it opens the vaulted keys with the KEK only inside the wrap operation and issues `wrapped_key_v1` to stations over mutual TLS). The dev root additionally provides a *dev device key pair* so the wrap/unwrap code of 6.3,
 6.5 and 6.8 can be tested on the Mac. (Story 6.5 implements the engine side of the unwrap on the Mac with it: `engine/host/dev_keys`, `DevKeyProvider`, behind the key-provider port; the board's provider is the OP-TEE TA of Story 6.6.)
 
 ### Holder, storage and rotation, per key and root

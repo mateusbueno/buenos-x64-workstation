@@ -2,6 +2,7 @@
 # (to verify what it wrote) and OpenSSL's cipher API. Nothing in the device images, the desktop build or the librarian may depend on it; the ctest
 # `content_pack_flagged_by_no_decrypt_scan` proves the no-decrypt scanner would flag it, and the shipped scans (format_no_decrypt, librarian_no_crypto)
 # are unchanged.
+# Story 6.8: crypto.{hpp,cpp} (vault_entry_v1, wrapped_key_v1) now live in tools/common/vault_crypto, shared with tools/registry.
 # Same OpenSSL discovery as formatlib (imported targets are directory scoped).
 if(APPLE AND NOT OPENSSL_ROOT_DIR)
   foreach(_ossl /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3)
@@ -16,12 +17,11 @@ find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 set(VELORA_CP_WARN $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
 
 add_library(velora_content_pack STATIC
-  src/crypto.cpp
   src/pack_description.cpp
   src/vendor_register.cpp
   src/pack.cpp)
 target_include_directories(velora_content_pack PUBLIC src)
-target_link_libraries(velora_content_pack PUBLIC velora_librarian velora_format_decrypt velora_format_protected_writer OpenSSL::Crypto)
+target_link_libraries(velora_content_pack PUBLIC velora_librarian velora_format_decrypt velora_format_protected_writer velora_vault_crypto OpenSSL::Crypto)
 target_compile_options(velora_content_pack PRIVATE ${VELORA_CP_WARN})
 
 add_executable(velora-content-pack src/main.cpp)
