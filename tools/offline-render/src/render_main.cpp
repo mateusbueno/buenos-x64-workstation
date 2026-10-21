@@ -7,6 +7,7 @@
 //                       [--reverb room|hall|plate] [--reverb-time S] [--reverb-level 0..1] [--rev-master 0..1]   (reverb, Story 2.10)
 //                       [--delay-time MS] [--delay-sync on|off] [--delay-note 1/4|1/8|1/16|1/4d|1/8d|1/16d|1/4t|1/8t|1/16t] [--delay-feedback 0..0.95]
 //                       [--delay-level 0..1] [--delay-damping 0..1] [--delay-pingpong 0..1] [--tempo BPM] [--tempo-change SECONDS:BPM]   (delay, Story 2.11)
+//                       [--arp P:MODE:RATE:OCTAVES:GATE]   (arpeggiator, Story 7.2)
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
 //                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
@@ -55,6 +56,7 @@ static int usage() {
                "                     [--delay-time 1..2000] [--delay-sync on|off] [--delay-note 1/4|1/8|1/16|1/4d|1/8d|1/16d|1/4t|1/8t|1/16t]\n"
                "                     [--delay-feedback 0..0.95] [--delay-level 0..1] [--delay-damping 0..1] [--delay-pingpong 0..1]\n"
                "                     [--tempo 20..300] [--tempo-change SECONDS:BPM] (repeatable)\n"
+               "                     [--arp P:MODE:RATE:OCTAVES:GATE] (MODE = up|down|updown|random|as-played, RATE = 1/4|1/8|1/16|1/32|1/4t|1/8t|1/16t|1/32t, OCTAVES = 1..4, GATE = 1..200)\n"
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n"
                "       Live Set: --live-set FILE --library-root DIR --midi in.mid --out out.wav [--scene-at SECONDS:INDEX]... [--seed N] [--tail-seconds S]\n"
@@ -72,6 +74,7 @@ int main(int argc, char** argv) {
   RenderOptions opt;
   bool master_eq_seen = false, master_comp_seen = false, reverb_seen = false, reverb_time_seen = false, reverb_level_seen = false, rev_master_seen = false;
   bool delay_seen[7] = {false, false, false, false, false, false, false}, tempo_seen = false;  // each master option may be given once (parse_double also refuses NaN / inf)
+  bool arp_seen[8] = {false, false, false, false, false, false, false, false};
   std::string line_in_path, aux_out_path, live_set_path, library_root;
   std::string dev_device_key, wrapped_key_path, trust_list_path;  // Story 6.5 (dev builds)
   bool seed_given = false;
@@ -287,6 +290,52 @@ int main(int argc, char** argv) {
         return 2;
       }
       opt.routing.tempo_changes.emplace_back(sec, static_cast<float>(bpm));
+      opt.routing.enabled = true;
+    } else if (a == "--arp" && val(v)) {  // Story 7.2: P:MODE:RATE:OCTAVES:GATE
+      std::uint32_t part = 0;
+      std::string rest;
+      bool good = split_part(v, part, rest);
+      std::string fields[4];
+      if (good) {
+        std::size_t q = 0;
+        for (int k = 0; k < 4 && good; ++k) {
+          std::size_t colon = rest.find(':', q);
+          if (colon == std::string::npos) colon = rest.size();
+          if ((k < 3 && colon == rest.size()) || (k == 3 && colon != rest.size())) { good = false; break; }
+          fields[k] = rest.substr(q, colon - q);
+          q = colon + 1;
+        }
+      }
+      static const char* const kModes[5] = {"up", "down", "updown", "random", "as-played"};
+      static const char* const kRates[8] = {"1/4", "1/8", "1/16", "1/32", "1/4t", "1/8t", "1/16t", "1/32t"};
+      int mode_idx = -1, rate_idx = -1;
+      std::uint64_t octaves = 0;
+      double gate = 0.0;
+      if (good) {
+        for (int k = 0; k < 5; ++k)
+          if (fields[0] == kModes[k]) mode_idx = k;
+        for (int k = 0; k < 8; ++k)
+          if (fields[1] == kRates[k]) rate_idx = k;
+        good = mode_idx >= 0 && rate_idx >= 0 && parse_uint(fields[2], 4, octaves) && octaves >= 1 &&
+               parse_double(fields[3], 1.0, 200.0, gate);
+      }
+      if (!good) {
+        std::fprintf(stderr,
+                     "error: invalid --arp (P:MODE:RATE:OCTAVES:GATE, P = 0..7, MODE = up|down|updown|random|as-played, "
+                     "RATE = 1/4|1/8|1/16|1/32|1/4t|1/8t|1/16t|1/32t, OCTAVES = 1..4, GATE = 1..200)\n");
+        return 2;
+      }
+      if (arp_seen[part]) {
+        std::fprintf(stderr, "error: duplicate --arp on part %u\n", part);
+        return 2;
+      }
+      arp_seen[part] = true;
+      velora::core::ArpConfig& ac = opt.routing.arp[part];
+      ac.enabled = true;
+      ac.mode = static_cast<velora::core::ArpMode>(mode_idx);
+      ac.rate = static_cast<velora::core::ArpRate>(rate_idx);
+      ac.octaves = static_cast<std::uint8_t>(octaves);
+      ac.gate_percent = static_cast<float>(gate);
       opt.routing.enabled = true;
     } else if (a == "--master-eq" && val(v)) {  // LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]   (! = bypassed)
       if (master_eq_seen) { std::fprintf(stderr, "error: duplicate --master-eq\n"); return 2; }

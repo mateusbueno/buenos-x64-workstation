@@ -94,6 +94,14 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     error = "block renderer failed to initialise";
     return false;
   }
+  if (opt.emitted_notes) {
+    opt.emitted_notes->clear();
+    br->set_note_observer(
+        [](void* ctx, const EmittedNoteEvent& ev) noexcept {
+          static_cast<std::vector<EmittedNoteEvent>*>(ctx)->push_back(ev);
+        },
+        opt.emitted_notes);
+  }
   std::unique_ptr<Snapshot> routing_snapshot;
   std::unique_ptr<WavLineIn> line_in;
   if (opt.routing.enabled) {
@@ -112,6 +120,7 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
       PartCfg& pc = routing_snapshot->parts[p];
       pc.output = ro.output[p];
+      pc.arp = ro.arp[p];
       if (ro.inserts[p].size() > params::kInsertSlotCount) {
         error = "too many inserts on a part (at most 5)";
         return false;

@@ -20,6 +20,7 @@ set(VELORA_CORE_SOURCES
   src/delay.cpp
   src/mixer.cpp
   src/transport_clock.cpp
+  src/arpeggiator.cpp
   src/block_renderer.cpp)
 add_library(velora_core STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
 add_library(velora::core ALIAS velora_core)
@@ -113,6 +114,11 @@ target_link_libraries(transport_clock_tests PRIVATE velora_core)
 add_test(NAME transport_clock_tests COMMAND transport_clock_tests)
 set_tests_properties(transport_clock_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
 
+add_executable(arpeggiator_tests tests/arpeggiator_test.cpp)
+target_link_libraries(arpeggiator_tests PRIVATE velora_core)
+add_test(NAME arpeggiator_tests COMMAND arpeggiator_tests)
+set_tests_properties(arpeggiator_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
+
 add_executable(delay_tests tests/delay_test.cpp)
 target_link_libraries(delay_tests PRIVATE velora_core)
 add_test(NAME delay_tests COMMAND delay_tests)
@@ -159,6 +165,12 @@ add_executable(assign_traffic_test tests/rtsan_assign_test.cpp)
 target_link_libraries(assign_traffic_test PRIVATE velora_core)
 add_test(NAME assign_traffic_test COMMAND assign_traffic_test)
 set_tests_properties(assign_traffic_test PROPERTIES TIMEOUT 300)
+
+# Arpeggiator and EventProcessor traffic across 8 parts beside generation changes (Story 7.2) without the sanitizer, so macOS runs its logic too; the RTSan build is below.
+add_executable(arpeggiator_traffic_test tests/rtsan_arpeggiator_test.cpp)
+target_link_libraries(arpeggiator_traffic_test PRIVATE velora_core)
+add_test(NAME arpeggiator_traffic_test COMMAND arpeggiator_traffic_test)
+set_tests_properties(arpeggiator_traffic_test PROPERTIES TIMEOUT 300)
 
 # The cost benchmarks assert the declared cost units, which only means something on optimised code: they link a bench-private copy of the core sources built
 # with -O3 -DNDEBUG (and are compiled -O2 themselves), so the assertions run in every configuration, the default unoptimised builds included.
@@ -269,6 +281,12 @@ if(VELORA_RTSAN)
     target_link_options(rtsan_assign_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_assign_test COMMAND rtsan_assign_test)
     set_tests_properties(rtsan_assign_test PROPERTIES TIMEOUT 300)
+    add_executable(rtsan_arpeggiator_test tests/rtsan_arpeggiator_test.cpp)
+    target_link_libraries(rtsan_arpeggiator_test PRIVATE velora_core)
+    target_compile_options(rtsan_arpeggiator_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_arpeggiator_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_arpeggiator_test COMMAND rtsan_arpeggiator_test)
+    set_tests_properties(rtsan_arpeggiator_test PROPERTIES TIMEOUT 300)
     add_test(NAME rtsan_safe_test COMMAND rtsan_safe_test)
     # The deliberately RT-unsafe test must be aborted by RTSan: expected failure.
     add_test(NAME rtsan_unsafe_test COMMAND rtsan_unsafe_test)

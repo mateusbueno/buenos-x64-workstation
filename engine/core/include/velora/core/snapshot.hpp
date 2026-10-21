@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "velora/core/arpeggiator.hpp"
 #include "velora/core/assign_events.hpp"
 #include "velora/core/fx.hpp"
 #include "velora/core/params_gen.hpp"
@@ -61,6 +62,8 @@ struct PartCfg {
   // keeps the very same chain and RT does not cross-fade. nullptr = no inserts. RT reads the raw pointer only (it never copies or
   // releases the shared_ptr); the instances die with the last generation that holds them, on the control thread.
   std::shared_ptr<FxChain> chain;
+  // Per-part arpeggiator configuration (Story 7.2). Default enabled = false (notes pass through unchanged).
+  ArpConfig arp{};
 };
 
 struct Snapshot {

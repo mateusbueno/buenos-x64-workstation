@@ -13,6 +13,7 @@ BlockRenderer::BlockRenderer(std::uint32_t test_tone_voices)
   [[maybe_unused]] const bool arbiter_bound = arbiter_.bind(tone_);
   assert(arbiter_bound);
   channel_engine_.fill(static_cast<std::uint32_t>(EngineTypeId::kTestTone));
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) arps_[p].set_part_index(p);
 }
 
 void BlockRenderer::record(EngineStatus s) noexcept {
@@ -68,6 +69,7 @@ void BlockRenderer::adopt_generation() noexcept {
   if (in_live_set_ && !next->live_set) leave_live_set(remapped);
   router_.configure(*next);
   if (next->live_set) adopt_live_set_parts(*next, remapped);
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) arps_[p].set_config(next->parts[p].arp);
   // Seamless Live Set switch (Story 4.5): the reservation prepared by the control thread takes effect at this very generation. Sounding
   // voices keep their slots and costs (VoiceArbiter::commit_prepared documents the accounting); the keyboard-pedal state is not reset.
   const bool live_set_switch = next->reservation_epoch != 0 && next->reservation_epoch != applied_reservation_epoch_;
@@ -114,7 +116,28 @@ void BlockRenderer::adopt_generation() noexcept {
 // went to), the sample engine forgets its per-part banks (they belong to generations that may be freed) and every channel gets the default
 // engine again.
 void BlockRenderer::leave_live_set(std::array<bool, params::kPartCount>& remapped) noexcept {
-  router_.release_all([this](std::uint32_t part, std::uint32_t pitch, std::uint32_t engine) { apply_part_note(part, pitch, 0, false, engine); });
+  current_in_block_frame_ = 0;
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    part_out_[p].clear();
+    arps_[p].flush_sounding(part_out_[p]);
+    if (part_out_[p].dropped() > 0) record(EngineStatus::kEventOverflow);
+    for (std::size_t i = 0; i < part_out_[p].size(); ++i) {
+      const Ump& u = part_out_[p][i].ump;
+      if (u.is_note_off()) {
+        const std::uint32_t note = u.note();
+        const std::size_t key_idx = p * 128u + (note & 127u);
+        const std::uint32_t eng = note_engine_[key_idx] != 0 ? note_engine_[key_idx] : channel_engine_[p];
+        apply_part_note(p, note, 0, false, eng);
+      }
+    }
+  }
+  router_.release_all([this](std::uint32_t part, std::uint32_t pitch, std::uint32_t engine) {
+    const bool passthrough = part >= params::kPartCount ||
+                             (custom_processors_[part] == nullptr && arps_[part].is_passthrough_sounding(pitch));
+    if (part < params::kPartCount) arps_[part].track_passthrough_note(pitch, 0, false);
+    if (passthrough) apply_part_note(part, pitch, 0, false, engine);
+  });
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) arps_[p].reset();
   for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->clear_part_sample_banks();
   for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
     if (channel_engine_[p] != legacy_engine_[p]) remapped[p] = true;
@@ -298,12 +321,26 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     apply_keyboard_note(ump);
     return;
   }
+  if (ump.channel() < params::kPartCount) {
+    arps_[ump.channel()].track_passthrough_note(ump.note(), ump.velocity16(), ump.is_note_on());
+  }
   apply_part_note(ump.channel(), ump.note(), ump.velocity16(), ump.is_note_on(), channel_engine_[ump.channel()]);
 }
 
 // The note path of one (channel, engine): the arbiter's key/pedal state follows the events even when no engine serves the channel.
 void BlockRenderer::apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on,
                                     std::uint32_t type_id) noexcept {
+  const std::size_t key_idx = (channel & 15u) * 128u + (note & 127u);
+  if (on) note_engine_[key_idx] = type_id;
+  if (note_observer_) {
+    note_observer_(note_observer_ctx_, EmittedNoteEvent{
+        clock_.frames() + current_in_block_frame_,
+        static_cast<std::uint8_t>(channel & 0xFFu),
+        static_cast<std::uint8_t>(note & 0x7Fu),
+        static_cast<std::uint16_t>(velocity16 & 0xFFFFu),
+        on,
+    });
+  }
   if (on && router_.active()) {
     // A part can change engine between generations. A voice the pedal still holds on the OLD engine for this very (part, note) would lose
     // its deferred release when the new note on resets the key (one deferred slot per key): let it go now.
@@ -350,12 +387,19 @@ void BlockRenderer::apply_keyboard_note(const Ump& ump) noexcept {
     router_.note_on(ump.channel(), ump.note(), fan);
     for (std::uint32_t i = 0; i < fan.count; ++i) {
       const PartRouter::Target& t = fan.t[i];
-      if (t.release_first) apply_part_note(t.part, t.old_pitch, 0, false, t.old_engine);  // a re-struck key lets its earlier note go first
+      if (t.release_first) {
+        arps_[t.part].track_passthrough_note(t.old_pitch, 0, false);
+        apply_part_note(t.part, t.old_pitch, 0, false, t.old_engine);  // a re-struck key lets its earlier note go first
+      }
+      arps_[t.part].track_passthrough_note(t.pitch, ump.velocity16(), true);
       apply_part_note(t.part, t.pitch, ump.velocity16(), true, t.engine);
     }
   } else {
     router_.note_off(ump.channel(), ump.note(), fan);
-    for (std::uint32_t i = 0; i < fan.count; ++i) apply_part_note(fan.t[i].part, fan.t[i].pitch, ump.velocity16(), false, fan.t[i].engine);
+    for (std::uint32_t i = 0; i < fan.count; ++i) {
+      arps_[fan.t[i].part].track_passthrough_note(fan.t[i].pitch, ump.velocity16(), false);
+      apply_part_note(fan.t[i].part, fan.t[i].pitch, ump.velocity16(), false, fan.t[i].engine);
+    }
   }
 }
 
@@ -510,16 +554,183 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   clock_.set_tempo_tenths(TransportClock::tenths_from_bpm(tempo_bpm()));  // once per block, same point as the Mixer: a change applies from the next block
   const bool routed = mixer_.begin_block(last_);
 
+  std::array<bool, params::kPartCount> uses_proc{};
+  bool any_proc = false;
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    uses_proc[p] = (custom_processors_[p] != nullptr) || arps_[p].enabled() || arps_[p].has_pending_transition();
+    any_proc = any_proc || uses_proc[p];
+  }
+
   std::uint32_t pos = 0;
   std::size_t consumed = 0;
-  while (consumed < pending_count_ && pending_[consumed].target_frame < kBlockFrames) {
-    const std::uint32_t f = pending_[consumed].target_frame;
-    render_segment(left, right, pos, f, routed);
-    pos = f;
-    apply(pending_[consumed].ump);
-    ++consumed;
+  if (!any_proc) {
+    while (consumed < pending_count_ && pending_[consumed].target_frame < kBlockFrames) {
+      const std::uint32_t f = pending_[consumed].target_frame;
+      render_segment(left, right, pos, f, routed);
+      pos = f;
+      current_in_block_frame_ = f;
+      apply(pending_[consumed].ump);
+      ++consumed;
+    }
+    render_segment(left, right, pos, kBlockFrames, routed);
+  } else {
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+      part_in_[p].clear();
+      part_out_[p].clear();
+    }
+    direct_part_notes_count_ = 0;
+    auto push_in = [this](std::uint32_t part, const Ump& u, std::uint32_t f) {
+      if (!part_in_[part].push(u, f)) record(EngineStatus::kEventOverflow);
+    };
+    auto push_direct = [this](std::size_t seq, std::uint32_t f, std::uint32_t part, std::uint32_t pitch,
+                              std::uint32_t vel16, bool on, std::uint32_t eng) {
+      if (direct_part_notes_count_ < kDirectPartNotesCapacity) {
+        direct_part_notes_[direct_part_notes_count_++] = DirectPartNote{
+            seq, f, eng, static_cast<std::uint16_t>(vel16 & 0xFFFFu),
+            static_cast<std::uint8_t>(part & 0xFFu), static_cast<std::uint8_t>(pitch & 0x7Fu), on};
+      } else {
+        record(EngineStatus::kEventOverflow);
+      }
+    };
+    for (std::size_t i = 0; i < pending_count_ && pending_[i].target_frame < kBlockFrames; ++i) {
+      const std::uint32_t f = pending_[i].target_frame;
+      const Ump& u = pending_[i].ump;
+      if (u.group() != 0 || (!u.is_note_on() && !u.is_note_off())) continue;
+      if (router_.active()) {
+        PartRouter::Fanout fan;
+        if (u.is_note_on()) {
+          router_.note_on(u.channel(), u.note(), fan);
+          for (std::uint32_t k = 0; k < fan.count; ++k) {
+            const PartRouter::Target& t = fan.t[k];
+            if (uses_proc[t.part]) {
+              if (t.release_first) push_in(t.part, make_note_off(0, t.part, t.old_pitch, 0), f);
+              push_in(t.part, make_note_on(0, t.part, t.pitch, u.velocity16()), f);
+            } else {
+              if (t.release_first) {
+                arps_[t.part].track_passthrough_note(t.old_pitch, 0, false);
+                push_direct(i, f, t.part, t.old_pitch, 0, false, t.old_engine);
+              }
+              arps_[t.part].track_passthrough_note(t.pitch, u.velocity16(), true);
+              push_direct(i, f, t.part, t.pitch, u.velocity16(), true, t.engine);
+            }
+          }
+        } else {
+          router_.note_off(u.channel(), u.note(), fan);
+          for (std::uint32_t k = 0; k < fan.count; ++k) {
+            const PartRouter::Target& t = fan.t[k];
+            if (uses_proc[t.part]) {
+              push_in(t.part, make_note_off(0, t.part, t.pitch, u.velocity16()), f);
+            } else {
+              arps_[t.part].track_passthrough_note(t.pitch, u.velocity16(), false);
+              push_direct(i, f, t.part, t.pitch, u.velocity16(), false, t.engine);
+            }
+          }
+        }
+      } else if (u.channel() < params::kPartCount) {
+        const std::uint32_t p = u.channel();
+        if (uses_proc[p]) {
+          push_in(p, u, f);
+        } else {
+          arps_[p].track_passthrough_note(u.note(), u.velocity16(), u.is_note_on());
+          push_direct(i, f, p, u.note(), u.velocity16(), u.is_note_on(), channel_engine_[p]);
+        }
+      }
+    }
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+      if (uses_proc[p]) {
+        EventProcessor* proc = custom_processors_[p] ? custom_processors_[p] : static_cast<EventProcessor*>(&arps_[p]);
+        proc->process_block(part_in_[p], clock_, kBlockFrames, part_out_[p]);
+        if (part_out_[p].dropped() > 0) record(EngineStatus::kEventOverflow);
+      }
+    }
+
+    std::size_t direct_idx = 0;
+    std::array<std::size_t, params::kPartCount> out_idx{};
+    while (true) {
+      std::uint32_t next_frame = kBlockFrames;
+      if (consumed < pending_count_ && pending_[consumed].target_frame < kBlockFrames) {
+        next_frame = std::min(next_frame, pending_[consumed].target_frame);
+      }
+      if (direct_idx < direct_part_notes_count_) {
+        next_frame = std::min(next_frame, direct_part_notes_[direct_idx].frame);
+      }
+      for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+        if (out_idx[p] < part_out_[p].size()) {
+          const std::uint32_t pf = std::min(part_out_[p][out_idx[p]].target_frame, kBlockFrames - 1);
+          next_frame = std::min(next_frame, pf);
+        }
+      }
+      if (next_frame >= kBlockFrames) break;
+
+      render_segment(left, right, pos, next_frame, routed);
+      pos = next_frame;
+      current_in_block_frame_ = next_frame;
+
+      bool part_out_flushed = false;
+      auto flush_part_out = [&]() {
+        if (part_out_flushed) return;
+        part_out_flushed = true;
+        for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+          while (out_idx[p] < part_out_[p].size() &&
+                 std::min(part_out_[p][out_idx[p]].target_frame, kBlockFrames - 1) == next_frame) {
+            const Ump& u = part_out_[p][out_idx[p]++].ump;
+            if (u.group() == 0 && (u.is_note_on() || u.is_note_off())) {
+              const std::uint32_t note = u.note();
+              const bool on = u.is_note_on();
+              const std::size_t key_idx = p * 128u + (note & 127u);
+              const std::uint32_t eng = on ? channel_engine_[p]
+                                           : (note_engine_[key_idx] != 0 ? note_engine_[key_idx] : channel_engine_[p]);
+              apply_part_note(p, note, u.velocity16(), on, eng);
+            } else {
+              apply(u);
+            }
+          }
+        }
+      };
+
+      std::size_t last_part_note_seq = pending_count_;
+      for (std::size_t look = consumed; look < pending_count_ && pending_[look].target_frame == next_frame; ++look) {
+        const Ump& lu = pending_[look].ump;
+        if (lu.group() == 0 && (lu.is_note_on() || lu.is_note_off()) &&
+            (router_.active() || lu.channel() < params::kPartCount)) {
+          last_part_note_seq = look;
+        }
+      }
+
+      while (consumed < pending_count_ && pending_[consumed].target_frame == next_frame) {
+        const std::size_t seq = consumed;
+        const Ump& u = pending_[consumed++].ump;
+        const bool is_part_note = u.group() == 0 && (u.is_note_on() || u.is_note_off()) &&
+                                  (router_.active() || u.channel() < params::kPartCount);
+        if (is_part_note) {
+          while (direct_idx < direct_part_notes_count_ &&
+                 direct_part_notes_[direct_idx].frame == next_frame &&
+                 direct_part_notes_[direct_idx].seq <= seq) {
+            const DirectPartNote& dn = direct_part_notes_[direct_idx++];
+            apply_part_note(dn.part, dn.note, dn.velocity16, dn.on, dn.engine);
+          }
+          if (seq == last_part_note_seq) {
+            flush_part_out();
+          }
+        } else {
+          if (is_fence_event(u)) {
+            while (direct_idx < direct_part_notes_count_ && direct_part_notes_[direct_idx].frame == next_frame) {
+              const DirectPartNote& dn = direct_part_notes_[direct_idx++];
+              apply_part_note(dn.part, dn.note, dn.velocity16, dn.on, dn.engine);
+            }
+            flush_part_out();
+          }
+          apply(u);
+        }
+      }
+      while (direct_idx < direct_part_notes_count_ && direct_part_notes_[direct_idx].frame == next_frame) {
+        const DirectPartNote& dn = direct_part_notes_[direct_idx++];
+        apply_part_note(dn.part, dn.note, dn.velocity16, dn.on, dn.engine);
+      }
+      flush_part_out();
+    }
+    render_segment(left, right, pos, kBlockFrames, routed);
   }
-  render_segment(left, right, pos, kBlockFrames, routed);
   if (routed) mixer_.finish(out, last_);  // chains, sends, Main/Aux, line-in, master
   clock_.advance(kBlockFrames);
 

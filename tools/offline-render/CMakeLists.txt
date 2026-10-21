@@ -982,3 +982,51 @@ add_test(NAME assign_mode_rejects_without_live_set
 set_tests_properties(assign_mode_rejects_without_live_set PROPERTIES PASS_REGULAR_EXPRESSION "--encoder-at and --assign-mode need --live-set")
 add_custom_target(update-assign-golden
   COMMAND velora-offline-render ${_as_args} ${_as_good} --out ${_ls}/assign/assign.wav)
+
+# --- Arpeggiator (Story 7.2): exact emitted note frame tests + two-part golden null-test pipeline ---
+set(_arp ${CMAKE_CURRENT_SOURCE_DIR}/tests/arp)
+add_executable(arp_tests tests/arp_test.cpp)
+target_link_libraries(arp_tests PRIVATE velora_offline)
+target_compile_definitions(arp_tests PRIVATE
+  ARP_TEST_MIDI="${_arp}/arp.mid")
+add_test(NAME arp_tests COMMAND arp_tests)
+
+set(_arp_base --midi ${_arp}/arp.mid --tail-seconds 0.3)
+set(_arp_good ${_arp_base} --arp 0:updown:1/16:2:80 --arp 1:random:1/8t:2:110 --tempo 120 --tempo-change 1.0:97.3)
+set(_arp_wrong_mode ${_arp_base} --arp 0:up:1/16:2:80 --arp 1:random:1/8t:2:110 --tempo 120 --tempo-change 1.0:97.3)
+set(_arp_wrong_rate ${_arp_base} --arp 0:updown:1/16t:2:80 --arp 1:random:1/8t:2:110 --tempo 120 --tempo-change 1.0:97.3)
+set(_arp_wrong_octaves ${_arp_base} --arp 0:updown:1/16:3:80 --arp 1:random:1/8t:2:110 --tempo 120 --tempo-change 1.0:97.3)
+set(_arp_wrong_gate ${_arp_base} --arp 0:updown:1/16:2:50 --arp 1:random:1/8t:2:110 --tempo 120 --tempo-change 1.0:97.3)
+set(_arp_wrong_tempo ${_arp_base} --arp 0:updown:1/16:2:80 --arp 1:random:1/8t:2:110 --tempo 120 --tempo-change 1.0:105.0)
+add_test(NAME arp_clean
+         COMMAND ${CMAKE_COMMAND} -E remove -f ${_out}/arp_a.wav ${_out}/arp_b.wav ${_out}/arp_wm.wav ${_out}/arp_wr.wav ${_out}/arp_wo.wav ${_out}/arp_wg.wav ${_out}/arp_wt.wav)
+set_tests_properties(arp_clean PROPERTIES FIXTURES_SETUP arp_clean)
+add_test(NAME arp_render_a COMMAND velora-offline-render ${_arp_good} --out ${_out}/arp_a.wav)
+add_test(NAME arp_render_b COMMAND velora-offline-render ${_arp_good} --out ${_out}/arp_b.wav)
+set_tests_properties(arp_render_a PROPERTIES FIXTURES_REQUIRED arp_clean FIXTURES_SETUP arp_a)
+set_tests_properties(arp_render_b PROPERTIES FIXTURES_REQUIRED arp_clean FIXTURES_SETUP arp_b)
+add_test(NAME arp_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/arp_a.wav ${_out}/arp_b.wav)
+set_tests_properties(arp_bit_identical PROPERTIES FIXTURES_REQUIRED "arp_a;arp_b")
+add_test(NAME arp_null_golden COMMAND velora-null-test --case ${_arp}/arp.case --candidate ${_out}/arp_a.wav)
+set_tests_properties(arp_null_golden PROPERTIES FIXTURES_REQUIRED arp_a PASS_REGULAR_EXPRESSION "overall: PASS")
+foreach(_w mode:wm rate:wr octaves:wo gate:wg tempo:wt)
+  string(REPLACE ":" ";" _wl "${_w}")
+  list(GET _wl 0 _wn)
+  list(GET _wl 1 _wf)
+  add_test(NAME arp_wrong_${_wn} COMMAND velora-offline-render ${_arp_wrong_${_wn}} --out ${_out}/arp_${_wf}.wav)
+  set_tests_properties(arp_wrong_${_wn} PROPERTIES FIXTURES_REQUIRED arp_clean FIXTURES_SETUP arp_${_wf})
+  add_test(NAME arp_wrong_${_wn}_fails COMMAND velora-null-test --case ${_arp}/arp.case --candidate ${_out}/arp_${_wf}.wav)
+  set_tests_properties(arp_wrong_${_wn}_fails PROPERTIES FIXTURES_REQUIRED arp_${_wf} PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+endforeach()
+add_test(NAME arp_rejects_duplicate_part
+         COMMAND velora-offline-render ${_render_args} --arp 0:up:1/16:1:80 --arp 0:down:1/8:1:80 --out ${_out}/never.wav)
+set_tests_properties(arp_rejects_duplicate_part PROPERTIES PASS_REGULAR_EXPRESSION "duplicate --arp on part 0")
+foreach(_bad "8:up:1/16:1:80" "0:sideways:1/16:1:80" "0:up:1/64:1:80" "0:up:1/16:0:80" "0:up:1/16:5:80" "0:up:1/16:1:0" "0:up:1/16:1:201" "0:up:1/16:1")
+  string(MAKE_C_IDENTIFIER "arp_${_bad}" _id)
+  add_test(NAME arp_rejects_${_id}
+           COMMAND velora-offline-render ${_render_args} --arp ${_bad} --out ${_out}/never.wav)
+  set_tests_properties(arp_rejects_${_id} PROPERTIES PASS_REGULAR_EXPRESSION "error: invalid --arp")
+endforeach()
+add_custom_target(update-arp-golden
+  COMMAND velora-offline-render ${_arp_good} --out ${_arp}/arp.wav
+  DEPENDS velora-offline-render)

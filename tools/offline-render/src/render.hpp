@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "smf.hpp"
+#include "velora/core/arpeggiator.hpp"
+#include "velora/core/block_renderer.hpp"
 #include "velora/core/sample_engine.hpp"
 #include "velora/ports/sample_source.hpp"
 #include "wav.hpp"
@@ -37,6 +39,7 @@ struct RoutingOptions {
   std::array<std::uint8_t, 8> output{};               // registry part_output per part: 0 main (default), 1 aux
   std::array<float, 8> send_reverb{}, send_delay{};   // 0..1 per part
   std::array<std::vector<Insert>, 8> inserts;         // up to 5 per part
+  std::array<velora::core::ArpConfig, 8> arp{};       // per-part arpeggiator config (Story 7.2)
   float master_level_db = 0.0f;
   // Reverb (Story 2.10), registry defaults: type 1 (hall), time 2 s, return level 1, REV master send level 1. type: 0 room, 1 hall, 2 plate.
   std::uint8_t reverb_type = 1;
@@ -87,6 +90,8 @@ struct RenderOptions {
   // Routing (Story 2.7): see RoutingOptions. `aux_out` (optional) receives the Aux bus, same length as the Main output.
   RoutingOptions routing;
   WavData* aux_out = nullptr;
+  // Optional trace of every part note event reaching voice allocation (Story 7.2).
+  std::vector<velora::core::EmittedNoteEvent>* emitted_notes = nullptr;
   double tail_seconds = 1.0;
   float detune_cents = 0.0f;  // test-only: used to produce a deliberately wrong render
 };

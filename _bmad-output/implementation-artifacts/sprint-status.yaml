@@ -193,9 +193,9 @@ development_status:
   6-17-som-swap-re-provisioning: backlog
   epic-6-retrospective: optional
 
-  epic-7: backlog
+  epic-7: in-progress
   7-1-single-tempo-and-transport-clock-on-the-rt-plane: done
-  7-2-event-processor-framework-and-arpeggiator-note-generation: backlog
+  7-2-event-processor-framework-and-arpeggiator-note-generation: done
   7-3-swing-latch-and-arpeggiator-performance-behaviour: backlog
   7-4-arpeggiator-settings-in-live-sets-and-scenes: backlog
   7-5-part-surface-arpeggiator-section-and-live-set-tempo: backlog

@@ -6,8 +6,10 @@
 #include <cstdint>
 
 #include "velora/core/arena.hpp"
+#include "velora/core/arpeggiator.hpp"
 #include "velora/core/engine.hpp"
 #include "velora/core/engine_registry.hpp"
+#include "velora/core/event_processor.hpp"
 #include "velora/core/mixer.hpp"
 #include "velora/core/param_events.hpp"
 #include "velora/core/part_router.hpp"
@@ -33,6 +35,16 @@ constexpr std::uint32_t kSampleRate = 48000;
 //
 // Sustain pedal (CC 64, value >= half range = down): a note off while the pedal is down (CC 64 value >= 64, i.e. >= 0x80000000 in 32 bits) is deferred to
 // the pedal-up event; the arbiter treats such voices as pedal-sustained (protected from stealing).
+struct EmittedNoteEvent {
+  std::uint64_t frame = 0;       // absolute frame since start/reset (clock().frames() + in_block_frame)
+  std::uint8_t part = 0;         // part / channel index
+  std::uint8_t note = 0;         // MIDI note 0..127
+  std::uint16_t velocity16 = 0;  // 16-bit velocity
+  bool on = false;               // true = NoteOn, false = NoteOff
+};
+
+using NoteObserver = void (*)(void* ctx, const EmittedNoteEvent& ev) noexcept;
+
 class BlockRenderer {
  public:
   static constexpr std::size_t kQueueCapacity = 1024;
@@ -128,6 +140,33 @@ class BlockRenderer {
   // The RT plane's single transport clock (Story 7.1): reads tempo_bpm() once per block (before the Mixer's begin_block) and advances at block
   // end. Position is the block start; query ticks_at / frame_of_tick for frames inside the block. RT thread only (or while not rendering).
   const TransportClock& clock() const noexcept { return clock_; }
+
+  // --- Event-processor framework and arpeggiator (Story 7.2, AR17) ------------------------------------------------
+  // Each part (0..7) has an EventProcessor slot in the serial phase that consumes the part's UMP input and emits UMP with exact
+  // frame positions before voice allocation. By default the slot runs the part's built-in Arpeggiator (configured via Snapshot::parts[p].arp
+  // or set_part_arp()); a custom processor (e.g. a test processor or a future sequencer) may be installed with set_event_processor().
+  void set_event_processor(std::uint32_t part, EventProcessor* processor) noexcept VELORA_NONBLOCKING {
+    if (part < params::kPartCount) custom_processors_[part] = processor;
+  }
+  EventProcessor* event_processor(std::uint32_t part) noexcept VELORA_NONBLOCKING {
+    if (part >= params::kPartCount) return nullptr;
+    return custom_processors_[part] ? custom_processors_[part] : &arps_[part];
+  }
+  const EventProcessor* event_processor(std::uint32_t part) const noexcept VELORA_NONBLOCKING {
+    if (part >= params::kPartCount) return nullptr;
+    return custom_processors_[part] ? custom_processors_[part] : &arps_[part];
+  }
+  Arpeggiator& arp(std::uint32_t part) noexcept VELORA_NONBLOCKING { return arps_[part & (params::kPartCount - 1)]; }
+  const Arpeggiator& arp(std::uint32_t part) const noexcept VELORA_NONBLOCKING { return arps_[part & (params::kPartCount - 1)]; }
+  void set_part_arp(std::uint32_t part, const ArpConfig& cfg) noexcept VELORA_NONBLOCKING {
+    if (part < params::kPartCount) arps_[part].set_config(cfg);
+  }
+
+  // Optional test / offline-render observation hook called on every part note applied to voice allocation.
+  void set_note_observer(NoteObserver fn, void* ctx = nullptr) noexcept {
+    note_observer_ = fn;
+    note_observer_ctx_ = ctx;
+  }
 
   // --- ASSIGN encoders (Story 4.10) ---------------------------------------------------------------------------------
   // The encoder mode flag, the selected part and the counters of the encoder steps (assign_events.hpp): set by the reserved control events
@@ -229,6 +268,27 @@ class BlockRenderer {
   std::atomic<std::uint64_t> aux_folded_{0}, rejected_outputs_{0};
   std::array<float, 2 * 64> fold_{};  // scratch: Aux bus of the single-output overload (64 = kBlockFrames)
   std::atomic<std::uint64_t> contact_routed_{0}, contact_dropped_{0};
+
+  struct DirectPartNote {
+    std::size_t seq = 0;
+    std::uint32_t frame = 0;
+    std::uint32_t engine = 0;
+    std::uint16_t velocity16 = 0;
+    std::uint8_t part = 0;
+    std::uint8_t note = 0;
+    bool on = false;
+  };
+  static constexpr std::size_t kDirectPartNotesCapacity = kPendingCapacity * 2;
+  std::array<Arpeggiator, params::kPartCount> arps_{};
+  std::array<EventProcessor*, params::kPartCount> custom_processors_{};
+  std::array<EventBuffer, params::kPartCount> part_in_{};
+  std::array<EventBuffer, params::kPartCount> part_out_{};
+  std::array<DirectPartNote, kDirectPartNotesCapacity> direct_part_notes_{};
+  std::size_t direct_part_notes_count_ = 0;
+  std::array<std::uint32_t, 16 * 128> note_engine_{};
+  std::uint32_t current_in_block_frame_ = 0;
+  NoteObserver note_observer_ = nullptr;
+  void* note_observer_ctx_ = nullptr;
 };
 
 }  // namespace velora::core

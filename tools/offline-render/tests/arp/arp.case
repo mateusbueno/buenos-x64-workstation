@@ -1,0 +1,8 @@
+# Null-test case for the arpeggiator golden render (Story 7.2): arp.mid rendered with two active arpeggiator parts
+# (--arp 0:updown:1/16:2:80 --arp 1:random:1/8t:2:110 --tempo 120 --tempo-change 1.0:97.3 --tail-seconds 0.3).
+# -100 dB residual: far below any note/pitch/timing/gate/mode difference, loose enough for libm/FMA differences across platforms.
+reference=arp.wav
+tolerance_db=-100
+max_offset_frames=0
+max_length_diff_frames=0
+check_excess=1
