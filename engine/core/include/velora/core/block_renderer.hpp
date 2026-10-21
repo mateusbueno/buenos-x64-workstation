@@ -14,6 +14,7 @@
 #include "velora/core/snapshot.hpp"
 #include "velora/core/spsc_queue.hpp"
 #include "velora/core/test_tone_engine.hpp"
+#include "velora/core/transport_clock.hpp"
 #include "velora/core/ump.hpp"
 #include "velora/core/voice_arbiter.hpp"
 
@@ -124,6 +125,10 @@ class BlockRenderer {
   // the block, so a change takes effect at the next block) keeps this one API. Any thread.
   float tempo_bpm() const noexcept;
 
+  // The RT plane's single transport clock (Story 7.1): reads tempo_bpm() once per block (before the Mixer's begin_block) and advances at block
+  // end. Position is the block start; query ticks_at / frame_of_tick for frames inside the block. RT thread only (or while not rendering).
+  const TransportClock& clock() const noexcept { return clock_; }
+
   // --- ASSIGN encoders (Story 4.10) ---------------------------------------------------------------------------------
   // The encoder mode flag, the selected part and the counters of the encoder steps (assign_events.hpp): set by the reserved control events
   // (make_encoder_mode_event, make_select_part_event) and read from any thread. In ASSIGN mode an EncoderStep event changes the parameter mapped to
@@ -204,6 +209,7 @@ class BlockRenderer {
   PartRouter router_;
   SnapshotExchange exchange_;
   Mixer mixer_{exchange_};
+  TransportClock clock_;
   LastValueTable last_;
   const Snapshot* held_ = nullptr;
   std::array<float, params::kPerfSlotCount> applied_init_{};  // RT-owned: perf_init last applied

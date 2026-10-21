@@ -19,6 +19,7 @@ set(VELORA_CORE_SOURCES
   src/reverb.cpp
   src/delay.cpp
   src/mixer.cpp
+  src/transport_clock.cpp
   src/block_renderer.cpp)
 add_library(velora_core STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
 add_library(velora::core ALIAS velora_core)
@@ -106,6 +107,11 @@ add_test(NAME ep_amp_tests COMMAND ep_amp_tests)
 add_executable(reverb_tests tests/reverb_test.cpp)
 target_link_libraries(reverb_tests PRIVATE velora_core)
 add_test(NAME reverb_tests COMMAND reverb_tests)
+
+add_executable(transport_clock_tests tests/transport_clock_test.cpp)
+target_link_libraries(transport_clock_tests PRIVATE velora_core)
+add_test(NAME transport_clock_tests COMMAND transport_clock_tests)
+set_tests_properties(transport_clock_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
 
 add_executable(delay_tests tests/delay_test.cpp)
 target_link_libraries(delay_tests PRIVATE velora_core)

@@ -507,6 +507,7 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   // Phase 2: shared per-part generators (the organ's tonewheels) produce their block before voices render.
   for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->begin_block(kBlockFrames);
   // Phase 5 setup: trivial routing renders straight into Main (the pre-2.7 path, bit-identical); otherwise into the part buses.
+  clock_.set_tempo_tenths(TransportClock::tenths_from_bpm(tempo_bpm()));  // once per block, same point as the Mixer: a change applies from the next block
   const bool routed = mixer_.begin_block(last_);
 
   std::uint32_t pos = 0;
@@ -520,6 +521,7 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   }
   render_segment(left, right, pos, kBlockFrames, routed);
   if (routed) mixer_.finish(out, last_);  // chains, sends, Main/Aux, line-in, master
+  clock_.advance(kBlockFrames);
 
   // Drop applied events, carry the rest into the next block.
   const std::size_t remaining = pending_count_ - consumed;

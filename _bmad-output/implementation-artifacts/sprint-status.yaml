@@ -194,7 +194,7 @@ development_status:
   epic-6-retrospective: optional
 
   epic-7: backlog
-  7-1-single-tempo-and-transport-clock-on-the-rt-plane: backlog
+  7-1-single-tempo-and-transport-clock-on-the-rt-plane: done
   7-2-event-processor-framework-and-arpeggiator-note-generation: backlog
   7-3-swing-latch-and-arpeggiator-performance-behaviour: backlog
   7-4-arpeggiator-settings-in-live-sets-and-scenes: backlog
