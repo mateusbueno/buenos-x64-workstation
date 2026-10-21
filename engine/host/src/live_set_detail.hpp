@@ -63,6 +63,37 @@ inline void fill_inserts(core::PartCfg& pc, const google::protobuf::RepeatedPtrF
   }
 }
 
+inline core::ArpConfig initial_arp_config() noexcept {
+  core::ArpConfig c;
+  c.enabled = false;
+  c.mode = core::ArpMode::kUp;
+  c.rate = core::ArpRate::k1_8;
+  c.octaves = 1;
+  c.gate_percent = 50.0f;
+  c.swing_percent = 50.0f;
+  c.latch = false;
+  return c;
+}
+
+inline core::ArpConfig fill_arp_config(const lsp::ArpSettings& a,
+                                       const core::ArpConfig& base = initial_arp_config()) noexcept {
+  core::ArpConfig c = base;
+  if (a.has_enabled()) c.enabled = a.enabled();
+  if (a.has_pattern() && a.pattern() >= 1 && a.pattern() <= 5)
+    c.mode = static_cast<core::ArpMode>(a.pattern() - 1);
+  if (a.has_rate() && a.rate() >= 1 && a.rate() <= 8)
+    c.rate = static_cast<core::ArpRate>(a.rate() - 1);
+  if (a.has_octave_range())
+    c.octaves = static_cast<std::uint8_t>(std::clamp(a.octave_range(), 1u, 4u));
+  if (a.has_gate())
+    c.gate_percent = std::clamp(a.gate(), 1.0f, 200.0f);
+  if (a.has_swing())
+    c.swing_percent = std::clamp(a.swing(), 50.0f, 75.0f);
+  if (a.has_hold())
+    c.latch = a.hold();
+  return c;
+}
+
 // The values of one Live Set part as fields of a generation: zone, octave, transpose, keyboard flag, volume, output, insert chain (configuration only,
 // no instances), send levels and the engine / envelope / EQ sound parameters. Not the engine type, the timbre or the part state (those need the
 // resolver). Shared by the loader, which builds a generation with it, and by the edit session, which rebuilds the scenes' base values from the
@@ -77,6 +108,7 @@ inline void fill_part_values(core::Snapshot& snap, const lsp::Part& lp, std::uin
   pc.volume = sane_volume(lp.volume());
   pc.output = lp.output() == ws::v1::PART_OUTPUT_AUX ? static_cast<std::uint8_t>(p::kPartOutputAux) : static_cast<std::uint8_t>(p::kPartOutputMain);
   fill_inserts(pc, lp.inserts());
+  pc.arp = lp.has_arp() ? fill_arp_config(lp.arp()) : initial_arp_config();
   snap.perf_init[p::perf_slot(*p::find(p::kSendReverbLevel), pi)] = sane(*p::find(p::kSendReverbLevel), lp.send_reverb());
   snap.perf_init[p::perf_slot(*p::find(p::kSendDelayLevel), pi)] = sane(*p::find(p::kSendDelayLevel), lp.send_delay());
   apply_entries(snap, lp.engine().params(), pi, false);

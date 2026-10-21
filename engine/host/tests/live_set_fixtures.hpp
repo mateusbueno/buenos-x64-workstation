@@ -34,9 +34,15 @@ inline void unknown_varint(google::protobuf::Message* m, int field, std::uint64_
   m->GetReflection()->MutableUnknownFields(m)->AddVarint(field, v);
 }
 
+inline void clear_fixture_arp(lsp::LiveSet& l) {
+  for (int i = 0; i < l.parts_size(); ++i) l.mutable_parts(i)->clear_arp();
+}
+
 // The smallest valid Live Set of the tier.
 inline lsp::LiveSet minimal(std::uint32_t parts = 8) {
-  return ls::make_default_live_set(uuid_n(1), "Minimal", parts);
+  lsp::LiveSet l = ls::make_default_live_set(uuid_n(1), "Minimal", parts);
+  clear_fixture_arp(l);
+  return l;
 }
 
 // Literal tables (no float arithmetic: contraction/FMA differs between compilers and would change the golden bytes).
@@ -46,6 +52,7 @@ inline constexpr float kSends[17] = {0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.0f, 0.05f, 
 // a full ASSIGN map and master parameters.
 inline lsp::LiveSet full(std::uint32_t parts = 8) {
   lsp::LiveSet l = ls::make_default_live_set(uuid_n(2), parts == 8 ? "Full show" : "Pro show", parts);
+  clear_fixture_arp(l);
   l.set_tempo(96.5f);
   const std::string lib_a = uuid_n(100), lib_b = uuid_n(101);
   for (std::uint32_t i = 0; i < parts; ++i) {
@@ -115,6 +122,7 @@ inline lsp::LiveSet full(std::uint32_t parts = 8) {
 // A part of a reserved engine type with no compiled engine (FM, VA) next to ordinary parts.
 inline lsp::LiveSet fm_part() {
   lsp::LiveSet l = ls::make_default_live_set(uuid_n(3), "FM and VA", 8);
+  clear_fixture_arp(l);
   lsp::Part* fm = l.mutable_parts(0);
   fm->mutable_engine()->set_engine_type_id(3);
   entry(fm->mutable_engine()->mutable_params(), 15001, 0.5f);  // engine-specific ids unknown to this build: preserved
@@ -128,6 +136,7 @@ inline lsp::LiveSet fm_part() {
 // Parts whose libraries are not installed anywhere: the file is still valid, the part just plays silent later.
 inline lsp::LiveSet missing_library() {
   lsp::LiveSet l = ls::make_default_live_set(uuid_n(4), "Missing library", 8);
+  clear_fixture_arp(l);
   timbre(l.mutable_parts(0), uuid_n(9000), "Strings/Ensemble.sfz");
   timbre(l.mutable_parts(3), uuid_n(9001), "Brass/Section.sfz");
   return l;
@@ -149,6 +158,7 @@ inline lsp::LiveSet newer_schema() {
 // The set whose serialised bytes are pinned by golden/live_set_fixed.bin.
 inline lsp::LiveSet golden() {
   lsp::LiveSet l = ls::make_default_live_set("3f2b8c1e-5a4d-4e6f-9a7b-0c1d2e3f4a5b", "Golden", 8);
+  clear_fixture_arp(l);
   l.set_tempo(123.5f);
   timbre(l.mutable_parts(0), "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", "Keys/EP.sfz");
   l.mutable_parts(0)->set_high_key(71);

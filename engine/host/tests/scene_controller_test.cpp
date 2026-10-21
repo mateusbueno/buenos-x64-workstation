@@ -942,6 +942,69 @@ void test_worst_scene_over_the_budget_is_refused_at_load() {
   CHECK(f.rig.scenes.current_scene() == 1 && f.rig.scenes.scene_count() == 3);
 }
 
+// Story 7.4 AC 3: Recall Scene 2 with Arp On, Up-Down, 1/16T, then Scene 1 with Arp Off.
+// Arpeggiator starts and stops as a parameter-only snapshot swap, and the tempo does not change.
+void test_arpeggiator_scene_recall() {
+  Fixture f;
+  lsp::LiveSet s = make_set(f.lib, 95);
+  s.set_tempo(128.5f);
+  // Base Live Set: Part 2 has Arp Off (Up, 1/8, 1 octave, 50% gate, 50% swing, latch off)
+  s.mutable_parts(2)->mutable_arp()->set_enabled(false);
+  s.mutable_parts(2)->mutable_arp()->set_pattern(lsp::ARP_PATTERN_UP);
+  s.mutable_parts(2)->mutable_arp()->set_rate(lsp::ARP_RATE_EIGHTH);
+
+  // Scene 0 (verse): keeps Arp Off on part 2
+  scene_part(s.mutable_scenes(0), 2)->mutable_arp()->set_enabled(false);
+
+  // Scene 1 (chorus): Part 2 has Arp On, Up-Down, 1/16T, 2 octaves, Gate 60%, Swing 55%, Latch On
+  lsp::ArpSettings* a1 = scene_part(s.mutable_scenes(1), 2)->mutable_arp();
+  a1->set_enabled(true);
+  a1->set_pattern(lsp::ARP_PATTERN_UP_DOWN);
+  a1->set_rate(lsp::ARP_RATE_SIXTEENTH_TRIPLET);
+  a1->set_octave_range(2);
+  a1->set_gate(60.0f);
+  a1->set_swing(55.0f);
+  a1->set_hold(true);
+
+  CHECK(f.load(s));
+  Rig& rig = f.rig;
+
+  // Base load check: part 2 arp is Off, tempo is 128.5 BPM
+  CHECK(!rig.cur()->parts[2].arp.enabled);
+  CHECK(rig.br->tempo_bpm() == 128.5f);
+
+  // Recall Scene 0 (verse): Arp Off on part 2, tempo unchanged
+  CHECK(rig.scenes.recall_scene(0).result == SceneResult::kOk);
+  rig.run(2);
+  CHECK(!rig.cur()->parts[2].arp.enabled);
+  CHECK(!rig.br->arp(2).enabled());
+  CHECK(rig.br->tempo_bpm() == 128.5f);
+
+  // Recall Scene 1 (chorus): Arp On, Up-Down, 1/16T on part 2, tempo unchanged
+  const std::uint64_t pg_before = rig.cur()->program_generation;
+  CHECK(rig.scenes.recall_scene(1).result == SceneResult::kOk);
+  CHECK(rig.cur()->program_generation == pg_before + 1);
+  rig.run(2);
+  CHECK(rig.cur()->parts[2].arp.enabled);
+  CHECK(rig.cur()->parts[2].arp.mode == core::ArpMode::kUpDown);
+  CHECK(rig.cur()->parts[2].arp.rate == core::ArpRate::k1_16T);
+  CHECK(rig.cur()->parts[2].arp.octaves == 2);
+  CHECK(rig.cur()->parts[2].arp.gate_percent == 60.0f);
+  CHECK(rig.cur()->parts[2].arp.swing_percent == 55.0f);
+  CHECK(rig.cur()->parts[2].arp.latch == true);
+  CHECK(rig.br->arp(2).enabled());
+  CHECK(rig.br->arp(2).config().mode == core::ArpMode::kUpDown);
+  CHECK(rig.br->arp(2).config().rate == core::ArpRate::k1_16T);
+  CHECK(rig.br->tempo_bpm() == 128.5f);
+
+  // Recall Scene 0 (verse): Arp stops, tempo unchanged
+  CHECK(rig.scenes.recall_scene(0).result == SceneResult::kOk);
+  rig.run(2);
+  CHECK(!rig.cur()->parts[2].arp.enabled);
+  CHECK(!rig.br->arp(2).enabled());
+  CHECK(rig.br->tempo_bpm() == 128.5f);
+}
+
 // --- ws.v1 over a real Unix domain socket -----------------------------------------------------------------------
 struct Client {
   int fd = -1;
@@ -1129,6 +1192,7 @@ int main() {
   test_skipped_program_generation_keeps_forced_slots();
   test_ws_level_refusals();
   test_worst_scene_over_the_budget_is_refused_at_load();
+  test_arpeggiator_scene_recall();
   test_ws_v1_scene_commands();
   if (g_fail) {
     std::printf("scene_controller_tests: %d FAILED\n", g_fail);

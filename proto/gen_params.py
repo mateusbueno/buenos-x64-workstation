@@ -208,8 +208,11 @@ def load_and_validate(path):
         by_name[name] = q
         params.append(q)
     # Every structural parameter needs storage in core::Snapshot (snapshot.hpp): master scope -> Snapshot::master,
-    # part scope -> PartCfg::{output,timbre_ref}, insert scope -> InsertSlotCfg. Anything else has nowhere to live.
-    stored_part = {"part_output", "timbre_ref"}
+    # part scope -> PartCfg::{output,timbre_ref,arp}, insert scope -> InsertSlotCfg. Anything else has nowhere to live.
+    stored_part = {
+        "part_output", "timbre_ref",
+        "arp_on", "arp_mode", "arp_rate", "arp_octaves", "arp_gate", "arp_swing", "arp_latch"
+    }
     stored_insert = {"insert_type", "insert_bypass"}
     for q in params:
         if q.get("class") != "structural" or q["scope"] == "master":

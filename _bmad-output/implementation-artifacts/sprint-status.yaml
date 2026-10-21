@@ -197,7 +197,7 @@ development_status:
   7-1-single-tempo-and-transport-clock-on-the-rt-plane: done
   7-2-event-processor-framework-and-arpeggiator-note-generation: done
   7-3-swing-latch-and-arpeggiator-performance-behaviour: done
-  7-4-arpeggiator-settings-in-live-sets-and-scenes: backlog
+  7-4-arpeggiator-settings-in-live-sets-and-scenes: done
   7-5-part-surface-arpeggiator-section-and-live-set-tempo: backlog
   7-6-external-midi-clock-follower-and-clock-lost-behaviour: backlog
   7-7-clock-source-setting-and-din-usb-clock-inputs: backlog

@@ -19,9 +19,12 @@
 #include <vector>
 
 #include "live_set_fixtures.hpp"
+#include "../src/live_set_detail.hpp"
 #include "velora/core/arena.hpp"
+#include "velora/core/arpeggiator.hpp"
 #include "velora/core/engine_registry.hpp"
 #include "velora/core/params_gen.hpp"
+#include "velora/core/snapshot.hpp"
 #include "velora/core/test_tone_engine.hpp"
 
 namespace fs = std::filesystem;
@@ -911,6 +914,82 @@ void test_ownership_and_availability_lifetime() {
   CHECK(!avail(3) && !avail(4));
 }
 
+void test_arpeggiator_registry_and_live_set_defaults() {
+  namespace p = velora::core::params;
+  namespace core = velora::core;
+  namespace detail = velora::host::detail;
+  // 1. Registry parameters check (Story 7.4 AC 1):
+  // on/off, mode, rate, octaves, gate, swing, latch per part classified as structural, part-scope.
+  // Live Set tempo is Live-Set-scoped (tempo_bpm id 802, performance, master-scope).
+  const struct {
+    std::uint32_t id;
+    const char* name;
+    p::Class cls;
+    p::Scope scope;
+    p::Type type;
+    double def;
+  } expected_params[] = {
+      {900, "arp_on", p::Class::kStructural, p::Scope::kPart, p::Type::kBool, 0.0},
+      {901, "arp_mode", p::Class::kStructural, p::Scope::kPart, p::Type::kEnum, 0.0},
+      {902, "arp_rate", p::Class::kStructural, p::Scope::kPart, p::Type::kEnum, 1.0},
+      {903, "arp_octaves", p::Class::kStructural, p::Scope::kPart, p::Type::kInt, 1.0},
+      {904, "arp_gate", p::Class::kStructural, p::Scope::kPart, p::Type::kFloat, 50.0},
+      {905, "arp_swing", p::Class::kStructural, p::Scope::kPart, p::Type::kFloat, 50.0},
+      {906, "arp_latch", p::Class::kStructural, p::Scope::kPart, p::Type::kBool, 0.0},
+  };
+  for (const auto& ep : expected_params) {
+    const p::ParamDef* d = p::find(ep.id);
+    CHECK(d != nullptr);
+    if (d) {
+      CHECK(d->cls == ep.cls);
+      CHECK(d->scope == ep.scope);
+      CHECK(d->type == ep.type);
+      CHECK(d->def == ep.def);
+    }
+  }
+  const p::ParamDef* tempo = p::find(p::kTempoBpm);
+  CHECK(tempo && tempo->cls == p::Class::kPerformance && tempo->scope == p::Scope::kMaster);
+
+  // 2. New Live Set creation holds initial values (Story 7.4 AC 2):
+  // Off, Up, 1/8, 1 octave, Gate 50%, Swing 50%, Latch Off
+  lsp::LiveSet n = make_default_live_set("11111111-2222-4333-8444-555555555555", "New Arp", 8);
+  CHECK(validate(n, 8).ok());
+  for (int i = 0; i < n.parts_size(); ++i) {
+    const lsp::Part& pt = n.parts(i);
+    CHECK(pt.has_arp());
+    if (pt.has_arp()) {
+      const lsp::ArpSettings& a = pt.arp();
+      CHECK(a.has_enabled() && a.enabled() == false);
+      CHECK(a.has_pattern() && a.pattern() == lsp::ARP_PATTERN_UP);
+      CHECK(a.has_rate() && a.rate() == lsp::ARP_RATE_EIGHTH);
+      CHECK(a.has_octave_range() && a.octave_range() == 1);
+      CHECK(a.has_gate() && a.gate() == 50.0f);
+      CHECK(a.has_swing() && a.swing() == 50.0f);
+      CHECK(a.has_hold() && a.hold() == false);
+    }
+  }
+
+  // 3. Backward compatibility (Story 7.4 AC 4):
+  // Opening a Live Set saved before this story with unset arp fields loads with initial defaults,
+  // no format version bump or migration needed, unknown fields preserved, and write produces a file N and N-1 readers open.
+  lsp::LiveSet older = fixtures::full();
+  for (const lsp::Part& pt : older.parts()) CHECK(!pt.has_arp());
+  std::string bytes;
+  CHECK(serialize(older, bytes) == Status::kOk);
+  LoadResult lr;
+  CHECK(parse(bytes, ReadOptions{}, lr) == Status::kOk);
+  CHECK(lr.live_set.format_version() == 1);
+  core::Snapshot snap = core::Snapshot::defaults();
+  detail::fill_part_values(snap, lr.live_set.parts(0), 0);
+  CHECK(snap.parts[0].arp.enabled == false);
+  CHECK(snap.parts[0].arp.mode == core::ArpMode::kUp);
+  CHECK(snap.parts[0].arp.rate == core::ArpRate::k1_8);
+  CHECK(snap.parts[0].arp.octaves == 1);
+  CHECK(snap.parts[0].arp.gate_percent == 50.0f);
+  CHECK(snap.parts[0].arp.swing_percent == 50.0f);
+  CHECK(snap.parts[0].arp.latch == false);
+}
+
 }  // namespace
 
 int main() {
@@ -928,6 +1007,7 @@ int main() {
   test_ownership_and_availability_lifetime();
   test_hostile_input();
   test_corpus();
+  test_arpeggiator_registry_and_live_set_defaults();
   if (g_fail) {
     std::printf("live_set_tests: %d failure(s)\n", g_fail);
     return 1;

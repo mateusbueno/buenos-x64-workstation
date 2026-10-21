@@ -499,6 +499,14 @@ lsp::LiveSet make_default_live_set(const std::string& id, const std::string& nam
     p->set_keyboard_on(true);
     p->set_volume(0.8f);
     p->mutable_engine()->set_engine_type_id(static_cast<std::uint32_t>(core::EngineTypeId::kSample));
+    lsp::ArpSettings* a = p->mutable_arp();
+    a->set_enabled(false);
+    a->set_pattern(lsp::ARP_PATTERN_UP);
+    a->set_rate(lsp::ARP_RATE_EIGHTH);
+    a->set_octave_range(1);
+    a->set_gate(50.0f);
+    a->set_swing(50.0f);
+    a->set_hold(false);
   }
   for (std::size_t k = 0; k < kAssignSlots; ++k) ls.add_assign(0);
   return ls;

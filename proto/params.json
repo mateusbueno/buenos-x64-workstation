@@ -11,7 +11,9 @@
     "percussion_volume": ["soft", "normal"],
     "vibrato_chorus_type": ["v1", "v2", "v3", "c1", "c2", "c3"],
     "reverb_type": ["room", "hall", "plate"],
-    "delay_note": ["quarter", "eighth", "sixteenth", "dotted_quarter", "dotted_eighth", "dotted_sixteenth", "triplet_quarter", "triplet_eighth", "triplet_sixteenth"]
+    "delay_note": ["quarter", "eighth", "sixteenth", "dotted_quarter", "dotted_eighth", "dotted_sixteenth", "triplet_quarter", "triplet_eighth", "triplet_sixteenth"],
+    "arp_mode": ["up", "down", "up_down", "random", "as_played"],
+    "arp_rate": ["quarter", "eighth", "sixteenth", "thirty_second", "quarter_triplet", "eighth_triplet", "sixteenth_triplet", "thirty_second_triplet"]
   },
   "reserved": [
     {"id": 99, "name": "organ_master_draft", "note": "draft drawbar master, retired before release"}
@@ -71,6 +73,13 @@
     {"id": 700, "name": "timbre_ref", "class": "structural", "type": "uint", "scope": "part", "unit": "id", "min": 0, "max": 4294967295, "default": 0},
     {"id": 800, "name": "line_in_level", "assignable": false, "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 0},
     {"id": 801, "name": "send_reverb_master", "class": "performance", "type": "float", "scope": "master", "unit": "ratio", "min": 0, "max": 1, "default": 1},
-    {"id": 802, "name": "tempo_bpm", "class": "performance", "type": "float", "scope": "master", "unit": "bpm", "min": 20, "max": 300, "default": 120}
+    {"id": 802, "name": "tempo_bpm", "class": "performance", "type": "float", "scope": "master", "unit": "bpm", "min": 20, "max": 300, "default": 120},
+    {"id": 900, "name": "arp_on", "class": "structural", "type": "bool", "scope": "part", "unit": "flag", "min": 0, "max": 1, "default": 0},
+    {"id": 901, "name": "arp_mode", "class": "structural", "type": "enum", "scope": "part", "unit": "enum", "enum": "arp_mode", "default": "up"},
+    {"id": 902, "name": "arp_rate", "class": "structural", "type": "enum", "scope": "part", "unit": "enum", "enum": "arp_rate", "default": "eighth"},
+    {"id": 903, "name": "arp_octaves", "class": "structural", "type": "int", "scope": "part", "unit": "octave", "min": 1, "max": 4, "default": 1},
+    {"id": 904, "name": "arp_gate", "class": "structural", "type": "float", "scope": "part", "unit": "percent", "min": 1, "max": 200, "default": 50},
+    {"id": 905, "name": "arp_swing", "class": "structural", "type": "float", "scope": "part", "unit": "percent", "min": 50, "max": 75, "default": 50},
+    {"id": 906, "name": "arp_latch", "class": "structural", "type": "bool", "scope": "part", "unit": "flag", "min": 0, "max": 1, "default": 0}
   ]
 }

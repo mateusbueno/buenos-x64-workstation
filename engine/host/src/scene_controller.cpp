@@ -43,6 +43,7 @@ void apply_scene(const lsp::Scene& scene, const core::Snapshot& base, core::Snap
       w.inserts = b.inserts;
       w.insert_count = b.insert_count;
     }
+    w.arp = (sp && sp->has_arp()) ? fill_arp_config(sp->arp(), b.arp) : b.arp;
     // Performance values: everything starts at the base Live Set's value; what the scene stores overrides it and is flagged for RT.
     for (const p::ParamDef& d : p::kParams)
       if (d.cls == p::Class::kPerformance && d.scope == p::Scope::kPart) {
