@@ -64,9 +64,18 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   // Other renders ignore controllers entirely.
   const bool organ_render = opt.engine == EngineKind::kOrgan;
   const bool sample_render = opt.engine == EngineKind::kSample;
-  auto control = [organ_render, sample_render](const NoteEvent& e, Ump& out) {
+  const bool routing_enabled = opt.routing.enabled;
+  auto control = [organ_render, sample_render, routing_enabled, &opt](const NoteEvent& e, Ump& out) {
     const std::uint32_t v32 = static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127);
     if (sample_render && !e.contact) {
+      out = make_control_change(0, e.channel, e.note, v32);
+      return true;
+    }
+    const bool arp_on_channel = e.channel < params::kPartCount &&
+        (opt.routing.arp[e.channel].enabled ||
+         std::any_of(opt.routing.arp_switches.begin(), opt.routing.arp_switches.end(),
+                     [&](const auto& sw) { return sw.arp[e.channel].enabled; }));
+    if (routing_enabled && !e.contact && e.note == Ump::kControllerSustain && arp_on_channel) {
       out = make_control_change(0, e.channel, e.note, v32);
       return true;
     }
@@ -80,6 +89,11 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       if (organ_render && e.channel < OrganEngine::kPartCount) last = std::max(last, e.frame);  // an organ feature on parts, like controllers
     } else if (!e.cc || control(e, u)) {
       last = std::max(last, e.frame);
+    }
+  }
+  for (const auto& as : opt.routing.arp_switches) {
+    if (as.seconds > 0.0) {
+      last = std::max(last, static_cast<std::uint64_t>(std::llround(as.seconds * kSampleRate)));
     }
   }
   const std::uint64_t total = last + tail;
@@ -255,10 +269,31 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   std::stable_sort(tempo_events.begin(), tempo_events.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
   std::size_t next_tempo = 0;
 
+  std::vector<std::pair<std::uint64_t, RoutingOptions::ArpSwitch>> arp_switches;
+  for (const auto& as : opt.routing.arp_switches) {
+    arp_switches.emplace_back(static_cast<std::uint64_t>(std::llround(std::max(0.0, as.seconds) * kSampleRate)), as);
+  }
+  std::stable_sort(arp_switches.begin(), arp_switches.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::size_t next_arp_switch = 0;
+  std::vector<std::unique_ptr<Snapshot>> switch_snapshots;
+
   float l[kBlockFrames], r[kBlockFrames], al[kBlockFrames], ar[kBlockFrames];
   std::size_t next = 0;
   for (std::uint64_t b = 0; b < blocks; ++b) {
     const std::uint64_t end = (b + 1) * kBlockFrames;
+    while (routing_snapshot && next_arp_switch < arp_switches.size() && arp_switches[next_arp_switch].first < end) {
+      const auto& as = arp_switches[next_arp_switch++];
+      const Snapshot& base = switch_snapshots.empty() ? *routing_snapshot : *switch_snapshots.back();
+      auto s = std::make_unique<Snapshot>(base);
+      s->revision = 1 + next_arp_switch;
+      s->program_generation = next_arp_switch;
+      s->ledger_index = static_cast<std::uint32_t>(next_arp_switch % SnapshotExchange::kLedgerSlots);
+      for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+        s->parts[p].arp = as.second.arp[p];
+      }
+      br->snapshots().publish(s.get());
+      switch_snapshots.push_back(std::move(s));
+    }
     while (next_tempo < tempo_events.size() && tempo_events[next_tempo].first < end) {
       const auto& te = tempo_events[next_tempo++];
       const std::uint32_t off = te.first < b * kBlockFrames ? 0u : static_cast<std::uint32_t>(te.first - b * kBlockFrames);

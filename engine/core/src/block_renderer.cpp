@@ -69,7 +69,13 @@ void BlockRenderer::adopt_generation() noexcept {
   if (in_live_set_ && !next->live_set) leave_live_set(remapped);
   router_.configure(*next);
   if (next->live_set) adopt_live_set_parts(*next, remapped);
-  for (std::uint32_t p = 0; p < params::kPartCount; ++p) arps_[p].set_config(next->parts[p].arp);
+  const bool seamless_arp = held_ != nullptr;
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    arps_[p].set_config(next->parts[p].arp, seamless_arp);
+    if (custom_processors_[p] == nullptr && arps_[p].enabled()) {
+      arbiter_.set_sustain(p, false);
+    }
+  }
   // Seamless Live Set switch (Story 4.5): the reservation prepared by the control thread takes effect at this very generation. Sounding
   // voices keep their slots and costs (VoiceArbiter::commit_prepared documents the accounting); the keyboard-pedal state is not reset.
   const bool live_set_switch = next->reservation_epoch != 0 && next->reservation_epoch != applied_reservation_epoch_;
@@ -82,7 +88,10 @@ void BlockRenderer::adopt_generation() noexcept {
     // new notes of the parts that listen to the keyboard (their pedal flag may have been unset under the old part layout).
     if (next->live_set && keyboard_pedal_down_)
       for (std::uint32_t p = 0; p < params::kPartCount; ++p)
-        if (router_.pedal_down_target(p)) arbiter_.set_sustain(p, true);
+        if (router_.pedal_down_target(p)) {
+          if (custom_processors_[p] == nullptr && arps_[p].enabled()) arbiter_.set_sustain(p, false);
+          else arbiter_.set_sustain(p, true);
+        }
   }
   if (next->live_set) replay_keyboard_ccs(*next, live_set_switch, remapped);
   std::array<bool, params::kPerfSlotCount> changed{};
@@ -127,7 +136,7 @@ void BlockRenderer::leave_live_set(std::array<bool, params::kPartCount>& remappe
         const std::uint32_t note = u.note();
         const std::size_t key_idx = p * 128u + (note & 127u);
         const std::uint32_t eng = note_engine_[key_idx] != 0 ? note_engine_[key_idx] : channel_engine_[p];
-        apply_part_note(p, note, 0, false, eng);
+        apply_part_note(p, note, 0, false, eng, true);
       }
     }
   }
@@ -301,8 +310,16 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
       return;
     }
     keyboard_pedal_down_ = down;  // kept in step on every pedal path, so a switch sees the physical pedal
-    arbiter_.set_sustain(ump.channel(), down);
-    if (!down) release_deferred(ump.channel());
+    const std::uint32_t ch = ump.channel();
+    if (ch < params::kPartCount) {
+      arps_[ch].set_sustain_pedal(down);
+      if (custom_processors_[ch] == nullptr && arps_[ch].enabled()) {
+        arbiter_.set_sustain(ch, false);
+        return;
+      }
+    }
+    arbiter_.set_sustain(ch, down);
+    if (!down) release_deferred(ch);
     return;
   }
   if (ump.group() == 0 && ump.is_assignable_per_note_controller()) {  // contact_k (Story 2.5)
@@ -322,14 +339,17 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     return;
   }
   if (ump.channel() < params::kPartCount) {
-    arps_[ump.channel()].track_passthrough_note(ump.note(), ump.velocity16(), ump.is_note_on());
+    const std::uint32_t p = ump.channel();
+    const bool suppress_off = ump.is_note_off() && custom_processors_[p] == nullptr && arps_[p].is_held_non_passthrough(ump.note());
+    arps_[p].track_passthrough_note(ump.note(), ump.velocity16(), ump.is_note_on());
+    if (suppress_off) return;
   }
   apply_part_note(ump.channel(), ump.note(), ump.velocity16(), ump.is_note_on(), channel_engine_[ump.channel()]);
 }
 
 // The note path of one (channel, engine): the arbiter's key/pedal state follows the events even when no engine serves the channel.
 void BlockRenderer::apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on,
-                                    std::uint32_t type_id) noexcept {
+                                    std::uint32_t type_id, bool from_arp) noexcept {
   const std::size_t key_idx = (channel & 15u) * 128u + (note & 127u);
   if (on) note_engine_[key_idx] = type_id;
   if (note_observer_) {
@@ -357,6 +377,7 @@ void BlockRenderer::apply_part_note(std::uint32_t channel, std::uint32_t note, s
   }
   bool stop_now = true;
   if (on) arbiter_.note_on(channel, note);
+  else if (from_arp) arbiter_.contact_up(channel, note);
   else stop_now = arbiter_.note_off(channel, note, type_id);
   Engine* engine = nullptr;
   const EngineStatus rs = registry_.resolve(type_id, engine);
@@ -397,8 +418,10 @@ void BlockRenderer::apply_keyboard_note(const Ump& ump) noexcept {
   } else {
     router_.note_off(ump.channel(), ump.note(), fan);
     for (std::uint32_t i = 0; i < fan.count; ++i) {
-      arps_[fan.t[i].part].track_passthrough_note(fan.t[i].pitch, ump.velocity16(), false);
-      apply_part_note(fan.t[i].part, fan.t[i].pitch, ump.velocity16(), false, fan.t[i].engine);
+      const std::uint32_t p = fan.t[i].part;
+      const bool suppress_off = p < params::kPartCount && custom_processors_[p] == nullptr && arps_[p].is_held_non_passthrough(fan.t[i].pitch);
+      if (p < params::kPartCount) arps_[p].track_passthrough_note(fan.t[i].pitch, ump.velocity16(), false);
+      if (!suppress_off) apply_part_note(p, fan.t[i].pitch, ump.velocity16(), false, fan.t[i].engine);
     }
   }
 }
@@ -407,8 +430,12 @@ void BlockRenderer::apply_keyboard_note(const Ump& ump) noexcept {
 void BlockRenderer::apply_keyboard_sustain(bool down) noexcept {
   keyboard_pedal_down_ = down;
   for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    arps_[p].set_sustain_pedal(down);
     if (down) {
-      if (router_.pedal_down_target(p)) arbiter_.set_sustain(p, true);
+      if (router_.pedal_down_target(p)) {
+        if (custom_processors_[p] == nullptr && arps_[p].enabled()) arbiter_.set_sustain(p, false);
+        else arbiter_.set_sustain(p, true);
+      }
     } else {
       arbiter_.set_sustain(p, false);
       release_deferred(p);
@@ -595,6 +622,22 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
     for (std::size_t i = 0; i < pending_count_ && pending_[i].target_frame < kBlockFrames; ++i) {
       const std::uint32_t f = pending_[i].target_frame;
       const Ump& u = pending_[i].ump;
+      if (u.group() == 0 && u.is_control_change() && u.controller_index() == Ump::kControllerSustain) {
+        const bool down = u.controller_value32() >= 0x80000000u;
+        if (router_.active()) {
+          for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+            if (uses_proc[p] && custom_processors_[p] == nullptr && (!down || router_.pedal_down_target(p))) {
+              push_in(p, make_control_change(0, p, Ump::kControllerSustain, u.controller_value32()), f);
+            }
+          }
+        } else if (u.channel() < params::kPartCount) {
+          const std::uint32_t p = u.channel();
+          if (uses_proc[p] && custom_processors_[p] == nullptr) {
+            push_in(p, u, f);
+          }
+        }
+        continue;
+      }
       if (u.group() != 0 || (!u.is_note_on() && !u.is_note_off())) continue;
       if (router_.active()) {
         PartRouter::Fanout fan;
@@ -621,8 +664,9 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
             if (uses_proc[t.part]) {
               push_in(t.part, make_note_off(0, t.part, t.pitch, u.velocity16()), f);
             } else {
+              const bool suppress_off = custom_processors_[t.part] == nullptr && arps_[t.part].is_held_non_passthrough(t.pitch);
               arps_[t.part].track_passthrough_note(t.pitch, u.velocity16(), false);
-              push_direct(i, f, t.part, t.pitch, u.velocity16(), false, t.engine);
+              if (!suppress_off) push_direct(i, f, t.part, t.pitch, u.velocity16(), false, t.engine);
             }
           }
         }
@@ -631,8 +675,9 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
         if (uses_proc[p]) {
           push_in(p, u, f);
         } else {
+          const bool suppress_off = u.is_note_off() && custom_processors_[p] == nullptr && arps_[p].is_held_non_passthrough(u.note());
           arps_[p].track_passthrough_note(u.note(), u.velocity16(), u.is_note_on());
-          push_direct(i, f, p, u.note(), u.velocity16(), u.is_note_on(), channel_engine_[p]);
+          if (!suppress_off) push_direct(i, f, p, u.note(), u.velocity16(), u.is_note_on(), channel_engine_[p]);
         }
       }
     }
@@ -680,7 +725,8 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
               const std::size_t key_idx = p * 128u + (note & 127u);
               const std::uint32_t eng = on ? channel_engine_[p]
                                            : (note_engine_[key_idx] != 0 ? note_engine_[key_idx] : channel_engine_[p]);
-              apply_part_note(p, note, u.velocity16(), on, eng);
+              const bool from_arp = custom_processors_[p] == nullptr;
+              apply_part_note(p, note, u.velocity16(), on, eng, from_arp);
             } else {
               apply(u);
             }

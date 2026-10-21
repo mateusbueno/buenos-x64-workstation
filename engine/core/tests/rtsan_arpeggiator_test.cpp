@@ -1,8 +1,8 @@
-// Story 7.2: dense traffic through the per-part EventProcessor slots and Arpeggiator inside a nonblocking function.
-// 10,000 blocks with notes pressed and released across 8 parts while new Snapshot generations cycle Arp On/Off, modes
-// (Up, Down, UpDown, Random, AsPlayed), rates (1/4..1/32 + triplets), octaves (1..4) and gates (1..200%), plus live tempo
-// changes. Verifies zero RT allocation/locks (RTSan), balanced voices (zero hanging voices after release), finite non-silent
-// audio, and bit-exact determinism across two runs.
+// Story 7.2 / 7.3: dense traffic through the per-part EventProcessor slots and Arpeggiator inside a nonblocking function.
+// 10,000 blocks with notes pressed and released plus sustain pedal (CC 64) toggles across 8 parts while new Snapshot generations
+// cycle Arp On/Off, modes (Up, Down, UpDown, Random, AsPlayed), rates (1/4..1/32 + triplets), octaves (1..4), gates (1..200%),
+// swing (50..75%), and latch (On/Off), plus live tempo changes. Verifies zero RT allocation/locks (RTSan), balanced voices
+// (zero hanging voices after release), finite non-silent audio, and bit-exact determinism across two runs.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -63,6 +63,8 @@ struct Control {
       a.rate = static_cast<ArpRate>((r >> 3) % 8);
       a.octaves = static_cast<std::uint8_t>(1 + ((r >> 6) % 4));
       a.gate_percent = static_cast<float>(10 + ((r >> 8) % 160));
+      a.swing_percent = static_cast<float>(50 + ((r >> 16) % 26));
+      a.latch = ((r >> 22) & 1u) != 0u;
     }
     reclaim();
     std::uint32_t idx = 0;
@@ -106,6 +108,11 @@ void run_block(BlockRenderer& br, Player& pl, OutputBuses ob, std::uint32_t i) n
     br.submit({make_note_off(0, d >> 7, d & 127, 0), pl.rnd() % kBlockFrames});
   }
   for (std::uint32_t n = 0; n < presses; ++n) pl.keys[pl.count++] = fresh[n];
+  if (i % 7 == 0) {
+    const std::uint32_t ch = pl.rnd() % params::kPartCount;
+    const std::uint32_t val32 = (pl.rnd() & 1u) ? 0xFFFFFFFFu : 0u;
+    br.submit({make_control_change(0, ch, Ump::kControllerSustain, val32), pl.rnd() % kBlockFrames});
+  }
   if (i % 25 == 0) {
     const double bpm = 60.0 + static_cast<double>((i * 13) % 180);
     br.submit({make_param_event(*params::find(params::kTempoBpm), 0, bpm), pl.rnd() % kBlockFrames});
@@ -136,6 +143,13 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& gens_out) {
     }
   }
   gens_out = ctl.published;
+  for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    ArpConfig off_cfg = br->arp(p).config();
+    off_cfg.latch = false;
+    off_cfg.enabled = false;
+    br->set_part_arp(p, off_cfg);
+    br->submit({make_control_change(0, p, Ump::kControllerSustain, 0u), 0});
+  }
   for (std::size_t k = 0; k < pl.count; ++k) {
     br->submit({make_note_off(0, pl.keys[k] >> 7, pl.keys[k] & 127, 0), 0});
   }

@@ -39,7 +39,12 @@ struct RoutingOptions {
   std::array<std::uint8_t, 8> output{};               // registry part_output per part: 0 main (default), 1 aux
   std::array<float, 8> send_reverb{}, send_delay{};   // 0..1 per part
   std::array<std::vector<Insert>, 8> inserts;         // up to 5 per part
-  std::array<velora::core::ArpConfig, 8> arp{};       // per-part arpeggiator config (Story 7.2)
+  std::array<velora::core::ArpConfig, 8> arp{};       // per-part arpeggiator config (Story 7.2 / 7.3)
+  struct ArpSwitch {
+    double seconds = 0.0;
+    std::array<velora::core::ArpConfig, 8> arp{};
+  };
+  std::vector<ArpSwitch> arp_switches;                // optional mid-render Snapshot switches of per-part ArpConfig (Story 7.3)
   float master_level_db = 0.0f;
   // Reverb (Story 2.10), registry defaults: type 1 (hall), time 2 s, return level 1, REV master send level 1. type: 0 room, 1 hall, 2 plate.
   std::uint8_t reverb_type = 1;

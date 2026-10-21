@@ -200,8 +200,10 @@ class BlockRenderer {
   void apply(const Ump& ump) noexcept VELORA_NONBLOCKING;
   void apply_contact(const Ump& ump) noexcept VELORA_NONBLOCKING;
   // One note on / off for engine `type_id` on UMP channel `channel` (= the part in a Live Set generation): arbiter bookkeeping, engine
-  // call, status counting. The body of the pre-4.3 note path.
-  void apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on, std::uint32_t type_id) noexcept VELORA_NONBLOCKING;
+  // call, status counting. The body of the pre-4.3 note path. When `from_arp` is true, Note Offs bypass sustain-pedal deferral in
+  // VoiceArbiter so arpeggiator-generated step gates always end on schedule.
+  void apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on, std::uint32_t type_id,
+                       bool from_arp = false) noexcept VELORA_NONBLOCKING;
   void apply_keyboard_note(const Ump& ump) noexcept VELORA_NONBLOCKING;
   void apply_keyboard_sustain(bool down) noexcept VELORA_NONBLOCKING;
   // Controllers other than the pedal (Story 5.2): UMP control change -> the part's engine (CcState of the sample engine).

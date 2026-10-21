@@ -1,8 +1,10 @@
-// Story 7.2: Event-processor framework and arpeggiator note generation.
+// Story 7.2 / 7.3: Event-processor framework, arpeggiator note generation, swing, latch, sustain pedal (CC 64), and
+// seamless scene / Live Set switching while an arpeggiator is running.
 // Covers EventBuffer and custom EventProcessor slots, all ArpMode values (Up, Down, UpDown without repeating end notes,
 // per-part seeded Random, AsPlayed), Octaves 1-4, all 8 rates (1/4..1/32 and triplets), Gate % (incl. 1-frame floor and >=100%
-// re-strike balance), exact TransportClock grid alignment, Arp Off pass-through, live Arp On<->Off transitions while holding
-// notes, and Live Set PartRouter + Arpeggiator integration.
+// re-strike balance), Swing % (50..75%), Latch On/Off and chord replacement, Sustain pedal (CC 64) with Latch Off, exact
+// TransportClock grid alignment, Arp Off pass-through, live Arp On<->Off transitions while holding notes, and seamless
+// scene / Live Set switching with running arpeggiators.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +16,7 @@
 #include "velora/core/event_processor.hpp"
 #include "velora/core/param_events.hpp"
 #include "velora/core/params_gen.hpp"
+#include "velora/core/sample_engine.hpp"
 #include "velora/core/snapshot.hpp"
 
 using namespace velora::core;
@@ -498,6 +501,443 @@ void test_live_set_router_with_arpeggiator() {
   CHECK(rig.br->status_count(EngineStatus::kVoiceNotFound) == 0);
 }
 
+void test_swing_timing_and_gate_scaling() {
+  // Sanitize clamps swing_percent to [50.0f, 75.0f].
+  {
+    ArpConfig c;
+    c.swing_percent = 10.0f;
+    CHECK(sanitize_arp_config(c).swing_percent == 50.0f);
+    c.swing_percent = 95.0f;
+    CHECK(sanitize_arp_config(c).swing_percent == 75.0f);
+    c.swing_percent = 62.5f;
+    CHECK(sanitize_arp_config(c).swing_percent == 62.5f);
+  }
+
+  // At 120 BPM, 1/16 = 240 ticks = 6000 frames per straight step, 12000 frames per step pair.
+  auto run_swing_case = [](float swing_pct, const std::vector<std::uint64_t>& exp_ons,
+                           const std::vector<std::uint64_t>& exp_offs) {
+    Rig rig;
+    ArpConfig cfg;
+    cfg.enabled = true;
+    cfg.mode = ArpMode::kUp;
+    cfg.rate = ArpRate::k1_16;
+    cfg.octaves = 1;
+    cfg.gate_percent = 50.0f;
+    cfg.swing_percent = swing_pct;
+    rig.br->set_part_arp(0, cfg);
+    rig.br->submit({make_note_on(0, 0, 60, 45000), 0});
+    rig.br->submit({make_note_on(0, 0, 64, 45000), 0});
+    rig.run(375);  // 24000 frames (4 steps)
+
+    std::vector<std::uint64_t> ons, offs;
+    for (const auto& ev : rig.trace.events) {
+      if (ev.frame < 24000) {
+        if (ev.on) ons.push_back(ev.frame);
+        else offs.push_back(ev.frame);
+      }
+    }
+    CHECK(ons == exp_ons);
+    CHECK(offs == exp_offs);
+  };
+
+  // 50% swing (straight): steps at 0, 6000, 12000, 18000; 50% gate offs at 3000, 9000, 15000, 21000.
+  run_swing_case(50.0f, {0, 6000, 12000, 18000}, {3000, 9000, 15000, 21000});
+
+  // 62.5% swing: odd steps at tick 300 (frame 7500) and tick 780 (frame 19500).
+  // Even step duration = 7500 -> 50% gate = 3750 (offs at 3750, 15750).
+  // Odd step duration = 4500 -> 50% gate = 2250 (offs at 9750, 21750).
+  run_swing_case(62.5f, {0, 7500, 12000, 19500}, {3750, 9750, 15750, 21750});
+
+  // 75% swing (dotted-triplet pair): odd steps at tick 360 (frame 9000) and tick 840 (frame 21000).
+  // Even step duration = 9000 -> 50% gate = 4500 (offs at 4500, 16500).
+  // Odd step duration = 3000 -> 50% gate = 1500 (offs at 10500, 22500).
+  run_swing_case(75.0f, {0, 9000, 12000, 21000}, {4500, 10500, 16500, 22500});
+
+  // Non-integer tempo (97.3 BPM) with 66% swing on 1/8 (480 ticks): verify exact TransportClock::frame_of_tick(swung_step_tick).
+  {
+    Rig rig;
+    Snapshot s = Snapshot::defaults();
+    s.revision = 1;
+    s.perf_init[params::perf_slot(*params::find(params::kTempoBpm), 0)] = 97.3f;
+    s.parts[0].arp.enabled = true;
+    s.parts[0].arp.mode = ArpMode::kUp;
+    s.parts[0].arp.rate = ArpRate::k1_8;
+    s.parts[0].arp.octaves = 1;
+    s.parts[0].arp.gate_percent = 50.0f;
+    s.parts[0].arp.swing_percent = 66.0f;
+    rig.br->snapshots().publish(&s);
+    rig.br->submit({make_note_on(0, 0, 60, 40000), 0});
+    rig.br->submit({make_note_on(0, 0, 67, 40000), 0});
+
+    TransportClock ref_clock;
+    ref_clock.set_tempo_tenths(TransportClock::tenths_from_bpm(97.3f));
+    const std::int64_t step_ticks = arp_rate_ticks(ArpRate::k1_8);
+
+    rig.run(1500);
+    std::size_t step = 0;
+    for (const auto& ev : rig.trace.events) {
+      if (!ev.on) continue;
+      const std::int64_t swung_tick =
+          Arpeggiator::swung_step_tick(static_cast<std::int64_t>(step) * step_ticks, step_ticks, 66.0f);
+      const std::uint64_t expected_frame = static_cast<std::uint64_t>(ref_clock.frame_of_tick(swung_tick));
+      CHECK(ev.frame == expected_frame);
+      ++step;
+    }
+    CHECK(step >= 4);
+  }
+
+  // Off-zero entry point falling between an unswung odd tick and its swung position:
+  // At 120 BPM with 75% swing on 1/16, unswung odd tick 240 is at frame 6000, swung odd tick 360 is at frame 9000.
+  // When a note arrives at frame 7000 (after the unswung tick but before the swung tick),
+  // first_grid_tick_from_frame selects tick 240, landing its NoteOn exactly at swung frame 9000.
+  {
+    Rig rig;
+    ArpConfig cfg;
+    cfg.enabled = true;
+    cfg.mode = ArpMode::kUp;
+    cfg.rate = ArpRate::k1_16;
+    cfg.octaves = 1;
+    cfg.gate_percent = 50.0f;
+    cfg.swing_percent = 75.0f;
+    rig.br->set_part_arp(0, cfg);
+    rig.run(109);  // 109 blocks * 64 = 6976 frames
+    // Submit note on at frame 7000 (offset = 7000 - 6976 = 24 frames in block 109)
+    rig.br->submit({make_note_on(0, 0, 60, 45000), 24});
+    rig.run(50);  // up to 159 blocks * 64 = 10176 frames (crosses swung frame 9000)
+    std::vector<std::uint64_t> ons;
+    for (const auto& ev : rig.trace.events) {
+      if (ev.on) ons.push_back(ev.frame);
+    }
+    CHECK(ons.size() == 1);
+    if (!ons.empty()) {
+      CHECK(ons[0] == 9000);
+    }
+  }
+}
+
+void test_latch_on_off_and_chord_replacement() {
+  Rig rig;
+  ArpConfig cfg;
+  cfg.enabled = true;
+  cfg.mode = ArpMode::kUp;
+  cfg.rate = ArpRate::k1_16;  // 6000 frames at 120 BPM
+  cfg.octaves = 1;
+  cfg.gate_percent = 50.0f;   // 3000 frames
+  cfg.latch = true;
+  rig.br->set_part_arp(0, cfg);
+
+  // Press chord (60, 64, 67) at frame 0, then release all keys at frame 512.
+  rig.br->submit({make_note_on(0, 0, 60, 45000), 0});
+  rig.br->submit({make_note_on(0, 0, 64, 45000), 0});
+  rig.br->submit({make_note_on(0, 0, 67, 45000), 0});
+  rig.run(8);  // 512 frames
+  CHECK(rig.br->arp(0).held_note_count() == 3);
+  CHECK(rig.br->arp(0).physically_held_note_count() == 3);
+
+  rig.br->submit({make_note_off(0, 0, 60, 0), 0});
+  rig.br->submit({make_note_off(0, 0, 64, 0), 0});
+  rig.br->submit({make_note_off(0, 0, 67, 0), 0});
+  rig.run(304);  // up to frame 19968 (crosses step 0 off at 3000, step 1 at 6000, step 2 at 12000, step 3 at 18000)
+  CHECK(rig.br->arp(0).held_note_count() == 3);
+  CHECK(rig.br->arp(0).physically_held_note_count() == 0);
+
+  // At frame 19968 (while step 3's note 60 is sounding 18000..21000), press a new chord (72, 76) and release it at frame 20608.
+  // Because all physical keys were released, (72, 76) replaces (60, 64, 67) without cutting step 3's gate or double-triggering,
+  // and starts the new latched chord at the next grid step (frame 24000).
+  rig.br->submit({make_note_on(0, 0, 72, 45000), 0});
+  rig.br->submit({make_note_on(0, 0, 76, 45000), 0});
+  rig.run(10);  // up to frame 20608
+  CHECK(rig.br->arp(0).held_note_count() == 2);
+  CHECK(rig.br->arp(0).physically_held_note_count() == 2);
+
+  rig.br->submit({make_note_off(0, 0, 72, 0), 0});
+  rig.br->submit({make_note_off(0, 0, 76, 0), 0});
+  rig.run(167);  // up to frame 31296 (crosses step 3 off at 21000, step 4 at 24000 -> 72, step 5 at 30000 -> 76)
+  CHECK(rig.br->arp(0).held_note_count() == 2);
+  CHECK(rig.br->arp(0).physically_held_note_count() == 0);
+
+  // Switch Latch Off at frame 31296 while latched note 76 (started at 30000, gate off at 33000) is playing.
+  // Note 76 finishes its gate at 33000, and at the next step boundary (36000) the latched notes are cleared and the pattern stops.
+  cfg.latch = false;
+  rig.br->set_part_arp(0, cfg);
+  rig.run(150);  // up to frame 40896 (well past 36000)
+  CHECK(rig.br->arp(0).held_note_count() == 0);
+  CHECK(rig.br->test_tone().active_voices() == 0);
+
+  std::vector<std::uint8_t> on_pitches;
+  std::vector<std::uint64_t> on_frames;
+  std::vector<std::uint64_t> off_frames;
+  for (const auto& ev : rig.trace.events) {
+    if (ev.on) {
+      on_pitches.push_back(ev.note);
+      on_frames.push_back(ev.frame);
+    } else {
+      off_frames.push_back(ev.frame);
+    }
+  }
+  const std::vector<std::uint8_t> exp_pitches = {60, 64, 67, 60, 72, 76};
+  const std::vector<std::uint64_t> exp_ons = {0, 6000, 12000, 18000, 24000, 30000};
+  const std::vector<std::uint64_t> exp_offs = {3000, 9000, 15000, 21000, 27000, 33000};
+  CHECK(on_pitches == exp_pitches);
+  CHECK(on_frames == exp_ons);
+  CHECK(off_frames == exp_offs);
+
+  // Also test switching Latch Off when gate_percent = 150% (gate would extend to 9000, past the next step at 6000):
+  // switching Latch Off at frame 1280 ends the latched note at the next step boundary (frame 6000) and stops the pattern.
+  {
+    Rig rig2;
+    ArpConfig cfg2 = cfg;
+    cfg2.latch = true;
+    cfg2.gate_percent = 150.0f;  // 9000-frame gate on a 6000-frame step
+    rig2.br->set_part_arp(0, cfg2);
+    rig2.br->submit({make_note_on(0, 0, 60, 45000), 0});
+    rig2.br->submit({make_note_off(0, 0, 60, 0), 10});
+    rig2.run(20);  // 1280 frames
+    CHECK(rig2.br->test_tone().active_voices() == 1);
+
+    cfg2.latch = false;
+    rig2.br->set_part_arp(0, cfg2);
+    rig2.run(70);  // up to frame 5760 (still before the next step at 6000): voice is still sounding!
+    CHECK(rig2.br->test_tone().active_voices() == 1);
+
+    rig2.run(10);  // crosses frame 6000 (the next step): latched note ends at 6000 and no new step fires!
+    CHECK(rig2.br->test_tone().active_voices() == 0);
+    CHECK(rig2.br->arp(0).held_note_count() == 0);
+    CHECK(rig2.trace.events.size() == 2);
+    if (rig2.trace.events.size() == 2) {
+      CHECK(rig2.trace.events[0].on && rig2.trace.events[0].frame == 0);
+      CHECK(!rig2.trace.events[1].on && rig2.trace.events[1].frame == 6000);
+    }
+  }
+}
+
+void test_sustain_pedal_with_latch_off() {
+  Rig rig;
+  ArpConfig cfg;
+  cfg.enabled = true;
+  cfg.mode = ArpMode::kUp;
+  cfg.rate = ArpRate::k1_16;  // 6000 frames
+  cfg.octaves = 1;
+  cfg.gate_percent = 50.0f;   // 3000 frames
+  cfg.latch = false;
+  rig.br->set_part_arp(0, cfg);
+
+  // Sustain pedal down (CC 64 = 127 -> 0xFFFFFFFFu), press (60, 64) at frame 0, release keys at frame 512.
+  rig.br->submit({make_control_change(0, 0, Ump::kControllerSustain, 0xFFFFFFFFu), 0});
+  rig.br->submit({make_note_on(0, 0, 60, 45000), 0});
+  rig.br->submit({make_note_on(0, 0, 64, 45000), 0});
+  rig.run(8);  // 512 frames
+  rig.br->submit({make_note_off(0, 0, 60, 0), 0});
+  rig.br->submit({make_note_off(0, 0, 64, 0), 0});
+
+  // Run past step 0's gate off (frame 3000) to frame 3200: VoiceArbiter must NOT defer the arpeggiator's step NoteOff!
+  rig.run(42);  // total 50 blocks = 3200 frames
+  CHECK(rig.br->test_tone().active_voices() == 0);
+  CHECK(rig.br->arp(0).held_note_count() == 2);
+  CHECK(rig.br->arp(0).physically_held_note_count() == 0);
+
+  // Run to frame 12800 (crosses step 1 at 6000, off at 9000, step 2 at 12000).
+  rig.run(150);  // total 200 blocks = 12800 frames (step 2 note 60 is currently sounding 12000..15000)
+  CHECK(rig.br->test_tone().active_voices() == 1);
+
+  // Release sustain pedal (CC 64 = 0) at frame 12810: removes unheld notes, ends sounding step note at 12810, stops pattern.
+  rig.br->submit({make_control_change(0, 0, Ump::kControllerSustain, 0u), 10});
+  rig.run(100);
+  CHECK(rig.br->test_tone().active_voices() == 0);
+  CHECK(rig.br->arp(0).held_note_count() == 0);
+
+  std::vector<std::uint64_t> ons, offs;
+  for (const auto& ev : rig.trace.events) {
+    if (ev.on) ons.push_back(ev.frame);
+    else offs.push_back(ev.frame);
+  }
+  const std::vector<std::uint64_t> exp_ons = {0, 6000, 12000};
+  const std::vector<std::uint64_t> exp_offs = {3000, 9000, 12810};
+  CHECK(ons == exp_ons);
+  CHECK(offs == exp_offs);
+  CHECK(rig.br->status_count(EngineStatus::kVoiceNotFound) == 0);
+
+  // Live Set sustain pedal test: verify that arps_[p] holds notes on listening parts
+  // (router_.pedal_down_target(p)) when live_set = true without VoiceArbiter deferring arp step note-offs.
+  {
+    Rig rig2;
+    Snapshot s = Snapshot::defaults();
+    s.revision = 1;
+    s.live_set = true;
+    s.parts[0].engine_type = static_cast<std::uint32_t>(EngineTypeId::kTestTone);
+    s.parts[0].keyboard_on = 1;
+    s.parts[0].arp.enabled = true;
+    s.parts[0].arp.mode = ArpMode::kUp;
+    s.parts[0].arp.rate = ArpRate::k1_16;
+    s.parts[0].arp.gate_percent = 50.0f;
+    s.parts[0].arp.latch = false;
+    for (std::uint32_t p = 1; p < params::kPartCount; ++p) s.parts[p].keyboard_on = 0;
+    rig2.br->snapshots().publish(&s);
+
+    // Sustain pedal down on channel 0, press (60, 64) at frame 0, release keys at frame 512.
+    rig2.br->submit({make_control_change(0, 0, Ump::kControllerSustain, 0xFFFFFFFFu), 0});
+    rig2.br->submit({make_note_on(0, 0, 60, 45000), 0});
+    rig2.br->submit({make_note_on(0, 0, 64, 45000), 0});
+    rig2.run(8);  // 512 frames
+    rig2.br->submit({make_note_off(0, 0, 60, 0), 0});
+    rig2.br->submit({make_note_off(0, 0, 64, 0), 0});
+
+    // Run to frame 3200 (past step 0 gate off at 3000): voice is stopped (not deferred by VoiceArbiter).
+    rig2.run(42);
+    CHECK(rig2.br->test_tone().active_voices() == 0);
+    CHECK(rig2.br->arp(0).held_note_count() == 2);
+    CHECK(rig2.br->arp(0).physically_held_note_count() == 0);
+
+    // Run past step 1 (6000..9000) into step 2 at 12000.
+    rig2.run(150);
+    CHECK(rig2.br->test_tone().active_voices() == 1);
+
+    // Release pedal at frame 12810.
+    rig2.br->submit({make_control_change(0, 0, Ump::kControllerSustain, 0u), 10});
+    rig2.run(100);
+    CHECK(rig2.br->test_tone().active_voices() == 0);
+    CHECK(rig2.br->arp(0).held_note_count() == 0);
+    CHECK(rig2.br->status_count(EngineStatus::kVoiceNotFound) == 0);
+  }
+}
+
+struct ConstantSampleSource final : velora::ports::SampleSource {
+  std::vector<velora::ports::SampleRegionDesc> regions;
+  std::vector<velora::ports::SamplePcm> pcm;
+  std::vector<float> samples;
+
+  explicit ConstantSampleSource(float level) : samples(4800, level) {
+    velora::ports::SamplePcm p;
+    p.sample_rate = 48000;
+    p.channels = 1;
+    p.frames = samples.size();
+    p.left = samples.data();
+    pcm.push_back(p);
+
+    velora::ports::SampleRegionDesc d;
+    d.sample_index = 0;
+    d.key_lo = 0;
+    d.key_hi = 127;
+    d.key_center = 60;
+    d.loop_mode = velora::ports::SampleLoopMode::kLoopContinuous;
+    regions.push_back(d);
+  }
+
+  velora::ports::InstrumentView instrument() const noexcept override { return {regions, pcm}; }
+};
+
+void test_seamless_scene_and_live_set_switching_with_running_arp() {
+  Rig rig;
+  SampleEngine::Config scfg;
+  scfg.max_voices = 32;
+  scfg.interpolation = SampleInterpolation::kLinear;
+  SampleEngine sample_engine(scfg);
+  CHECK(rig.br->bind_engine(sample_engine));
+
+  auto src_a = std::make_shared<ConstantSampleSource>(0.25f);
+  auto src_b = std::make_shared<ConstantSampleSource>(0.75f);
+  auto bank_a = sample_engine.prepare(*src_a, src_a);
+  auto bank_b = sample_engine.prepare(*src_b, src_b);
+  CHECK(bank_a != nullptr && bank_b != nullptr);
+
+  // Generation 1 (Scene / Live Set 1): Part 0 on SampleEngine with bank_a (level 0.25), Arp On, Up, 1/16 (6000 frames), 50% gate (3000 frames).
+  Snapshot s1 = Snapshot::defaults();
+  s1.revision = 1;
+  s1.program_generation = 1;
+  s1.ledger_index = 0;
+  s1.live_set = true;
+  s1.parts[0].engine_type = static_cast<std::uint32_t>(EngineTypeId::kSample);
+  s1.parts[0].sample_bank = bank_a;
+  s1.parts[0].arp.enabled = true;
+  s1.parts[0].arp.mode = ArpMode::kUp;
+  s1.parts[0].arp.rate = ArpRate::k1_16;
+  s1.parts[0].arp.octaves = 1;
+  s1.parts[0].arp.gate_percent = 50.0f;
+  for (std::uint32_t p = 1; p < params::kPartCount; ++p) s1.parts[p].keyboard_on = 0;
+  rig.br->snapshots().publish(&s1);
+
+  // Press chord (60, 64) at frame 0 -> Step 0 starts note 60 on bank_a at frame 0 with gate ending at frame 3000.
+  rig.br->submit({make_note_on(0, 0, 60, 65535), 0});
+  rig.br->submit({make_note_on(0, 0, 64, 65535), 0});
+  rig.run(20);  // 1280 frames (mid-gate of Step 0)
+  CHECK(sample_engine.active_voices() == 1);
+
+  // Generation 2 (Scene / Live Set switch while Arp is running and Step 0 is mid-gate!):
+  // Part 0 switches to bank_b (level 0.75), Arp remains On.
+  Snapshot s2 = s1;
+  s2.revision = 2;
+  s2.program_generation = 2;
+  s2.ledger_index = 1;
+  s2.parts[0].sample_bank = bank_b;
+  rig.br->snapshots().publish(&s2);
+
+  // Render from frame 1280 to frame 2944 (26 blocks): Step 0 must keep sounding on bank_a (level ~0.25) and keep s1 referenced!
+  float l[kBlockFrames], r[kBlockFrames], al[kBlockFrames], ar[kBlockFrames];
+  for (std::uint32_t b = 0; b < 26; ++b) {
+    OutputBuses ob{l, r, al, ar};
+    rig.br->process_block(ob);
+    CHECK(std::fabs(l[0] - 0.25f) < 0.02f);
+  }
+  CHECK(!rig.br->snapshots().safe_to_free(&s1));
+  CHECK(sample_engine.active_voices() == 1);
+
+  // Render past frame 3000 (Step 0 gate off) up to frame 5952: Step 0 ends at frame 3000, freeing s1, and Step 1 fires at frame 6000 on bank_b!
+  rig.run(47);  // 20 + 26 + 47 = 93 blocks = 5952 frames
+  CHECK(sample_engine.active_voices() == 0);
+  CHECK(rig.br->snapshots().safe_to_free(&s1));
+
+  // Block 93 (frames 5952..6016) triggers Step 1 (note 64) at exact frame 6000 on bank_b (level ~0.75), with no gap or double trigger!
+  rig.run(2);  // up to frame 6080
+  {
+    OutputBuses ob{l, r, al, ar};
+    rig.br->process_block(ob);  // frames 6080..6144
+    CHECK(std::fabs(l[0] - 0.75f) < 0.02f);
+  }
+  CHECK(sample_engine.active_voices() == 1);
+
+  // Generation 3 (Scene / Live Set switch at frame 6144 that turns Arp Off while Step 1's note 64 is mid-gate 6000..9000!):
+  // Already-sounding step note 64 must NOT be cut at frame 6144; it must finish its full gate until frame 9000 on bank_b!
+  Snapshot s3 = s2;
+  s3.revision = 3;
+  s3.program_generation = 3;
+  s3.ledger_index = 2;
+  s3.parts[0].arp.enabled = false;
+  rig.br->snapshots().publish(&s3);
+
+  for (std::uint32_t b = 0; b < 40; ++b) {  // frames 6144..8704 (still inside Step 1's 6000..9000 gate)
+    OutputBuses ob{l, r, al, ar};
+    rig.br->process_block(ob);
+    CHECK(std::fabs(l[0] - 0.75f) < 0.02f);
+  }
+  CHECK(sample_engine.active_voices() == 1);
+
+  // Advance past frame 9000 and the sample voice's release tail (50 more blocks -> frame 11904): Step 1 finishes its gate at frame 9000!
+  rig.run(50);
+  CHECK(sample_engine.active_voices() == 0);
+  CHECK(rig.br->snapshots().safe_to_free(&s2));
+
+  // Release keys 60 and 64 while Arp is Off: no unmatched NoteOff or kVoiceNotFound!
+  rig.br->submit({make_note_off(0, 0, 60, 0), 0});
+  rig.br->submit({make_note_off(0, 0, 64, 0), 0});
+  rig.run(2);
+  CHECK(sample_engine.active_voices() == 0);
+  CHECK(rig.br->status_count(EngineStatus::kVoiceNotFound) == 0);
+
+  std::vector<EmittedNoteEvent> expected_trace = {
+      {0, 0, 60, 65535, true},
+      {3000, 0, 60, 0, false},
+      {6000, 0, 64, 65535, true},
+      {9000, 0, 64, 0, false},
+  };
+  CHECK(rig.trace.events.size() == expected_trace.size());
+  for (std::size_t i = 0; i < std::min(rig.trace.events.size(), expected_trace.size()); ++i) {
+    CHECK(rig.trace.events[i].frame == expected_trace[i].frame);
+    CHECK(rig.trace.events[i].part == expected_trace[i].part);
+    CHECK(rig.trace.events[i].note == expected_trace[i].note);
+    CHECK(rig.trace.events[i].on == expected_trace[i].on);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -508,6 +948,10 @@ int main() {
   test_arp_on_off_transitions_while_holding_notes();
   test_mid_chord_rate_change_and_key_updates();
   test_live_set_router_with_arpeggiator();
+  test_swing_timing_and_gate_scaling();
+  test_latch_on_off_and_chord_replacement();
+  test_sustain_pedal_with_latch_off();
+  test_seamless_scene_and_live_set_switching_with_running_arp();
   if (g_fail) {
     std::printf("%d failures\n", g_fail);
     return 1;

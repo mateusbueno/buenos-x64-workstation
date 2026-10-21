@@ -239,6 +239,213 @@ int main() {
     }
   }
 
-  std::printf("arp_tests: all mode/rate/octave/gate/tempo checks passed\n");
+  // 5. Story 7.3: Verify Swing % (50%, 62.5%, 75%) timing and swung step gate scaling across both tempos.
+  auto make_note_ev = [](std::uint64_t frame, std::uint8_t ch, std::uint8_t note, std::uint16_t vel16, bool on) {
+    NoteEvent e{};
+    e.frame = frame;
+    e.on = on;
+    e.channel = ch;
+    e.note = note;
+    e.velocity16 = vel16;
+    return e;
+  };
+  auto make_cc_ev = [](std::uint64_t frame, std::uint8_t ch, std::uint8_t cc_num, std::uint8_t val7) {
+    NoteEvent e{};
+    e.frame = frame;
+    e.channel = ch;
+    e.note = cc_num;
+    e.cc = true;
+    e.value = val7;
+    return e;
+  };
+
+  for (float bpm : kTempos) {
+    for (float swing : {50.0f, 62.5f, 75.0f}) {
+      const std::uint64_t release_frame = 48000;
+      std::vector<NoteEvent> events = {
+          make_note_ev(0, 0, 60, 50000, true),
+          make_note_ev(0, 0, 64, 50000, true),
+          make_note_ev(release_frame, 0, 60, 0, false),
+          make_note_ev(release_frame, 0, 64, 0, false),
+      };
+      RenderOptions opt;
+      opt.tail_seconds = 0.25;
+      opt.routing.enabled = true;
+      opt.routing.tempo_bpm = bpm;
+      opt.routing.arp[0] = ArpConfig{true, ArpMode::kUp, ArpRate::k1_16, 1, 50.0f, swing, false};
+      std::vector<EmittedNoteEvent> emitted;
+      opt.emitted_notes = &emitted;
+      WavData wav;
+      std::string err;
+      CHECK(render_events(events, opt, wav, err));
+
+      TransportClock ref_clock;
+      ref_clock.reset();
+      ref_clock.set_tempo_tenths(TransportClock::tenths_from_bpm(bpm));
+      const std::int64_t step_ticks = arp_rate_ticks(ArpRate::k1_16);
+
+      std::vector<EmittedNoteEvent> ons, offs;
+      for (const auto& ev : emitted) {
+        if (ev.on) ons.push_back(ev);
+        else offs.push_back(ev);
+      }
+      CHECK(ons.size() >= 6);
+      CHECK(ons.size() == offs.size());
+      for (std::size_t s = 0; s < ons.size(); ++s) {
+        const std::int64_t grid_tick = static_cast<std::int64_t>(s) * step_ticks;
+        const std::int64_t swung_tick = Arpeggiator::swung_step_tick(grid_tick, step_ticks, swing);
+        const std::int64_t next_swung_tick = Arpeggiator::swung_step_tick(grid_tick + step_ticks, step_ticks, swing);
+        const std::uint64_t exp_on = static_cast<std::uint64_t>(ref_clock.frame_of_tick(swung_tick));
+        const std::int64_t f_next = ref_clock.frame_of_tick(next_swung_tick);
+        const std::int64_t step_frames = std::max<std::int64_t>(1, f_next - static_cast<std::int64_t>(exp_on));
+        const std::int64_t gate_frames = std::max<std::int64_t>(1, std::llround(static_cast<double>(step_frames) * 0.5));
+        const std::uint64_t exp_off = std::min<std::uint64_t>(release_frame, exp_on + static_cast<std::uint64_t>(gate_frames));
+        CHECK(ons[s].frame == exp_on);
+        CHECK(offs[s].frame == exp_off);
+      }
+    }
+  }
+
+  // 6. Story 7.3: Verify Latch On (release all keys, replace latched chord on next NoteOn, switch Latch Off ending at next step).
+  {
+    // 120 BPM, 1/16 = 6000 frames, 50% gate = 3000 frames.
+    // Press (60, 64) at frame 0, release at frame 500; press new chord (67, 72) at frame 13000 (after step 2 at 12000), release at 13500;
+    // switch Latch Off at 25280 frames (0.526667 s, during step 4 at 24000..27000) -> ends at next step (30000), no step at 30000.
+    std::vector<NoteEvent> events = {
+        make_note_ev(0, 0, 60, 50000, true),
+        make_note_ev(0, 0, 64, 50000, true),
+        make_note_ev(500, 0, 60, 0, false),
+        make_note_ev(500, 0, 64, 0, false),
+        make_note_ev(13000, 0, 67, 50000, true),
+        make_note_ev(13000, 0, 72, 50000, true),
+        make_note_ev(13500, 0, 67, 0, false),
+        make_note_ev(13500, 0, 72, 0, false),
+    };
+    RenderOptions opt;
+    opt.tail_seconds = 0.35;
+    opt.routing.enabled = true;
+    opt.routing.tempo_bpm = 120.0f;
+    opt.routing.arp[0] = ArpConfig{true, ArpMode::kUp, ArpRate::k1_16, 1, 50.0f, 50.0f, true};
+    RoutingOptions::ArpSwitch sw;
+    sw.seconds = 25280.0 / 48000.0;
+    sw.arp = opt.routing.arp;
+    sw.arp[0].latch = false;
+    opt.routing.arp_switches.push_back(sw);
+
+    std::vector<EmittedNoteEvent> emitted;
+    opt.emitted_notes = &emitted;
+    WavData wav;
+    std::string err;
+    CHECK(render_events(events, opt, wav, err));
+
+    std::vector<std::uint8_t> on_notes;
+    std::vector<std::uint64_t> on_frames, off_frames;
+    for (const auto& ev : emitted) {
+      if (ev.on) {
+        on_notes.push_back(ev.note);
+        on_frames.push_back(ev.frame);
+      } else {
+        off_frames.push_back(ev.frame);
+      }
+    }
+    const std::vector<std::uint8_t> exp_notes = {60, 64, 60, 67, 72};
+    const std::vector<std::uint64_t> exp_ons = {0, 6000, 12000, 18000, 24000};
+    const std::vector<std::uint64_t> exp_offs = {3000, 9000, 15000, 21000, 27000};
+    CHECK(on_notes == exp_notes);
+    CHECK(on_frames == exp_ons);
+    CHECK(off_frames == exp_offs);
+  }
+
+  // 7. Story 7.3: Verify Sustain pedal (CC 64) with Latch Off holds notes in the pattern without holding step NoteOffs in VoiceArbiter.
+  {
+    std::vector<NoteEvent> events = {
+        make_cc_ev(0, 0, 64, 127),
+        make_note_ev(0, 0, 60, 50000, true),
+        make_note_ev(0, 0, 64, 50000, true),
+        make_note_ev(500, 0, 60, 0, false),
+        make_note_ev(500, 0, 64, 0, false),
+        make_cc_ev(13000, 0, 64, 0),
+    };
+    RenderOptions opt;
+    opt.tail_seconds = 0.25;
+    opt.routing.enabled = true;
+    opt.routing.tempo_bpm = 120.0f;
+    opt.routing.arp[0] = ArpConfig{true, ArpMode::kUp, ArpRate::k1_16, 1, 50.0f, 50.0f, false};
+
+    std::vector<EmittedNoteEvent> emitted;
+    opt.emitted_notes = &emitted;
+    WavData wav;
+    std::string err;
+    CHECK(render_events(events, opt, wav, err));
+
+    std::vector<std::uint64_t> on_frames, off_frames;
+    for (const auto& ev : emitted) {
+      if (ev.on) on_frames.push_back(ev.frame);
+      else off_frames.push_back(ev.frame);
+    }
+    const std::vector<std::uint64_t> exp_ons = {0, 6000, 12000};
+    const std::vector<std::uint64_t> exp_offs = {3000, 9000, 13000};
+    CHECK(on_frames == exp_ons);
+    CHECK(off_frames == exp_offs);
+
+    // Between step 0's gate off (frame 3000) and step 1's NoteOn (frame 6000), the audio must be silent (proving VoiceArbiter did not hold step 0).
+    for (std::uint64_t f = 3100; f < 5900; ++f) {
+      CHECK(wav.samples[f * 2] == 0.0f && wav.samples[f * 2 + 1] == 0.0f);
+    }
+  }
+
+  // 8. Story 7.3: Verify scene / Live Set Snapshot switch mid-gate does not truncate already-sounding arpeggiated step notes.
+  {
+    std::vector<NoteEvent> events = {
+        make_note_ev(0, 0, 60, 50000, true),
+        make_note_ev(0, 0, 64, 50000, true),
+        make_note_ev(15000, 0, 60, 0, false),
+        make_note_ev(15000, 0, 64, 0, false),
+    };
+    RenderOptions opt;
+    opt.tail_seconds = 0.25;
+    opt.routing.enabled = true;
+    opt.routing.tempo_bpm = 120.0f;
+    opt.routing.arp[0] = ArpConfig{true, ArpMode::kUp, ArpRate::k1_16, 1, 50.0f, 50.0f, false};
+
+    // Switch 1 at frame 1280 (mid-gate of step 0 [0..3000]): Arp stays On.
+    RoutingOptions::ArpSwitch sw1;
+    sw1.seconds = 1280.0 / 48000.0;
+    sw1.arp = opt.routing.arp;
+    opt.routing.arp_switches.push_back(sw1);
+
+    // Switch 2 at frame 7280 (mid-gate of step 1 [6000..9000]): Arp turns Off in the new scene.
+    RoutingOptions::ArpSwitch sw2;
+    sw2.seconds = 7280.0 / 48000.0;
+    sw2.arp = opt.routing.arp;
+    sw2.arp[0].enabled = false;
+    opt.routing.arp_switches.push_back(sw2);
+
+    std::vector<EmittedNoteEvent> emitted;
+    opt.emitted_notes = &emitted;
+    WavData wav;
+    std::string err;
+    CHECK(render_events(events, opt, wav, err));
+
+    // Step 0 plays 0..3000 and Step 1 plays 6000..9000 without truncation at frame 7280!
+    std::vector<std::uint64_t> on_frames, off_frames;
+    for (const auto& ev : emitted) {
+      if (ev.on) on_frames.push_back(ev.frame);
+      else off_frames.push_back(ev.frame);
+    }
+    const std::vector<std::uint64_t> exp_ons = {0, 6000};
+    const std::vector<std::uint64_t> exp_offs = {3000, 9000};
+    CHECK(on_frames == exp_ons);
+    CHECK(off_frames == exp_offs);
+
+    // Audio remains non-silent throughout [7300, 8900] after the scene switch at frame 7280!
+    float peak_after_switch = 0.0f;
+    for (std::uint64_t f = 7300; f < 8900; ++f) {
+      peak_after_switch = std::max(peak_after_switch, std::fabs(wav.samples[f * 2]));
+    }
+    CHECK(peak_after_switch > 0.01f);
+  }
+
+  std::printf("arp_tests: all mode/rate/octave/gate/swing/latch/sustain/switch checks passed\n");
   return 0;
 }
