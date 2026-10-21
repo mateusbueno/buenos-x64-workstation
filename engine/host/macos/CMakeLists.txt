@@ -78,4 +78,12 @@ if(VELORA_DEV_KEY_PROVIDER)
   add_dependencies(engine_host_protected_smoke engine-host)
   add_test(NAME engine_host_protected_smoke COMMAND engine_host_protected_smoke $<TARGET_FILE:engine-host>)
   set_tests_properties(engine_host_protected_smoke PROPERTIES TIMEOUT 120)
+
+  # Story 6.9: the first-boot import of the signed factory Live Sets by the real engine-host (--factory-live-sets): imported once, idempotent, a deleted one stays deleted, a missing
+  # library or an untrusted signer refused with the typed cause and nothing written. --no-audio.
+  add_executable(engine_host_factory_smoke engine_host_factory_smoke.cpp)
+  target_link_libraries(engine_host_factory_smoke PRIVATE velora_control velora_format_protected_writer OpenSSL::Crypto)
+  add_dependencies(engine_host_factory_smoke engine-host)
+  add_test(NAME engine_host_factory_smoke COMMAND engine_host_factory_smoke $<TARGET_FILE:engine-host>)
+  set_tests_properties(engine_host_factory_smoke PROPERTIES TIMEOUT 180)
 endif()

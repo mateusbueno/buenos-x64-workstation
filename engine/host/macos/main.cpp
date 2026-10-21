@@ -31,6 +31,7 @@
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
 #include "velora/host/edit_session.hpp"
+#include "velora/host/factory_live_set.hpp"
 #include "velora/host/dev_config.hpp"
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
@@ -63,6 +64,8 @@ int main(int argc, char** argv) {
   bool want_line_in = false, no_audio = false;
   std::string live_set_path, library_root, live_set_dir, data_dir, library_socket;
   std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
+  bool factory_live_sets_required = false;      // --factory-live-sets-required: a failed import is fatal
+  std::string factory_live_sets_path;            // Story 6.9 (dev builds): the signed factory Live Set file imported on first boot
   long scrub_interval_ms = 30000;               // Story 6.5: how often an I/O edge thread re-verifies the resident protected instruments (0 = never)
   long library_idle_ms = 3000, inject_note_after_ms = -1;  // --library-playing-idle-ms; hidden --test-inject-note-after-ms (smoke tests: a note without MIDI)
   for (int i = 1; i < argc; ++i) {
@@ -103,6 +106,10 @@ int main(int argc, char** argv) {
       trust_list_path = argv[++i];
     } else if (!std::strcmp(argv[i], "--dev-device-key") && i + 1 < argc) {
       dev_device_key = argv[++i];
+    } else if (!std::strcmp(argv[i], "--factory-live-sets-required")) {
+      factory_live_sets_required = true;
+    } else if (!std::strcmp(argv[i], "--factory-live-sets") && i + 1 < argc) {
+      factory_live_sets_path = argv[++i];
     } else if (!std::strcmp(argv[i], "--scrub-interval-ms") && i + 1 < argc) {
       char* end = nullptr;
       scrub_interval_ms = std::strtol(argv[++i], &end, 10);
@@ -125,6 +132,9 @@ int main(int argc, char** argv) {
                    "                   [--trust-list FILE --dev-device-key FILE [--scrub-interval-ms N]]   (dev builds only: play PROTECTED libraries -- the content-manifest keys to trust\n"
                    "                                                              (tools/keys/trust/<root>.pub-list format) and the dev device private key (device.x25519.priv) that unwraps\n"
                    "                                                              their content keys; an I/O edge thread re-verifies resident protected instruments every N ms, default 30000)\n"
+                   "                   [--factory-live-sets FILE]   (dev builds, with --data-dir --library-root --trust-list: import the signed factory Live Set file (factory-live-sets.vfls)\n"
+                   "                                                 into DIR/live_sets through the Live Set store before the catalog is scanned; idempotent, user edits and deletions are kept)\n"
+                   "                   [--factory-live-sets-required]   (a failed factory import is fatal: exit 1, instead of starting with the Live Sets the engine has)\n"
 #endif
                    "                   [--library-socket PATH [--library-playing-idle-ms N]]   (report the active Live Set and the performing state to the librarian service's Library API;\n"
                    "                                                                           performing = a note within the last N ms, default 3000; default off)\n");
@@ -148,6 +158,48 @@ int main(int argc, char** argv) {
   if (!trust_list_path.empty() != !dev_device_key.empty()) {
     std::fprintf(stderr, "engine-host: --trust-list and --dev-device-key go together\n");
     return 2;
+  }
+#endif
+#ifdef VELORA_ENGINE_DEV_KEYS
+  // Story 6.9: first boot. The control thread (this one) imports the signed factory Live Sets through the single writer (LiveSetStore) before anything scans the
+  // directory. The store is closed again right after, so the engine's own store below takes the writer lock as before. A refusal is reported and the engine
+  // starts with the Live Sets it has (a gig must go on); the typed cause and any unresolved (library_id, instrument_key) are on stderr.
+  if (factory_live_sets_required && factory_live_sets_path.empty()) {
+    std::fprintf(stderr, "engine-host: --factory-live-sets-required needs --factory-live-sets\n");
+    return 2;
+  }
+  if (!factory_live_sets_path.empty()) {
+    if (data_dir.empty() || library_root.empty() || trust_list_path.empty()) {
+      std::fprintf(stderr, "engine-host: --factory-live-sets needs --data-dir, --library-root and --trust-list\n");
+      return 2;
+    }
+    velora::format::TrustedKeys trusted;
+    std::string terr;
+    if (!host::load_trust_list_file(trust_list_path, trusted, terr)) {
+      std::fprintf(stderr, "engine-host: %s\n", terr.c_str());
+      return 1;
+    }
+    host::LibraryResolver factory_resolver(host::make_posix_fs(), library_root);
+    factory_resolver.set_protected_trust(std::make_shared<const velora::format::TrustedKeys>(trusted));
+    host::liveset::StoreOptions fso;
+    fso.dir = live_set_dir;
+    std::unique_ptr<host::liveset::LiveSetStore> factory_store;
+    const host::liveset::Status fst = host::liveset::LiveSetStore::open(fso, factory_store);
+    if (fst != host::liveset::Status::kOk) {
+      std::fprintf(stderr, "engine-host: live set store %s: cannot open: %s (another engine-host running on it?)\n", live_set_dir.c_str(), host::liveset::to_string(fst));
+      return 1;
+    }
+    host::factory::InstallOptions fio;
+    fio.trusted = &trusted;
+    fio.resolves = host::factory::resolver_of(factory_resolver);
+    const host::factory::InstallResult fr = host::factory::install_factory_live_sets_file(*factory_store, factory_live_sets_path, fio);
+    if (fr.ok()) {
+      std::printf("factory live sets: %s %s: %zu imported, %zu updated, %zu unchanged, %zu deleted by the user, %zu conflict(s)\n", fr.release_name.c_str(), fr.release_version.c_str(),
+                  fr.imported.size(), fr.updated.size(), fr.unchanged.size(), fr.deleted_by_user.size(), fr.conflicts.size());
+    } else {
+      std::fprintf(stderr, "engine-host: factory live sets %s: %s: %s\n", factory_live_sets_path.c_str(), host::factory::to_string(fr.status), fr.detail.c_str());
+      if (factory_live_sets_required) return 1;
+    }
   }
 #endif
   if ((live_set_path.empty() && live_set_dir.empty()) != library_root.empty()) {

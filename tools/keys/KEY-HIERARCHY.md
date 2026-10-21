@@ -1,7 +1,7 @@
 # Signing and content-key hierarchy
 
 Story 6.1 (AR34 partial, NFR23 partial). This document is the contract for every signing, verification and key-wrapping step in Epic 6 and for the
-update flow of Epic 8. Stories 6.2 (bundle format), 6.3 (content-pack tool), 6.5 (OP-TEE key path), 6.8 (device registry and vault), 6.10 (production
+update flow of Epic 8. Stories 6.2 (bundle format), 6.3 (content-pack tool), 6.5 (OP-TEE key path), 6.8 (device registry and vault), 6.9 (factory release: the content-manifest key also signs the release index and the factory Live Set file), 6.10 (production
 ceremony), 6.11-6.13 (images) implement against it.
 
 Status of the pieces it relates to: the dev key tool, the trust lists and the trusted-key embedding exist in this directory. The boot-signing chain

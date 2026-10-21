@@ -30,14 +30,14 @@ velora_params_output(host VELORA_PARAMS_HOST_HPP)
 velora_params_output(proto VELORA_PARAMS_PROTO)
 
 set(VELORA_PB_DIR "${VELORA_GENERATED_DIR}/pb")
-set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc" "${VELORA_PB_DIR}/live_set.pb.cc" "${VELORA_PB_DIR}/setlist.pb.cc" "${VELORA_PB_DIR}/category.pb.cc")
-set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h" "${VELORA_PB_DIR}/live_set.pb.h" "${VELORA_PB_DIR}/setlist.pb.h" "${VELORA_PB_DIR}/category.pb.h")
+set(VELORA_PB_SOURCES "${VELORA_PB_DIR}/ws_v1.pb.cc" "${VELORA_PB_DIR}/ws_v1_params.pb.cc" "${VELORA_PB_DIR}/live_set.pb.cc" "${VELORA_PB_DIR}/setlist.pb.cc" "${VELORA_PB_DIR}/category.pb.cc" "${VELORA_PB_DIR}/factory_live_set.pb.cc")
+set(VELORA_PB_HEADERS "${VELORA_PB_DIR}/ws_v1.pb.h" "${VELORA_PB_DIR}/ws_v1_params.pb.h" "${VELORA_PB_DIR}/live_set.pb.h" "${VELORA_PB_DIR}/setlist.pb.h" "${VELORA_PB_DIR}/category.pb.h" "${VELORA_PB_DIR}/factory_live_set.pb.h")
 add_custom_command(
   OUTPUT ${VELORA_PB_SOURCES} ${VELORA_PB_HEADERS}
   COMMAND ${CMAKE_COMMAND} -E make_directory "${VELORA_PB_DIR}"
   COMMAND $<TARGET_FILE:protobuf::protoc> -I "${CMAKE_SOURCE_DIR}/proto" -I "${VELORA_GENERATED_DIR}/proto"
-          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${CMAKE_SOURCE_DIR}/proto/category.proto" "${VELORA_PARAMS_PROTO}"
-  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${CMAKE_SOURCE_DIR}/proto/category.proto" "${VELORA_PARAMS_PROTO}"
+          --cpp_out "${VELORA_PB_DIR}" "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${CMAKE_SOURCE_DIR}/proto/category.proto" "${CMAKE_SOURCE_DIR}/proto/factory_live_set.proto" "${VELORA_PARAMS_PROTO}"
+  DEPENDS "${CMAKE_SOURCE_DIR}/proto/ws_v1.proto" "${CMAKE_SOURCE_DIR}/proto/live_set.proto" "${CMAKE_SOURCE_DIR}/proto/setlist.proto" "${CMAKE_SOURCE_DIR}/proto/category.proto" "${CMAKE_SOURCE_DIR}/proto/factory_live_set.proto" "${VELORA_PARAMS_PROTO}"
   COMMENT "Generating ws.v1 protobuf code"
   VERBATIM)
 
@@ -48,6 +48,7 @@ add_library(velora_control STATIC
   src/dev_config.cpp
   src/live_set_store.cpp
   src/live_set_loader.cpp
+  src/factory_live_set.cpp
   src/scene_controller.cpp
   src/live_set_switcher.cpp
   src/setlist_store.cpp
@@ -176,6 +177,13 @@ target_link_libraries(live_set_loader_tests PRIVATE velora_control)
 target_compile_definitions(live_set_loader_tests PRIVATE VELORA_LIVESET_CORPUS_DIR="${VELORA_LIVESET_CORPUS_DIR}")
 add_test(NAME live_set_loader_tests COMMAND live_set_loader_tests)
 set_tests_properties(live_set_loader_tests PROPERTIES TIMEOUT 120)
+
+# Factory Live Sets (Story 6.9): the signed container (layout, signature, tamper sweep) and the first-boot install through the single writer (references, idempotence,
+# user deletion, user files, release order, typed errors). It signs with the protected writer's Ed25519 (test and tool code only).
+add_executable(factory_live_set_tests tests/factory_live_set_test.cpp)
+target_link_libraries(factory_live_set_tests PRIVATE velora_control velora_format_protected_writer)
+add_test(NAME factory_live_set_tests COMMAND factory_live_set_tests)
+set_tests_properties(factory_live_set_tests PROPERTIES TIMEOUT 300)
 
 # Scene recall (Story 4.4): parameter-only snapshot swap, performance values applied once, notes across a recall, stepping, hostile cases, ws.v1.
 add_executable(scene_controller_tests tests/scene_controller_test.cpp)

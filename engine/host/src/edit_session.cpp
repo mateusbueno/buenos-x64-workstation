@@ -892,6 +892,9 @@ bool EditSession::do_write(const ws::v1::WriteLiveSet& m, ws::v1::ServerMessage&
   if (!d || !scenes_.owns_current()) return fail(err, ws::v1::ERROR_CODE_NO_LIVE_SET, "no Live Set is loaded");
   std::string why;
   if (busy_reason(why)) return fail(err, ws::v1::ERROR_CODE_BUSY, "a Live Set load is in progress", {{"reason", why}});
+  // Story 6.9: a factory Live Set (LiveSet.factory) is read-only; the edits are kept in memory and Save as new makes an ordinary copy of it.
+  if (scope != ws::v1::WRITE_SCOPE_SAVE_AS_NEW && d->saved.has_factory())
+    return fail(err, ws::v1::ERROR_CODE_WRITE_SCOPE_UNAVAILABLE, "factory Live Sets are read-only; use Save as new", {{"reason", "factory_read_only"}});
 
   // What needs no live values is decided first.
   const std::string loaded_setlist = setlist_ctl_ ? setlist_ctl_->loaded_setlist_id() : std::string();
@@ -961,6 +964,7 @@ bool EditSession::do_write(const ws::v1::WriteLiveSet& m, ws::v1::ServerMessage&
 
   if (scope == ws::v1::WRITE_SCOPE_SAVE_AS_NEW) {
     lsp::LiveSet ns = d->working;
+    ns.clear_factory();  // the copy is the user's own Live Set
     std::string id;
     for (int attempt = 0; attempt < liveset::kMaxAdoptAttempts && id.empty(); ++attempt) {
       std::string c = liveset::mint_uuid_v4(opt_.rng ? *opt_.rng : static_cast<liveset::RandomSource&>(os_rng_));

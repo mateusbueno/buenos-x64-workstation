@@ -21,6 +21,7 @@ namespace velora::format {
 struct TrustedKey {
   KeyId id{};        // first 8 bytes of SHA-256(pub)
   PublicKey pub{};   // Ed25519 content-manifest public key
+  std::string root{};  // Story 6.9: the root of the trust-list line this key came from ("dev", "factory-test", "production"); empty = not bound to a root
 };
 
 // The trusted content-manifest keys of an image variant (tools/keys: velora_trusted_keys_<variant>.hpp).

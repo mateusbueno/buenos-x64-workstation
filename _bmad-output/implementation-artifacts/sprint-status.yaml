@@ -182,7 +182,7 @@ development_status:
   6-6-op-tee-content-key-trusted-application-on-the-board: backlog
   6-7-a-copied-or-tampered-library-does-not-play-elsewhere: backlog
   6-8-device-registry-and-content-key-vault: done
-  6-9-factory-library-packaging: backlog
+  6-9-factory-library-packaging: done
   6-10-production-signing-root-ceremony-in-an-offline-hsm: backlog
   6-11-read-only-root-filesystem-and-journaled-data-partition: backlog
   6-12-rauc-a-b-slots-with-rollback-on-failed-boot: backlog

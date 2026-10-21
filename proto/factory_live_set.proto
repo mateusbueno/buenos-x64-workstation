@@ -1,0 +1,31 @@
+// FactoryLiveSets: the payload of the signed factory Live Set file (Story 6.9: FR34, AR31). The file itself (container, signature, byte layout) is
+// documented in engine/host/README.md ("Factory Live Sets") and implemented in engine/host/src/factory_live_set.cpp; this message is what the signature covers.
+//
+// The signature covers the serialised bytes of this message exactly as stored in the container (the verifier never re-serialises), so the writer's
+// serialisation only has to be deterministic, which it is: no map fields, fields in number order, no unknown fields.
+//
+// Package velora.liveset.v1 (same family as the Live Set file). The schema only grows by addition, like live_set.proto.
+syntax = "proto3";
+
+package velora.liveset.v1;
+
+import "live_set.proto";
+
+enum FactoryFormatVersion {
+  FACTORY_FORMAT_VERSION_UNSPECIFIED = 0;
+  FACTORY_FORMAT_VERSION_1 = 1;
+}
+
+message FactoryLiveSetEntry {
+  uint32 program_id = 1;   // vendor-assigned, > 0, unique within the file. Also the key of the first-boot import (idempotence).
+  LiveSet live_set = 2;    // a complete Live Set: id = the id derived from program_id, factory = {program_id, release_version}; parts reference instruments only by
+                           // (library_id, instrument_key) or by engine parameters
+}
+
+message FactoryLiveSets {
+  uint32 format_version = 1;   // FactoryFormatVersion
+  string release_name = 2;     // 1..128 bytes
+  string release_version = 3;  // MAJOR.MINOR.PATCH
+  string root = 4;             // "dev" | "factory-test" | "production": the key set the release was signed under
+  repeated FactoryLiveSetEntry entries = 5;
+}

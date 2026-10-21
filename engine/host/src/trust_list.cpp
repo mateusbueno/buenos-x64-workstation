@@ -49,6 +49,7 @@ bool load_trust_list_file(const std::string& path, fmt::TrustedKeys& out, std::s
     if (f.size() != 4) return bad("expected `<root> <role> <key_id> <public_key>`");
     if (f[1] != "content-manifest") return bad("unknown role (only content-manifest)");
     fmt::TrustedKey k;
+    k.root = f[0];
     if (!unhex(f[2], k.id.data(), k.id.size()) || !unhex(f[3], k.pub.data(), k.pub.size())) return bad("key id or public key is not hex of the right length");
     if (fmt::key_id_of_public(k.pub) != k.id) return bad("the key id is not the first 8 bytes of SHA-256(public key)");
     if (!ids.insert(k.id).second) return bad("the key id is listed twice");

@@ -32,6 +32,7 @@ add_subdirectory(tools/library-gen)
 add_subdirectory(tools/keys)
 add_subdirectory(tools/common/vault_crypto)
 add_subdirectory(tools/content-pack)
+add_subdirectory(tools/factory-release)
 add_subdirectory(tools/registry)
 add_subdirectory(tools/spikes)
 
@@ -129,6 +130,12 @@ if(Python3_Interpreter_FOUND)
                    --binary $<TARGET_FILE:velora-content-pack>
                    --expect-flagged EVP_aes_256_gcm --expect-flagged EVP_EncryptInit_ex --expect-flagged EVP_DecryptInit_ex)
   set_tests_properties(content_pack_flagged_by_no_decrypt_scan PROPERTIES SKIP_RETURN_CODE 77)
+  # Story 6.9: tools/factory-release (signing, packing, the factory Live Set container) is vendor-side code like the pack tool: the scanner must flag its cipher calls.
+  add_test(NAME factory_release_flagged_by_no_decrypt_scan
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_format_no_decrypt.py
+                   --binary $<TARGET_FILE:velora-factory-release>
+                   --expect-flagged EVP_aes_256_gcm --expect-flagged EVP_EncryptInit_ex --expect-flagged EVP_DecryptInit_ex)
+  set_tests_properties(factory_release_flagged_by_no_decrypt_scan PROPERTIES SKIP_RETURN_CODE 77)
   # Story 6.8: the registry (vault KEK, unwrap, wrap) is vendor-server code like the pack tool: the same scanner must flag its cipher calls, which proves a clean
   # shipped scan is not an empty one and that nothing shipped can have picked the registry up.
   add_test(NAME registry_flagged_by_no_decrypt_scan

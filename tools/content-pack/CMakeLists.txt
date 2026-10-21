@@ -19,6 +19,7 @@ set(VELORA_CP_WARN $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_
 add_library(velora_content_pack STATIC
   src/pack_description.cpp
   src/vendor_register.cpp
+  src/key_files.cpp
   src/pack.cpp)
 target_include_directories(velora_content_pack PUBLIC src)
 target_link_libraries(velora_content_pack PUBLIC velora_librarian velora_format_decrypt velora_format_protected_writer velora_vault_crypto OpenSSL::Crypto)

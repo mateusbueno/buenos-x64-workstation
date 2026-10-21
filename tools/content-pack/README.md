@@ -10,6 +10,8 @@ its cipher calls, while `format_no_decrypt` and `librarian_no_crypto` keep provi
 
 The key-handling primitives (`vault_entry_v1`, `wrapped_key_v1`, X25519, AES-GCM, HKDF, secret hygiene) live in `tools/common/vault_crypto` (library `velora_vault_crypto`, moved here from `src/crypto.*` in Story 6.8 without behaviour change) and are shared with the device registry (`tools/registry`); this tool's tests still pin the vectors. `tools/ci/check_content_pack_not_linked.py` keeps both tools and the shared library out of every shipped target.
 
+Story 6.9: key resolution and the root guard (`read_key_file`, `load_root_keys`) moved from `main.cpp` to `src/key_files.{hpp,cpp}` without behaviour change, so `tools/factory-release` resolves and checks the root's keys with the same code; `tools/factory-release` builds a whole factory release on `run_pack`.
+
 Read `tools/keys/KEY-HIERARCHY.md` first (roots, keys, `vault_entry_v1`, `wrapped_key_v1`) and `formatlib/README.md` ("Protected bundles").
 
 ## Commands

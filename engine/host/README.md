@@ -296,6 +296,50 @@ build/engine/host/macos/engine-host --live-set X.liveset --library-root ROOT --t
 Notes arriving from any MIDI source play the engine test tone. It exits non-zero with a message if there is no output
 device or the device cannot run at 48 kHz (the engine never resamples).
 
+## Factory Live Sets (Story 6.9: FR34, AR31, `velora_control`)
+
+The factory library ships with Live Sets (organ presets, piano setups, ...) that carry **vendor-assigned program ids** and reference instruments only by `(library_id, instrument_key)` or by engine
+parameters. `tools/factory-release` packs them into ONE signed file, `factory-live-sets.vfls`; on first boot the engine's control thread verifies it and imports the Live Sets through the single writer
+(`LiveSetStore`). Code: `velora/host/factory_live_set.hpp` + `src/factory_live_set.cpp`; schema: `proto/factory_live_set.proto`; tests: `factory_live_set_tests` (container, tamper sweep, install rules) and, with the
+real pipeline against installed protected libraries, `factory_release_test`.
+
+**File layout** (all integers little-endian; anything after the payload is refused):
+
+| offset | size | field |
+|---|---|---|
+| 0 | 4 | magic `VFLS` |
+| 4 | 2 | `container_version` = 1 |
+| 6 | 2 | reserved = 0 |
+| 8 | 8 | signer key id (first 8 bytes of SHA-256 of the Ed25519 public key; the release root's content-manifest key) |
+| 16 | 64 | Ed25519 signature (RFC 8032, deterministic) |
+| 80 | 4 | payload length N (<= 4 MiB; the whole file is <= 84 + 4 MiB) |
+| 84 | N | payload: the serialised `velora.liveset.v1.FactoryLiveSets` message (deterministic: no maps, fields in number order, no unknown fields) |
+
+The signature covers `"velora/factory-live-sets/v1" 0x00 || signer key id (8) || payload length (4, LE) || payload`: the payload bytes exactly as stored (the verifier never re-serialises). Verification is the
+strict Ed25519 of `formatlib` (`ed25519_verify_strict`), against the injected `format::TrustedKeys` (dev: a `tools/keys/trust/<root>.pub-list`; production: the keys built into the image); an unknown signer is
+`untrusted_key` before any signature work. A trust-list line carries a **root**; `format::TrustedKey::root` keeps it, and when it is not empty the payload's `root` must equal it (`root_mismatch`): a dev key cannot vouch for a production release. A key built from bare bytes has no root and binds nothing. `FactoryLiveSets` = `format_version` (1), `release_name`, `release_version` (`MAJOR.MINOR.PATCH`), `root` (`dev` | `factory-test` | `production`) and `entries`
+(`program_id`, a complete `LiveSet`). Rebuilding from the same inputs gives the same bytes.
+
+**Identity and the factory mark.** A factory Live Set's `id` is derived from its program id alone: a UUIDv4-shaped value from `SHA-256("velora/factory-live-set-id/v1" 0x00 || program_id (4, BE))`
+(`derive_live_set_id`), so a later release replaces the same file and a user copy never collides. `LiveSet.factory` (`FactoryInfo{program_id, release_version}`, an additive optional field 9; unset in every
+user Live Set and in every existing golden) is the "factory / read-only" mark. **Read-only:** `WriteLiveSet` scope `WHOLE_LIVE_SET` / `SCENE` on a factory Live Set is refused with `WRITE_SCOPE_UNAVAILABLE`
+(`details.reason = factory_read_only`), nothing is written and the edits stay in memory; `SAVE_AS_NEW` makes an ordinary copy (the mark is cleared). Deleting a factory Live Set is allowed and is remembered.
+
+**First-boot install** (`install_factory_live_sets`, control thread only; every failure is a typed `FactoryStatus` and writes nothing, except `store`):
+1. size, magic, versions, length; the signer must be trusted (`untrusted_key`); the signature must verify (`signature_invalid`); the payload must parse (`bad_container`);
+2. payload rules (`bad_release`, `duplicate_program_id`, `invalid_live_set`): format 1, a release name, a semantic version, a known root, 1..256 entries, program ids > 0 and unique, every Live Set valid for the
+   tier (`liveset::validate`), `id == derive_live_set_id(program_id)`, and `factory == {program_id, release_version}`;
+3. every `(library_id, instrument_key)` of every part resolves through the injected `ReferenceResolver` (`resolver_of(LibraryResolver)` resolves verified protected bundles too); otherwise
+   `unresolved_references` with one `MissingReference{program_id, part, library_id, instrument_key}` per miss and **nothing written**;
+4. the state file `<live set dir>/factory-live-sets.state` (text: `release V`, `root R`, `program N` lines, unknown `key value` lines ignored; written with the store's atomic replace, after the Live Sets, also after a
+   partial failure where it records the ids actually written). It is **per root**: a state of another root is not used (a fresh state; no file is deleted). A missing or damaged state is **rebuilt from the factory marks in
+   the store** (the programs present; the highest mark is the downgrade floor). A release OLDER than the recorded one is `downgrade`; otherwise per program id: no file and not recorded = **imported**; no file but recorded = **the user deleted it, it is not brought back**; a file with the factory mark of that program = replaced
+   when this release is newer, **left alone when equal** (idempotent); a file with the id but no mark = **never touched**, reported as a conflict; a file at a factory id that cannot be read or parsed = **repaired** (rewritten, counted as updated). A crash between the Live Sets and the state file is repaired by running
+   the install again.
+
+`engine-host --data-dir DIR --library-root DIR --trust-list FILE --factory-live-sets FILE` (dev builds, with the dev key provider) runs it before the Live Set directory is scanned and then releases the store; a refusal
+is printed on stderr and the engine starts with the Live Sets it has, unless `--factory-live-sets-required` is given (then the process exits 1). The board's wiring (embedded trusted keys, the image's `factory-live-sets.vfls`) comes with the provisioning image; the API is the same.
+
 ## Protected libraries (Story 6.5, `velora_host` + `velora_host_protected` + `velora_host_dev_keys`)
 
 The engine plays a PROTECTED (factory) library exactly like a user library: the same resident PCM, the same banks, the same voices. What differs is how the PCM is

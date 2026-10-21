@@ -671,6 +671,41 @@ void test_write_whole_live_set() {
   CHECK(f.scenes(0).parts_size() >= 3);
 }
 
+// Story 6.9: a factory Live Set (LiveSet.factory) is read-only. Write (whole / scene) is refused with WRITE_SCOPE_UNAVAILABLE factory_read_only, nothing is written and
+// the edits stay in memory; Save as new makes an ordinary copy without the mark.
+void test_factory_live_set_is_read_only() {
+  Rig rig;
+  lsp::LiveSet a = perfect(rig.lib, 30, "Factory piano");
+  a.mutable_factory()->set_program_id(7);
+  a.mutable_factory()->set_release_version("1.0.0");
+  rig.start({a});
+  CHECK(rig.volume(0, 0.35f).has_ack());
+  rig.step(2);
+  const std::string path = rig.live->path_for(a.id());
+  const std::string before = slurp(path);
+  for (auto scope : {ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET, ws::v1::WRITE_SCOPE_SCENE}) {
+    const auto rep = rig.write(scope);
+    CHECK(Rig::is_err(rep, ws::v1::ERROR_CODE_WRITE_SCOPE_UNAVAILABLE) && rep.error().details().at("reason") == "factory_read_only");
+  }
+  CHECK(slurp(path) == before && rig.live->mutations() == 0 && rig.edits->is_dirty(a.id()));  // the edits stay in memory
+  const auto rep = rig.write(ws::v1::WRITE_SCOPE_SAVE_AS_NEW, "My piano");
+  CHECK(rep.has_write_reply());
+  if (rep.has_write_reply()) {
+    const lsp::LiveSet copy = rig.read_file(rep.write_reply().written_live_set_id());
+    CHECK(!copy.has_factory() && copy.name() == "My piano" && copy.id() != a.id());
+    CHECK_NEAR(copy.parts(0).volume(), 0.35f, 1e-6);  // the edited state
+  }
+  CHECK(slurp(path) == before && rig.read_file(a.id()).has_factory());  // the factory file is untouched
+  // The copy is the user's: Write on it works.
+  if (rep.has_write_reply()) {
+    CHECK(rig.sw->jump_to(rep.write_reply().written_live_set_id()).result == host::SwitchOutcome::Result::kAccepted);
+    rig.settle();
+    CHECK(rig.volume(0, 0.5f).has_ack());
+    rig.step(2);
+    CHECK(rig.write(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET).has_write_reply());
+  }
+}
+
 // A Live Set file that is not named <id>.liveset (copied into the directory): Write puts it under its canonical name and removes the old file.
 void test_write_moves_a_non_canonical_file() {
   Rig rig;
@@ -1476,6 +1511,7 @@ int main() {
   test_unapplied_generation_is_not_an_edit();
   test_edits_kept_across_live_set_changes();
   test_write_whole_live_set();
+  test_factory_live_set_is_read_only();
   test_write_moves_a_non_canonical_file();
   test_write_scene_scope();
   test_write_scene_refusals();

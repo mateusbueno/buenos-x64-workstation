@@ -399,7 +399,7 @@ message SetlistsReply {
 // last-value table, then writes per scope: SCENE = the current scene's stored parameters (refused with WRITE_SCOPE_UNAVAILABLE when no scene is current,
 // there are no scenes, or a timbre / engine change is pending), WHOLE_LIVE_SET = everything (base, every scene, master, ASSIGN), SAVE_AS_NEW = a new
 // Live Set (new UUIDv4, `new_name` or a suggestion) added after the current one in the loaded setlist; the current Live Set keeps its unsaved edits.
-// Errors: NO_LIVE_SET, BUSY (details reason = load_in_progress | reload_in_progress | fence_timeout | fence_queue_full | generation_not_applied), NAME_IN_USE, INVALID_NAME, WRITE_SCOPE_UNAVAILABLE (reason = timbre_change | no_scene | no_scenes | scene_not_in_saved),
+// Errors: NO_LIVE_SET, BUSY (details reason = load_in_progress | reload_in_progress | fence_timeout | fence_queue_full | generation_not_applied), NAME_IN_USE, INVALID_NAME, WRITE_SCOPE_UNAVAILABLE (reason = timbre_change | no_scene | no_scenes | scene_not_in_saved | factory_read_only: Story 6.9, a factory Live Set is saved only with Save as new),
 // STORAGE_FULL, STORAGE_FAILED, INVALID_COMMAND. A success moves the revision by one and replies WriteReply.
 enum WriteScope {
   WRITE_SCOPE_UNSPECIFIED = 0;

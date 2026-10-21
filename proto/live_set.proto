@@ -128,6 +128,13 @@ message Scene {
   repeated ParamEntry master = 3;       // master-scope registry ids (not tempo_bpm), same override rule
 }
 
+// Story 6.9: set on the Live Sets that come from a signed factory release (proto/factory_live_set.proto). Its presence is the "factory" mark: the engine never
+// overwrites such a file with a Write (Save as new makes an ordinary copy without the mark), and the first-boot importer knows which file it delivered.
+message FactoryInfo {
+  uint32 program_id = 1;        // vendor-assigned program id, unique within the release (and across releases)
+  string release_version = 2;   // semantic version (MAJOR.MINOR.PATCH) of the factory release that delivered this content
+}
+
 message LiveSet {
   uint32 format_version = 1;            // FormatVersion
   string id = 2;                        // UUIDv4, canonical lowercase
@@ -137,4 +144,5 @@ message LiveSet {
   repeated Scene scenes = 6;            // 0..8
   repeated uint32 assign = 7;           // exactly 8 slots K1..K8; 0 = empty, else an assignable performance param_id (Story 4.10)
   repeated ParamEntry master = 8;       // master-scope registry ids (reverb, delay, EQ, ...); not tempo_bpm
+  optional FactoryInfo factory = 9;     // Story 6.9: set only on factory Live Sets (read-only on the unit); unset in every user Live Set
 }
