@@ -27,6 +27,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   if (!setlist_browser_view_.create(parent)) return false;
   if (!scenes_view_.create(parent)) return false;
   if (!part_view_.create(parent)) return false;
+  if (!settings_view_.create(parent)) return false;
   if (!write_dialog_.create(parent)) return false;
 
   write_dialog_.set_on_write([this](ws::v1::WriteScope scope, const std::string& name) {
@@ -81,6 +82,34 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     navigate_to(SurfaceId::Effects);
   });
 
+  settings_view_.set_on_close([this]() {
+    navigate_to(surface_before_launcher_);
+  });
+
+  settings_view_.set_on_edit([this]() {
+    set_pending_edits(true, false, "ASSIGN map edit");
+  });
+
+  settings_view_.set_on_assign_changed([this](ws::v1::AssignTarget target, uint32_t slot_1_based, uint32_t param_id) {
+    if (client_) {
+      ws::v1::ClientMessage msg;
+      if (param_id == 0) {
+        auto* cmd = msg.mutable_clear_assign_slot();
+        cmd->set_target(target);
+        cmd->set_slot(slot_1_based);
+      } else {
+        auto* cmd = msg.mutable_set_assign_slot();
+        cmd->set_target(target);
+        cmd->set_slot(slot_1_based);
+        cmd->set_param_id(param_id);
+      }
+      client_->send_command(msg);
+    }
+    if (target == ws::v1::ASSIGN_TARGET_CURRENT_LIVE_SET) {
+      set_pending_edits(true, false, "ASSIGN slot " + std::to_string(slot_1_based));
+    }
+  });
+
   launcher_view_.set_tile_select_callback([this](LauncherTileId tile) {
     switch (tile) {
       case LauncherTileId::Effects:
@@ -114,6 +143,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   hide_surface(SurfaceId::SetlistBrowser);
   hide_surface(SurfaceId::Scenes);
   hide_surface(SurfaceId::Part);
+  hide_surface(SurfaceId::Settings);
   show_surface(SurfaceId::Performance);
 
   current_surface_ = SurfaceId::Performance;
@@ -146,6 +176,9 @@ void NavigationController::show_surface(SurfaceId surface) {
     case SurfaceId::Part:
       root = part_view_.skeleton().root_container();
       break;
+    case SurfaceId::Settings:
+      root = settings_view_.skeleton().root_container();
+      break;
     default:
       break;
   }
@@ -177,6 +210,9 @@ void NavigationController::hide_surface(SurfaceId surface) {
       break;
     case SurfaceId::Part:
       root = part_view_.skeleton().root_container();
+      break;
+    case SurfaceId::Settings:
+      root = settings_view_.skeleton().root_container();
       break;
     default:
       break;
@@ -214,6 +250,7 @@ bool NavigationController::has_pending_edits() const {
   if (performance_view_.has_unsaved_edits()) return true;
   if (scenes_view_.has_unsaved_edits()) return true;
   if (part_view_.has_unsaved_edits()) return true;
+  if (settings_view_.has_unsaved_edits()) return true;
   return false;
 }
 
@@ -253,6 +290,7 @@ void NavigationController::update_from_state(const ws::v1::State& state) {
   setlist_view_.update_from_state(state);
   setlist_browser_view_.update_from_state(state);
   scenes_view_.update_from_state(state);
+  settings_view_.update_from_state(state);
 
   if (state.has_edits()) {
     manual_pending_edits_ = state.edits().current_dirty();
@@ -298,6 +336,9 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
           break;
         case SurfaceId::Part:
           part_view_.on_panel_event(short_press);
+          break;
+        case SurfaceId::Settings:
+          settings_view_.on_panel_event(short_press);
           break;
         case SurfaceId::Setlist:
           setlist_view_.on_panel_event(short_press);
@@ -427,6 +468,14 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
         navigate_to(surface_before_launcher_);
         return;
       }
+      if (current_surface_ == SurfaceId::Settings) {
+        if (settings_view_.is_picker_open()) {
+          settings_view_.on_panel_event(ev);
+          return;
+        }
+        navigate_to(surface_before_launcher_);
+        return;
+      }
       navigate_back();
       return;
     }
@@ -454,6 +503,9 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       break;
     case SurfaceId::Part:
       part_view_.on_panel_event(ev);
+      break;
+    case SurfaceId::Settings:
+      settings_view_.on_panel_event(ev);
       break;
     default:
       break;

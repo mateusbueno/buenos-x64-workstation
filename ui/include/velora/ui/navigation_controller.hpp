@@ -12,6 +12,7 @@
 #include "velora/ui/screens/setlist_browser_view.hpp"
 #include "velora/ui/screens/scenes_view.hpp"
 #include "velora/ui/screens/part_view.hpp"
+#include "velora/ui/screens/settings_view.hpp"
 #include "velora/ui/components/write_dialog.hpp"
 
 namespace velora::ui {
@@ -52,6 +53,7 @@ class NavigationController {
   SetlistBrowserView& setlist_browser_view() noexcept { return setlist_browser_view_; }
   ScenesView& scenes_view() noexcept { return scenes_view_; }
   PartView& part_view() noexcept { return part_view_; }
+  SettingsView& settings_view() noexcept { return settings_view_; }
   WriteDialog& write_dialog() noexcept { return write_dialog_; }
 
   void on_midi_note(uint8_t note_number);
@@ -79,6 +81,7 @@ class NavigationController {
   SetlistBrowserView setlist_browser_view_;
   ScenesView scenes_view_;
   PartView part_view_;
+  SettingsView settings_view_;
   WriteDialog write_dialog_;
 
   SurfaceId current_surface_{SurfaceId::Performance};
