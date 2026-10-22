@@ -124,6 +124,16 @@ void NavigationController::update_from_state(const ws::v1::State& state) {
 }
 
 void NavigationController::on_panel_event(const PanelEvent& ev) {
+  // Global Encoders and Knob Mode toggle: operate per current mode across ANY surface
+  if (ev.type == PanelEventType::Button && ev.pressed && ev.id == MCU_BTN_TOGGLE_PART_ALL_ASSIGN) {
+    performance_view_.on_panel_event(ev);
+    return;
+  }
+  if (ev.type == PanelEventType::Encoder && ev.id >= MCU_CTRL_ENCODER_1 && ev.id <= MCU_CTRL_ENCODER_8) {
+    performance_view_.on_panel_event(ev);
+    return;
+  }
+
   // 1. Global Stepping: LIVE SET ◀ ▶ and SCENE ◀ ▶ work on ANY surface
   if (ev.type == PanelEventType::Button && ev.pressed) {
     if (ev.id == MCU_BTN_LIVE_SET_PREV) {

@@ -18,6 +18,17 @@ PerformanceView::PerformanceView(WsClient* client) : client_(client) {
     parts_[i].is_empty = (i >= 4);
     parts_[i].missing_library = false;
   }
+
+  for (size_t p = 0; p < 8; ++p) {
+    for (size_t k = 0; k < 8; ++k) {
+      part_encoder_values_[p][k] = 0.5f;
+      part_base_values_[p][k] = 0.5f;
+    }
+  }
+  for (size_t k = 0; k < 8; ++k) {
+    all_encoder_offsets_[k] = 0.0f;
+    assign_encoder_values_[k] = 0.5f;
+  }
 }
 
 PerformanceView::~PerformanceView() {
@@ -809,8 +820,8 @@ void PerformanceView::update_part_strips() {
     lv_obj_t* lbl_c = part_cat_objs_[i];
     lv_obj_t* fill = part_vol_fill_objs_[i];
 
-    // Knob-target selection border (PARTS mode)
-    if (!mode_scenes_ && static_cast<int32_t>(i) == selected_knob_part_idx_) {
+    // Knob-target selection border (only in PART mode)
+    if (!mode_scenes_ && mode_knobs_ == 0 && static_cast<int32_t>(i) == selected_knob_part_idx_) {
       lv_obj_set_style_border_color(card, p.accent, LV_PART_MAIN);
       lv_obj_set_style_border_width(card, Theme::spacing().selection_border, LV_PART_MAIN);
     } else {
@@ -1244,7 +1255,96 @@ void PerformanceView::update_drawbars_ui() {
   }
 }
 
+void PerformanceView::cycle_knob_mode() {
+  mode_knobs_ = (mode_knobs_ + 1) % 3;
+  if (mode_knobs_ == 1) {
+    // Entering ALL mode: snapshot base values
+    for (size_t p = 0; p < 8; ++p) {
+      for (size_t k = 0; k < 8; ++k) {
+        part_base_values_[p][k] = part_encoder_values_[p][k];
+      }
+    }
+    for (size_t k = 0; k < 8; ++k) {
+      all_encoder_offsets_[k] = 0.0f;
+    }
+  }
+  update_top_bar_modes();
+  update_part_strips();
+}
+
+LedLevel PerformanceView::knob_mode_led(uint8_t led_id) const {
+  switch (led_id) {
+    case MCU_LED_TOGGLE_LED_PART:
+      return (mode_knobs_ == 0) ? LedLevel::Strong : LedLevel::Off;
+    case MCU_LED_TOGGLE_LED_ALL:
+      return (mode_knobs_ == 1) ? LedLevel::Strong : LedLevel::Off;
+    case MCU_LED_TOGGLE_LED_ASSIGN:
+      return (mode_knobs_ == 2) ? LedLevel::Strong : LedLevel::Off;
+    default:
+      return LedLevel::Off;
+  }
+}
+
+void PerformanceView::handle_encoder_turn(size_t encoder_idx, int16_t delta) {
+  if (encoder_idx >= 8) return;
+  float step = static_cast<float>(delta) * 0.01f;
+
+  if (mode_knobs_ == 0) {
+    size_t p = static_cast<size_t>(std::clamp(selected_knob_part_idx_, 0, 7));
+    part_encoder_values_[p][encoder_idx] = std::clamp(part_encoder_values_[p][encoder_idx] + step, 0.0f, 1.0f);
+  } else if (mode_knobs_ == 1) {
+    all_encoder_offsets_[encoder_idx] = std::clamp(all_encoder_offsets_[encoder_idx] + step, -0.5f, 0.5f);
+    for (size_t p = 0; p < 8; ++p) {
+      part_encoder_values_[p][encoder_idx] = std::clamp(part_base_values_[p][encoder_idx] + all_encoder_offsets_[encoder_idx], 0.0f, 1.0f);
+    }
+  } else {
+    assign_encoder_values_[encoder_idx] = std::clamp(assign_encoder_values_[encoder_idx] + step, 0.0f, 1.0f);
+  }
+}
+
+void PerformanceView::set_encoder_value(size_t encoder_idx, float val) {
+  if (encoder_idx >= 8) return;
+  float clamped = std::clamp(val, 0.0f, 1.0f);
+  if (mode_knobs_ == 0) {
+    size_t p = static_cast<size_t>(std::clamp(selected_knob_part_idx_, 0, 7));
+    part_encoder_values_[p][encoder_idx] = clamped;
+  } else if (mode_knobs_ == 1) {
+    all_encoder_offsets_[encoder_idx] = clamped - 0.5f;
+    for (size_t p = 0; p < 8; ++p) {
+      part_encoder_values_[p][encoder_idx] = std::clamp(part_base_values_[p][encoder_idx] + all_encoder_offsets_[encoder_idx], 0.0f, 1.0f);
+    }
+  } else {
+    assign_encoder_values_[encoder_idx] = clamped;
+  }
+}
+
+float PerformanceView::encoder_ring_value(size_t encoder_idx) const {
+  if (encoder_idx >= 8) return 0.0f;
+
+  if (mode_knobs_ == 0) {
+    size_t p = static_cast<size_t>(std::clamp(selected_knob_part_idx_, 0, 7));
+    return part_encoder_values_[p][encoder_idx];
+  } else if (mode_knobs_ == 1) {
+    return std::clamp(0.5f + all_encoder_offsets_[encoder_idx], 0.0f, 1.0f);
+  } else {
+    return assign_encoder_values_[encoder_idx];
+  }
+}
+
+uint8_t PerformanceView::encoder_ring_fill(size_t encoder_idx) const {
+  float val = encoder_ring_value(encoder_idx);
+  return static_cast<uint8_t>(std::round(std::clamp(val, 0.0f, 1.0f) * 255.0f));
+}
+
 void PerformanceView::on_panel_event(const PanelEvent& ev) {
+  if (ev.type == PanelEventType::Encoder) {
+    if (ev.id >= MCU_CTRL_ENCODER_1 && ev.id <= MCU_CTRL_ENCODER_8) {
+      handle_encoder_turn(ev.id - MCU_CTRL_ENCODER_1, static_cast<int16_t>(ev.delta));
+      return;
+    }
+    return;
+  }
+
   if (ev.type == PanelEventType::Fader) {
     if (mode_drawbars_) {
       if (ev.id >= MCU_CTRL_FADER_1 && ev.id <= MCU_CTRL_FADER_8) {
@@ -1268,6 +1368,10 @@ void PerformanceView::on_panel_event(const PanelEvent& ev) {
   if (ev.type == PanelEventType::Button) {
     if (ev.pressed && ev.id == MCU_BTN_TOGGLE_DRAWBARS_MIXER) {
       toggle_drawbars_mixer_mode();
+      return;
+    }
+    if (ev.pressed && ev.id == MCU_BTN_TOGGLE_PART_ALL_ASSIGN) {
+      cycle_knob_mode();
       return;
     }
     if (ev.pressed && ev.id == MCU_BTN_ROTARY_STOP) {

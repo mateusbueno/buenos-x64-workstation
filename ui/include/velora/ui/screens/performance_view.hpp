@@ -98,6 +98,15 @@ class PerformanceView {
   lv_obj_t* organ_card() const noexcept { return organ_card_obj_; }
   lv_obj_t* drawbar_col(size_t index) const { return (index < drawbar_col_objs_.size()) ? drawbar_col_objs_[index] : nullptr; }
 
+  // Story 4.26 Features: PART/ALL/ASSIGN & Encoder LED Rings
+  void cycle_knob_mode();
+  int32_t knob_mode() const noexcept { return mode_knobs_; }
+  LedLevel knob_mode_led(uint8_t led_id) const;
+  void handle_encoder_turn(size_t encoder_idx, int16_t delta);
+  void set_encoder_value(size_t encoder_idx, float val);
+  float encoder_ring_value(size_t encoder_idx) const;
+  uint8_t encoder_ring_fill(size_t encoder_idx) const;
+
   void set_part_toggle_callback(PartToggleCallback cb) { on_part_toggle_ = std::move(cb); }
   void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
   void set_rev_click_callback(RevClickCallback cb) { on_rev_click_ = std::move(cb); }
@@ -239,6 +248,12 @@ class PerformanceView {
   int32_t mode_knobs_{0}; // 0 = PART, 1 = ALL, 2 = ASSIGN
   int32_t knob_part_{1};
   int32_t selected_knob_part_idx_{0};
+
+  // Story 4.26 Encoders & Rings
+  float part_encoder_values_[8][8]{};
+  float part_base_values_[8][8]{};
+  float all_encoder_offsets_[8]{};
+  float assign_encoder_values_[8]{};
 
   // Pickup & Fader tracking
   int32_t active_pickup_fader_{-1};

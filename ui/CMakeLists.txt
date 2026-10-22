@@ -130,6 +130,11 @@ target_link_libraries(drawbars_view_test PRIVATE velora_ui)
 add_test(NAME drawbars_view_test COMMAND drawbars_view_test)
 set_tests_properties(drawbars_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
+add_executable(encoder_rings_test tests/encoder_rings_test.cpp)
+target_link_libraries(encoder_rings_test PRIVATE velora_ui)
+add_test(NAME encoder_rings_test COMMAND encoder_rings_test)
+set_tests_properties(encoder_rings_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
 add_test(NAME ui_resilience_test COMMAND ui_resilience_test)
