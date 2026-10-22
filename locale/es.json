@@ -97,5 +97,14 @@
   "performance.status.rotary_slow": "ROTARY SLOW",
   "performance.status.rotary_fast": "ROTARY FAST",
   "performance.status.rotary_stop": "ROTARY STOP",
-  "performance.status.rev": "REV"
+  "performance.status.rev": "REV",
+  "launcher.title": "Menú",
+  "launcher.tile.setlist_browser": "Explorador Setlist",
+  "launcher.tile.setlist": "Setlist",
+  "launcher.tile.library": "Biblioteca",
+  "launcher.tile.effects": "Efectos",
+  "launcher.tile.scenes": "Escenas",
+  "launcher.tile.import": "Importar",
+  "launcher.tile.settings": "Ajustes",
+  "launcher.status.not_available": "No disponible"
 }
