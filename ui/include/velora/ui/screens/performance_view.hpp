@@ -8,6 +8,7 @@
 
 #include "ws_v1.pb.h"
 #include "velora/ui/panel_event.hpp"
+#include "velora/ui/system_config.hpp"
 
 namespace velora::ui {
 
@@ -136,6 +137,27 @@ class PerformanceView {
   void set_setlist_click_callback(SetlistClickCallback cb) { on_setlist_click_ = std::move(cb); }
   void set_scene_long_press_callback(SceneLongPressCallback cb) { on_scene_long_press_ = std::move(cb); }
 
+  using KnobTargetSelectCallback = std::function<void(int32_t part_idx)>;
+  void set_knob_target_select_callback(KnobTargetSelectCallback cb) { on_knob_target_select_ = std::move(cb); }
+
+  void set_touch_mode(TouchMode mode) noexcept { touch_mode_ = mode; }
+  TouchMode touch_mode() const noexcept { return touch_mode_; }
+
+  void set_long_press_time_ms(uint32_t ms) noexcept { long_press_ms_ = ms; }
+  uint32_t long_press_time_ms() const noexcept { return long_press_ms_; }
+
+  // Testing helpers
+  void simulate_touch_down(lv_obj_t* target, int32_t x = 0, int32_t y = 0, uint32_t timestamp_ms = 0);
+  void simulate_touch_up(lv_obj_t* target, int32_t x = 0, int32_t y = 0, uint32_t timestamp_ms = 0);
+  void simulate_long_press(lv_obj_t* target);
+  bool is_armed(lv_obj_t* target) const;
+
+  lv_obj_t* part_power_button(size_t idx) const { return (idx < part_power_objs_.size()) ? part_power_objs_[idx] : nullptr; }
+  lv_obj_t* scene_tile(size_t idx) const { return (idx < scene_tile_objs_.size()) ? scene_tile_objs_[idx] : nullptr; }
+  lv_obj_t* part_card(size_t idx) const { return (idx < part_card_objs_.size()) ? part_card_objs_[idx] : nullptr; }
+  lv_obj_t* context_label() const noexcept { return lbl_context_; }
+  lv_obj_t* rev_button() const noexcept { return btn_status_rev_; }
+
   void recall_scene(int32_t scene_idx);
 
   // Accessors for testing
@@ -159,9 +181,7 @@ class PerformanceView {
   bool is_warning_active() const noexcept { return warning_active_; }
   const std::string& warning_text() const noexcept { return warning_text_; }
 
-  lv_obj_t* part_card(size_t idx) const { return part_card_objs_[idx]; }
   lv_obj_t* part_power_btn(size_t idx) const { return part_power_objs_[idx]; }
-  lv_obj_t* rev_button() const noexcept { return btn_status_rev_; }
 
  private:
   static void scene_click_cb(lv_event_t* e);
@@ -183,9 +203,25 @@ class PerformanceView {
 
   PartToggleCallback on_part_toggle_;
   PartSelectCallback on_part_select_;
+  KnobTargetSelectCallback on_knob_target_select_;
   RevClickCallback on_rev_click_;
   SetlistClickCallback on_setlist_click_;
   SceneLongPressCallback on_scene_long_press_;
+
+  TouchMode touch_mode_{TouchMode::Safe};
+  uint32_t long_press_ms_{500};
+
+  struct TouchArmState {
+    lv_obj_t* target{nullptr};
+    uint32_t press_timestamp_ms{0};
+    int32_t press_x{0};
+    int32_t press_y{0};
+    bool is_armed{false};
+  };
+  TouchArmState arm_state_;
+  uint32_t sim_timestamp_ms_{0};
+
+  void set_armed_state(lv_obj_t* target, bool armed);
 
   lv_obj_t* root_{nullptr};
   lv_obj_t* top_bar_{nullptr};

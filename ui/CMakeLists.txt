@@ -51,6 +51,8 @@ add_library(velora_ui
   src/screens/settings_view.cpp
   src/screens/import_view.cpp
   src/screens/library_view.cpp
+  src/screens/boot_view.cpp
+  src/system_config.cpp
   src/navigation_controller.cpp
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
@@ -76,6 +78,7 @@ target_link_libraries(velora_ui PUBLIC
   lvgl
   velora_control
   velora_mcu_common
+  velora_format
   Threads::Threads
 )
 
@@ -206,6 +209,16 @@ add_executable(settings_view_test tests/settings_view_test.cpp)
 target_link_libraries(settings_view_test PRIVATE velora_ui)
 add_test(NAME settings_view_test COMMAND settings_view_test)
 set_tests_properties(settings_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(boot_view_test tests/boot_view_test.cpp)
+target_link_libraries(boot_view_test PRIVATE velora_ui)
+add_test(NAME boot_view_test COMMAND boot_view_test)
+set_tests_properties(boot_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(performance_guards_test tests/performance_guards_test.cpp)
+target_link_libraries(performance_guards_test PRIVATE velora_ui)
+add_test(NAME performance_guards_test COMMAND performance_guards_test)
+set_tests_properties(performance_guards_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)

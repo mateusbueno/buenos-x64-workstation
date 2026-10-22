@@ -108,7 +108,19 @@ bool PerformanceView::create(lv_obj_t* parent) {
   lv_obj_add_style(lbl_context_, Theme::style_text_muted(), LV_PART_MAIN);
   lv_obj_align(lbl_context_, LV_ALIGN_LEFT_MID, sp.screen_gutter, 0);
   lv_obj_set_clickable(lbl_context_, true);
-  lv_obj_add_event_cb(lbl_context_, context_click_cb, LV_EVENT_CLICKED, this);
+  lv_obj_add_event_cb(lbl_context_, [](lv_event_t* e) {
+    auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+    if (!self) return;
+    auto code = lv_event_get_code(e);
+    auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+    if (code == LV_EVENT_PRESSED) {
+      self->simulate_touch_down(target);
+    } else if (code == LV_EVENT_RELEASED) {
+      self->simulate_touch_up(target);
+    } else if (code == LV_EVENT_LONG_PRESSED) {
+      self->simulate_long_press(target);
+    }
+  }, LV_EVENT_ALL, this);
 
   lbl_mode_mixer_ = lv_label_create(top_bar_);
   lv_label_set_text(lbl_mode_mixer_, tr("performance.mode.mixer").c_str());
@@ -203,8 +215,19 @@ bool PerformanceView::create(lv_obj_t* parent) {
     lv_obj_set_clickable(tile, true);
     lv_obj_set_style_pad_all(tile, sp.space_1, LV_PART_MAIN);
     lv_obj_set_style_radius(tile, r.md, LV_PART_MAIN);
-    lv_obj_add_event_cb(tile, scene_click_cb, LV_EVENT_CLICKED, this);
-    lv_obj_add_event_cb(tile, scene_long_press_cb, LV_EVENT_LONG_PRESSED, this);
+    lv_obj_add_event_cb(tile, [](lv_event_t* e) {
+      auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+      if (!self) return;
+      auto code = lv_event_get_code(e);
+      auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+      if (code == LV_EVENT_PRESSED) {
+        self->simulate_touch_down(target);
+      } else if (code == LV_EVENT_RELEASED) {
+        self->simulate_touch_up(target);
+      } else if (code == LV_EVENT_LONG_PRESSED) {
+        self->simulate_long_press(target);
+      }
+    }, LV_EVENT_ALL, this);
 
     lv_obj_t* lbl_t = lv_label_create(tile);
     lv_obj_align(lbl_t, LV_ALIGN_TOP_LEFT, 0, 2);
@@ -261,7 +284,19 @@ bool PerformanceView::create(lv_obj_t* parent) {
     lv_obj_set_style_border_color(card, p.line, LV_PART_MAIN);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
     lv_obj_set_style_pad_all(card, sp.space_2, LV_PART_MAIN);
-    lv_obj_add_event_cb(card, part_card_click_cb, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(card, [](lv_event_t* e) {
+      auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+      if (!self) return;
+      auto code = lv_event_get_code(e);
+      auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+      if (code == LV_EVENT_PRESSED) {
+        self->simulate_touch_down(target);
+      } else if (code == LV_EVENT_RELEASED) {
+        self->simulate_touch_up(target);
+      } else if (code == LV_EVENT_LONG_PRESSED) {
+        self->simulate_long_press(target);
+      }
+    }, LV_EVENT_ALL, this);
 
     // Number + LED dot row
     lv_obj_t* lbl_n = lv_label_create(card);
@@ -286,7 +321,17 @@ bool PerformanceView::create(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(btn_p, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(btn_p, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(btn_p, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(btn_p, part_power_click_cb, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(btn_p, [](lv_event_t* e) {
+      auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+      if (!self) return;
+      auto code = lv_event_get_code(e);
+      auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+      if (code == LV_EVENT_PRESSED) {
+        self->simulate_touch_down(target);
+      } else if (code == LV_EVENT_RELEASED) {
+        self->simulate_touch_up(target);
+      }
+    }, LV_EVENT_ALL, this);
 
     lv_obj_t* lbl_p = lv_label_create(btn_p);
     lv_label_set_text(lbl_p, tr("performance.part.power").c_str());
@@ -618,7 +663,19 @@ bool PerformanceView::create(lv_obj_t* parent) {
   lv_obj_set_style_bg_opa(btn_status_rev_, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_border_width(btn_status_rev_, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(btn_status_rev_, 0, LV_PART_MAIN);
-  lv_obj_add_event_cb(btn_status_rev_, rev_click_cb, LV_EVENT_CLICKED, this);
+  lv_obj_add_event_cb(btn_status_rev_, [](lv_event_t* e) {
+    auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+    if (!self) return;
+    auto code = lv_event_get_code(e);
+    auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+    if (code == LV_EVENT_PRESSED) {
+      self->simulate_touch_down(target);
+    } else if (code == LV_EVENT_RELEASED) {
+      self->simulate_touch_up(target);
+    } else if (code == LV_EVENT_LONG_PRESSED) {
+      self->simulate_long_press(target);
+    }
+  }, LV_EVENT_ALL, this);
 
   lbl_status_rev_ = lv_label_create(btn_status_rev_);
   char rev_buf[32];
@@ -1713,6 +1770,156 @@ void PerformanceView::context_click_cb(lv_event_t* e) {
 
   if (self->on_setlist_click_) {
     self->on_setlist_click_();
+  }
+}
+
+void PerformanceView::set_armed_state(lv_obj_t* target, bool armed) {
+  if (!target) return;
+  const auto& p = Theme::current();
+  if (armed) {
+    arm_state_.target = target;
+    arm_state_.is_armed = true;
+    lv_obj_set_style_border_color(target, p.accent, LV_PART_MAIN);
+    lv_obj_set_style_border_width(target, 2, LV_PART_MAIN);
+  } else {
+    if (arm_state_.target == target) {
+      arm_state_.is_armed = false;
+      arm_state_.target = nullptr;
+    }
+    lv_obj_set_style_border_color(target, p.line, LV_PART_MAIN);
+    lv_obj_set_style_border_width(target, 1, LV_PART_MAIN);
+  }
+}
+
+bool PerformanceView::is_armed(lv_obj_t* target) const {
+  return arm_state_.is_armed && (arm_state_.target == target);
+}
+
+void PerformanceView::simulate_touch_down(lv_obj_t* target, int32_t x, int32_t y, uint32_t timestamp_ms) {
+  arm_state_.target = target;
+  arm_state_.press_timestamp_ms = (timestamp_ms > 0) ? timestamp_ms : lv_tick_get();
+  arm_state_.press_x = x;
+  arm_state_.press_y = y;
+  set_armed_state(target, true);
+}
+
+void PerformanceView::simulate_touch_up(lv_obj_t* target, int32_t x, int32_t y, uint32_t timestamp_ms) {
+  if (!arm_state_.is_armed || arm_state_.target != target) {
+    set_armed_state(target, false);
+    return;
+  }
+
+  uint32_t press_time = arm_state_.press_timestamp_ms;
+  uint32_t now_time = (timestamp_ms > 0) ? timestamp_ms : lv_tick_get();
+  uint32_t duration = (now_time >= press_time) ? (now_time - press_time) : 0;
+  int32_t dx = std::abs(x - arm_state_.press_x);
+  int32_t dy = std::abs(y - arm_state_.press_y);
+  double dist = std::hypot(dx, dy);
+
+  set_armed_state(target, false);
+
+  // 1. Part power button
+  for (size_t i = 0; i < part_power_objs_.size(); ++i) {
+    if (part_power_objs_[i] == target) {
+      if (touch_mode_ == TouchMode::Off) return;
+      if (touch_mode_ == TouchMode::Safe) {
+        if (duration < 150 || dist > 10.0) return;
+      }
+      bool new_state = !parts_[i].enabled;
+      set_part_enabled(static_cast<int32_t>(i), new_state);
+      return;
+    }
+  }
+
+  // 2. Scene Tile
+  for (size_t i = 0; i < scene_tile_objs_.size(); ++i) {
+    if (scene_tile_objs_[i] == target) {
+      if (touch_mode_ == TouchMode::Off) return;
+      if (touch_mode_ == TouchMode::Safe) {
+        if (duration < 150 || dist > 10.0) return;
+      }
+      recall_scene(static_cast<int32_t>(i));
+      return;
+    }
+  }
+
+  // 3. Part card body
+  for (size_t i = 0; i < part_card_objs_.size(); ++i) {
+    if (part_card_objs_[i] == target) {
+      if (touch_mode_ == TouchMode::Full) {
+        if (on_part_select_) {
+          on_part_select_(static_cast<int32_t>(i));
+        }
+      }
+      return;
+    }
+  }
+
+  // 4. Setlist context
+  if (target == lbl_context_) {
+    if (touch_mode_ == TouchMode::Full) {
+      if (on_setlist_click_) {
+        on_setlist_click_();
+      }
+    }
+    return;
+  }
+
+  // 5. REV button
+  if (target == btn_status_rev_) {
+    if (touch_mode_ == TouchMode::Full) {
+      if (on_rev_click_) {
+        on_rev_click_();
+      }
+    }
+    return;
+  }
+}
+
+void PerformanceView::simulate_long_press(lv_obj_t* target) {
+  // 1. Scene Tile -> Scenes surface (works in Full, Safe, Off)
+  for (size_t i = 0; i < scene_tile_objs_.size(); ++i) {
+    if (scene_tile_objs_[i] == target) {
+      if (on_scene_long_press_) {
+        on_scene_long_press_(static_cast<int32_t>(i));
+      }
+      return;
+    }
+  }
+
+  // 2. Part card body:
+  // Full mode: selects knob target!
+  // Safe or Off mode: opens Part surface!
+  for (size_t i = 0; i < part_card_objs_.size(); ++i) {
+    if (part_card_objs_[i] == target) {
+      if (touch_mode_ == TouchMode::Full) {
+        select_knob_part(static_cast<int32_t>(i));
+        if (on_knob_target_select_) {
+          on_knob_target_select_(static_cast<int32_t>(i));
+        }
+      } else {
+        if (on_part_select_) {
+          on_part_select_(static_cast<int32_t>(i));
+        }
+      }
+      return;
+    }
+  }
+
+  // 3. Setlist context -> Setlist Browser (works in Full, Safe, Off)
+  if (target == lbl_context_) {
+    if (on_setlist_click_) {
+      on_setlist_click_();
+    }
+    return;
+  }
+
+  // 4. REV button -> Effects (works in Full, Safe, Off)
+  if (target == btn_status_rev_) {
+    if (on_rev_click_) {
+      on_rev_click_();
+    }
+    return;
   }
 }
 

@@ -145,7 +145,7 @@ development_status:
   4-34-part-surface-sound-envelope-and-eq-effects: done
   4-35-settings-surface-with-knobs-global-assign: done
   4-36-footswitch-function: backlog
-  4-37-accidental-press-guards-and-touch-on-performance: backlog
+  4-37-accidental-press-guards-and-touch-on-performance: done
   4-38-first-playable-unit-full-show-run-through: backlog
   epic-4-retrospective: optional
 
@@ -212,7 +212,7 @@ development_status:
   8-4-mcu-firmware-manifest-in-the-a-b-image-and-boot-time-version: backlog
   8-5-format-versions-n-n-1-and-migrations-only-after-the-slot-is: backlog
   8-6-a-firmware-update-adds-a-new-engine-on-a-v1-unit: backlog
-  8-7-boot-screen-with-drawbar-animation-and-reduced-motion: backlog
+  8-7-boot-screen-with-drawbar-animation-and-reduced-motion: done
   8-8-journaled-boot-into-pointer: backlog
   8-9-boot-into-setting-and-restoring-the-target: backlog
   8-10-boot-to-playable-in-10-s-with-a-1-tb-library: backlog

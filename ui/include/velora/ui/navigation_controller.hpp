@@ -15,6 +15,7 @@
 #include "velora/ui/screens/settings_view.hpp"
 #include "velora/ui/screens/library_view.hpp"
 #include "velora/ui/screens/import_view.hpp"
+#include "velora/ui/screens/boot_view.hpp"
 #include "velora/ui/components/notice_toast.hpp"
 #include "velora/ui/components/write_dialog.hpp"
 
@@ -23,7 +24,8 @@ namespace velora::ui {
 class WsClient;
 
 enum class SurfaceId {
-  Performance = 0,
+  Boot = 0,
+  Performance,
   Launcher,
   Effects,
   Setlist,
@@ -61,6 +63,7 @@ class NavigationController {
   SettingsView& settings_view() noexcept { return settings_view_; }
   LibraryView& library_view() noexcept { return library_view_; }
   ImportView& import_view() noexcept { return import_view_; }
+  BootView& boot_view() noexcept { return boot_view_; }
   NoticeToast& notice_toast() noexcept { return notice_toast_; }
   WriteDialog& write_dialog() noexcept { return write_dialog_; }
 
@@ -79,6 +82,12 @@ class NavigationController {
   int live_set_step_count() const noexcept { return live_set_step_count_; }
   int scene_step_count() const noexcept { return scene_step_count_; }
 
+  void set_panel_guard(bool enabled) noexcept { panel_guard_ = enabled; }
+  bool panel_guard() const noexcept { return panel_guard_; }
+
+  void set_write_hold_ms(uint32_t ms) noexcept { write_hold_threshold_us_ = ms * 1000ULL; }
+  uint32_t write_hold_ms() const noexcept { return static_cast<uint32_t>(write_hold_threshold_us_ / 1000ULL); }
+
  private:
   void show_surface(SurfaceId surface);
   void hide_surface(SurfaceId surface);
@@ -95,6 +104,7 @@ class NavigationController {
   SettingsView settings_view_;
   LibraryView library_view_;
   ImportView import_view_;
+  BootView boot_view_;
   NoticeToast notice_toast_;
   WriteDialog write_dialog_;
 
@@ -107,6 +117,9 @@ class NavigationController {
 
   uint64_t write_btn_down_time_us_{0};
   uint64_t write_hold_threshold_us_{500000};
+  bool panel_guard_{false};
+  uint64_t live_set_btn_down_time_us_{0};
+  uint32_t live_set_btn_pending_id_{0};
   bool manual_pending_edits_{false};
   bool has_timbre_edit_{false};
   std::string change_summary_text_;

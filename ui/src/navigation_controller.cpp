@@ -13,7 +13,8 @@ NavigationController::NavigationController(WsClient* client)
       part_view_(client),
       settings_view_(client),
       library_view_(client),
-      import_view_(client) {}
+      import_view_(client),
+      boot_view_(client) {}
 
 NavigationController::~NavigationController() = default;
 
@@ -33,8 +34,13 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   if (!settings_view_.create(parent)) return false;
   if (!library_view_.create(parent)) return false;
   if (!import_view_.create(parent)) return false;
+  if (!boot_view_.create(parent)) return false;
   if (!notice_toast_.create(parent)) return false;
   if (!write_dialog_.create(parent)) return false;
+
+  boot_view_.set_on_ready([this]() {
+    navigate_to(SurfaceId::Performance);
+  });
 
   write_dialog_.set_on_write([this](ws::v1::WriteScope scope, const std::string& name) {
     handle_write_confirmed(scope, name);
@@ -61,6 +67,10 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     surface_before_launcher_ = current_surface_;
     part_view_.set_part_index(part_idx);
     navigate_to(SurfaceId::Part);
+  });
+
+  performance_view_.set_knob_target_select_callback([this](int32_t part_idx) {
+    performance_view_.select_knob_part(part_idx);
   });
 
   setlist_view_.set_on_close([this]() {
@@ -159,6 +169,23 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     }
   });
 
+  settings_view_.set_on_config_changed([this](const SystemConfig& c) {
+    performance_view_.set_touch_mode(c.touch_mode);
+    performance_view_.set_long_press_time_ms(c.long_press_ms);
+    set_write_hold_ms(c.write_hold_ms);
+    set_panel_guard(c.panel_guard);
+    boot_view_.set_reduced_motion(c.reduced_motion);
+  });
+
+  // Apply current system config
+  SystemConfig::instance().load_from_file();
+  const auto& init_cfg = SystemConfig::instance();
+  performance_view_.set_touch_mode(init_cfg.touch_mode);
+  performance_view_.set_long_press_time_ms(init_cfg.long_press_ms);
+  set_write_hold_ms(init_cfg.write_hold_ms);
+  set_panel_guard(init_cfg.panel_guard);
+  boot_view_.set_reduced_motion(init_cfg.reduced_motion);
+
   launcher_view_.set_tile_select_callback([this](LauncherTileId tile) {
     switch (tile) {
       case LauncherTileId::Effects:
@@ -201,6 +228,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   hide_surface(SurfaceId::Settings);
   hide_surface(SurfaceId::Library);
   hide_surface(SurfaceId::Import);
+  hide_surface(SurfaceId::Boot);
   show_surface(SurfaceId::Performance);
 
   current_surface_ = SurfaceId::Performance;
@@ -242,6 +270,9 @@ void NavigationController::show_surface(SurfaceId surface) {
     case SurfaceId::Import:
       root = import_view_.skeleton().root_container();
       break;
+    case SurfaceId::Boot:
+      root = boot_view_.root();
+      break;
     default:
       break;
   }
@@ -282,6 +313,9 @@ void NavigationController::hide_surface(SurfaceId surface) {
       break;
     case SurfaceId::Import:
       root = import_view_.skeleton().root_container();
+      break;
+    case SurfaceId::Boot:
+      root = boot_view_.root();
       break;
     default:
       break;
@@ -359,6 +393,18 @@ void NavigationController::set_pending_edits(bool pending, bool has_timbre, cons
 }
 
 void NavigationController::update_from_state(const ws::v1::State& state) {
+  if (current_surface_ == SurfaceId::Boot) {
+    if (state.loading().progress() > 0.0f) {
+      boot_view_.set_progress(state.loading().progress());
+    }
+    if (!state.live_set_name().empty()) {
+      boot_view_.set_status(state.live_set_name(), state.current_scene() + 1);
+    }
+    if (state.live_set_loaded()) {
+      boot_view_.set_ready(true);
+    }
+  }
+
   performance_view_.update_from_state(state);
   setlist_view_.update_from_state(state);
   setlist_browser_view_.update_from_state(state);
@@ -437,28 +483,50 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
     return;
   }
 
-  // 1. Global Stepping: LIVE SET ◀ ▶ and SCENE ◀ ▶ work on ANY surface
+  // 1. Global Stepping: LIVE SET ◀ ▶ (with Panel Guard) and SCENE ◀ ▶ work on ANY surface
+  if (ev.type == PanelEventType::Button && (ev.id == MCU_BTN_LIVE_SET_PREV || ev.id == MCU_BTN_LIVE_SET_NEXT)) {
+    if (!panel_guard_) {
+      if (ev.pressed) {
+        live_set_step_count_ += (ev.id == MCU_BTN_LIVE_SET_NEXT) ? 1 : -1;
+        if (client_) {
+          ws::v1::ClientMessage msg;
+          msg.set_request_id(101);
+          if (ev.id == MCU_BTN_LIVE_SET_PREV) msg.mutable_previous_live_set();
+          else msg.mutable_next_live_set();
+          client_->send_command(msg);
+        }
+      }
+      return;
+    } else {
+      // Panel guard = On: brief press does nothing, 300 ms hold steps
+      if (ev.pressed) {
+        live_set_btn_down_time_us_ = (ev.timestamp_us > 0) ? ev.timestamp_us : 1;
+        live_set_btn_pending_id_ = ev.id;
+        return;
+      } else {
+        if (live_set_btn_pending_id_ == ev.id) {
+          uint64_t hold_time = (ev.timestamp_us > live_set_btn_down_time_us_ && live_set_btn_down_time_us_ > 0)
+                                   ? (ev.timestamp_us - live_set_btn_down_time_us_)
+                                   : 0;
+          live_set_btn_down_time_us_ = 0;
+          live_set_btn_pending_id_ = 0;
+          if (hold_time >= 300000) {  // 300 ms in microseconds
+            live_set_step_count_ += (ev.id == MCU_BTN_LIVE_SET_NEXT) ? 1 : -1;
+            if (client_) {
+              ws::v1::ClientMessage msg;
+              msg.set_request_id(101);
+              if (ev.id == MCU_BTN_LIVE_SET_PREV) msg.mutable_previous_live_set();
+              else msg.mutable_next_live_set();
+              client_->send_command(msg);
+            }
+          }
+        }
+        return;
+      }
+    }
+  }
+
   if (ev.type == PanelEventType::Button && ev.pressed) {
-    if (ev.id == MCU_BTN_LIVE_SET_PREV) {
-      live_set_step_count_--;
-      if (client_) {
-        ws::v1::ClientMessage msg;
-        msg.set_request_id(101);
-        msg.mutable_previous_live_set();
-        client_->send_command(msg);
-      }
-      return;
-    }
-    if (ev.id == MCU_BTN_LIVE_SET_NEXT) {
-      live_set_step_count_++;
-      if (client_) {
-        ws::v1::ClientMessage msg;
-        msg.set_request_id(102);
-        msg.mutable_next_live_set();
-        client_->send_command(msg);
-      }
-      return;
-    }
     if (ev.id == MCU_BTN_SCENE_PREV || ev.id == MCU_BTN_SCENE_NEXT) {
       scene_step_count_ += (ev.id == MCU_BTN_SCENE_NEXT) ? 1 : -1;
       performance_view_.on_panel_event(ev);
@@ -608,6 +676,7 @@ void NavigationController::on_usb_drive_inserted(const std::string& drive_name, 
 void NavigationController::tick(uint32_t elapsed_ms) {
   notice_toast_.tick(elapsed_ms);
   import_view_.tick(elapsed_ms);
+  boot_view_.tick(elapsed_ms);
 }
 
 }  // namespace velora::ui

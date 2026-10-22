@@ -94,6 +94,7 @@ bool SettingsView::create(lv_obj_t* parent) {
   build_sidebar();
   build_detail();
   build_storage_detail();
+  build_display_detail();
   create_picker_modal();
 
   update_sidebar_ui();
@@ -149,7 +150,7 @@ void SettingsView::build_sidebar() {
     lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 4);
 
     lv_obj_t* sub = lv_label_create(row);
-    if (i == 3 || i == 5) {
+    if (i == 0 || i == 3 || i == 5) {
       lv_label_set_text(sub, "");
       lv_obj_set_hidden(sub, true);
     } else {
@@ -701,17 +702,19 @@ bool SettingsView::remove_library(const std::string& lib_id) {
 }
 
 void SettingsView::select_section(SettingsSection section) {
-  if (section == SettingsSection::KnobsGlobalAssign || section == SettingsSection::StorageLibrary) {
+  if (section == SettingsSection::DisplayLanguage ||
+      section == SettingsSection::KnobsGlobalAssign ||
+      section == SettingsSection::StorageLibrary) {
     current_section_ = section;
     update_sidebar_ui();
-    if (detail_container_ && storage_container_) {
-      if (current_section_ == SettingsSection::StorageLibrary) {
-        lv_obj_set_hidden(detail_container_, true);
-        lv_obj_set_hidden(storage_container_, false);
-      } else {
-        lv_obj_set_hidden(detail_container_, false);
-        lv_obj_set_hidden(storage_container_, true);
-      }
+    if (detail_container_) {
+      lv_obj_set_hidden(detail_container_, current_section_ != SettingsSection::KnobsGlobalAssign);
+    }
+    if (storage_container_) {
+      lv_obj_set_hidden(storage_container_, current_section_ != SettingsSection::StorageLibrary);
+    }
+    if (display_container_) {
+      lv_obj_set_hidden(display_container_, current_section_ != SettingsSection::DisplayLanguage);
     }
   }
 }
@@ -894,6 +897,160 @@ void SettingsView::on_panel_event(const PanelEvent& ev) {
       return;
     }
   }
+}
+
+void SettingsView::build_display_detail() {
+  const auto& p = Theme::current();
+  const auto& sp = Theme::spacing();
+  const auto& r = Theme::radius();
+  lv_obj_t* content = skeleton_.content_area();
+
+  display_container_ = lv_obj_create(content);
+  lv_obj_set_size(display_container_, 764, 488);
+  lv_obj_set_pos(display_container_, 260, 0);
+  lv_obj_set_scrollable(display_container_, true);
+  lv_obj_set_style_bg_opa(display_container_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(display_container_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(display_container_, sp.space_3, LV_PART_MAIN);
+
+  const auto& cfg = SystemConfig::instance();
+
+  auto create_setting_card = [&](int32_t y, int32_t height) {
+    lv_obj_t* card = lv_obj_create(display_container_);
+    lv_obj_set_size(card, 720, height);
+    lv_obj_set_pos(card, 0, y);
+    lv_obj_set_scrollable(card, false);
+    lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, p.line, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, r.md, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, sp.space_2, LV_PART_MAIN);
+    return card;
+  };
+
+  // 1. Touch on Performance (Full / Safe / Off)
+  lv_obj_t* card_touch = create_setting_card(0, 72);
+  lv_obj_t* lbl_touch = lv_label_create(card_touch);
+  lv_label_set_text(lbl_touch, tr("settings.display.touch_performance").c_str());
+  lv_obj_add_style(lbl_touch, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_touch, LV_ALIGN_LEFT_MID, 8, 0);
+
+  seg_touch_.create(card_touch, {
+    tr("settings.display.touch_full"),
+    tr("settings.display.touch_safe"),
+    tr("settings.display.touch_off")
+  }, 90);
+  lv_obj_align(seg_touch_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
+  seg_touch_.set_selected_index(static_cast<int32_t>(cfg.touch_mode));
+  seg_touch_.set_on_change([this](int32_t idx) {
+    auto& c = SystemConfig::instance();
+    c.touch_mode = static_cast<TouchMode>(idx);
+    c.save_to_file();
+    if (on_config_changed_) on_config_changed_(c);
+  });
+
+  // 2. Write hold (0.3 s / 0.5 s / 0.8 s / 1.0 s)
+  lv_obj_t* card_wh = create_setting_card(80, 72);
+  lv_obj_t* lbl_wh = lv_label_create(card_wh);
+  lv_label_set_text(lbl_wh, tr("settings.display.write_hold").c_str());
+  lv_obj_add_style(lbl_wh, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_wh, LV_ALIGN_LEFT_MID, 8, 0);
+
+  seg_write_hold_.create(card_wh, {
+    tr("settings.display.write_hold_03"),
+    tr("settings.display.write_hold_05"),
+    tr("settings.display.write_hold_08"),
+    tr("settings.display.write_hold_10")
+  }, 70);
+  lv_obj_align(seg_write_hold_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
+  int wh_idx = 1;
+  if (cfg.write_hold_ms <= 350) wh_idx = 0;
+  else if (cfg.write_hold_ms <= 650) wh_idx = 1;
+  else if (cfg.write_hold_ms <= 850) wh_idx = 2;
+  else wh_idx = 3;
+  seg_write_hold_.set_selected_index(wh_idx);
+  seg_write_hold_.set_on_change([this](int32_t idx) {
+    auto& c = SystemConfig::instance();
+    static const uint32_t kHoldVals[] = {300, 500, 800, 1000};
+    if (idx >= 0 && idx < 4) c.write_hold_ms = kHoldVals[idx];
+    c.save_to_file();
+    if (on_config_changed_) on_config_changed_(c);
+  });
+
+  // 3. Long press (400 ms / 500 ms / 800 ms)
+  lv_obj_t* card_lp = create_setting_card(160, 72);
+  lv_obj_t* lbl_lp = lv_label_create(card_lp);
+  lv_label_set_text(lbl_lp, tr("settings.display.long_press").c_str());
+  lv_obj_add_style(lbl_lp, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_lp, LV_ALIGN_LEFT_MID, 8, 0);
+
+  seg_long_press_.create(card_lp, {
+    tr("settings.display.long_press_400"),
+    tr("settings.display.long_press_500"),
+    tr("settings.display.long_press_800")
+  }, 80);
+  lv_obj_align(seg_long_press_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
+  int lp_idx = 1;
+  if (cfg.long_press_ms <= 450) lp_idx = 0;
+  else if (cfg.long_press_ms <= 650) lp_idx = 1;
+  else lp_idx = 2;
+  seg_long_press_.set_selected_index(lp_idx);
+  seg_long_press_.set_on_change([this](int32_t idx) {
+    auto& c = SystemConfig::instance();
+    static const uint32_t kLpVals[] = {400, 500, 800};
+    if (idx >= 0 && idx < 3) c.long_press_ms = kLpVals[idx];
+    c.save_to_file();
+    if (on_config_changed_) on_config_changed_(c);
+  });
+
+  // 4. Panel guard (Off / On + helper text)
+  lv_obj_t* card_pg = create_setting_card(240, 84);
+  lv_obj_t* lbl_pg = lv_label_create(card_pg);
+  lv_label_set_text(lbl_pg, tr("settings.display.panel_guard").c_str());
+  lv_obj_add_style(lbl_pg, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_pg, LV_ALIGN_TOP_LEFT, 8, 4);
+
+  lv_obj_t* lbl_pg_desc = lv_label_create(card_pg);
+  lv_label_set_text(lbl_pg_desc, tr("settings.display.panel_guard_desc").c_str());
+  lv_obj_add_style(lbl_pg_desc, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_set_style_text_color(lbl_pg_desc, p.muted, LV_PART_MAIN);
+  lv_obj_align(lbl_pg_desc, LV_ALIGN_BOTTOM_LEFT, 8, -4);
+
+  seg_panel_guard_.create(card_pg, {
+    tr("state.off"),
+    tr("state.on")
+  }, 70);
+  lv_obj_align(seg_panel_guard_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
+  seg_panel_guard_.set_selected_index(cfg.panel_guard ? 1 : 0);
+  seg_panel_guard_.set_on_change([this](int32_t idx) {
+    auto& c = SystemConfig::instance();
+    c.panel_guard = (idx == 1);
+    c.save_to_file();
+    if (on_config_changed_) on_config_changed_(c);
+  });
+
+  // 5. Reduced motion (Off / On)
+  lv_obj_t* card_rm = create_setting_card(332, 72);
+  lv_obj_t* lbl_rm = lv_label_create(card_rm);
+  lv_label_set_text(lbl_rm, tr("settings.display.reduced_motion").c_str());
+  lv_obj_add_style(lbl_rm, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_rm, LV_ALIGN_LEFT_MID, 8, 0);
+
+  seg_reduced_motion_.create(card_rm, {
+    tr("settings.display.reduced_motion_off"),
+    tr("settings.display.reduced_motion_on")
+  }, 70);
+  lv_obj_align(seg_reduced_motion_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
+  seg_reduced_motion_.set_selected_index(cfg.reduced_motion ? 1 : 0);
+  seg_reduced_motion_.set_on_change([this](int32_t idx) {
+    auto& c = SystemConfig::instance();
+    c.reduced_motion = (idx == 1);
+    c.save_to_file();
+    if (on_config_changed_) on_config_changed_(c);
+  });
+
+  lv_obj_set_hidden(display_container_, true);
 }
 
 }  // namespace velora::ui

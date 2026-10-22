@@ -9,6 +9,8 @@
 #include "ws_v1.pb.h"
 #include "velora/ui/screens/surface_skeleton.hpp"
 #include "velora/ui/panel_event.hpp"
+#include "velora/ui/widgets/segmented_control.hpp"
+#include "velora/ui/system_config.hpp"
 
 namespace velora::ui {
 
@@ -48,6 +50,7 @@ class SettingsView {
   using CloseCallback = std::function<void()>;
   using AssignSlotCallback = std::function<void(ws::v1::AssignTarget target, uint32_t slot_1_based, uint32_t param_id)>;
   using EditCallback = std::function<void()>;
+  using ConfigChangeCallback = std::function<void(const SystemConfig& cfg)>;
 
   explicit SettingsView(WsClient* client = nullptr);
   ~SettingsView();
@@ -60,6 +63,14 @@ class SettingsView {
   void set_on_close(CloseCallback cb) { on_close_ = std::move(cb); }
   void set_on_assign_changed(AssignSlotCallback cb) { on_assign_changed_ = std::move(cb); }
   void set_on_edit(EditCallback cb) { on_edit_ = std::move(cb); }
+  void set_on_config_changed(ConfigChangeCallback cb) { on_config_changed_ = std::move(cb); }
+
+  SegmentedControl& seg_touch() noexcept { return seg_touch_; }
+  SegmentedControl& seg_write_hold() noexcept { return seg_write_hold_; }
+  SegmentedControl& seg_long_press() noexcept { return seg_long_press_; }
+  SegmentedControl& seg_panel_guard() noexcept { return seg_panel_guard_; }
+  SegmentedControl& seg_reduced_motion() noexcept { return seg_reduced_motion_; }
+  lv_obj_t* display_container() const noexcept { return display_container_; }
 
   // Navigation / Selection
   void select_section(SettingsSection section);
@@ -107,6 +118,7 @@ class SettingsView {
   void build_sidebar();
   void build_detail();
   void build_storage_detail();
+  void build_display_detail();
   void rebuild_storage_list();
   void update_sidebar_ui();
   void update_knob_cards_ui();
@@ -171,6 +183,15 @@ class SettingsView {
   uint64_t storage_total_bytes_{480ULL * 1024 * 1024 * 1024};
   std::string storage_error_;
   std::vector<uint32_t> picker_param_ids_;
+
+  // Display & Language UI
+  lv_obj_t* display_container_{nullptr};
+  SegmentedControl seg_touch_;
+  SegmentedControl seg_write_hold_;
+  SegmentedControl seg_long_press_;
+  SegmentedControl seg_panel_guard_;
+  SegmentedControl seg_reduced_motion_;
+  ConfigChangeCallback on_config_changed_;
 };
 
 }  // namespace velora::ui
