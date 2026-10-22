@@ -60,6 +60,10 @@ struct SpacingTokens {
   int32_t space_5;
   int32_t screen_gutter;
   int32_t device_topbar;
+  int32_t device_hero;
+  int32_t device_scene_strip;
+  int32_t device_part_area;
+  int32_t device_status;
   int32_t device_hint;
   int32_t touch_target_min;
   int32_t selection_border;

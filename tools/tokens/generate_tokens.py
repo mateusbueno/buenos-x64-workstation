@@ -173,6 +173,10 @@ struct SpacingTokens {{
   int32_t space_5;
   int32_t screen_gutter;
   int32_t device_topbar;
+  int32_t device_hero;
+  int32_t device_scene_strip;
+  int32_t device_part_area;
+  int32_t device_status;
   int32_t device_hint;
   int32_t touch_target_min;
   int32_t selection_border;
@@ -304,6 +308,10 @@ const SpacingTokens& Theme::spacing() {{
     .space_5 = {int(str(spacing.get("5", "16px")).replace("px", ""))},
     .screen_gutter = {int(str(spacing.get("screen-gutter", "22px")).replace("px", ""))},
     .device_topbar = {int(str(spacing.get("device-topbar", "56px")).replace("px", ""))},
+    .device_hero = {int(str(spacing.get("device-hero", "118px")).replace("px", ""))},
+    .device_scene_strip = {int(str(spacing.get("device-scene-strip", "72px")).replace("px", ""))},
+    .device_part_area = {int(str(spacing.get("device-part-area", "298px")).replace("px", ""))},
+    .device_status = {int(str(spacing.get("device-status", "56px")).replace("px", ""))},
     .device_hint = {int(str(spacing.get("device-hint", "56px")).replace("px", ""))},
     .touch_target_min = {int(str(spacing.get("touch-target-min", "56px")).replace("px", ""))},
     .selection_border = {int(str(spacing.get("selection-device", "3px")).replace("px", ""))},

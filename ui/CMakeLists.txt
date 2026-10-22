@@ -42,6 +42,7 @@ add_library(velora_ui
   src/screens/shell_view.cpp
   src/screens/surface_skeleton.cpp
   src/screens/effects_view.cpp
+  src/screens/performance_view.cpp
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
   src/widgets/segmented_control.cpp
@@ -101,6 +102,11 @@ add_executable(effects_view_test tests/effects_view_test.cpp)
 target_link_libraries(effects_view_test PRIVATE velora_ui)
 add_test(NAME effects_view_test COMMAND effects_view_test)
 set_tests_properties(effects_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(performance_view_test tests/performance_view_test.cpp)
+target_link_libraries(performance_view_test PRIVATE velora_ui)
+add_test(NAME performance_view_test COMMAND performance_view_test)
+set_tests_properties(performance_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)

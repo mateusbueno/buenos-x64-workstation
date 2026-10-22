@@ -71,5 +71,21 @@
   "effects.output.aux": "AUX",
   "effects.master.eq": "EQ Master",
   "effects.master.comp": "Compressor Master",
-  "effects.master.line_in": "Nível Entrada Linha"
+  "effects.master.line_in": "Nível Entrada Linha",
+  "performance.top_bar.no_setlist": "SEM SETLIST",
+  "performance.top_bar.setlist": "SETLIST",
+  "performance.hero.live_set": "LIVE SET",
+  "performance.hero.default_name": "Padrão",
+  "performance.hero.next": "PRÓXIMO",
+  "performance.hero.ready": "● PRONTO",
+  "performance.hero.loading": "Carregando…",
+  "performance.hero.end_of_setlist": "Fim da setlist",
+  "performance.mode.mixer": "MIXER",
+  "performance.mode.drawbars": "DRAWBARS",
+  "performance.mode.parts": "PARTS",
+  "performance.mode.scenes": "SCENES",
+  "performance.mode.knobs": "KNOBS",
+  "performance.mode.part": "PART",
+  "performance.mode.all": "ALL",
+  "performance.mode.assign": "ASSIGN"
 }
