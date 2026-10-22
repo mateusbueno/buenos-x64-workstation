@@ -10,6 +10,9 @@ static void headless_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t
 
 bool HeadlessAdapter::initialize(int width, int height) {
   if (display_) return true;
+  if (!lv_is_initialized()) {
+    lv_init();
+  }
 
   display_ = lv_display_create(width, height);
   if (!display_) return false;

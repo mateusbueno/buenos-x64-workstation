@@ -57,6 +57,22 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME ui_strings_lint_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_ui_strings.py
                    --self-test)
+  # Story 2.18: Design tokens verify, contrast gate, and no-color-literals lint
+  add_test(NAME tokens_verify
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tokens/generate_tokens.py
+                   --root ${CMAKE_SOURCE_DIR} --verify)
+  add_test(NAME contrast_gate
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tokens/contrast_check.py
+                   --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME contrast_gate_selftest
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tokens/contrast_check.py
+                   --self-test)
+  add_test(NAME color_literals_lint
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_color_literals.py
+                   --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME color_literals_lint_selftest
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_color_literals.py
+                   --self-test)
   # Story 6.1 (AR34/NFR23): no private key material in the git index / working tree.
   add_test(NAME no_private_keys
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_private_keys.py

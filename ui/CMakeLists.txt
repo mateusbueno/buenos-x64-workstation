@@ -40,6 +40,7 @@ add_library(velora_ui
   src/locale.cpp
   src/ws_client.cpp
   src/screens/shell_view.cpp
+  src/theme.cpp
   src/adapters/headless_adapter.cpp
   src/adapters/sdl_adapter.cpp
   src/adapters/drm_adapter.cpp
@@ -79,6 +80,10 @@ add_executable(ui_shell_test tests/ui_shell_test.cpp)
 target_link_libraries(ui_shell_test PRIVATE velora_ui)
 add_test(NAME ui_shell_test COMMAND ui_shell_test)
 set_tests_properties(ui_shell_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(theme_test tests/theme_test.cpp)
+target_link_libraries(theme_test PRIVATE velora_ui)
+add_test(NAME theme_test COMMAND theme_test)
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
