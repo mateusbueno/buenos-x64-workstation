@@ -47,6 +47,7 @@ add_library(velora_ui
   src/screens/setlist_view.cpp
   src/screens/setlist_browser_view.cpp
   src/screens/scenes_view.cpp
+  src/screens/part_view.cpp
   src/navigation_controller.cpp
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
@@ -170,6 +171,11 @@ add_executable(write_dialog_test tests/write_dialog_test.cpp)
 target_link_libraries(write_dialog_test PRIVATE velora_ui)
 add_test(NAME write_dialog_test COMMAND write_dialog_test)
 set_tests_properties(write_dialog_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(part_view_test tests/part_view_test.cpp)
+target_link_libraries(part_view_test PRIVATE velora_ui)
+add_test(NAME part_view_test COMMAND part_view_test)
+set_tests_properties(part_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)

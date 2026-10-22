@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Part Surface Mockup (Story 4.18)</title>
+<style>
+:root {
+  --bg-stage: #000000;
+  --surface-stage: #141414;
+  --raised-stage: #222222;
+  --line-stage: #2c2c2c;
+  --line-strong-stage: #444444;
+  --text-stage: #ffffff;
+  --muted-stage: #909090;
+  --accent-stage: #d85c2c;
+  --on-accent-stage: #000000;
+  --warn-stage: #f59e0b;
+  --ok-stage: #10b981;
+
+  --bg-studio: #1a1a1a;
+  --surface-studio: #282828;
+  --raised-studio: #383838;
+  --line-studio: #484848;
+  --line-strong-studio: #606060;
+  --text-studio: #f0f0f0;
+  --muted-studio: #a0a0a0;
+  --accent-studio: #e06d3d;
+  --on-accent-studio: #000000;
+  --warn-studio: #fbbf24;
+  --ok-studio: #34d399;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #111;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #ccc;
+  padding: 24px;
+}
+
+h1 { font-size: 20px; color: #fff; margin: 0 0 8px; }
+p.lead { font-size: 14px; color: #999; margin: 0 0 24px; }
+.theme-section { margin-bottom: 40px; }
+.theme-title { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.theme-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #333; color: #ddd; }
+
+/* 1024x600 viewport */
+.screen-frame {
+  width: 1024px;
+  height: 600px;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+  border: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Stage theme variables */
+.theme-stage {
+  background: var(--bg-stage);
+  color: var(--text-stage);
+}
+.theme-stage .top-bar, .theme-stage .hint-bar { background: var(--surface-stage); border-color: var(--line-stage); }
+.theme-stage .nav-col { background: var(--surface-stage); border-color: var(--line-stage); }
+.theme-stage .card { background: var(--surface-stage); border-color: var(--line-strong-stage); }
+.theme-stage .card.raised { background: var(--raised-stage); border-color: var(--accent-stage); }
+.theme-stage .btn-accent { background: var(--accent-stage); color: var(--on-accent-stage); }
+.theme-stage .text-muted { color: var(--muted-stage); }
+.theme-stage .accent-text { color: var(--accent-stage); }
+
+/* Studio theme variables */
+.theme-studio {
+  background: var(--bg-studio);
+  color: var(--text-studio);
+}
+.theme-studio .top-bar, .theme-studio .hint-bar { background: var(--surface-studio); border-color: var(--line-studio); }
+.theme-studio .nav-col { background: var(--surface-studio); border-color: var(--line-studio); }
+.theme-studio .card { background: var(--surface-studio); border-color: var(--line-strong-studio); }
+.theme-studio .card.raised { background: var(--raised-studio); border-color: var(--accent-studio); }
+.theme-studio .btn-accent { background: var(--accent-studio); color: var(--on-accent-studio); }
+.theme-studio .text-muted { color: var(--muted-studio); }
+.theme-studio .accent-text { color: var(--accent-studio); }
+
+/* Layout components */
+.top-bar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid #222;
+  flex-shrink: 0;
+}
+.top-bar-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.top-bar-icons {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 20px;
+}
+
+.content-area {
+  height: 488px;
+  display: flex;
+  flex-shrink: 0;
+}
+
+/* Left Section Nav (260px) */
+.nav-col {
+  width: 260px;
+  border-right: 1px solid #222;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+  flex-shrink: 0;
+}
+.nav-item {
+  height: 56px;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  border-left: 4px solid transparent;
+}
+.nav-item.active {
+  border-left-color: var(--accent-stage);
+  background: rgba(216, 92, 44, 0.12);
+  color: #fff;
+}
+
+/* Right Content Panel (764px) */
+.panel-col {
+  flex: 1;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+.card {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.card-header {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #888;
+}
+.card-val {
+  font-size: 22px;
+  font-weight: 700;
+}
+.card.interactive {
+  min-height: 56px;
+  justify-content: center;
+  cursor: pointer;
+}
+.card.selected {
+  border-color: #d85c2c;
+  box-shadow: 0 0 0 1px #d85c2c;
+}
+
+.btn-touch {
+  height: 56px;
+  min-height: 56px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  border: 1px solid #444;
+  cursor: pointer;
+  padding: 0 24px;
+}
+
+.hint-bar {
+  height: 56px;
+  border-top: 1px solid #222;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.hints-left { display: flex; gap: 24px; align-items: center; }
+.hint-chip {
+  border: 1px solid #444;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  color: #fff;
+  margin-right: 6px;
+}
+</style>
+</head>
+<body>
+
+<h1>Velora 73 — Part Surface (Story 4.18 Design Mockup)</h1>
+<p class="lead">Layout: Top Bar 56px · Content 488px (Nav Left 260px + Editor Right 764px) · Hint Bar 56px · Touch targets ≥ 56px</p>
+
+<!-- 1. STAGE THEME -->
+<div class="theme-section">
+  <div class="theme-title">
+    <span>Stage Theme (High Contrast Dark)</span>
+    <span class="theme-tag">Default Performance</span>
+  </div>
+
+  <div class="screen-frame theme-stage">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="top-bar-title">
+        <span class="accent-text">PART 1</span>
+        <span>·</span>
+        <span>Grand Piano</span>
+        <span>·</span>
+        <span class="text-muted">ACOUSTIC PIANO</span>
+      </div>
+      <div class="top-bar-icons">
+        <span title="Part Power">⏻</span>
+        <span title="Favorite" style="display:none">★</span>
+      </div>
+    </div>
+
+    <!-- Main Content Area (488px) -->
+    <div class="content-area">
+      <!-- Left Column: Navigation Sections -->
+      <div class="nav-col">
+        <div class="nav-item active">Timbre</div>
+        <div class="nav-item">Zone & Keyboard</div>
+        <div class="nav-item">Level & Output</div>
+        <div class="nav-item">Sound Engine</div>
+        <div class="nav-item">Envelope & EQ</div>
+        <div class="nav-item">Effects Sends</div>
+      </div>
+
+      <!-- Right Column: Active Editor Section (Timbre & Zone & Level) -->
+      <div class="panel-col">
+        <!-- Timbre Row -->
+        <div class="grid-2">
+          <div class="card selected">
+            <div class="card-header">Current Timbre</div>
+            <div class="card-val">German Grand D-274</div>
+            <div class="text-muted" style="font-size: 13px;">SFZ Sample Library · 2.4 GB · 24-bit 48kHz</div>
+          </div>
+          <div class="btn-touch btn-accent" style="height: 100%;">
+            Change Timbre (Browse)
+          </div>
+        </div>
+
+        <!-- Zone & Keyboard -->
+        <div class="grid-3">
+          <div class="card interactive">
+            <div class="card-header">Low Key (Keybed press)</div>
+            <div class="card-val">E1 (MIDI 28)</div>
+          </div>
+          <div class="card interactive">
+            <div class="card-header">High Key (Keybed press)</div>
+            <div class="card-val">G7 (MIDI 103)</div>
+          </div>
+          <div class="card interactive">
+            <div class="card-header">Octave / Transpose</div>
+            <div class="card-val">0 / 0 st</div>
+          </div>
+        </div>
+
+        <!-- Level & Output -->
+        <div class="grid-2">
+          <div class="card interactive">
+            <div class="card-header">Part Volume</div>
+            <div class="card-val">94% (0.0 dB)</div>
+          </div>
+          <div class="card interactive">
+            <div class="card-header">Routing / Output</div>
+            <div class="card-val">Main L/R (Balanced)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hint Bar -->
+    <div class="hint-bar">
+      <div class="hints-left">
+        <div><span class="hint-chip">VALUE</span> edit highlighted field</div>
+        <div><span class="hint-chip">WRITE</span> change timbre</div>
+        <div><span class="hint-chip">EXIT</span> back to Performance</div>
+      </div>
+      <div class="text-muted">Hold WRITE to save edits · Live Set is marked ◆</div>
+    </div>
+  </div>
+</div>
+
+<!-- 2. STUDIO THEME + PSEUDO-LOCALIZATION -->
+<div class="theme-section">
+  <div class="theme-title">
+    <span>Studio Theme + Pseudo-Localization (+40% Character Expansion)</span>
+    <span class="theme-tag">Studio Balanced Dark</span>
+  </div>
+
+  <div class="screen-frame theme-studio">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="top-bar-title">
+        <span class="accent-text">PARTE 1</span>
+        <span>·</span>
+        <span>Piano de Cauda Imperial ÁÇÊÕÑ</span>
+        <span>·</span>
+        <span class="text-muted">PIANO ACÚSTICO ÁÇÊÕÑ</span>
+      </div>
+      <div class="top-bar-icons">
+        <span>⏻</span>
+      </div>
+    </div>
+
+    <!-- Main Content Area (488px) -->
+    <div class="content-area">
+      <!-- Left Column: Navigation Sections -->
+      <div class="nav-col">
+        <div class="nav-item">Timbre ÁÇÊÕÑ</div>
+        <div class="nav-item active">Zona e Teclado ÁÇÊÕÑ</div>
+        <div class="nav-item">Nível e Saída ÁÇÊÕÑ</div>
+        <div class="nav-item">Parâmetros de Som ÁÇÊÕÑ</div>
+        <div class="nav-item">Envelope e EQ ÁÇÊÕÑ</div>
+        <div class="nav-item">Efeitos de Envio ÁÇÊÕÑ</div>
+      </div>
+
+      <!-- Right Column: Active Editor Section -->
+      <div class="panel-col">
+        <div class="grid-3">
+          <div class="card interactive selected">
+            <div class="card-header">Nota Inicial ÁÇÊÕÑ</div>
+            <div class="card-val">E1 (MIDI 28)</div>
+          </div>
+          <div class="card interactive">
+            <div class="card-header">Nota Final ÁÇÊÕÑ</div>
+            <div class="card-val">G7 (MIDI 103)</div>
+          </div>
+          <div class="card interactive">
+            <div class="card-header">Transposição ÁÇÊÕÑ</div>
+            <div class="card-val">+12 st (8va)</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card interactive">
+            <div class="card-header">Volume da Parte ÁÇÊÕÑ</div>
+            <div class="card-val">85% (-1.5 dB)</div>
+          </div>
+          <div class="card interactive">
+            <div class="card-header">Saída de Áudio ÁÇÊÕÑ</div>
+            <div class="card-val">Saída Principal ÁÇÊÕÑ</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hint Bar -->
+    <div class="hint-bar">
+      <div class="hints-left">
+        <div><span class="hint-chip">VALUE</span> editar campo destacado ÁÇÊÕÑ</div>
+        <div><span class="hint-chip">EXIT</span> voltar ao Performance ÁÇÊÕÑ</div>
+      </div>
+      <div class="text-muted">Segure WRITE para salvar · Marcado com ◆</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

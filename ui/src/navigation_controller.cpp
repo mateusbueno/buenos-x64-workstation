@@ -9,7 +9,8 @@ NavigationController::NavigationController(WsClient* client)
       performance_view_(client),
       setlist_view_(client),
       setlist_browser_view_(client),
-      scenes_view_(client) {}
+      scenes_view_(client),
+      part_view_(client) {}
 
 NavigationController::~NavigationController() = default;
 
@@ -25,6 +26,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   if (!setlist_view_.create(parent)) return false;
   if (!setlist_browser_view_.create(parent)) return false;
   if (!scenes_view_.create(parent)) return false;
+  if (!part_view_.create(parent)) return false;
   if (!write_dialog_.create(parent)) return false;
 
   write_dialog_.set_on_write([this](ws::v1::WriteScope scope, const std::string& name) {
@@ -48,6 +50,12 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     navigate_to(SurfaceId::Scenes);
   });
 
+  performance_view_.set_part_select_callback([this](int32_t part_idx) {
+    surface_before_launcher_ = current_surface_;
+    part_view_.set_part_index(part_idx);
+    navigate_to(SurfaceId::Part);
+  });
+
   setlist_view_.set_on_close([this]() {
     navigate_to(surface_before_launcher_);
   });
@@ -58,6 +66,14 @@ bool NavigationController::initialize(lv_obj_t* parent) {
 
   scenes_view_.set_on_close([this]() {
     navigate_to(surface_before_launcher_);
+  });
+
+  part_view_.set_on_close([this]() {
+    navigate_to(surface_before_launcher_);
+  });
+
+  part_view_.set_on_edit([this](int32_t part_idx) {
+    set_pending_edits(true, true, "Part " + std::to_string(part_idx + 1) + " edit");
   });
 
   launcher_view_.set_tile_select_callback([this](LauncherTileId tile) {
@@ -92,6 +108,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   hide_surface(SurfaceId::Setlist);
   hide_surface(SurfaceId::SetlistBrowser);
   hide_surface(SurfaceId::Scenes);
+  hide_surface(SurfaceId::Part);
   show_surface(SurfaceId::Performance);
 
   current_surface_ = SurfaceId::Performance;
@@ -121,6 +138,9 @@ void NavigationController::show_surface(SurfaceId surface) {
     case SurfaceId::Scenes:
       root = scenes_view_.skeleton().root_container();
       break;
+    case SurfaceId::Part:
+      root = part_view_.skeleton().root_container();
+      break;
     default:
       break;
   }
@@ -149,6 +169,9 @@ void NavigationController::hide_surface(SurfaceId surface) {
       break;
     case SurfaceId::Scenes:
       root = scenes_view_.skeleton().root_container();
+      break;
+    case SurfaceId::Part:
+      root = part_view_.skeleton().root_container();
       break;
     default:
       break;
@@ -185,6 +208,7 @@ bool NavigationController::has_pending_edits() const {
   if (manual_pending_edits_) return true;
   if (performance_view_.has_unsaved_edits()) return true;
   if (scenes_view_.has_unsaved_edits()) return true;
+  if (part_view_.has_unsaved_edits()) return true;
   return false;
 }
 
@@ -267,6 +291,9 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
         case SurfaceId::Scenes:
           scenes_view_.on_panel_event(short_press);
           break;
+        case SurfaceId::Part:
+          part_view_.on_panel_event(short_press);
+          break;
         case SurfaceId::Setlist:
           setlist_view_.on_panel_event(short_press);
           break;
@@ -293,6 +320,14 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
   }
   if (ev.type == PanelEventType::Encoder && ev.id >= MCU_CTRL_ENCODER_1 && ev.id <= MCU_CTRL_ENCODER_8) {
     performance_view_.on_panel_event(ev);
+    return;
+  }
+
+  // UX-DR82, UX-DR86: On Performance, VALUE push opens Part surface of the knob-target part
+  if (current_surface_ == SurfaceId::Performance && ev.type == PanelEventType::Button && ev.pressed && ev.id == MCU_BTN_VALUE_PUSH) {
+    surface_before_launcher_ = current_surface_;
+    part_view_.set_part_index(performance_view_.selected_knob_part());
+    navigate_to(SurfaceId::Part);
     return;
   }
 
@@ -379,6 +414,14 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
         navigate_to(surface_before_launcher_);
         return;
       }
+      if (current_surface_ == SurfaceId::Part) {
+        if (part_view_.is_timbre_picker_open()) {
+          part_view_.on_panel_event(ev);
+          return;
+        }
+        navigate_to(surface_before_launcher_);
+        return;
+      }
       navigate_back();
       return;
     }
@@ -404,9 +447,16 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
     case SurfaceId::Scenes:
       scenes_view_.on_panel_event(ev);
       break;
+    case SurfaceId::Part:
+      part_view_.on_panel_event(ev);
+      break;
     default:
       break;
   }
+}
+
+void NavigationController::on_midi_note(uint8_t note_number) {
+  part_view_.on_midi_note(note_number);
 }
 
 }  // namespace velora::ui
