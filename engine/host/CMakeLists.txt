@@ -3,6 +3,7 @@ add_library(velora_host STATIC
   src/host_info.cpp
   src/time_mapper.cpp
   src/midi_ingest.cpp
+  src/sysex_receiver.cpp
   src/render_driver.cpp
   src/posix_fs.cpp
   src/library_resolver.cpp
@@ -277,6 +278,10 @@ add_test(NAME host_tests COMMAND host_tests)
 add_executable(host_unit_tests tests/host_unit_test.cpp)
 target_link_libraries(host_unit_tests PRIVATE velora_host)
 add_test(NAME host_unit_tests COMMAND host_unit_tests)
+
+add_executable(sysex_receiver_test tests/sysex_receiver_test.cpp)
+target_link_libraries(sysex_receiver_test PRIVATE velora_host velora_core velora_format)
+add_test(NAME sysex_receiver_test COMMAND sysex_receiver_test)
 
 add_executable(mcu_wrapper_test tests/mcu_wrapper_test.cpp)
 target_link_libraries(mcu_wrapper_test PRIVATE velora_host)

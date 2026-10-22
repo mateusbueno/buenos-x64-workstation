@@ -10,6 +10,7 @@ namespace velora::core {
 //   word1: [31:16] velocity (16 bit) | [15:0] attribute
 struct Ump {
   static constexpr std::uint32_t kMessageTypeSystemRealTime = 0x1;
+  static constexpr std::uint32_t kMessageTypeData64 = 0x3;
   static constexpr std::uint32_t kMessageTypeChannelVoice2 = 0x4;
   static constexpr std::uint32_t kStatusNoteOff = 0x8;
   static constexpr std::uint32_t kStatusNoteOn = 0x9;
@@ -17,6 +18,12 @@ struct Ump {
   static constexpr std::uint32_t kStatusAssignablePerNoteController = 0x1;  // MIDI 2.0 assignable per-note controller
   static constexpr std::uint32_t kStatusControlChange = 0xB;
   static constexpr std::uint32_t kControllerSustain = 64;
+
+  // SysEx7 Status (Form) bits: word0 [23:20]
+  static constexpr std::uint32_t kSysex7FormComplete = 0x0;
+  static constexpr std::uint32_t kSysex7FormStart = 0x1;
+  static constexpr std::uint32_t kSysex7FormContinue = 0x2;
+  static constexpr std::uint32_t kSysex7FormEnd = 0x3;
 
   // System Real Time status bytes (Message Type 0x1)
   static constexpr std::uint32_t kStatusTimingClock = 0xF8;
@@ -73,6 +80,28 @@ struct Ump {
   constexpr bool is_note_off() const noexcept {
     return message_type() == kMessageTypeChannelVoice2 && status() == kStatusNoteOff;
   }
+
+  // SysEx7 (Message Type 0x3) accessors
+  constexpr bool is_sysex7() const noexcept {
+    return message_type() == kMessageTypeData64;
+  }
+  constexpr std::uint32_t sysex7_form() const noexcept {
+    return (word0 >> 20) & 0xF;
+  }
+  constexpr std::uint32_t sysex7_byte_count() const noexcept {
+    return (word0 >> 16) & 0xF;
+  }
+  constexpr std::uint8_t sysex7_byte(std::size_t idx) const noexcept {
+    switch (idx) {
+      case 0: return static_cast<std::uint8_t>((word0 >> 8) & 0xFF);
+      case 1: return static_cast<std::uint8_t>(word0 & 0xFF);
+      case 2: return static_cast<std::uint8_t>((word1 >> 24) & 0xFF);
+      case 3: return static_cast<std::uint8_t>((word1 >> 16) & 0xFF);
+      case 4: return static_cast<std::uint8_t>((word1 >> 8) & 0xFF);
+      case 5: return static_cast<std::uint8_t>(word1 & 0xFF);
+      default: return 0;
+    }
+  }
 };
 
 constexpr Ump make_note_on(std::uint32_t group, std::uint32_t channel, std::uint32_t note,
@@ -118,6 +147,23 @@ constexpr Ump make_stop(std::uint32_t group = 0) noexcept {
   return Ump{(Ump::kMessageTypeSystemRealTime << 28) | ((group & 0xF) << 24) |
                  (Ump::kStatusStop << 16),
              0};
+}
+
+constexpr Ump make_sysex7(std::uint32_t group, std::uint32_t form,
+                          const std::uint8_t* bytes, std::size_t num_bytes) noexcept {
+  const std::uint32_t count = static_cast<std::uint32_t>(num_bytes > 6 ? 6 : num_bytes);
+  std::uint32_t w0 = (Ump::kMessageTypeData64 << 28) | ((group & 0xF) << 24) |
+                     ((form & 0xF) << 20) | ((count & 0xF) << 16);
+  if (count >= 1) w0 |= (static_cast<std::uint32_t>(bytes[0]) << 8);
+  if (count >= 2) w0 |= static_cast<std::uint32_t>(bytes[1]);
+
+  std::uint32_t w1 = 0;
+  if (count >= 3) w1 |= (static_cast<std::uint32_t>(bytes[2]) << 24);
+  if (count >= 4) w1 |= (static_cast<std::uint32_t>(bytes[3]) << 16);
+  if (count >= 5) w1 |= (static_cast<std::uint32_t>(bytes[4]) << 8);
+  if (count >= 6) w1 |= static_cast<std::uint32_t>(bytes[5]);
+
+  return Ump{w0, w1};
 }
 
 // A UMP with the frame (relative to the start of the next rendered block) at which it applies.

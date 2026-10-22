@@ -20,6 +20,9 @@ struct StampedUmp {
 // MIDI thread (single producer) -> audio thread (single consumer).
 using HostEventQueue = core::SpscQueue<StampedUmp, 1024>;
 
+// Lock-free queue for 64-bit SysEx UMP packets (MIDI input thread -> control thread).
+using SysexPacketQueue = core::SpscQueue<core::Ump, 4096>;
+
 // Scale a 7-bit MIDI 1.0 velocity to 16 bits (bit-repeat, 127 -> 65535, 0 -> 0).
 constexpr std::uint32_t scale_velocity_7_to_16(std::uint32_t v) noexcept {
   v &= 0x7F;
@@ -53,20 +56,27 @@ struct MidiIngestCounters {
   std::atomic<std::uint64_t> params{0};         // mapped control changes queued as parameter UMPs
   std::atomic<std::uint64_t> controllers{0};    // control changes the registry does not map (not the pedal), queued as MIDI 2.0 control changes (Story 5.2)
   std::atomic<std::uint64_t> controllers_dropped{0};  // controllers (and mapped parameter events) shed because the queue had only note headroom left
-  std::atomic<std::uint64_t> ignored{0};        // messages that are not notes, controllers or pedal (or truncated packets)
+  std::atomic<std::uint64_t> sysex_packets{0};  // 64-bit SysEx UMP packets queued for control thread
+  std::atomic<std::uint64_t> sysex_dropped{0};  // SysEx packets dropped because sysex queue was full
+  std::atomic<std::uint64_t> ignored{0};        // messages that are not notes, controllers, pedal or sysex (or truncated packets)
   std::atomic<std::uint64_t> queue_full{0};     // dropped because the audio side is behind
 };
 
 // UmpSink that normalises, stamps and queues events. Runs on the MIDI adapter thread.
 class MidiIngest final : public ports::UmpSink {
  public:
-  explicit MidiIngest(HostEventQueue& q) noexcept : queue_(q) {}
+  explicit MidiIngest(HostEventQueue& q, SysexPacketQueue* sysex_q = nullptr) noexcept
+      : queue_(q), sysex_queue_(sysex_q) {}
   void on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override;
   const MidiIngestCounters& counters() const noexcept { return counters_; }
   std::uint64_t last_stamp_ns() const noexcept { return last_stamp_ns_.load(std::memory_order_relaxed); }
 
+  void set_sysex_queue(SysexPacketQueue* q) noexcept { sysex_queue_ = q; }
+  SysexPacketQueue* sysex_queue() const noexcept { return sysex_queue_; }
+
  private:
   HostEventQueue& queue_;
+  SysexPacketQueue* sysex_queue_{nullptr};
   MidiIngestCounters counters_;
   std::atomic<std::uint64_t> last_stamp_ns_{0};
 };

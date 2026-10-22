@@ -2,8 +2,10 @@
 
 #include <lvgl.h>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "velora/format/sysex_6op.hpp"
 #include "velora/ui/panel_event.hpp"
 #include "velora/ui/screens/performance_view.hpp"
 #include "velora/ui/screens/launcher_view.hpp"
@@ -68,6 +70,8 @@ class NavigationController {
   WriteDialog& write_dialog() noexcept { return write_dialog_; }
 
   void on_usb_drive_inserted(const std::string& drive_name, const std::vector<ImportItem>& items);
+  void on_sysex_dump_received(const format::SysexParseResult& result);
+  void on_sysex_damaged();
   void tick(uint32_t elapsed_ms);
 
   void on_midi_note(uint8_t note_number);
@@ -125,6 +129,7 @@ class NavigationController {
   bool manual_pending_edits_{false};
   bool has_timbre_edit_{false};
   std::string change_summary_text_;
+  std::optional<format::SysexParseResult> pending_sysex_;
 };
 
 }  // namespace velora::ui

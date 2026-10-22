@@ -267,6 +267,8 @@
   "category_picker.apply_all": "Apply one category to all",
   "category_picker.hint.reassurance": "Nothing changes until you pick",
   "notice.usb_drive_found": "USB drive found",
+  "notice.sysex_received": "6-OP SysEx received: %d voices",
+  "notice.sysex_damaged": "SysEx received but damaged. Nothing was imported.",
   "notice.action.import": "Import?",
   "notice.import_finished": "Import finished: %d imported, %d skipped",
   "import.title": "Import",

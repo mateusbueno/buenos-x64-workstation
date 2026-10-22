@@ -138,8 +138,27 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   });
 
   notice_toast_.set_on_action([this]() {
+    if (pending_sysex_ && pending_sysex_->ok()) {
+      std::vector<ImportItem> items;
+      for (const auto& v : pending_sysex_->voices) {
+        ImportItem item;
+        item.file_name = v.name;
+        item.size_bytes = 155;
+        item.format_str = "Import 6-OP SysEx";
+        item.category = format::Category::kSynthPoly;
+        item.status = ImportItemStatus::Ready;
+        items.push_back(std::move(item));
+      }
+      import_view_.set_drive_info("MIDI IN", pending_sysex_->voices.size() * 155, 50ULL * 1024 * 1024 * 1024);
+      import_view_.set_items(std::move(items));
+      pending_sysex_.reset();
+    }
     surface_before_launcher_ = current_surface_;
     navigate_to(SurfaceId::Import);
+  });
+
+  notice_toast_.set_on_dismiss([this]() {
+    pending_sysex_.reset();
   });
 
   settings_view_.set_on_close([this]() {
@@ -578,6 +597,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       if (notice_toast_.is_visible()) {
         notice_toast_.hide();
+        pending_sysex_.reset();
         return;
       }
       PanelEvent press_ev = ev;
@@ -711,6 +731,21 @@ void NavigationController::on_usb_drive_inserted(const std::string& drive_name, 
   import_view_.set_drive_info(drive_name, total_size, 50ULL * 1024 * 1024 * 1024);
   import_view_.set_items(items);
   notice_toast_.show(tr("notice.usb_drive_found"), tr("notice.action.import"), 8000);
+}
+
+void NavigationController::on_sysex_dump_received(const format::SysexParseResult& result) {
+  if (!result.ok() || result.voices.empty()) {
+    on_sysex_damaged();
+    return;
+  }
+  pending_sysex_ = result;
+  const std::string msg = "6-OP SysEx received: " + std::to_string(result.voices.size()) + " voices";
+  notice_toast_.show(msg, tr("notice.action.import"), 8000);
+}
+
+void NavigationController::on_sysex_damaged() {
+  pending_sysex_.reset();
+  notice_toast_.show(tr("notice.sysex_damaged"), "");
 }
 
 void NavigationController::tick(uint32_t elapsed_ms) {

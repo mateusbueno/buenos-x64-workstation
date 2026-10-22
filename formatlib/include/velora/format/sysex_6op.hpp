@@ -89,6 +89,10 @@ struct SysexParseResult {
 inline constexpr const char* kSysexDamagedMessage =
     "This SysEx file is damaged or not a 6-OP voice dump. Nothing was imported.";
 
+// Story 12.4: exact copy for SysEx arriving over MIDI (USB MIDI / DIN)
+inline constexpr const char* kSysexMidiDamagedMessage =
+    "SysEx received but damaged. Nothing was imported.";
+
 // SysEx file sizes
 inline constexpr size_t kSysexSingleDumpSize = 163;
 inline constexpr size_t kSysexBulkDumpSize = 4104;

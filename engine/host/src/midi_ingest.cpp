@@ -66,6 +66,29 @@ bool normalise_packet(const std::uint32_t* words, std::size_t count, std::size_t
 
 void MidiIngest::on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept {
   while (count > 0) {
+    const std::uint32_t w0 = words[0];
+    const std::uint32_t mt = w0 >> 28;
+    const std::size_t need = ump_packet_words(mt);
+    if (need > count) {
+      counters_.ignored.fetch_add(1, std::memory_order_relaxed);
+      break;
+    }
+    // SysEx7 (Message Type 0x3) bypasses the audio queue entirely and is routed
+    // directly to the lock-free sysex queue for the control thread (Story 12.4).
+    if (mt == core::Ump::kMessageTypeData64) {
+      if (sysex_queue_) {
+        core::Ump pkt{w0, words[1]};
+        if (!sysex_queue_->push(pkt)) {
+          counters_.sysex_dropped.fetch_add(1, std::memory_order_relaxed);
+        } else {
+          counters_.sysex_packets.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+      words += need;
+      count -= need;
+      continue;
+    }
+
     std::size_t used = 0;
     core::Ump u;
     if (normalise_packet(words, count, used, u)) {

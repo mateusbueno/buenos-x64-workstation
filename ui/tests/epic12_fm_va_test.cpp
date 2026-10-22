@@ -10,8 +10,10 @@
 #include "velora/ui/navigation_controller.hpp"
 #include "velora/ui/screens/part_view.hpp"
 #include "velora/ui/screens/performance_view.hpp"
+#include "velora/format/sysex_6op.hpp"
 
 using namespace velora::ui;
+namespace fmt = velora::format;
 
 void test_story_12_10_engine_not_available_state() {
   std::cout << "Testing Story 12.10: Engine not-available state...\n";
@@ -255,6 +257,77 @@ void test_step_by_step_exit_navigation() {
   std::cout << "[PASS] Step-by-Step EXIT Navigation\n";
 }
 
+void test_story_12_4_sysex_ui_notification_and_import() {
+  std::cout << "Testing Story 12.4: SysEx UI Notice Toast and Import Flow...\n";
+
+  NavigationController nav(nullptr);
+  bool ok = nav.initialize();
+  assert(ok);
+  assert(nav.current_surface() == SurfaceId::Performance);
+
+  // 1. Valid single-voice SysEx received
+  fmt::SysexParseResult single_dump;
+  single_dump.status = fmt::SysexParseStatus::kOk;
+  fmt::SysexVoiceDump single_v;
+  single_v.slot = 1;
+  single_v.name = "BASS 1";
+  single_dump.voices.push_back(single_v);
+
+  nav.on_sysex_dump_received(single_dump);
+  assert(nav.notice_toast().is_visible());
+  assert(nav.notice_toast().message() == "6-OP SysEx received: 1 voices");
+  assert(nav.notice_toast().action_text() == "Import?");
+  // Performance surface remains active, play is not blocked
+  assert(nav.current_surface() == SurfaceId::Performance);
+
+  // Dismiss without importing via EXIT
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
+  assert(!nav.notice_toast().is_visible());
+  assert(nav.current_surface() == SurfaceId::Performance);
+
+  // 2. Valid 32-voice bulk dump received
+  fmt::SysexParseResult bulk_dump;
+  bulk_dump.status = fmt::SysexParseStatus::kOk;
+  for (int i = 1; i <= 32; ++i) {
+    fmt::SysexVoiceDump v;
+    v.slot = static_cast<uint8_t>(i);
+    v.name = "VOX " + std::to_string(i);
+    bulk_dump.voices.push_back(v);
+  }
+
+  nav.on_sysex_dump_received(bulk_dump);
+  assert(nav.notice_toast().is_visible());
+  assert(nav.notice_toast().message() == "6-OP SysEx received: 32 voices");
+  assert(nav.notice_toast().action_text() == "Import?");
+  assert(nav.current_surface() == SurfaceId::Performance);
+
+  // Confirming "Import?" opens Import rows
+  lv_obj_send_event(nav.notice_toast().action_button(), LV_EVENT_CLICKED, nullptr);
+  assert(!nav.notice_toast().is_visible());
+  assert(nav.current_surface() == SurfaceId::Import);
+
+  // Verify rows match Story 12.3: default category Synth Poly, format string, ready status
+  assert(nav.import_view().items().size() == 32);
+  for (size_t i = 0; i < 32; ++i) {
+    const auto& it = nav.import_view().items()[i];
+    assert(it.file_name == "VOX " + std::to_string(i + 1));
+    assert(it.format_str == "Import 6-OP SysEx");
+    assert(it.category == fmt::Category::kSynthPoly);
+    assert(it.status == ImportItemStatus::Ready);
+  }
+
+  // 3. Damaged SysEx dump shows damaged notice copy with no action button
+  nav.navigate_to(SurfaceId::Performance);
+  nav.on_sysex_damaged();
+  assert(nav.notice_toast().is_visible());
+  assert(nav.notice_toast().message() == "SysEx received but damaged. Nothing was imported.");
+  assert(nav.notice_toast().action_text().empty());
+  assert(nav.current_surface() == SurfaceId::Performance);
+
+  std::cout << "[PASS] Story 12.4: SysEx UI Notice Toast and Import Flow\n";
+}
+
 int main() {
   lv_init();
   Locale::instance().initialize("", "en");
@@ -264,11 +337,12 @@ int main() {
     return 1;
   }
 
+  test_story_12_4_sysex_ui_notification_and_import();
   test_story_12_10_engine_not_available_state();
   test_story_12_11_fm_sound_section();
   test_story_12_12_va_sound_section();
   test_step_by_step_exit_navigation();
 
-  std::cout << "All Epic 12 (Stories 12.10, 12.11, 12.12) tests passed successfully!\n";
+  std::cout << "All Epic 12 (Stories 12.4, 12.10, 12.11, 12.12) tests passed successfully!\n";
   return 0;
 }
