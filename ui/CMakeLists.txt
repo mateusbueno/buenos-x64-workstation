@@ -40,6 +40,11 @@ add_library(velora_ui
   src/locale.cpp
   src/ws_client.cpp
   src/screens/shell_view.cpp
+  src/screens/surface_skeleton.cpp
+  src/widgets/hint_bar.cpp
+  src/widgets/list_row.cpp
+  src/widgets/segmented_control.cpp
+  src/virtual_panel.cpp
   src/theme.cpp
   src/adapters/headless_adapter.cpp
   src/adapters/sdl_adapter.cpp
@@ -54,6 +59,7 @@ target_include_directories(velora_ui PUBLIC
 target_link_libraries(velora_ui PUBLIC
   lvgl
   velora_control
+  velora_mcu_common
   Threads::Threads
 )
 
@@ -84,6 +90,11 @@ set_tests_properties(ui_shell_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${C
 add_executable(theme_test tests/theme_test.cpp)
 target_link_libraries(theme_test PRIVATE velora_ui)
 add_test(NAME theme_test COMMAND theme_test)
+
+add_executable(widget_test tests/widget_test.cpp)
+target_link_libraries(widget_test PRIVATE velora_ui)
+add_test(NAME widget_test COMMAND widget_test)
+set_tests_properties(widget_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)

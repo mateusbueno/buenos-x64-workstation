@@ -41,5 +41,14 @@
   "shell.top_bar.clock_lost": "CLOCK PERDIDO",
   "shell.hint.ready": "Listo",
   "shell.hint.live_set": "Live Set",
-  "shell.hint.write_to_save": "Mantenga WRITE para guardar cambios"
+  "shell.hint.write_to_save": "Mantenga WRITE para guardar cambios",
+  "hint.verb.scroll": "desplazar",
+  "hint.verb.select": "seleccionar",
+  "hint.verb.confirm": "confirmar",
+  "hint.verb.back": "volver",
+  "hint.verb.change": "cambiar",
+  "hint.reassurance.nothing_to_write": "Nada para guardar",
+  "hint.reassurance.hold_write": "Mantener WRITE para guardar",
+  "list_row.tag.now": "NOW",
+  "list_row.indicator.unsaved": "◆"
 }

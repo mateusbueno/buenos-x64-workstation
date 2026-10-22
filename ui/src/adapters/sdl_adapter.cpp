@@ -3,6 +3,7 @@
 #if LV_USE_SDL
 #include <SDL.h>
 #include <lvgl.h>
+#include "velora/ui/virtual_panel.hpp"
 
 namespace velora::ui {
 
@@ -23,6 +24,10 @@ void SdlAdapter::update() {
   while (SDL_PollEvent(&event)) {
     if (event.type == SDL_QUIT) {
       should_close_ = true;
+    } else if (event.type == SDL_KEYDOWN) {
+      VirtualPanel::instance().handle_key(event.key.keysym.sym, true);
+    } else if (event.type == SDL_KEYUP) {
+      VirtualPanel::instance().handle_key(event.key.keysym.sym, false);
     }
   }
 }
