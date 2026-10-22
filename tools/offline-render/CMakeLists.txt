@@ -985,6 +985,11 @@ add_custom_target(update-assign-golden
 
 # --- Arpeggiator (Story 7.2): exact emitted note frame tests + two-part golden null-test pipeline ---
 set(_arp ${CMAKE_CURRENT_SOURCE_DIR}/tests/arp)
+add_executable(clock_follower_render_test tests/clock_follower_render_test.cpp)
+target_link_libraries(clock_follower_render_test PRIVATE velora_offline)
+add_test(NAME clock_follower_render_test COMMAND clock_follower_render_test)
+set_tests_properties(clock_follower_render_test PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
+
 add_executable(arp_tests tests/arp_test.cpp)
 target_link_libraries(arp_tests PRIVATE velora_offline)
 target_compile_definitions(arp_tests PRIVATE

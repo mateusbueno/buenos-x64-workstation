@@ -24,7 +24,13 @@ void TransportClock::advance(std::uint32_t frames) noexcept {
 }
 
 std::int64_t TransportClock::ticks_at(std::uint32_t frame) const noexcept {
-  return (units_ + static_cast<std::int64_t>(frame) * tenths_) / kUnitsPerTick;  // units_ >= 0
+  const std::int64_t u = units_ + static_cast<std::int64_t>(frame) * tenths_;
+  if (u >= 0) return u / kUnitsPerTick;
+  return (u - (kUnitsPerTick - 1)) / kUnitsPerTick;
+}
+
+void TransportClock::align_to_tick(std::int64_t tick, std::uint32_t frame) noexcept {
+  units_ = tick * kUnitsPerTick - static_cast<std::int64_t>(frame) * tenths_;
 }
 
 std::int64_t TransportClock::frame_of_tick(std::int64_t tick) const noexcept {

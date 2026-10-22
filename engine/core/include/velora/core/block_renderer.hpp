@@ -7,6 +7,7 @@
 
 #include "velora/core/arena.hpp"
 #include "velora/core/arpeggiator.hpp"
+#include "velora/core/clock_follower.hpp"
 #include "velora/core/engine.hpp"
 #include "velora/core/engine_registry.hpp"
 #include "velora/core/event_processor.hpp"
@@ -141,6 +142,19 @@ class BlockRenderer {
   // end. Position is the block start; query ticks_at / frame_of_tick for frames inside the block. RT thread only (or while not rendering).
   const TransportClock& clock() const noexcept { return clock_; }
 
+  // --- External MIDI Clock Follower (Story 7.6) -----------------------------------------------------------------
+  void set_clock_source(ClockSource source) noexcept VELORA_NONBLOCKING {
+    clock_source_.store(source, std::memory_order_release);
+    if (source != ClockSource::kInternal) {
+      follower_.reset();
+    }
+  }
+  ClockSource clock_source() const noexcept VELORA_NONBLOCKING {
+    return clock_source_.load(std::memory_order_acquire);
+  }
+  ClockFollower& clock_follower() noexcept VELORA_NONBLOCKING { return follower_; }
+  const ClockFollower& clock_follower() const noexcept VELORA_NONBLOCKING { return follower_; }
+
   // --- Event-processor framework and arpeggiator (Story 7.2, AR17) ------------------------------------------------
   // Each part (0..7) has an EventProcessor slot in the serial phase that consumes the part's UMP input and emits UMP with exact
   // frame positions before voice allocation. By default the slot runs the part's built-in Arpeggiator (configured via Snapshot::parts[p].arp
@@ -251,6 +265,8 @@ class BlockRenderer {
   SnapshotExchange exchange_;
   Mixer mixer_{exchange_};
   TransportClock clock_;
+  std::atomic<ClockSource> clock_source_{ClockSource::kInternal};
+  ClockFollower follower_;
   LastValueTable last_;
   const Snapshot* held_ = nullptr;
   std::array<float, params::kPerfSlotCount> applied_init_{};  // RT-owned: perf_init last applied

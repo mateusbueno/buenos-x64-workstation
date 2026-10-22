@@ -9,6 +9,7 @@ namespace velora::core {
 //   word0: [31:28] mt=4 | [27:24] group | [23:20] status | [19:16] channel | [15:8] note | [7:0] attr type
 //   word1: [31:16] velocity (16 bit) | [15:0] attribute
 struct Ump {
+  static constexpr std::uint32_t kMessageTypeSystemRealTime = 0x1;
   static constexpr std::uint32_t kMessageTypeChannelVoice2 = 0x4;
   static constexpr std::uint32_t kStatusNoteOff = 0x8;
   static constexpr std::uint32_t kStatusNoteOn = 0x9;
@@ -16,6 +17,14 @@ struct Ump {
   static constexpr std::uint32_t kStatusAssignablePerNoteController = 0x1;  // MIDI 2.0 assignable per-note controller
   static constexpr std::uint32_t kStatusControlChange = 0xB;
   static constexpr std::uint32_t kControllerSustain = 64;
+
+  // System Real Time status bytes (Message Type 0x1)
+  static constexpr std::uint32_t kStatusTimingClock = 0xF8;
+  static constexpr std::uint32_t kStatusStart = 0xFA;
+  static constexpr std::uint32_t kStatusContinue = 0xFB;
+  static constexpr std::uint32_t kStatusStop = 0xFC;
+  static constexpr std::uint32_t kStatusActiveSensing = 0xFE;
+  static constexpr std::uint32_t kStatusReset = 0xFF;
 
   std::uint32_t word0 = 0;
   std::uint32_t word1 = 0;
@@ -26,6 +35,24 @@ struct Ump {
   constexpr std::uint32_t channel() const noexcept { return (word0 >> 16) & 0xF; }
   constexpr std::uint32_t note() const noexcept { return (word0 >> 8) & 0x7F; }
   constexpr std::uint32_t velocity16() const noexcept { return word1 >> 16; }
+
+  // System Real Time / Common status byte: word0 [23:16]
+  constexpr std::uint32_t status_byte() const noexcept { return (word0 >> 16) & 0xFF; }
+  constexpr bool is_system_realtime() const noexcept {
+    return message_type() == kMessageTypeSystemRealTime && status_byte() >= 0xF8;
+  }
+  constexpr bool is_timing_clock() const noexcept {
+    return message_type() == kMessageTypeSystemRealTime && status_byte() == kStatusTimingClock;
+  }
+  constexpr bool is_start() const noexcept {
+    return message_type() == kMessageTypeSystemRealTime && status_byte() == kStatusStart;
+  }
+  constexpr bool is_continue() const noexcept {
+    return message_type() == kMessageTypeSystemRealTime && status_byte() == kStatusContinue;
+  }
+  constexpr bool is_stop() const noexcept {
+    return message_type() == kMessageTypeSystemRealTime && status_byte() == kStatusStop;
+  }
 
   // MIDI 2.0 control change: word0 [15:8] = controller index, word1 = 32-bit value.
   constexpr std::uint32_t controller_index() const noexcept { return (word0 >> 8) & 0x7F; }
@@ -67,6 +94,30 @@ constexpr Ump make_control_change(std::uint32_t group, std::uint32_t channel, st
   return Ump{(Ump::kMessageTypeChannelVoice2 << 28) | ((group & 0xF) << 24) |
                  (Ump::kStatusControlChange << 20) | ((channel & 0xF) << 16) | ((index & 0x7F) << 8),
              value32};
+}
+
+constexpr Ump make_timing_clock(std::uint32_t group = 0) noexcept {
+  return Ump{(Ump::kMessageTypeSystemRealTime << 28) | ((group & 0xF) << 24) |
+                 (Ump::kStatusTimingClock << 16),
+             0};
+}
+
+constexpr Ump make_start(std::uint32_t group = 0) noexcept {
+  return Ump{(Ump::kMessageTypeSystemRealTime << 28) | ((group & 0xF) << 24) |
+                 (Ump::kStatusStart << 16),
+             0};
+}
+
+constexpr Ump make_continue(std::uint32_t group = 0) noexcept {
+  return Ump{(Ump::kMessageTypeSystemRealTime << 28) | ((group & 0xF) << 24) |
+                 (Ump::kStatusContinue << 16),
+             0};
+}
+
+constexpr Ump make_stop(std::uint32_t group = 0) noexcept {
+  return Ump{(Ump::kMessageTypeSystemRealTime << 28) | ((group & 0xF) << 24) |
+                 (Ump::kStatusStop << 16),
+             0};
 }
 
 // A UMP with the frame (relative to the start of the next rendered block) at which it applies.

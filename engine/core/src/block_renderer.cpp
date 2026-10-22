@@ -330,6 +330,12 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     apply_controller(ump);
     return;
   }
+  if (ump.group() == 0 && ump.is_system_realtime()) {
+    if (clock_source_.load(std::memory_order_relaxed) == ClockSource::kInternal) {
+      ++ignored_;
+    }
+    return;
+  }
   if (ump.group() != 0 || (!ump.is_note_on() && !ump.is_note_off())) {
     ++ignored_;
     return;
@@ -538,6 +544,9 @@ void BlockRenderer::render_segment(float* l, float* r, std::uint32_t from, std::
 }
 
 float BlockRenderer::tempo_bpm() const noexcept {
+  if (clock_source_.load(std::memory_order_acquire) != ClockSource::kInternal) {
+    return follower_.tempo_bpm();
+  }
   const params::ParamDef* d = params::find(params::kTempoBpm);
   return d ? delaymap::tempo_bpm(last_.load(params::perf_slot(*d, 0))) : delaymap::kDefaultTempoBpm;
 }
@@ -575,10 +584,27 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
     for (std::uint32_t i = 0; i < kBlockFrames; ++i) out.aux_left[i] = out.aux_right[i] = 0.0f;
   adopt_generation();
   drain_queue();
+  const ClockSource cs = clock_source_.load(std::memory_order_acquire);
+  if (cs != ClockSource::kInternal) {
+    for (std::size_t i = 0; i < pending_count_ && pending_[i].target_frame < kBlockFrames; ++i) {
+      const Ump& u = pending_[i].ump;
+      if (u.group() == 0 && u.is_system_realtime()) {
+        follower_.process_ump(u, clock_.frames() + pending_[i].target_frame, clock_);
+      }
+    }
+    clock_.set_tempo_tenths(follower_.tempo_tenths());
+    const params::ParamDef* d = params::find(params::kTempoBpm);
+    if (d) {
+      last_.store(params::perf_slot(*d, 0), follower_.tempo_bpm());
+    }
+    last_.store_clock_lost(follower_.clock_lost());
+  } else {
+    clock_.set_tempo_tenths(TransportClock::tenths_from_bpm(tempo_bpm()));
+    last_.store_clock_lost(false);
+  }
   // Phase 2: shared per-part generators (the organ's tonewheels) produce their block before voices render.
   for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->begin_block(kBlockFrames);
   // Phase 5 setup: trivial routing renders straight into Main (the pre-2.7 path, bit-identical); otherwise into the part buses.
-  clock_.set_tempo_tenths(TransportClock::tenths_from_bpm(tempo_bpm()));  // once per block, same point as the Mixer: a change applies from the next block
   const bool routed = mixer_.begin_block(last_);
 
   std::array<bool, params::kPartCount> uses_proc{};
@@ -779,6 +805,10 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   }
   if (routed) mixer_.finish(out, last_);  // chains, sends, Main/Aux, line-in, master
   clock_.advance(kBlockFrames);
+  if (cs != ClockSource::kInternal) {
+    follower_.process_block(kBlockFrames, clock_);
+    last_.store_clock_lost(follower_.clock_lost());
+  }
 
   // Drop applied events, carry the rest into the next block.
   const std::size_t remaining = pending_count_ - consumed;

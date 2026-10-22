@@ -30,7 +30,11 @@ class TransportClock {
 
   // Position of the block start, in 1/30000 tick units, and the frames advanced since reset.
   std::int64_t position_units() const noexcept { return units_; }
+  void set_position_units(std::int64_t units) noexcept { units_ = units; }
   std::uint64_t frames() const noexcept { return frames_; }
+
+  // Aligns musical position so that at `frame` frames after the block start, the position is exactly `tick` ticks.
+  void align_to_tick(std::int64_t tick, std::uint32_t frame = 0) noexcept;
 
   // Whole ticks (floor) at `frame` frames after the block start (current tempo).
   std::int64_t ticks_at(std::uint32_t frame) const noexcept;
