@@ -26,8 +26,10 @@
 #include "mach_time.hpp"
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/mixer.hpp"
+#include "velora/core/fm_engine.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/sample_engine.hpp"
+#include "velora/core/va_engine.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
 #include "velora/host/edit_session.hpp"
@@ -266,6 +268,8 @@ int main(int argc, char** argv) {
   sample_cfg.extended_voices = true;  // Story 5.2: any imported instrument may use filters and CC crossfades, so every voice is budgeted for them
   core::SampleEngine sample(sample_cfg);
   core::OrganEngine organ;
+  core::FmEngine fm;
+  core::VaEngine va;
   host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);
   host::RamHeadProvider ram_heads;
   host::HeadProvider* head_provider = &ram_heads;
@@ -318,8 +322,8 @@ int main(int argc, char** argv) {
   std::unique_ptr<host::EditSession> edits;                    // Story 4.9: edits in memory, the dirty flags and Write; destroyed first
   std::atomic<bool> audio_running{false};  // set once the audio stream starts; the loader refuses to run while it is true
   if (!live_set_path.empty() || bootstrap) {
-    if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ)) {
-      std::fprintf(stderr, "engine-host: cannot bind the sample engine and the organ\n");
+    if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ) || !renderer->bind_engine(fm) || !renderer->bind_engine(va)) {
+      std::fprintf(stderr, "engine-host: cannot bind engines (sample, organ, fm, va)\n");
       return 1;
     }
     // Story 4.3: the Live Set is the first generation and reserves the voice pool for the whole Live Set (FX, organ,
@@ -336,6 +340,8 @@ int main(int argc, char** argv) {
       reservation.fx_cost = plane.fx_budget();
       reservation.waive_sample_floor = true;  // the engines are bound for the first jump, but nothing plays on them yet
       reservation.waive_organ_reservation = true;
+      reservation.waive_fm_floor = true;
+      reservation.waive_va_floor = true;
       const auto st = renderer->arbiter().reserve(reservation);
       if (st != core::VoiceArbiter::ReserveStatus::kOk) {
         std::fprintf(stderr, "engine-host: cannot reserve the FX budget (status %d)\n", static_cast<int>(st));

@@ -45,6 +45,10 @@ class VoiceArbiter final : public VoiceAllocator {
   static constexpr std::uint32_t kMaxStealRampFrames = 4800;  // 100 ms
   // The sample engine is guaranteed at least this many stereo voices (a product floor, NFR2).
   static constexpr std::uint32_t kSampleFloorVoices = 256;
+  // The FM engine is guaranteed at least this many voices (Story 12.5, FR12).
+  static constexpr std::uint32_t kFmFloorVoices = 128;
+  // The VA engine is guaranteed at least this many voices (Story 12.7, FR13).
+  static constexpr std::uint32_t kVaFloorVoices = 64;
   // A floored engine's voice_capacity() must be at least floor + this many voices: stolen voices keep
   // their slot for the whole ramp (4 ms), and the slack lets an engine below its floor always find a free
   // slot while up to this many voices are still fading (reserve() enforces it).
@@ -73,6 +77,8 @@ class VoiceArbiter final : public VoiceAllocator {
     // organ needs 73 keys' cost" checks, and only when the floor / the organ reservation really is zero. Default false: unchanged behaviour.
     bool waive_sample_floor = false;
     bool waive_organ_reservation = false;
+    bool waive_fm_floor = false;
+    bool waive_va_floor = false;
   };
 
   enum class ReserveStatus : std::uint8_t {
@@ -84,6 +90,8 @@ class VoiceArbiter final : public VoiceAllocator {
     kFloorsExceedBudget,    // step 3 does not fit after FX and organ
     kFloorExceedsCapacity,  // voice_capacity() < floor + kFadeHeadroomVoices
     kSampleFloorTooLow,     // sample engine bound with a floor below kSampleFloorVoices
+    kFmFloorTooLow,         // FM engine bound with a floor below kFmFloorVoices
+    kVaFloorTooLow,         // VA engine bound with a floor below kVaFloorVoices
   };
 
   struct Reservation {
@@ -104,8 +112,10 @@ class VoiceArbiter final : public VoiceAllocator {
   void unbind_last() noexcept;  // setup-time: undo the latest successful bind()
 
 #ifdef VELORA_ARBITER_TEST_HOOKS
-  // Tests only: lets small pools use a sample floor below kSampleFloorVoices. Not compiled in production.
+  // Tests only: lets small pools use a floor below the engine's standard floor. Not compiled in production.
   void set_min_sample_floor_for_tests(std::uint32_t voices) noexcept { min_sample_floor_ = voices; }
+  void set_min_fm_floor_for_tests(std::uint32_t voices) noexcept { min_fm_floor_ = voices; }
+  void set_min_va_floor_for_tests(std::uint32_t voices) noexcept { min_va_floor_ = voices; }
 #endif
 
   // Applies a Live Set configuration atomically: either everything is reserved or nothing changes.
@@ -241,6 +251,8 @@ class VoiceArbiter final : public VoiceAllocator {
   std::uint64_t serial_ = 1;  // note-on / note-off counter; a request never steals voices of its own event
   std::uint64_t req_ = 0;
   std::uint32_t min_sample_floor_ = kSampleFloorVoices;
+  std::uint32_t min_fm_floor_ = kFmFloorVoices;
+  std::uint32_t min_va_floor_ = kVaFloorVoices;
   std::atomic<std::uint64_t> steals_total_{0}, exhausted_{0};
   std::atomic<std::uint64_t> last_steal_{0};  // packed, 0 = none
 };

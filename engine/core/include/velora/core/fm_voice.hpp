@@ -92,7 +92,14 @@ class FmVoice {
 
   void stop() noexcept {
     held_ = false;
-    if (!sustained_) {
+    if (!sustained_ && !is_steal_fading_) {
+      trigger_release();
+    }
+  }
+
+  void key_released() noexcept {
+    held_ = false;
+    if (!sustained_ && !is_steal_fading_) {
       trigger_release();
     }
   }
@@ -222,6 +229,7 @@ class FmVoice {
   bool is_active() const noexcept { return active_; }
   bool is_held() const noexcept { return held_; }
   bool is_sustained() const noexcept { return sustained_; }
+  bool is_steal_fading() const noexcept { return is_steal_fading_; }
   uint32_t channel() const noexcept { return channel_; }
   uint8_t note() const noexcept { return note_; }
   float current_level() const noexcept { return current_level_; }

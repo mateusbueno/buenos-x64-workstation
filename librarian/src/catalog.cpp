@@ -473,9 +473,13 @@ CatalogStatus Catalog::init_schema() {
 CatalogStatus Catalog::migrate_forward(std::uint32_t from) {
   // Forward only; each step is one transaction that also writes the new schema_version and user_version, so a crash leaves the old or the new
   // version, never a mix. Step 1 -> 2 (Story 5.6) adds the libraries and instruments tables; favorites and recent rows are not touched. Step 2 -> 3 (Story 6.4) adds libraries.kind.
+  exec("PRAGMA foreign_keys = OFF;");
   for (std::uint32_t v = from; v < kCatalogSchemaVersion; ++v) {
     CatalogStatus st = begin();
-    if (st != CatalogStatus::kOk) return st == CatalogStatus::kSql ? CatalogStatus::kMigrationFailed : st;
+    if (st != CatalogStatus::kOk) {
+      exec("PRAGMA foreign_keys = ON;");
+      return st == CatalogStatus::kSql ? CatalogStatus::kMigrationFailed : st;
+    }
     if (v == 1) {
       st = exec(kSchemaV2Ddl);
     } else if (v == 2) {
@@ -505,6 +509,7 @@ CatalogStatus Catalog::migrate_forward(std::uint32_t from) {
     } else {
       last_error_ = "no migration from schema_version " + std::to_string(v);
       rollback();
+      exec("PRAGMA foreign_keys = ON;");
       return CatalogStatus::kMigrationFailed;
     }
     if (st == CatalogStatus::kOk) st = exec(("UPDATE meta SET value=" + std::to_string(v + 1) + " WHERE key='schema_version'").c_str());
@@ -512,11 +517,16 @@ CatalogStatus Catalog::migrate_forward(std::uint32_t from) {
     if (st == CatalogStatus::kOk && fault("migrate.before_commit")) st = CatalogStatus::kFaultInjected;
     if (st != CatalogStatus::kOk) {
       rollback();
+      exec("PRAGMA foreign_keys = ON;");
       return st == CatalogStatus::kFaultInjected ? st : CatalogStatus::kMigrationFailed;
     }
     st = commit();
-    if (st != CatalogStatus::kOk) return st;
+    if (st != CatalogStatus::kOk) {
+      exec("PRAGMA foreign_keys = ON;");
+      return st;
+    }
   }
+  exec("PRAGMA foreign_keys = ON;");
   migrated_ = true;
   schema_version_ = kCatalogSchemaVersion;
   return CatalogStatus::kOk;

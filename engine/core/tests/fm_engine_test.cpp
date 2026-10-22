@@ -14,7 +14,7 @@ void test_fm_engine_initialization_and_metadata() {
   FmEngine engine(48000.0f);
   assert(engine.type_id() == EngineTypeId::kFm);
   assert(engine.cost_units_per_voice() == 4);
-  assert(engine.voice_capacity() == 128);
+  assert(engine.voice_capacity() == 256);
   assert(engine.active_voice_count() == 0);
 
   // Check voice info on inactive slot

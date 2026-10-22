@@ -160,7 +160,7 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   std::vector<Unique> uniques;
   std::map<std::string, std::size_t> unique_of;               // key -> index into `uniques`
   std::vector<int> part_unique(static_cast<std::size_t>(ls.parts_size()), -1);  // the unique a sample part loads, -1 = none
-  std::uint32_t sample_parts = 0, organ_parts = 0;
+  std::uint32_t sample_parts = 0, organ_parts = 0, fm_parts = 0, va_parts = 0;
 
   for (int i = 0; i < ls.parts_size(); ++i) {
     if (cancelled()) return failure(LiveSetLoadStatus::kCancelled);
@@ -218,6 +218,12 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
       ++sample_parts;
     } else if (et == static_cast<std::uint32_t>(EngineTypeId::kOrgan)) {
       ++organ_parts;  // the organ needs no timbre
+      rep.state = pc.state = core::PartState::kReady;
+    } else if (et == static_cast<std::uint32_t>(EngineTypeId::kFm)) {
+      ++fm_parts;
+      rep.state = pc.state = core::PartState::kReady;
+    } else if (et == static_cast<std::uint32_t>(EngineTypeId::kVa)) {
+      ++va_parts;
       rep.state = pc.state = core::PartState::kReady;
     } else {
       rep.state = pc.state = core::PartState::kReady;
@@ -344,10 +350,17 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   if (organ_parts > 0) cfg.organ_rotary_cost = core::OrganEngine::reservation_cost_units(organ_parts);
   cfg.waive_organ_reservation = organ_parts == 0;
   if (sample_parts > 0 && available(static_cast<std::uint32_t>(EngineTypeId::kSample))) {
-    cfg.floors[0] = {static_cast<std::uint32_t>(EngineTypeId::kSample), options_.sample_floor_voices};
-    cfg.floor_count = 1;
+    cfg.floors[cfg.floor_count++] = {static_cast<std::uint32_t>(EngineTypeId::kSample), options_.sample_floor_voices};
   }
   cfg.waive_sample_floor = sample_parts == 0;  // no sample part: the floor is zero
+  if (fm_parts > 0 && available(static_cast<std::uint32_t>(EngineTypeId::kFm))) {
+    cfg.floors[cfg.floor_count++] = {static_cast<std::uint32_t>(EngineTypeId::kFm), options_.fm_floor_voices};
+  }
+  cfg.waive_fm_floor = fm_parts == 0;  // no FM part: the floor is zero
+  if (va_parts > 0 && available(static_cast<std::uint32_t>(EngineTypeId::kVa))) {
+    cfg.floors[cfg.floor_count++] = {static_cast<std::uint32_t>(EngineTypeId::kVa), options_.va_floor_voices};
+  }
+  cfg.waive_va_floor = va_parts == 0;  // no VA part: the floor is zero
 
   staged->live_set = ls;
   res.status = LiveSetLoadStatus::kOk;

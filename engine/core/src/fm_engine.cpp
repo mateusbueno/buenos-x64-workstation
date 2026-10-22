@@ -85,7 +85,10 @@ uint32_t FmEngine::allocate_voice_slot(uint32_t channel, uint32_t note) noexcept
 }
 
 EngineStatus FmEngine::start_voice(uint32_t channel, uint32_t note, uint32_t velocity16) noexcept {
-  uint32_t slot = allocate_voice_slot(channel, note);
+  uint32_t slot = acquire_slot(channel, note);
+  if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
+    return EngineStatus::kPoolExhausted;
+  }
   uint32_t part_idx = channel % kPartCount;
   uint8_t note7 = static_cast<uint8_t>(std::clamp(note, 0u, 127u));
 
@@ -108,6 +111,15 @@ EngineStatus FmEngine::stop_voice(uint32_t channel, uint32_t note) noexcept {
     }
   }
   return found ? EngineStatus::kOk : EngineStatus::kVoiceNotFound;
+}
+
+void FmEngine::key_released(uint32_t channel, uint32_t note) noexcept {
+  uint8_t note7 = static_cast<uint8_t>(std::clamp(note, 0u, 127u));
+  for (auto& v : voices_) {
+    if (v.is_active() && v.channel() == channel && v.note() == note7 && v.is_held()) {
+      v.key_released();
+    }
+  }
 }
 
 void FmEngine::set_param(uint32_t param_id, float value) noexcept {
@@ -186,18 +198,18 @@ bool FmEngine::voice_info(uint32_t slot, VoiceInfo& out) const noexcept {
   out.level = v.current_level();
   out.channel = v.channel();
   out.note = v.note();
-  if (v.is_held()) {
-    out.state = VoiceState::kHeld;
+  if (v.is_steal_fading() || (!v.is_held() && !v.is_sustained())) {
+    out.state = VoiceState::kReleasing;
   } else if (v.is_sustained()) {
     out.state = VoiceState::kSustained;
   } else {
-    out.state = VoiceState::kReleasing;
+    out.state = VoiceState::kHeld;
   }
   return true;
 }
 
 bool FmEngine::begin_steal_fade(uint32_t slot, uint32_t ramp_frames) noexcept {
-  if (slot >= kVoiceCapacity || !voices_[slot].is_active()) {
+  if (slot >= kVoiceCapacity || !voices_[slot].is_active() || voices_[slot].is_steal_fading()) {
     return false;
   }
   voices_[slot].begin_steal_fade(ramp_frames);

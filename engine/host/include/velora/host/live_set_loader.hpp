@@ -123,6 +123,8 @@ struct LiveSetLoaderOptions {
   std::uint64_t arbiter_budget = 1u << 20;           // cost units of the whole voice pool (calibrated on the board: Story 1.18)
   std::uint64_t fx_flat = 0;                         // extra flat FX reservation on top of the Live Set's own effect instances
   std::uint32_t sample_floor_voices = core::VoiceArbiter::kSampleFloorVoices;
+  std::uint32_t fm_floor_voices = core::VoiceArbiter::kFmFloorVoices;
+  std::uint32_t va_floor_voices = core::VoiceArbiter::kVaFloorVoices;
   std::uint32_t steal_ramp_frames = core::VoiceArbiter::kStealRampFrames;
   // Quiescence guard. The reservation (VoiceArbiter::reserve()) must not run while the audio callback renders. When set, the loader asks this
   // before it touches anything and refuses with kNotQuiesced when it returns true. engine-host answers "the audio stream is running";

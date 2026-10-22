@@ -112,6 +112,14 @@ VoiceArbiter::ReserveStatus VoiceArbiter::prepare_reservation(const LiveSetConfi
   if (sample >= 0 && fv[static_cast<std::size_t>(sample)] < min_sample_floor_ &&
       !(cfg.waive_sample_floor && fv[static_cast<std::size_t>(sample)] == 0))
     return ReserveStatus::kSampleFloorTooLow;
+  const int fm = index_of_type(static_cast<std::uint32_t>(EngineTypeId::kFm));
+  if (fm >= 0 && fv[static_cast<std::size_t>(fm)] < min_fm_floor_ &&
+      !(cfg.waive_fm_floor && fv[static_cast<std::size_t>(fm)] == 0))
+    return ReserveStatus::kFmFloorTooLow;
+  const int va = index_of_type(static_cast<std::uint32_t>(EngineTypeId::kVa));
+  if (va >= 0 && fv[static_cast<std::size_t>(va)] < min_va_floor_ &&
+      !(cfg.waive_va_floor && fv[static_cast<std::size_t>(va)] == 0))
+    return ReserveStatus::kVaFloorTooLow;
 
   // Reservation order: FX, organ+rotary, floors.
   std::uint64_t rem = cfg.budget;

@@ -552,7 +552,7 @@ void test_schema3_migration() {
     sqlite3_close(h);
   }
   std::unique_ptr<Catalog> cat;
-  CHECK(Catalog::open(t.sub("data"), cat) == CatalogStatus::kOk && cat->migrated() && cat->schema_version() == 3);
+  CHECK(Catalog::open(t.sub("data"), cat) == CatalogStatus::kOk && cat->migrated() && cat->schema_version() == kCatalogSchemaVersion);
   std::vector<LibraryRecord> rows;
   CHECK(cat->list_libraries(rows, true) == CatalogStatus::kOk && rows.size() == 1 && rows[0].kind == LibraryKind::kUser && rows[0].instruments.size() == 1);
   LibraryRecord got;
@@ -580,7 +580,7 @@ void test_schema3_migration() {
     sqlite3_close(e);
     cat.reset();
     std::unique_ptr<Catalog> again;
-    CHECK(Catalog::open(t.sub("data"), again) == CatalogStatus::kOk && again->migrated() && again->schema_version() == 3);
+    CHECK(Catalog::open(t.sub("data"), again) == CatalogStatus::kOk && again->migrated() && again->schema_version() == kCatalogSchemaVersion);
     CHECK(again->get_library("lib-a", got, found) == CatalogStatus::kOk && found && got.name == "A");
     cat = std::move(again);
   }
@@ -613,7 +613,7 @@ void test_schema3_migration() {
           sqlite3_column_int(cols, 0) == 0);
     sqlite3_finalize(cols);
     sqlite3_close(e);
-    CHECK(Catalog::open(u.sub("data"), c2) == CatalogStatus::kOk && c2->schema_version() == 3);
+    CHECK(Catalog::open(u.sub("data"), c2) == CatalogStatus::kOk && c2->schema_version() == kCatalogSchemaVersion);
   }
   // the CHECK constraint on the column
   sqlite3* h = nullptr;

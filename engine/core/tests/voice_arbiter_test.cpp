@@ -143,6 +143,8 @@ void route_all(BlockRenderer& br, std::uint32_t id) {
 VoiceArbiter::LiveSetConfig cfg(std::uint64_t budget) {
   VoiceArbiter::LiveSetConfig c;
   c.budget = budget;
+  c.waive_fm_floor = true;
+  c.waive_va_floor = true;
   return c;
 }
 void add_floor(VoiceArbiter::LiveSetConfig& c, std::uint32_t id, std::uint32_t voices) {
@@ -156,6 +158,7 @@ void test_reservation() {
   FakeEngine fm(EngineTypeId::kFm, 4, 80);
   CHECK(br->bind_engine(fm));
   auto& a = br->arbiter();
+  a.set_min_fm_floor_for_tests(0);
   CHECK(!a.reserved());
 
   auto c = cfg(100);
@@ -398,6 +401,7 @@ void test_no_candidate_exhausted() {
   auto br = std::make_unique<BlockRenderer>(8);
   FakeEngine fm(EngineTypeId::kFm, 2, 70);
   br->bind_engine(fm);
+  br->arbiter().set_min_fm_floor_for_tests(0);
   br->set_channel_engine(1, kFmId);
   auto c = cfg(4);
   add_floor(c, kFmId, 2);
@@ -432,6 +436,7 @@ void test_mixed_costs_and_floors() {
   auto br = std::make_unique<BlockRenderer>(40);  // tone: cost 1
   FakeEngine fm(EngineTypeId::kFm, 4, 70);        // cost 4
   br->bind_engine(fm);
+  br->arbiter().set_min_fm_floor_for_tests(0);
   br->set_channel_engine(1, kFmId);
   auto c = cfg(40);
   c.fx_cost = 4;
@@ -549,6 +554,189 @@ void test_sample_floor_256() {
   CHECK(a.steals() == a.steals(kToneId) + a.steals(kSampleId));
 }
 
+// Story 12.5: FM floor reservation in the shared pool
+void test_fm_floor_reservation() {
+  auto br = std::make_unique<BlockRenderer>(80);
+  FakeEngine fm(EngineTypeId::kFm, 4, 256);
+  CHECK(br->bind_engine(fm));
+  auto& a = br->arbiter();
+
+  // 1. waive_fm_floor = false and floor is 0 -> kFmFloorTooLow
+  VoiceArbiter::LiveSetConfig c;
+  c.budget = 2000;
+  c.waive_fm_floor = false;
+  CHECK(a.reserve(c) == RS::kFmFloorTooLow);
+
+  // 2. waive_fm_floor = false and floor < 128 -> kFmFloorTooLow
+  auto c_low = c;
+  add_floor(c_low, kFmId, 127);
+  CHECK(a.reserve(c_low) == RS::kFmFloorTooLow);
+
+  // 3. waive_fm_floor = false and floor >= 128 -> kOk
+  auto c_128 = c;
+  add_floor(c_128, kFmId, 128);
+  CHECK(a.reserve(c_128) == RS::kOk);
+  CHECK(a.floor_cost(kFmId) == 128 * 4);
+
+  // 4. waive_fm_floor = true and floor is 0 -> kOk (zero reservation when no FM part)
+  auto c_waived = c;
+  c_waived.waive_fm_floor = true;
+  CHECK(a.reserve(c_waived) == RS::kOk);
+  CHECK(a.floor_cost(kFmId) == 0);
+
+  // 5. waive_fm_floor = true but a floor < 128 is set -> kFmFloorTooLow (waive only applies when floor is 0)
+  auto c_waived_low = c_waived;
+  add_floor(c_waived_low, kFmId, 64);
+  CHECK(a.reserve(c_waived_low) == RS::kFmFloorTooLow);
+
+  // 6. Floor exceeds capacity: capacity is 256, so floor of 200 + 64 headroom > 256
+  auto c_huge = c;
+  c_huge.budget = 10000;
+  add_floor(c_huge, kFmId, 200);
+  CHECK(a.reserve(c_huge) == RS::kFloorExceedsCapacity);
+}
+
+// Story 12.5: Scripted scenario with FM pad layered over 256-voice piano, sustain pedal down, organ present
+void test_fm_piano_organ_shared_pool() {
+  SampleSrc src;
+  src.init(400000);
+  src.region(0, 127);
+  SampleEngine::Config sc;
+  sc.max_voices = 340;
+  SampleEngine se(sc);
+  se.set_instrument(src);
+  const std::uint32_t sc_cost = se.cost_units_per_voice();
+  CHECK(sc_cost == 5);
+
+  OrganEngine organ;
+  const std::uint32_t organ_cost = organ.cost_units_per_voice();
+  CHECK(organ.steal_protected());
+
+  FakeEngine fm(EngineTypeId::kFm, 4, 256);
+
+  auto br = std::make_unique<BlockRenderer>(100);
+  CHECK(br->bind_engine(se));
+  CHECK(br->bind_engine(organ));
+  CHECK(br->bind_engine(fm));
+
+  // Route channels:
+  // ch 1: organ
+  // ch 2..3: sample piano (256 notes)
+  // ch 4: FM pad
+  br->set_channel_engine(1, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
+  br->set_channel_engine(2, kSampleId);
+  br->set_channel_engine(3, kSampleId);
+  br->set_channel_engine(4, kFmId);
+  br->set_channel_engine(5, kFmId);
+
+  // Configuration with:
+  // FX cost = 50
+  // Organ reservation = 73 keys * organ_cost
+  // Sample floor = 256 voices (1280 cost units)
+  // FM floor = 128 voices (512 cost units)
+  // Shared remainder = 32 cost units (room for 8 extra FM voices)
+  const std::uint64_t organ_res = 73ull * organ_cost;
+  const std::uint64_t sample_res = 256ull * sc_cost;
+  const std::uint64_t fm_res = 128ull * 4;
+  const std::uint64_t shared_units = 32;
+
+  VoiceArbiter::LiveSetConfig c;
+  c.fx_cost = 50;
+  c.organ_rotary_cost = organ_res;
+  add_floor(c, kSampleId, 256);
+  add_floor(c, kFmId, 128);
+  c.budget = c.fx_cost + c.organ_rotary_cost + sample_res + fm_res + shared_units;
+
+  CHECK(br->arbiter().reserve(c) == RS::kOk);
+  auto& a = br->arbiter();
+  CHECK(a.reservation().shared == shared_units);
+  CHECK(a.floor_cost(kSampleId) == sample_res);
+  CHECK(a.floor_cost(kFmId) == fm_res);
+
+  // 1. Play Organ notes
+  on(*br, 1, 60, 60000);
+  on(*br, 1, 64, 60000);
+  render(*br, 2);
+  const std::uint32_t organ_active = organ.active_voices();
+  CHECK(organ_active >= 2);
+
+  // 2. Play 256 sample piano notes (filling piano floor)
+  for (std::uint32_t k = 0; k < 256; ++k) {
+    on(*br, 2 + k / 128, k % 128, 40000, 0);
+  }
+  render(*br, 2);
+  CHECK(se.active_voices() == 256);
+  CHECK(a.usage(kSampleId).live_cost == sample_res);
+
+  // 3. Play 128 FM pad notes (filling FM floor)
+  for (std::uint32_t k = 0; k < 128; ++k) {
+    on(*br, 4 + k / 128, k % 128, 40000, 0);
+  }
+  render(*br, 2);
+  CHECK(fm.active() == 128);
+  CHECK(a.usage(kFmId).live_cost == fm_res);
+
+  // Zero steals so far, everything is within its guaranteed floor
+  CHECK(a.steals() == 0);
+
+  // 4. Put sustain pedal down on FM channel (ch 4) and Sample channel (ch 2)
+  br->submit({make_control_change(0, 4, 64, 0xFFFFFFFFu), 0});
+  br->submit({make_control_change(0, 2, 64, 0xFFFFFFFFu), 0});
+  render(*br, 1);
+
+  // Release some notes on ch 4: because sustain pedal is down, they become pedal-sustained (prio 2)
+  off(*br, 4, 10);
+  off(*br, 4, 11);
+  render(*br, 1);
+  CHECK(fm.active() == 128);
+
+  // 5. Play 8 extra FM voices on ch 5 to completely fill the 32 shared units (8 * 4 = 32)
+  for (std::uint32_t k = 0; k < 8; ++k) {
+    on(*br, 5, 20 + k, 30000 + k * 1000); // varying velocities
+  }
+  render(*br, 2);
+  CHECK(fm.active() == 136); // 128 floor + 8 shared
+  CHECK(a.usage(kSampleId).used() + a.usage(kFmId).used() == sample_res + fm_res + shared_units);
+  CHECK(a.steals() == 0);
+
+  // 6. Test whole-Live-Set stealing under pressure:
+  // Play new note on test tone engine (cost 1).
+  // Victims CANNOT come from:
+  // - Organ (protected)
+  // - Sample engine (sits at 256 floor)
+  // - FM floor (128 voices are floored)
+  // - Lowest held note (prio 3)
+  // - Pedal-sustained notes (prio 2)
+  // Victims MUST come from the FM surplus voices on ch 5 (prio 1, quieter first).
+  // Note with lowest velocity was note 20 (velocity 30000).
+  on(*br, 0, 70, 60000);
+  render(*br, 1);
+  CHECK(a.steals() == 1);
+  CHECK(a.last_steal().engine_type_id == kFmId);
+  CHECK(a.last_steal().note == 20); // lowest velocity stolen first!
+  CHECK(a.steals(static_cast<std::uint32_t>(EngineTypeId::kOrgan)) == 0);
+  CHECK(a.steals(kSampleId) == 0);
+
+  // 7. Verify floor preservation:
+  // Hammer with tone notes. Tone notes can only steal from remaining FM surplus voices.
+  // Once FM surplus is exhausted, FM sits exactly at 128 voices!
+  for (std::uint32_t i = 0; i < 50; ++i) {
+    on(*br, 0, 71 + i % 30, 60000);
+    render(*br, 1);
+    CHECK(a.usage(kSampleId).live_cost >= sample_res);
+    CHECK(a.usage(kFmId).used() >= fm_res);
+    CHECK(organ.active_voices() >= organ_active);
+  }
+
+  // Sample piano never dropped below 256
+  CHECK(se.active_voices() >= 256);
+  CHECK(a.steals(kSampleId) == 0);
+  // Organ was never stolen
+  CHECK(a.steals(static_cast<std::uint32_t>(EngineTypeId::kOrgan)) == 0);
+  // FM never dropped below 128
+  CHECK(fm.active() >= 128);
+}
+
 // A note never steals the voices of its own note-on (all regions of one SFZ note).
 void test_own_event_not_stolen() {
   SampleSrc src;
@@ -661,6 +849,7 @@ Run script_run(bool use_sample) {
     id = kSampleId;
   } else {
     br->bind_engine(fm);
+    br->arbiter().set_min_fm_floor_for_tests(0);
   }
   br->set_channel_engine(1, id);
   auto c = cfg(60);
@@ -953,6 +1142,7 @@ void test_prepare_commit_handover() {
   CHECK(br->bind_engine(fm));
   br->set_channel_engine(1, kFmId);
   auto& a = br->arbiter();
+  a.set_min_fm_floor_for_tests(0);
 
   // prepare_reservation answers exactly what reserve() answers, for every refusal, and changes nothing in the arbiter.
   auto c = cfg(100);
@@ -1058,6 +1248,7 @@ void test_prepare_commit_handover() {
     br3->set_channel_engine(1, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
     br3->set_channel_engine(2, kFmId);
     auto& a3 = br3->arbiter();
+    a3.set_min_fm_floor_for_tests(0);
     auto ca3 = cfg(100000);
     ca3.organ_rotary_cost = static_cast<std::uint64_t>(organ3.cost_units_per_voice()) * 73;
     add_floor(ca3, kFmId, 3);
@@ -1099,6 +1290,8 @@ int main() {
   test_unreserved_is_legacy();
   test_mixed_costs_and_floors();
   test_sample_floor_256();
+  test_fm_floor_reservation();
+  test_fm_piano_organ_shared_pool();
   test_own_event_not_stolen();
   test_ramp_tone_and_sample();
   test_ramp_counts_until_silent();
