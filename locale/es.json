@@ -167,5 +167,19 @@
   "scenes.action.clear": "Limpiar",
   "scenes.hint.select_slot": "seleccionar slot",
   "scenes.hint.recall_scene": "cargar escena",
-  "scenes.hint.hold_write_to_save": "Mantén WRITE para guardar escena"
+  "scenes.hint.hold_write_to_save": "Mantén WRITE para guardar escena",
+  "write_dialog.title": "Guardar cambios?",
+  "write_dialog.scope.scene": "Escena",
+  "write_dialog.scope.whole_live_set": "Live Set completo",
+  "write_dialog.scope.save_as_new": "Guardar como nuevo…",
+  "write_dialog.scene_disabled_timbre": "Los cambios de timbre se guardan con el Live Set",
+  "write_dialog.changed_prefix": "Cambiado: %s",
+  "write_dialog.nothing_to_write": "Nada que guardar",
+  "write_dialog.error.name_in_use": "Ya existe un Live Set llamado '%s' en este setlist",
+  "write_dialog.error.storage_full": "No hay suficiente espacio para guardar. Libera espacio en Configuración › Almacenamiento y librería.",
+  "write_dialog.action.cancel": "EXIT · Cancelar",
+  "write_dialog.action.yes": "WRITE · Sí",
+  "unsaved_indicator": "◆",
+  "symbol.radio_selected": "●",
+  "symbol.radio_unselected": "○"
 }

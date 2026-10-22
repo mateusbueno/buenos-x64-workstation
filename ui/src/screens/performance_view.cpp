@@ -674,7 +674,12 @@ void PerformanceView::set_live_set(const std::string& name, int32_t index, bool 
   has_unsaved_edits_ = dirty;
 
   if (lbl_hero_name_) {
-    lv_label_set_text(lbl_hero_name_, name.c_str());
+    if (dirty) {
+      std::string display_name = name + " " + tr("unsaved_indicator");
+      lv_label_set_text(lbl_hero_name_, display_name.c_str());
+    } else {
+      lv_label_set_text(lbl_hero_name_, name.c_str());
+    }
   }
 
   if (lbl_hero_meta_) {
@@ -1070,6 +1075,8 @@ void PerformanceView::update_from_state(const ws::v1::State& state) {
 
   if (!state.live_set_name().empty()) {
     set_live_set(state.live_set_name(), 0, state.edits().current_dirty());
+  } else if (state.has_edits()) {
+    set_live_set(live_set_name_, 0, state.edits().current_dirty());
   }
 
   if (state.has_setlists()) {

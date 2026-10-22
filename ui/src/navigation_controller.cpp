@@ -1,5 +1,6 @@
 #include "velora/ui/navigation_controller.hpp"
 #include "velora/ui/ws_client.hpp"
+#include "velora/ui/locale.hpp"
 
 namespace velora::ui {
 
@@ -24,6 +25,11 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   if (!setlist_view_.create(parent)) return false;
   if (!setlist_browser_view_.create(parent)) return false;
   if (!scenes_view_.create(parent)) return false;
+  if (!write_dialog_.create(parent)) return false;
+
+  write_dialog_.set_on_write([this](ws::v1::WriteScope scope, const std::string& name) {
+    handle_write_confirmed(scope, name);
+  });
 
   // Wire callbacks
   performance_view_.set_rev_click_callback([this]() {
@@ -169,14 +175,117 @@ void NavigationController::navigate_back() {
   }
 }
 
+void NavigationController::open_write_dialog() {
+  std::string name = performance_view_.live_set_name();
+  if (name.empty()) name = "Live Set";
+  write_dialog_.open(name, has_timbre_edit_, change_summary_text_, name + " 2");
+}
+
+bool NavigationController::has_pending_edits() const {
+  if (manual_pending_edits_) return true;
+  if (performance_view_.has_unsaved_edits()) return true;
+  if (scenes_view_.has_unsaved_edits()) return true;
+  return false;
+}
+
+void NavigationController::show_nothing_to_write_hint() {
+  performance_view_.set_warning_takeover(tr("write_dialog.nothing_to_write"));
+}
+
+void NavigationController::handle_write_confirmed(ws::v1::WriteScope scope, const std::string& name) {
+  manual_pending_edits_ = false;
+  has_timbre_edit_ = false;
+  change_summary_text_ = "";
+  std::string new_name = (scope == ws::v1::WRITE_SCOPE_SAVE_AS_NEW && !name.empty()) ? name : performance_view_.live_set_name();
+  performance_view_.set_live_set(new_name, 0, false);
+  performance_view_.clear_warning_takeover();
+
+  if (client_) {
+    ws::v1::ClientMessage msg;
+    msg.set_request_id(501);
+    auto* cmd = msg.mutable_write_live_set();
+    cmd->set_scope(scope);
+    if (scope == ws::v1::WRITE_SCOPE_SAVE_AS_NEW) {
+      cmd->set_new_name(new_name);
+    }
+    client_->send_command(msg);
+  }
+}
+
+void NavigationController::set_pending_edits(bool pending, bool has_timbre, const std::string& summary) {
+  manual_pending_edits_ = pending;
+  has_timbre_edit_ = has_timbre;
+  change_summary_text_ = summary;
+  performance_view_.set_live_set(performance_view_.live_set_name(), 0, pending);
+}
+
 void NavigationController::update_from_state(const ws::v1::State& state) {
   performance_view_.update_from_state(state);
   setlist_view_.update_from_state(state);
   setlist_browser_view_.update_from_state(state);
   scenes_view_.update_from_state(state);
+
+  if (state.has_edits()) {
+    manual_pending_edits_ = state.edits().current_dirty();
+    has_timbre_edit_ = state.edits().has_timbre_edit();
+    change_summary_text_ = state.edits().change_summary_text();
+  }
 }
 
 void NavigationController::on_panel_event(const PanelEvent& ev) {
+  // If WriteDialog is open, it captures all panel events
+  if (write_dialog_.is_open()) {
+    write_dialog_.on_panel_event(ev);
+    return;
+  }
+
+  // Handle WRITE hold vs short press
+  if (ev.type == PanelEventType::Button && ev.id == MCU_BTN_WRITE) {
+    if (ev.pressed) {
+      write_btn_down_time_us_ = (ev.timestamp_us > 0) ? ev.timestamp_us : 1;
+      return;
+    } else {
+      uint64_t dur = (ev.timestamp_us > write_btn_down_time_us_ && write_btn_down_time_us_ > 0) ?
+                     (ev.timestamp_us - write_btn_down_time_us_) : 0;
+      write_btn_down_time_us_ = 0;
+      if (dur >= write_hold_threshold_us_) {
+        if (has_pending_edits()) {
+          open_write_dialog();
+        } else {
+          show_nothing_to_write_hint();
+        }
+        return;
+      }
+
+      // Short press release (< 0.5s): forward to active surface
+      PanelEvent short_press = ev;
+      short_press.pressed = true;
+      switch (current_surface_) {
+        case SurfaceId::Performance:
+          show_nothing_to_write_hint();
+          break;
+        case SurfaceId::Scenes:
+          scenes_view_.on_panel_event(short_press);
+          break;
+        case SurfaceId::Setlist:
+          setlist_view_.on_panel_event(short_press);
+          break;
+        case SurfaceId::SetlistBrowser:
+          setlist_browser_view_.on_panel_event(short_press);
+          break;
+        case SurfaceId::Effects:
+          effects_view_.on_panel_event(short_press);
+          break;
+        case SurfaceId::Launcher:
+          launcher_view_.on_panel_event(short_press);
+          break;
+        default:
+          break;
+      }
+      return;
+    }
+  }
+
   // Global Encoders and Knob Mode toggle: operate per current mode across ANY surface
   if (ev.type == PanelEventType::Button && ev.pressed && ev.id == MCU_BTN_TOGGLE_PART_ALL_ASSIGN) {
     performance_view_.on_panel_event(ev);

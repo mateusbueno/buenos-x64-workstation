@@ -53,6 +53,7 @@ add_library(velora_ui
   src/widgets/segmented_control.cpp
   src/components/on_screen_keyboard.cpp
   src/components/action_sheet.cpp
+  src/components/write_dialog.cpp
   src/virtual_panel.cpp
   src/theme.cpp
   src/adapters/headless_adapter.cpp
@@ -164,6 +165,11 @@ add_executable(scenes_view_test tests/scenes_view_test.cpp)
 target_link_libraries(scenes_view_test PRIVATE velora_ui)
 add_test(NAME scenes_view_test COMMAND scenes_view_test)
 set_tests_properties(scenes_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(write_dialog_test tests/write_dialog_test.cpp)
+target_link_libraries(write_dialog_test PRIVATE velora_ui)
+add_test(NAME write_dialog_test COMMAND write_dialog_test)
+set_tests_properties(write_dialog_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)

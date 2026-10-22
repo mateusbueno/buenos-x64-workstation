@@ -11,6 +11,7 @@
 #include "velora/ui/screens/setlist_view.hpp"
 #include "velora/ui/screens/setlist_browser_view.hpp"
 #include "velora/ui/screens/scenes_view.hpp"
+#include "velora/ui/components/write_dialog.hpp"
 
 namespace velora::ui {
 
@@ -48,6 +49,13 @@ class NavigationController {
   SetlistView& setlist_view() noexcept { return setlist_view_; }
   SetlistBrowserView& setlist_browser_view() noexcept { return setlist_browser_view_; }
   ScenesView& scenes_view() noexcept { return scenes_view_; }
+  WriteDialog& write_dialog() noexcept { return write_dialog_; }
+
+  void open_write_dialog();
+  bool has_pending_edits() const;
+  void show_nothing_to_write_hint();
+  void handle_write_confirmed(ws::v1::WriteScope scope, const std::string& name);
+  void set_pending_edits(bool pending, bool has_timbre = false, const std::string& summary = "");
 
   // Testing helpers
   int live_set_step_count() const noexcept { return live_set_step_count_; }
@@ -65,6 +73,7 @@ class NavigationController {
   SetlistView setlist_view_;
   SetlistBrowserView setlist_browser_view_;
   ScenesView scenes_view_;
+  WriteDialog write_dialog_;
 
   SurfaceId current_surface_{SurfaceId::Performance};
   SurfaceId previous_surface_{SurfaceId::Performance};
@@ -72,6 +81,12 @@ class NavigationController {
 
   int live_set_step_count_{0};
   int scene_step_count_{0};
+
+  uint64_t write_btn_down_time_us_{0};
+  uint64_t write_hold_threshold_us_{500000};
+  bool manual_pending_edits_{false};
+  bool has_timbre_edit_{false};
+  std::string change_summary_text_;
 };
 
 }  // namespace velora::ui
