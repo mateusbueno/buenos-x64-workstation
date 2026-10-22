@@ -35,6 +35,7 @@ add_subdirectory(tools/content-pack)
 add_subdirectory(tools/factory-release)
 add_subdirectory(tools/registry)
 add_subdirectory(tools/spikes)
+add_subdirectory(ui)
 
 # Dependency-purity gate for engine/core (see tools/ci/check_core_deps.py).
 if(DEFINED ENV{CI})
@@ -48,6 +49,13 @@ if(Python3_Interpreter_FOUND)
                    --root ${CMAKE_SOURCE_DIR})
   add_test(NAME core_deps_purity_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_core_deps.py
+                   --self-test)
+  # Story 2.17: UI strings lint check
+  add_test(NAME ui_strings_lint
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_ui_strings.py
+                   --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME ui_strings_lint_selftest
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_ui_strings.py
                    --self-test)
   # Story 6.1 (AR34/NFR23): no private key material in the git index / working tree.
   add_test(NAME no_private_keys

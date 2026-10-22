@@ -49,6 +49,13 @@
       "license": "Apache-2.0",
       "notice_marker": "## 7. OpenSSL 3",
       "build_dependency": true
+    },
+    {
+      "name": "lvgl",
+      "version": "9.6.0",
+      "license": "MIT",
+      "notice_marker": "## 8. LVGL 9.6.0",
+      "build_dependency": true
     }
   ]
 }

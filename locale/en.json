@@ -32,5 +32,14 @@
   "category.world.full": "World",
   "category.world.short": "World",
   "category.fx_ambient.full": "FX & Ambient",
-  "category.fx_ambient.short": "FX/Amb"
+  "category.fx_ambient.short": "FX/Amb",
+  "shell.top_bar.title": "Velora 73",
+  "shell.top_bar.tempo": "Tempo",
+  "shell.top_bar.clock_internal": "INT",
+  "shell.top_bar.clock_din": "DIN",
+  "shell.top_bar.clock_usb": "USB",
+  "shell.top_bar.clock_lost": "CLOCK LOST",
+  "shell.hint.ready": "Ready",
+  "shell.hint.live_set": "Live Set",
+  "shell.hint.write_to_save": "Hold WRITE to save edits"
 }

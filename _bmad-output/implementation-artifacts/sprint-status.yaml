@@ -78,7 +78,7 @@ development_status:
   2-14-organ-blind-abx-listening-test-with-professional-keyboardist: backlog
   2-15-design-story-effects-surface-mockup: backlog
   2-16-design-story-organ-section-of-the-part-surface: backlog
-  2-17-device-ui-shell-on-the-lvgl-simulator-and-the-dev-board: backlog
+  2-17-device-ui-shell-on-the-lvgl-simulator-and-the-dev-board: done
   2-18-design-tokens-stage-and-studio-themes-and-the-contrast-gate: backlog
   2-19-hint-bar-list-row-segmented-control-and-the-mac-virtual-pane: backlog
   2-20-effects-surface-part-inserts: backlog

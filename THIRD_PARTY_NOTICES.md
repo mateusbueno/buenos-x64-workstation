@@ -361,6 +361,33 @@ Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
 Licensed under the Apache License 2.0 (the "License"). You may not use this software except in compliance with the License. You can obtain a copy of the
 License at https://www.openssl.org/source/license.html (header text as shipped in the installed OpenSSL 3 headers; the license text itself is in section 2).
 
+## 8. LVGL 9.6.0 (Light and Versatile Graphics Library) — MIT
+
+Build and link dependency of the `ui` process (Story 2.17: LVGL 9.6 with SDL backend on macOS simulator and DRM/KMS + evdev backend on dev board).
+The `ui` process is isolated from `engine/core` and `engine/ports`.
+
+MIT License
+
+Copyright (c) 2026 LVGL Kft.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## Not shipped: test oracle
 
 The sfizz renderer (`sfizz_render`, sfizz 1.2.3, commit 4e70dc0b) used by the null tests (Story 1.15) is neither vendored in this

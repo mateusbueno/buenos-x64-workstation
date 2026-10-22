@@ -313,8 +313,8 @@ void test_locale_files() {
     CHECK(cat.category_label("pt-BR", c) == l.pt && cat.category_label("pt-BR", c, true) == l.pt_s);
     CHECK(cat.category_label("es", c) == l.es && cat.category_label("es", c, true) == l.es_s);
   }
-  // No other keys yet: the category entries are the whole catalog. (Epic 10 extends it; relax then.)
-  CHECK(cat.keys("en").size() == 2 * kCategoryCount);
+  // Category entries plus UI shell keys (Story 2.17; Epic 10 extends further).
+  CHECK(cat.keys("en").size() >= 2 * kCategoryCount);
   CHECK(cat.category_label("en", Category::kNone).empty());
   // Short labels are measured in code points, not bytes: "P.Elétrico" is 10 code points and 11 bytes.
   const std::string pe(*cat.find_own("pt-BR", "category.epiano.short"));

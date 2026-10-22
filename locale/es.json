@@ -32,5 +32,14 @@
   "category.world.full": "Étnicos",
   "category.world.short": "Étnicos",
   "category.fx_ambient.full": "Efectos & Ambientes",
-  "category.fx_ambient.short": "Efectos"
+  "category.fx_ambient.short": "Efectos",
+  "shell.top_bar.title": "Velora 73",
+  "shell.top_bar.tempo": "Tempo",
+  "shell.top_bar.clock_internal": "INT",
+  "shell.top_bar.clock_din": "DIN",
+  "shell.top_bar.clock_usb": "USB",
+  "shell.top_bar.clock_lost": "CLOCK PERDIDO",
+  "shell.hint.ready": "Listo",
+  "shell.hint.live_set": "Live Set",
+  "shell.hint.write_to_save": "Mantenga WRITE para guardar cambios"
 }
