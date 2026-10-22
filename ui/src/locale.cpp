@@ -102,8 +102,55 @@ bool Locale::set_locale(const std::string& locale_code) {
   return true;
 }
 
+static std::string pseudo_localize(const std::string& str) {
+  if (str.empty()) return str;
+  std::string res;
+  res.reserve(str.size() * 2 + 16);
+  res.push_back('[');
+  for (char c : str) {
+    switch (c) {
+      case 'a': res += "å"; break;
+      case 'e': res += "é"; break;
+      case 'i': res += "î"; break;
+      case 'o': res += "ö"; break;
+      case 'u': res += "û"; break;
+      case 'c': res += "ç"; break;
+      case 'r': res += "ŕ"; break;
+      case 's': res += "š"; break;
+      case 't': res += "ţ"; break;
+      case 'w': res += "ŵ"; break;
+      case 'W': res += "Ŵ"; break;
+      case 'A': res += "Á"; break;
+      case 'C': res += "Ç"; break;
+      case 'E': res += "Ê"; break;
+      case 'O': res += "Õ"; break;
+      case 'N': res += "Ñ"; break;
+      default: res.push_back(c); break;
+    }
+  }
+  // +40% expansion with middle/end dots
+  size_t pad = (str.size() * 4) / 10;
+  if (pad == 0) pad = 1;
+  for (size_t i = 0; i < pad; ++i) {
+    res += "·";
+  }
+  res.push_back(']');
+  return res;
+}
+
 std::string Locale::tr(const std::string& key) const {
   std::lock_guard<std::mutex> lock(mutex_);
+  if (current_locale_ == "pseudo") {
+    auto it_en = catalogs_.find("en");
+    if (it_en != catalogs_.end()) {
+      auto it_key = it_en->second.find(key);
+      if (it_key != it_en->second.end()) {
+        return pseudo_localize(it_key->second);
+      }
+    }
+    return pseudo_localize(key);
+  }
+
   // 1. Try active locale
   auto it_cat = catalogs_.find(current_locale_);
   if (it_cat != catalogs_.end()) {

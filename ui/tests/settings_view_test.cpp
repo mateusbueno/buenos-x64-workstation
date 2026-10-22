@@ -171,12 +171,15 @@ void test_settings_navigation_controller_integration() {
   exit_ev.id = MCU_BTN_EXIT;
   exit_ev.pressed = true;
   nav.on_panel_event(exit_ev);
+  exit_ev.pressed = false;
+  nav.on_panel_event(exit_ev);
 
   assert(!nav.settings_view().is_picker_open());
   assert(nav.current_surface() == SurfaceId::Settings);
 
   // Next EXIT returns to surface_before_launcher_ (Performance)
-  nav.on_panel_event(exit_ev);
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
   std::cout << "[PASS] test_settings_navigation_controller_integration\n";

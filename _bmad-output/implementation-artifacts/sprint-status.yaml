@@ -247,15 +247,15 @@ development_status:
   9-22-velora-studio-accessibility-audit: backlog
   epic-9-retrospective: optional
 
-  epic-10: backlog
-  10-1-settings-surface-with-the-seven-canonical-sections: backlog
-  10-2-settings-keyboard-pedals-and-midi-clock-rows: backlog
-  10-3-theme-selection-on-the-device: backlog
-  10-4-screen-and-panel-led-brightness: backlog
-  10-5-brightness-quick-path-hold-exit-and-turn-value: backlog
-  10-6-large-text-on-performance-and-reduced-motion: backlog
-  10-7-pt-br-and-es-locale-catalogs-and-language-selection: backlog
-  10-8-pseudo-localization-qa-and-truncation-rules: backlog
+  epic-10: done
+  10-1-settings-surface-with-the-seven-canonical-sections: done
+  10-2-settings-keyboard-pedals-and-midi-clock-rows: done
+  10-3-theme-selection-on-the-device: done
+  10-4-screen-and-panel-led-brightness: done
+  10-5-brightness-quick-path-hold-exit-and-turn-value: done
+  10-6-large-text-on-performance-and-reduced-motion: done
+  10-7-pt-br-and-es-locale-catalogs-and-language-selection: done
+  10-8-pseudo-localization-qa-and-truncation-rules: done
   epic-10-retrospective: optional
 
   epic-11: in-progress

@@ -8,7 +8,12 @@
 
 using namespace velora::ui;
 
-static void test_navigation() {
+static void tap_exit(NavigationController& nav) {
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
+}
+
+void test_navigation() {
   lv_init();
   Locale::instance().initialize("", "en");
 
@@ -27,7 +32,7 @@ static void test_navigation() {
   assert(lv_obj_is_hidden(nav.setlist_view().skeleton().root_container()));
 
   // 2. EXIT on Performance is a NO-OP
-  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  tap_exit(nav);
   assert(nav.current_surface() == SurfaceId::Performance);
 
   // 3. MENU toggles Launcher
@@ -62,12 +67,12 @@ static void test_navigation() {
   assert(nav.effects_view().current_mode() == EffectsViewMode::ParamEditor);
 
   // First EXIT closes ParamEditor, returning to ChainList
-  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  tap_exit(nav);
   assert(nav.effects_view().current_mode() == EffectsViewMode::ChainList);
   assert(nav.current_surface() == SurfaceId::Effects);
 
   // Second EXIT returns to the surface Launcher was opened from (Performance)
-  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  tap_exit(nav);
   assert(nav.current_surface() == SurfaceId::Performance);
 
   // 5b. Launcher navigation to Setlist (index 1)
@@ -78,7 +83,7 @@ static void test_navigation() {
   nav.on_panel_event(PanelEvent::button_press(MCU_BTN_WRITE));
   assert(nav.current_surface() == SurfaceId::Setlist);
   assert(!lv_obj_is_hidden(nav.setlist_view().skeleton().root_container()));
-  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  tap_exit(nav);
   assert(nav.current_surface() == SurfaceId::Performance);
 
   // 6. Library tile in Launcher (Library = 2)
@@ -94,7 +99,7 @@ static void test_navigation() {
   assert(nav.current_surface() == SurfaceId::Library);
 
   // EXIT returns back to Performance
-  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  tap_exit(nav);
   assert(nav.current_surface() == SurfaceId::Performance);
 
   // 7. Global Stepping: LIVE SET ◀ ▶ and SCENE ◀ ▶ work on ANY surface
@@ -119,11 +124,10 @@ static void test_navigation() {
   // 8. REV tap on Performance opens Effects
   nav.navigate_to(SurfaceId::Performance);
   assert(nav.current_surface() == SurfaceId::Performance);
-  lv_obj_send_event(nav.performance_view().rev_button(), LV_EVENT_CLICKED, nullptr);
+  nav.performance_view().simulate_long_press(nav.performance_view().rev_button());
   assert(nav.current_surface() == SurfaceId::Effects);
 
   lv_timer_handler();
-  adapter.shutdown();
 
   std::cout << "[PASS] test_navigation\n";
 }

@@ -825,6 +825,45 @@ void PerformanceView::set_modes(bool drawbars, bool scenes_mode, int32_t knob_mo
   update_top_bar_modes();
 }
 
+void PerformanceView::set_large_text(bool enabled) {
+  large_text_ = enabled;
+  for (auto* sub : scene_sub_objs_) {
+    if (sub) lv_obj_set_hidden(sub, large_text_);
+  }
+  for (auto* cat : part_cat_objs_) {
+    if (cat) lv_obj_set_hidden(cat, large_text_);
+  }
+  for (auto* name : part_name_objs_) {
+    if (name) {
+      lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+      if (large_text_) {
+        lv_obj_set_style_text_font(name, &lv_font_montserrat_18, LV_PART_MAIN);
+      } else {
+        lv_obj_set_style_text_font(name, &lv_font_montserrat_14, LV_PART_MAIN);
+      }
+    }
+  }
+  for (auto* title : scene_title_objs_) {
+    if (title) {
+      if (large_text_) {
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+      } else {
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, LV_PART_MAIN);
+      }
+    }
+  }
+  if (lbl_hero_name_) {
+    lv_label_set_long_mode(lbl_hero_name_, LV_LABEL_LONG_DOT);
+    if (large_text_) {
+      lv_obj_set_style_text_font(lbl_hero_name_, &lv_font_montserrat_24, LV_PART_MAIN);
+    } else {
+      lv_obj_set_style_text_font(lbl_hero_name_, &lv_font_montserrat_18, LV_PART_MAIN);
+    }
+  }
+  update_scene_tiles();
+  update_part_strips();
+}
+
 void PerformanceView::recall_scene(int32_t scene_idx) {
   if (scene_idx < 0 || scene_idx >= 8) return;
   current_scene_idx_ = scene_idx;
@@ -970,6 +1009,7 @@ void PerformanceView::update_scene_tiles() {
       lv_obj_set_style_border_width(tile, 1, LV_PART_MAIN);
       lv_obj_set_style_text_color(lbl_t, p.muted, LV_PART_MAIN);
     }
+    lv_obj_set_hidden(lbl_s, large_text_);
   }
 }
 
@@ -1121,6 +1161,7 @@ void PerformanceView::update_part_strips() {
       lv_obj_set_hidden(ghost, true);
       lv_obj_set_hidden(chev, true);
     }
+    lv_obj_set_hidden(lbl_c, large_text_);
   }
 }
 
@@ -1457,6 +1498,37 @@ void PerformanceView::update_drawbars_ui() {
     char val_buf[4];
     std::snprintf(val_buf, sizeof(val_buf), "%u", val);
     lv_label_set_text(drawbar_val_objs_[i], val_buf);
+
+    // UX-DR3 theme-invariant drawbar edge rule:
+    const auto& inv = Theme::invariant();
+    const auto& p = Theme::current();
+    bool is_studio = (Theme::current_id() == ThemeId::Studio);
+    lv_obj_t* head = drawbar_head_objs_[i];
+
+    if (i == 0 || i == 1) {
+      lv_obj_set_style_bg_color(head, inv.drawbar_brown, LV_PART_MAIN);
+      lv_obj_set_style_border_width(head, 0, LV_PART_MAIN);
+    } else if (i == 2 || i == 3 || i == 5 || i == 8) {
+      lv_obj_set_style_bg_color(head, inv.drawbar_white, LV_PART_MAIN);
+      if (is_studio) {
+        lv_obj_set_style_border_color(head, inv.drawbar_white, LV_PART_MAIN);
+        lv_obj_set_style_border_width(head, 2, LV_PART_MAIN);
+      } else {
+        lv_obj_set_style_border_width(head, 0, LV_PART_MAIN);
+      }
+    } else {
+      lv_obj_set_style_bg_color(head, inv.drawbar_black, LV_PART_MAIN);
+      if (!is_studio) {
+        lv_obj_set_style_border_color(head, inv.drawbar_black, LV_PART_MAIN);
+        lv_obj_set_style_border_width(head, 2, LV_PART_MAIN);
+      } else {
+        lv_obj_set_style_border_width(head, 0, LV_PART_MAIN);
+      }
+    }
+
+    if (i < drawbar_track_objs_.size() && drawbar_track_objs_[i]) {
+      lv_obj_set_style_bg_color(drawbar_track_objs_[i], is_studio ? p.surface : p.line, LV_PART_MAIN);
+    }
   }
 }
 

@@ -158,6 +158,9 @@ class PerformanceView {
   lv_obj_t* context_label() const noexcept { return lbl_context_; }
   lv_obj_t* rev_button() const noexcept { return btn_status_rev_; }
 
+  void set_large_text(bool enabled);
+  bool is_large_text() const noexcept { return large_text_; }
+
   void recall_scene(int32_t scene_idx);
 
   // Accessors for testing
@@ -313,6 +316,7 @@ class PerformanceView {
   uint64_t last_tempo_update_ms_{0};
 
   // Modes
+  bool large_text_{false};
   bool mode_drawbars_{false};
   bool mode_scenes_{false};
   int32_t mode_knobs_{0}; // 0 = PART, 1 = ALL, 2 = ASSIGN

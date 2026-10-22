@@ -1,6 +1,7 @@
 #include "velora/ui/navigation_controller.hpp"
 #include "velora/ui/ws_client.hpp"
 #include "velora/ui/locale.hpp"
+#include "velora/ui/theme.hpp"
 
 namespace velora::ui {
 
@@ -175,6 +176,8 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     set_write_hold_ms(c.write_hold_ms);
     set_panel_guard(c.panel_guard);
     boot_view_.set_reduced_motion(c.reduced_motion);
+    performance_view_.set_large_text(c.large_text);
+    Theme::set_theme((c.theme == "studio") ? ThemeId::Studio : ThemeId::Stage);
   });
 
   // Apply current system config
@@ -185,6 +188,8 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   set_write_hold_ms(init_cfg.write_hold_ms);
   set_panel_guard(init_cfg.panel_guard);
   boot_view_.set_reduced_motion(init_cfg.reduced_motion);
+  performance_view_.set_large_text(init_cfg.large_text);
+  Theme::set_theme((init_cfg.theme == "studio") ? ThemeId::Studio : ThemeId::Stage);
 
   launcher_view_.set_tile_select_callback([this](LauncherTileId tile) {
     switch (tile) {
@@ -460,11 +465,6 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
     }
   }
 
-  if (notice_toast_.is_visible() && ev.type == PanelEventType::Button && ev.pressed && ev.id == MCU_BTN_EXIT) {
-    notice_toast_.hide();
-    return;
-  }
-
   // Global Encoders and Knob Mode toggle: operate per current mode across ANY surface
   if (ev.type == PanelEventType::Button && ev.pressed && ev.id == MCU_BTN_TOGGLE_PART_ALL_ASSIGN) {
     performance_view_.on_panel_event(ev);
@@ -543,9 +543,46 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       return;
     }
+  }
 
-    // 3. EXIT Button Navigation Rules
-    if (ev.id == MCU_BTN_EXIT) {
+  // Quick path: hold EXIT and turn VALUE from ANY surface
+  if (exit_btn_down_ && ev.type == PanelEventType::Encoder && ev.id == MCU_CTRL_VALUE_ENCODER) {
+    exit_turned_value_ = true;
+    auto& cfg = SystemConfig::instance();
+    int32_t b = static_cast<int32_t>(cfg.screen_brightness) + ev.delta * 5;
+    b = std::clamp(b, 5, 100);
+    cfg.screen_brightness = static_cast<uint32_t>(b);
+    cfg.save_to_file();
+
+    if (!performance_view_.is_assign_overlay_visible()) {
+      const std::string& loc = Locale::instance().current_locale();
+      std::string pct_str = (loc == "pt-BR") ? (std::to_string(b) + "%") : (std::to_string(b) + " %");
+      char toast_msg[64];
+      std::snprintf(toast_msg, sizeof(toast_msg), tr("notice.brightness").c_str(), pct_str.c_str());
+      notice_toast_.show(toast_msg);
+    }
+    return;
+  }
+
+  // 3. EXIT Button Navigation Rules: Press arms quick path, release executes back navigation (or cancels if turned VALUE)
+  if (ev.type == PanelEventType::Button && ev.id == MCU_BTN_EXIT) {
+    if (ev.pressed) {
+      exit_btn_down_ = true;
+      exit_turned_value_ = false;
+      return;
+    } else {
+      exit_btn_down_ = false;
+      if (exit_turned_value_) {
+        exit_turned_value_ = false;
+        return; // Quick path cancelled back navigation
+      }
+      if (notice_toast_.is_visible()) {
+        notice_toast_.hide();
+        return;
+      }
+      PanelEvent press_ev = ev;
+      press_ev.pressed = true;
+
       if (current_surface_ == SurfaceId::Performance) {
         // Rule: On Performance EXIT does nothing
         return;
@@ -557,7 +594,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       if (current_surface_ == SurfaceId::Effects) {
         // If in parameter editor, Effects handles EXIT to return to chain list
         if (effects_view_.current_mode() == EffectsViewMode::ParamEditor) {
-          effects_view_.on_panel_event(ev);
+          effects_view_.on_panel_event(press_ev);
           return;
         }
         // Otherwise return to the surface Launcher was opened from
@@ -566,7 +603,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       if (current_surface_ == SurfaceId::Setlist) {
         if (setlist_view_.keyboard().is_open()) {
-          setlist_view_.on_panel_event(ev);
+          setlist_view_.on_panel_event(press_ev);
           return;
         }
         navigate_to(surface_before_launcher_);
@@ -574,7 +611,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       if (current_surface_ == SurfaceId::SetlistBrowser) {
         if (setlist_browser_view_.action_sheet().is_open() || setlist_browser_view_.keyboard().is_open()) {
-          setlist_browser_view_.on_panel_event(ev);
+          setlist_browser_view_.on_panel_event(press_ev);
           return;
         }
         navigate_to(surface_before_launcher_);
@@ -582,7 +619,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       if (current_surface_ == SurfaceId::Scenes) {
         if (scenes_view_.keyboard().is_open()) {
-          scenes_view_.on_panel_event(ev);
+          scenes_view_.on_panel_event(press_ev);
           return;
         }
         navigate_to(surface_before_launcher_);
@@ -590,7 +627,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       if (current_surface_ == SurfaceId::Part) {
         if (part_view_.is_timbre_picker_open()) {
-          part_view_.on_panel_event(ev);
+          part_view_.on_panel_event(press_ev);
           return;
         }
         navigate_to(surface_before_launcher_);
@@ -598,7 +635,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       if (current_surface_ == SurfaceId::Settings) {
         if (settings_view_.is_picker_open()) {
-          settings_view_.on_panel_event(ev);
+          settings_view_.on_panel_event(press_ev);
           return;
         }
         navigate_to(surface_before_launcher_);
@@ -610,7 +647,7 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       }
       if (current_surface_ == SurfaceId::Import) {
         if (import_view_.category_picker().is_visible()) {
-          import_view_.on_panel_event(ev);
+          import_view_.on_panel_event(press_ev);
           return;
         }
         navigate_to(surface_before_launcher_);

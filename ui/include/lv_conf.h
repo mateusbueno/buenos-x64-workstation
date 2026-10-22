@@ -24,6 +24,11 @@
 #define LV_USE_SLIDER 1
 #define LV_USE_SWITCH 1
 
+/* Fonts */
+#define LV_FONT_MONTSERRAT_14 1
+#define LV_FONT_MONTSERRAT_18 1
+#define LV_FONT_MONTSERRAT_24 1
+
 /* Drivers */
 #if defined(__APPLE__) || defined(VELORA_USE_SDL)
   #define LV_USE_SDL 1

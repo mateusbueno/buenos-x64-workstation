@@ -65,12 +65,43 @@ class SettingsView {
   void set_on_edit(EditCallback cb) { on_edit_ = std::move(cb); }
   void set_on_config_changed(ConfigChangeCallback cb) { on_config_changed_ = std::move(cb); }
 
+  SegmentedControl& seg_theme() noexcept { return seg_theme_; }
+  SegmentedControl& seg_language() noexcept { return seg_language_; }
+  SegmentedControl& seg_screen_brightness() noexcept { return seg_screen_brightness_; }
+  SegmentedControl& seg_led_brightness() noexcept { return seg_led_brightness_; }
+  SegmentedControl& seg_large_text() noexcept { return seg_large_text_; }
   SegmentedControl& seg_touch() noexcept { return seg_touch_; }
   SegmentedControl& seg_write_hold() noexcept { return seg_write_hold_; }
   SegmentedControl& seg_long_press() noexcept { return seg_long_press_; }
   SegmentedControl& seg_panel_guard() noexcept { return seg_panel_guard_; }
   SegmentedControl& seg_reduced_motion() noexcept { return seg_reduced_motion_; }
+  SegmentedControl& seg_boot_into() noexcept { return seg_boot_into_; }
   lv_obj_t* display_container() const noexcept { return display_container_; }
+
+  SegmentedControl& seg_velocity_curve() noexcept { return seg_velocity_curve_; }
+  SegmentedControl& seg_aftertouch() noexcept { return seg_aftertouch_; }
+  lv_obj_t* card_aftertouch() const noexcept { return card_aftertouch_; }
+  SegmentedControl& seg_footswitch() noexcept { return seg_footswitch_; }
+  lv_obj_t* btn_sustain_calib() const noexcept { return btn_sustain_calib_; }
+  lv_obj_t* lbl_sustain_status() const noexcept { return lbl_sustain_status_; }
+  lv_obj_t* btn_expression_calib() const noexcept { return btn_expression_calib_; }
+  lv_obj_t* lbl_expression_status() const noexcept { return lbl_expression_status_; }
+  lv_obj_t* keyboard_pedals_container() const noexcept { return keyboard_pedals_container_; }
+
+  SegmentedControl& seg_clock_source() noexcept { return seg_clock_source_; }
+  SegmentedControl& seg_midi_out_ch() noexcept { return seg_midi_out_ch_; }
+  SegmentedControl& seg_keybed_out() noexcept { return seg_keybed_out_; }
+  SegmentedControl& seg_midi_thru() noexcept { return seg_midi_thru_; }
+  lv_obj_t* midi_clock_container() const noexcept { return midi_clock_container_; }
+
+  lv_obj_t* detail_container() const noexcept { return detail_container_; }
+  lv_obj_t* storage_container() const noexcept { return storage_container_; }
+  lv_obj_t* computer_container() const noexcept { return computer_container_; }
+  lv_obj_t* system_update_container() const noexcept { return system_update_container_; }
+
+  void calibrate_sustain();
+  void calibrate_expression();
+  void update_conditional_rows();
 
   // Navigation / Selection
   void select_section(SettingsSection section);
@@ -119,6 +150,10 @@ class SettingsView {
   void build_detail();
   void build_storage_detail();
   void build_display_detail();
+  void build_keyboard_pedals_detail();
+  void build_midi_clock_detail();
+  void build_computer_detail();
+  void build_system_update_detail();
   void rebuild_storage_list();
   void update_sidebar_ui();
   void update_knob_cards_ui();
@@ -186,11 +221,45 @@ class SettingsView {
 
   // Display & Language UI
   lv_obj_t* display_container_{nullptr};
+  SegmentedControl seg_theme_;
+  SegmentedControl seg_language_;
+  SegmentedControl seg_screen_brightness_;
+  SegmentedControl seg_led_brightness_;
+  SegmentedControl seg_large_text_;
   SegmentedControl seg_touch_;
   SegmentedControl seg_write_hold_;
   SegmentedControl seg_long_press_;
   SegmentedControl seg_panel_guard_;
   SegmentedControl seg_reduced_motion_;
+  SegmentedControl seg_boot_into_;
+
+  // Keyboard & Pedals UI
+  lv_obj_t* keyboard_pedals_container_{nullptr};
+  SegmentedControl seg_velocity_curve_;
+  lv_obj_t* card_aftertouch_{nullptr};
+  SegmentedControl seg_aftertouch_;
+  SegmentedControl seg_footswitch_;
+  lv_obj_t* btn_sustain_calib_{nullptr};
+  lv_obj_t* lbl_sustain_status_{nullptr};
+  lv_obj_t* btn_expression_calib_{nullptr};
+  lv_obj_t* lbl_expression_status_{nullptr};
+
+  // MIDI & Clock UI
+  lv_obj_t* midi_clock_container_{nullptr};
+  SegmentedControl seg_clock_source_;
+  SegmentedControl seg_midi_out_ch_;
+  SegmentedControl seg_keybed_out_;
+  SegmentedControl seg_midi_thru_;
+
+  // Computer (Velora Studio) UI
+  lv_obj_t* computer_container_{nullptr};
+  lv_obj_t* lbl_computer_status_{nullptr};
+
+  // System & Update UI
+  lv_obj_t* system_update_container_{nullptr};
+  lv_obj_t* lbl_update_version_{nullptr};
+  lv_obj_t* lbl_update_status_{nullptr};
+
   ConfigChangeCallback on_config_changed_;
 };
 

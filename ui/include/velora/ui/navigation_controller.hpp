@@ -118,6 +118,8 @@ class NavigationController {
   uint64_t write_btn_down_time_us_{0};
   uint64_t write_hold_threshold_us_{500000};
   bool panel_guard_{false};
+  bool exit_btn_down_{false};
+  bool exit_turned_value_{false};
   uint64_t live_set_btn_down_time_us_{0};
   uint32_t live_set_btn_pending_id_{0};
   bool manual_pending_edits_{false};
