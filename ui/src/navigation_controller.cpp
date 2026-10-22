@@ -6,7 +6,8 @@ namespace velora::ui {
 NavigationController::NavigationController(WsClient* client)
     : client_(client),
       performance_view_(client),
-      setlist_view_(client) {}
+      setlist_view_(client),
+      setlist_browser_view_(client) {}
 
 NavigationController::~NavigationController() = default;
 
@@ -20,6 +21,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   if (!launcher_view_.create(parent)) return false;
   if (!effects_view_.create(parent)) return false;
   if (!setlist_view_.create(parent)) return false;
+  if (!setlist_browser_view_.create(parent)) return false;
 
   // Wire callbacks
   performance_view_.set_rev_click_callback([this]() {
@@ -27,7 +29,16 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     navigate_to(SurfaceId::Effects);
   });
 
+  performance_view_.set_setlist_click_callback([this]() {
+    surface_before_launcher_ = current_surface_;
+    navigate_to(SurfaceId::SetlistBrowser);
+  });
+
   setlist_view_.set_on_close([this]() {
+    navigate_to(surface_before_launcher_);
+  });
+
+  setlist_browser_view_.set_on_close([this]() {
     navigate_to(surface_before_launcher_);
   });
 
@@ -61,6 +72,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   hide_surface(SurfaceId::Launcher);
   hide_surface(SurfaceId::Effects);
   hide_surface(SurfaceId::Setlist);
+  hide_surface(SurfaceId::SetlistBrowser);
   show_surface(SurfaceId::Performance);
 
   current_surface_ = SurfaceId::Performance;
@@ -84,6 +96,9 @@ void NavigationController::show_surface(SurfaceId surface) {
     case SurfaceId::Setlist:
       root = setlist_view_.skeleton().root_container();
       break;
+    case SurfaceId::SetlistBrowser:
+      root = setlist_browser_view_.skeleton().root_container();
+      break;
     default:
       break;
   }
@@ -106,6 +121,9 @@ void NavigationController::hide_surface(SurfaceId surface) {
       break;
     case SurfaceId::Setlist:
       root = setlist_view_.skeleton().root_container();
+      break;
+    case SurfaceId::SetlistBrowser:
+      root = setlist_browser_view_.skeleton().root_container();
       break;
     default:
       break;
@@ -135,6 +153,7 @@ void NavigationController::navigate_back() {
 void NavigationController::update_from_state(const ws::v1::State& state) {
   performance_view_.update_from_state(state);
   setlist_view_.update_from_state(state);
+  setlist_browser_view_.update_from_state(state);
 }
 
 void NavigationController::on_panel_event(const PanelEvent& ev) {
@@ -215,6 +234,14 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
         navigate_to(surface_before_launcher_);
         return;
       }
+      if (current_surface_ == SurfaceId::SetlistBrowser) {
+        if (setlist_browser_view_.action_sheet().is_open() || setlist_browser_view_.keyboard().is_open()) {
+          setlist_browser_view_.on_panel_event(ev);
+          return;
+        }
+        navigate_to(surface_before_launcher_);
+        return;
+      }
       navigate_back();
       return;
     }
@@ -233,6 +260,9 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
       break;
     case SurfaceId::Setlist:
       setlist_view_.on_panel_event(ev);
+      break;
+    case SurfaceId::SetlistBrowser:
+      setlist_browser_view_.on_panel_event(ev);
       break;
     default:
       break;

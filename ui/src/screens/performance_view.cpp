@@ -107,6 +107,8 @@ bool PerformanceView::create(lv_obj_t* parent) {
   lv_label_set_text(lbl_context_, tr("performance.top_bar.no_setlist").c_str());
   lv_obj_add_style(lbl_context_, Theme::style_text_muted(), LV_PART_MAIN);
   lv_obj_align(lbl_context_, LV_ALIGN_LEFT_MID, sp.screen_gutter, 0);
+  lv_obj_set_clickable(lbl_context_, true);
+  lv_obj_add_event_cb(lbl_context_, context_click_cb, LV_EVENT_CLICKED, this);
 
   lbl_mode_mixer_ = lv_label_create(top_bar_);
   lv_label_set_text(lbl_mode_mixer_, tr("performance.mode.mixer").c_str());
@@ -1634,6 +1636,15 @@ void PerformanceView::rev_click_cb(lv_event_t* e) {
 
   if (self->on_rev_click_) {
     self->on_rev_click_();
+  }
+}
+
+void PerformanceView::context_click_cb(lv_event_t* e) {
+  auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+  if (!self) return;
+
+  if (self->on_setlist_click_) {
+    self->on_setlist_click_();
   }
 }
 

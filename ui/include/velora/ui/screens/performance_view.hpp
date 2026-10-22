@@ -47,6 +47,7 @@ class PerformanceView {
   using PartToggleCallback = std::function<void(int32_t part_idx, bool enabled)>;
   using PartSelectCallback = std::function<void(int32_t part_idx)>;
   using RevClickCallback = std::function<void()>;
+  using SetlistClickCallback = std::function<void()>;
 
   explicit PerformanceView(WsClient* client = nullptr);
   ~PerformanceView();
@@ -126,6 +127,7 @@ class PerformanceView {
   void set_part_toggle_callback(PartToggleCallback cb) { on_part_toggle_ = std::move(cb); }
   void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
   void set_rev_click_callback(RevClickCallback cb) { on_rev_click_ = std::move(cb); }
+  void set_setlist_click_callback(SetlistClickCallback cb) { on_setlist_click_ = std::move(cb); }
 
   void recall_scene(int32_t scene_idx);
 
@@ -158,6 +160,7 @@ class PerformanceView {
   static void part_card_click_cb(lv_event_t* e);
   static void part_power_click_cb(lv_event_t* e);
   static void rev_click_cb(lv_event_t* e);
+  static void context_click_cb(lv_event_t* e);
 
   void update_scene_tiles();
   void update_top_bar_modes();
@@ -172,6 +175,7 @@ class PerformanceView {
   PartToggleCallback on_part_toggle_;
   PartSelectCallback on_part_select_;
   RevClickCallback on_rev_click_;
+  SetlistClickCallback on_setlist_click_;
 
   lv_obj_t* root_{nullptr};
   lv_obj_t* top_bar_{nullptr};
