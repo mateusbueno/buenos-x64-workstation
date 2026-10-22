@@ -115,5 +115,11 @@
   "organ.meta.percussion": "Perc 3rd Slow",
   "organ.meta.vibrato": "V3",
   "assign.overlay.heading": "ASSIGN · KNOBS (THIS LIVE SET)",
-  "assign.slot.not_assigned": "Not assigned"
+  "assign.slot.not_assigned": "Not assigned",
+  "osk.done": "Done",
+  "osk.space": "Space",
+  "osk.shift": "⇧",
+  "osk.backspace": "⌫",
+  "osk.mode_123": "123",
+  "osk.mode_abc": "ABC"
 }

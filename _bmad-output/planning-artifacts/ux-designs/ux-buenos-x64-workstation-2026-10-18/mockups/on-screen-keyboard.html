@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — On-screen Keyboard</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#ecebe8;font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#151515}
+.wrap{max-width:1180px;margin:auto;padding:28px 16px 60px}
+h1{font-size:22px;font-weight:500;margin:0 0 6px}
+h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#4d4d4d;margin:38px 0 6px}
+h3{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:14px 0 4px;font-weight:600}
+p{color:#4d4d4d;max-width:900px;margin:0 0 12px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media (max-width:760px){.pair{grid-template-columns:1fr}}
+figure{margin:0}
+figcaption{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:0 0 4px 2px}
+.frame{background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab);padding:10px;border-radius:12px}
+.scr{aspect-ratio:1024/600;width:100%;border-radius:6px;overflow:hidden;position:relative;container-type:inline-size;font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif;background:var(--bg);color:var(--text)}
+.s{--u:calc(100cqw/1024);position:absolute;inset:0;display:grid;grid-template-rows:calc(56*var(--u)) 1fr calc(56*var(--u))}
+.bar{display:flex;align-items:center;justify-content:space-between;padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(15*var(--u));letter-spacing:.12em;text-transform:uppercase}
+.bar b{color:var(--accent);font-weight:600}
+.field-area{padding:calc(20*var(--u)) calc(22*var(--u));display:flex;flex-direction:column;gap:calc(8*var(--u))}
+.field-label{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.field-box{background:var(--surface);border:calc(2*var(--u)) solid var(--accent);border-radius:calc(8*var(--u));height:calc(56*var(--u));display:flex;align-items:center;padding:0 calc(16*var(--u));font-size:calc(22*var(--u))}
+.field-box .cursor{display:inline-block;width:calc(2*var(--u));height:calc(26*var(--u));background:var(--accent);margin-left:calc(3*var(--u));animation:blink 1s infinite}
+@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+.osk-overlay{position:absolute;left:0;right:0;bottom:0;background:var(--raised);border-top:calc(1*var(--u)) solid var(--line-strong);padding:calc(10*var(--u)) calc(16*var(--u)) calc(12*var(--u));display:flex;flex-direction:column;gap:calc(8*var(--u))}
+.osk-row{display:flex;justify-content:center;gap:calc(6*var(--u))}
+.osk-key{flex:1;height:calc(58*var(--u));min-width:0;background:var(--surface);border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(4*var(--u));display:flex;align-items:center;justify-content:center;font-size:calc(20*var(--u));color:var(--text);font-weight:500;user-select:none}
+.osk-key.wide{flex:1.5}
+.osk-key.space{flex:5}
+.osk-key.done{flex:2;background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600;font-size:calc(17*var(--u));letter-spacing:.06em;text-transform:uppercase}
+.osk-key.shift.on{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.osk-popover{position:absolute;background:var(--surface);border:calc(1*var(--u)) solid var(--accent);border-radius:calc(6*var(--u));display:flex;gap:calc(4*var(--u));padding:calc(4*var(--u));box-shadow:0 calc(4*var(--u)) calc(12*var(--u)) rgba(0,0,0,.5);top:calc(-52*var(--u))}
+.osk-popover div{width:calc(44*var(--u));height:calc(44*var(--u));border-radius:calc(4*var(--u));display:flex;align-items:center;justify-content:center;font-size:calc(18*var(--u));color:var(--text);border:calc(1*var(--u)) solid var(--line)}
+.osk-popover div.hl{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.notes{background:#fff;border:1px solid #d6d4cf;border-radius:8px;padding:10px 14px 10px 30px;font-size:13px;color:#3d3d3d;margin:10px 0}
+.notes li{margin:4px 0}
+table{border-collapse:collapse;background:#fff;font-size:13px;color:#3d3d3d;margin:8px 0;width:100%}
+td,th{border:1px solid #d6d4cf;padding:6px 9px;text-align:left;vertical-align:top}
+th{background:#f4f3f0;font-weight:600}
+.t-stage{--bg:#0b0d0c;--surface:#151917;--raised:#202622;--line:#2b322e;--line-strong:#5a6860;--text:#e7ebe8;--muted:#88938c;--accent:#9fbaa8;--on-accent:#0b0d0c;--warn:#cdb86c;}
+.t-studio{--bg:#f2f4f2;--surface:#e3e8e4;--raised:#ffffff;--line:#cbd4cd;--line-strong:#728a77;--text:#131714;--muted:#5a635c;--accent:#466853;--on-accent:#f2f4f2;--warn:#725f1e;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Velora 73: On-screen Keyboard (OSK)</h1>
+<p>The On-screen Keyboard appears over the lower content area when a text field (such as a search or rename input) receives focus. It never covers the Top Bar or the active input field. All keys have a minimum touch target height of 56 px (58 px rendered). The Done key is accent-filled, and accented characters are directly accessible or reachable via hold popovers per the language layout (EN, PT-BR, ES).</p>
+
+<ul class="notes">
+<li><b>Key dimensions.</b> 4 rows of keys, each 58 px tall (well exceeding the 56 px touch floor). Total keyboard height = 276 px.</li>
+<li><b>Layering rule.</b> Sits at y = 324 to 600 px; Top Bar (0..56 px) and active input field (56..140 px) remain completely visible and un-obscured.</li>
+<li><b>Accent coverage rule.</b>
+  <ul>
+    <li><b>PT-BR:</b> Direct Ç key; dead keys ~ and ´ on the numeric/symbol layer, plus press-and-hold vowel popovers for (á, à, â, ã, é, ê, í, ó, ô, õ, ú).</li>
+    <li><b>ES:</b> Direct Ñ key; dead key ´ and direct hold popovers for (á, é, í, ó, ú, ü, ¿, ¡).</li>
+    <li><b>EN:</b> Standard QWERTY layout with press-and-hold accents available on all vowels.</li>
+  </ul>
+</li>
+<li><b>Physical hardware interaction.</b> Playing keys on the keybed continues sounding normally while the OSK is open. WRITE on the panel confirms (equivalent to Done), and EXIT closes the keyboard keeping the typed text.</li>
+</ul>
+
+<h2>1. English (EN) Layout · Search Field</h2>
+<div class="pair">
+<figure><figcaption>Stage theme · EN Search</figcaption>
+<div class="frame"><div class="scr t-stage"><div class="s">
+  <div class="bar"><span>LIBRARY · SEARCH</span><span>♩ 120</span></div>
+  <div class="field-area">
+    <div class="field-label">Search Timbre or Tag</div>
+    <div class="field-box">Grand Piano<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Space</div><div class="osk-key">.</div><div class="osk-key done">Done</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+<figure><figcaption>Studio theme · EN Search</figcaption>
+<div class="frame"><div class="scr t-studio"><div class="s">
+  <div class="bar"><span>LIBRARY · SEARCH</span><span>♩ 120</span></div>
+  <div class="field-area">
+    <div class="field-label">Search Timbre or Tag</div>
+    <div class="field-box">Grand Piano<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Space</div><div class="osk-key">.</div><div class="osk-key done">Done</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+</div>
+
+<h2>2. Portuguese (PT-BR) Layout · Accented Popover & Ç</h2>
+<div class="pair">
+<figure><figcaption>Stage theme · PT-BR with Popover on "A"</figcaption>
+<div class="frame"><div class="scr t-stage"><div class="s">
+  <div class="bar"><span>RENOMEAR LIVE SET</span><span>♩ 96</span></div>
+  <div class="field-area">
+    <div class="field-label">Nome do Live Set</div>
+    <div class="field-box">Coraç<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row" style="position:relative">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row" style="position:relative">
+      <div class="osk-popover" style="left:calc(4*var(--u))">
+        <div>á</div><div>à</div><div class="hl">ã</div><div>â</div>
+      </div>
+      <div class="osk-key" style="border-color:var(--accent)">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div><div class="osk-key">Ç</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Espaço</div><div class="osk-key">.</div><div class="osk-key done">OK</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+<figure><figcaption>Studio theme · PT-BR</figcaption>
+<div class="frame"><div class="scr t-studio"><div class="s">
+  <div class="bar"><span>RENOMEAR LIVE SET</span><span>♩ 96</span></div>
+  <div class="field-area">
+    <div class="field-label">Nome do Live Set</div>
+    <div class="field-box">Coração<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div><div class="osk-key">Ç</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Espaço</div><div class="osk-key">.</div><div class="osk-key done">OK</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+</div>
+
+<h2>3. Spanish (ES) Layout · Ñ & Accents</h2>
+<div class="pair">
+<figure><figcaption>Stage theme · ES with Ñ</figcaption>
+<div class="frame"><div class="scr t-stage"><div class="s">
+  <div class="bar"><span>RENOMBRAR LIVE SET</span><span>♩ 104</span></div>
+  <div class="field-area">
+    <div class="field-label">Nombre del Live Set</div>
+    <div class="field-box">Canción en Do Menor<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div><div class="osk-key">Ñ</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Espacio</div><div class="osk-key">.</div><div class="osk-key done">Listo</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+<figure><figcaption>Studio theme · ES with Ñ</figcaption>
+<div class="frame"><div class="scr t-studio"><div class="s">
+  <div class="bar"><span>RENOMBRAR LIVE SET</span><span>♩ 104</span></div>
+  <div class="field-area">
+    <div class="field-label">Nombre del Live Set</div>
+    <div class="field-box">Canción en Do Menor<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div><div class="osk-key">Ñ</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Espacio</div><div class="osk-key">.</div><div class="osk-key done">Listo</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+</div>
+
+<h2>4. Pseudo-localization +40% with ÁÇÊÕÑ Ação</h2>
+<div class="pair">
+<figure><figcaption>Stage theme · +40% Pseudo-localization</figcaption>
+<div class="frame"><div class="scr t-stage"><div class="s">
+  <div class="bar"><span>BÚSCÁ · ÁÇÊÕÑ Ação</span><span>♩ 120</span></div>
+  <div class="field-area">
+    <div class="field-label">Búscár Tímbrê õú Tág ÁÇ</div>
+    <div class="field-box">ÁÇÊÕÑ Ação Próxima<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div><div class="osk-key">Ç</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Espaço ÁÇ</div><div class="osk-key">.</div><div class="osk-key done">Pronto ÁÇ</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+<figure><figcaption>Studio theme · +40% Pseudo-localization</figcaption>
+<div class="frame"><div class="scr t-studio"><div class="s">
+  <div class="bar"><span>BÚSCÁ · ÁÇÊÕÑ Ação</span><span>♩ 120</span></div>
+  <div class="field-area">
+    <div class="field-label">Búscár Tímbrê õú Tág ÁÇ</div>
+    <div class="field-box">ÁÇÊÕÑ Ação Próxima<span class="cursor"></span></div>
+  </div>
+  <div class="osk-overlay">
+    <div class="osk-row">
+      <div class="osk-key">Q</div><div class="osk-key">W</div><div class="osk-key">E</div><div class="osk-key">R</div><div class="osk-key">T</div>
+      <div class="osk-key">Y</div><div class="osk-key">U</div><div class="osk-key">I</div><div class="osk-key">O</div><div class="osk-key">P</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key">A</div><div class="osk-key">S</div><div class="osk-key">D</div><div class="osk-key">F</div><div class="osk-key">G</div>
+      <div class="osk-key">H</div><div class="osk-key">J</div><div class="osk-key">K</div><div class="osk-key">L</div><div class="osk-key">Ç</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide shift">⇧</div><div class="osk-key">Z</div><div class="osk-key">X</div><div class="osk-key">C</div><div class="osk-key">V</div>
+      <div class="osk-key">B</div><div class="osk-key">N</div><div class="osk-key">M</div><div class="osk-key wide">⌫</div>
+    </div>
+    <div class="osk-row">
+      <div class="osk-key wide">123</div><div class="osk-key">,</div><div class="osk-key space">Espaço ÁÇ</div><div class="osk-key">.</div><div class="osk-key done">Pronto ÁÇ</div>
+    </div>
+  </div>
+</div></div></div>
+</figure>
+</div>
+
+</body>
+</html>

@@ -115,5 +115,11 @@
   "organ.meta.percussion": "Perc 3rd Slow",
   "organ.meta.vibrato": "V3",
   "assign.overlay.heading": "ASSIGN · ENCODERS (ESTE LIVE SET)",
-  "assign.slot.not_assigned": "Não atribuído"
+  "assign.slot.not_assigned": "Não atribuído",
+  "osk.done": "Pronto",
+  "osk.space": "Espaço",
+  "osk.shift": "⇧",
+  "osk.backspace": "⌫",
+  "osk.mode_123": "123",
+  "osk.mode_abc": "ABC"
 }

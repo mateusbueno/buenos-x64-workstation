@@ -48,6 +48,7 @@ add_library(velora_ui
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
   src/widgets/segmented_control.cpp
+  src/components/on_screen_keyboard.cpp
   src/virtual_panel.cpp
   src/theme.cpp
   src/adapters/headless_adapter.cpp
@@ -139,6 +140,11 @@ add_executable(assign_overlay_test tests/assign_overlay_test.cpp)
 target_link_libraries(assign_overlay_test PRIVATE velora_ui)
 add_test(NAME assign_overlay_test COMMAND assign_overlay_test)
 set_tests_properties(assign_overlay_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(on_screen_keyboard_test tests/on_screen_keyboard_test.cpp)
+target_link_libraries(on_screen_keyboard_test PRIVATE velora_ui)
+add_test(NAME on_screen_keyboard_test COMMAND on_screen_keyboard_test)
+set_tests_properties(on_screen_keyboard_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
