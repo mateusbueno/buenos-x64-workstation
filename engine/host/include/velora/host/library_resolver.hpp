@@ -28,6 +28,7 @@
 #include <string_view>
 
 #include "velora/format/bundle.hpp"
+#include "velora/format/parametric_bundle.hpp"
 #include "velora/format/protected_verify.hpp"
 #include "velora/host/fs_port.hpp"
 
@@ -39,6 +40,13 @@ inline constexpr const char* kCurrentLinkName = "current";
 inline constexpr const char* kBundleFileName = "bundle.vlb";
 inline constexpr const char* kProtectedBundleFileName = "bundle.vlrp";  // Story 6.5: a protected (format 3) bundle installed by the librarian
 inline constexpr const char* kWrappedKeyFileName = "wrapped-key.bin";  // beside it: the wrapped_key_v1 blob delivered with the pack
+
+// Story 12.9: Built-in engine timbres identity
+inline constexpr const char* kBuiltinLibraryId = "00000000-0000-0000-0000-000000000001";
+inline constexpr const char* kInitFmInstrumentKey = "init-fm";
+inline constexpr const char* kInitVaInstrumentKey = "init-va";
+inline constexpr const char* kInitFmName = "Init FM";
+inline constexpr const char* kInitVaName = "Init VA";
 
 enum class ResolveStatus : std::uint8_t {
   kOk = 0,
@@ -61,6 +69,10 @@ struct ResolveResult {
   std::shared_ptr<const format::BundleReader> bundle;
   // Story 6.5: non-null only with kOk and a PROTECTED library (then `bundle` is null): the verified view, which keeps bundle.vlrp open while held.
   std::shared_ptr<const format::ProtectedBundleView> protected_view;
+  // Story 12.9: non-null with kOk and a PARAMETRIC library (FM/VA)
+  std::shared_ptr<const format::ParametricBundle> parametric_bundle;
+  bool is_builtin = false;
+  format::InstrumentInfo builtin_info;
   bool from_protected = false; // Story 6.5: the failure (kBundleError / kIdentityMismatch) came from opening a PROTECTED bundle.vlrp (set even when status != kOk)
   std::string bundle_dir;      // kOk: <root>/lib/<library_id>/<bundle_id> (where wrapped-key.bin lives for a protected library)
   std::string library_id;      // kOk: the canonical library id text the resolve was asked for
@@ -68,7 +80,9 @@ struct ResolveResult {
 
   bool ok() const { return status == ResolveStatus::kOk; }
   bool is_protected() const { return protected_view != nullptr; }
+  bool is_parametric() const { return parametric_bundle != nullptr; }
   const format::InstrumentInfo& instrument_info() const {
+    if (is_builtin || is_parametric()) return builtin_info;
     assert(ok() && (bundle || protected_view));
     return protected_view ? protected_view->instruments()[instrument] : bundle->instruments()[instrument];
   }

@@ -101,6 +101,12 @@ std::vector<uint8_t> ParametricBundle::serialize() const {
       pack_155_voice(t.fm_parameters, s);
       put_u32(payload, 155);
       payload.insert(payload.end(), raw, raw + 155);
+    } else if (t.engine_type_id == kEngineTypeVa) {
+      uint8_t raw[kVaPackedVoiceSize]{};
+      std::span<uint8_t, kVaPackedVoiceSize> s(raw, kVaPackedVoiceSize);
+      pack_va_voice(t.va_parameters, s);
+      put_u32(payload, kVaPackedVoiceSize);
+      payload.insert(payload.end(), raw, raw + kVaPackedVoiceSize);
     } else {
       put_u32(payload, 0);
     }
@@ -178,6 +184,9 @@ Result<ParametricBundle> ParametricBundle::deserialize(std::span<const uint8_t> 
     if (t.engine_type_id == kEngineTypeFm && param_len == 155) {
       std::span<const uint8_t, 155> s(p, 155);
       if (!unpack_155_voice(s, t.fm_parameters)) return Error::kCorruptManifest;
+    } else if (t.engine_type_id == kEngineTypeVa && param_len == kVaPackedVoiceSize) {
+      std::span<const uint8_t, kVaPackedVoiceSize> s(p, kVaPackedVoiceSize);
+      if (!unpack_va_voice(s, t.va_parameters)) return Error::kCorruptManifest;
     }
     p += param_len;
     bundle.timbres_.push_back(std::move(t));

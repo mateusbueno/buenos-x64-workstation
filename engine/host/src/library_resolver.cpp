@@ -97,6 +97,32 @@ ResolveResult LibraryResolver::resolve(std::string_view library_id,
   auto key = format::normalize_instrument_key(instrument_key);
   if (!key) return res;
 
+  // Story 12.9: Built-in engine timbres (Init FM, Init VA) resolve directly without filesystem access
+  format::Uuid builtin_id{};
+  parse_library_id(kBuiltinLibraryId, builtin_id);
+  if (want_lib == builtin_id) {
+    if (key.value() == kInitFmInstrumentKey) {
+      res.status = ResolveStatus::kOk;
+      res.library_id = std::string(library_id);
+      res.bundle_dir = "builtin";
+      res.is_builtin = true;
+      res.builtin_info.key = kInitFmInstrumentKey;
+      res.builtin_info.name = kInitFmName;
+      return res;
+    }
+    if (key.value() == kInitVaInstrumentKey) {
+      res.status = ResolveStatus::kOk;
+      res.library_id = std::string(library_id);
+      res.bundle_dir = "builtin";
+      res.is_builtin = true;
+      res.builtin_info.key = kInitVaInstrumentKey;
+      res.builtin_info.name = kInitVaName;
+      return res;
+    }
+    res.status = ResolveStatus::kMissingInstrument;
+    return res;
+  }
+
   // 2. `current` must be a symlink to a sibling <bundle_id> directory.
   const std::string lib_dir = root_ + "/" + kLibDirName + "/" + std::string(library_id);
   const std::string link = lib_dir + "/" + kCurrentLinkName;
@@ -160,6 +186,40 @@ ResolveResult LibraryResolver::resolve(std::string_view library_id,
       return res;
     }
   }
+  // Check if it's a ParametricBundle ('VLPB')
+  char magic[4]{};
+  if (size >= 4 && fs_->pread(fd, 0, magic, 4) == FsStatus::kOk && std::memcmp(magic, "VLPB", 4) == 0) {
+    std::vector<uint8_t> pbuf(size);
+    if (fs_->pread(fd, 0, pbuf.data(), size) == FsStatus::kOk) {
+      fs_->close(fd);
+      auto pb_res = format::ParametricBundle::deserialize(pbuf);
+      if (pb_res) {
+        auto pb = std::make_shared<format::ParametricBundle>(pb_res.take());
+        if (pb->library_id() != want_lib || format::to_hex(pb->bundle_id()) != bundle_dir_name) {
+          res.status = ResolveStatus::kIdentityMismatch;
+          return res;
+        }
+        for (size_t idx = 0; idx < pb->timbres().size(); ++idx) {
+          if (pb->timbres()[idx].key == key.value()) {
+            res.status = ResolveStatus::kOk;
+            res.instrument = idx;
+            res.bundle_dir = bundle_dir;
+            res.library_id = std::string(library_id);
+            res.builtin_info.key = pb->timbres()[idx].key;
+            res.builtin_info.name = pb->timbres()[idx].name;
+            res.parametric_bundle = std::move(pb);
+            return res;
+          }
+        }
+        res.status = ResolveStatus::kMissingInstrument;
+        return res;
+      }
+      res.status = ResolveStatus::kBundleError;
+      res.bundle_error = pb_res.error();
+      return res;
+    }
+  }
+
   auto opened = format::BundleReader::open_source(std::make_unique<PortSource>(fs_, fd, size));
   if (!opened) {
     res.status = ResolveStatus::kBundleError;

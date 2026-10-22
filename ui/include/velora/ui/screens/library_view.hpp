@@ -72,6 +72,7 @@ class LibraryView {
 
  private:
   void refilter();
+  void ensure_builtin_timbres();
   void rebuild_grid_ui();
   void update_chips_ui();
   void update_header_ui();

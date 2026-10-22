@@ -23,16 +23,30 @@ void test_library_view_search_and_filters() {
   };
 
   view.set_catalog(entries);
-  assert(view.filtered_indices().size() == 4);
+  // 4 entries + 2 built-in Init timbres (Init FM, Init VA) = 6
+  assert(view.filtered_indices().size() == 6);
+
+  // Built-in Init FM and Init VA are always available under Synth Poly (Story 12.9)
+  view.set_filter_category(Category::kSynthPoly);
+  assert(view.filtered_indices().size() == 2);
+  assert(view.catalog()[view.filtered_indices()[0]].name == "Init FM");
+  assert(view.catalog()[view.filtered_indices()[1]].name == "Init VA");
+  assert(view.catalog()[view.filtered_indices()[0]].category == Category::kSynthPoly);
+  assert(view.catalog()[view.filtered_indices()[1]].category == Category::kSynthPoly);
 
   // Search filter
+  view.set_filter_category(Category::kNone);
   view.set_search_query("strings");
   assert(view.filtered_indices().size() == 1);
   assert(view.catalog()[view.filtered_indices()[0]].name == "Chamber Strings");
 
+  // Search Init finds built-ins
+  view.set_search_query("Init");
+  assert(view.filtered_indices().size() == 2);
+
   // Clear search
   view.set_search_query("");
-  assert(view.filtered_indices().size() == 4);
+  assert(view.filtered_indices().size() == 6);
 
   // Category filter
   view.set_filter_category(Category::kPiano);

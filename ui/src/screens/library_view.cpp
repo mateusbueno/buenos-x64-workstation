@@ -154,12 +154,27 @@ bool LibraryView::create(lv_obj_t* parent) {
   lv_obj_set_style_text_color(empty_label_obj_, p.muted, 0);
   lv_obj_set_hidden(empty_label_obj_, true);
 
+  ensure_builtin_timbres();
   refilter();
   update_chips_ui();
   update_header_ui();
   update_hints_ui();
 
   return true;
+}
+
+void LibraryView::ensure_builtin_timbres() {
+  bool has_init_fm = false, has_init_va = false;
+  for (const auto& it : catalog_) {
+    if (it.name == "Init FM" || it.id == "builtin:init-fm") has_init_fm = true;
+    if (it.name == "Init VA" || it.id == "builtin:init-va") has_init_va = true;
+  }
+  if (!has_init_fm) {
+    catalog_.push_back({"builtin:init-fm", "Init FM", format::Category::kSynthPoly, true, false, 0, 0});
+  }
+  if (!has_init_va) {
+    catalog_.push_back({"builtin:init-va", "Init VA", format::Category::kSynthPoly, true, false, 0, 0});
+  }
 }
 
 void LibraryView::set_mode(LibraryMode mode, int32_t target_part_idx) {
@@ -173,6 +188,7 @@ void LibraryView::set_mode(LibraryMode mode, int32_t target_part_idx) {
 
 void LibraryView::set_catalog(std::vector<TimbreCatalogEntry> entries) {
   catalog_ = std::move(entries);
+  ensure_builtin_timbres();
   refilter();
   update_header_ui();
 }

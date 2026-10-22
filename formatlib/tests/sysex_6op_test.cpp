@@ -202,6 +202,62 @@ int main() {
     std::cout << "  ✓ Parametric bundle serialization and deserialization passed\n";
   }
 
+  // Test 6: Parametric Bundle with VA Voice Parameters
+  {
+    ParametricBundle bundle;
+    bundle.set_name("Mixed Factory Synth");
+    Uuid lib_id{};
+    assert(uuid_from_string("12345678-1234-1234-1234-123456789abc", lib_id));
+    bundle.set_library_id(lib_id);
+
+    VaVoiceParameters va_v;
+    va_v.name = "Hyper Saw Lead";
+    va_v.osc1_wave = VaWaveform::kSaw;
+    va_v.osc2_wave = VaWaveform::kPulse;
+    va_v.osc2_detune_cents = 12.5f;
+    va_v.cutoff_hz = 3200.0f;
+    va_v.resonance = 0.45f;
+    va_v.drive = 0.2f;
+    va_v.voice_mode = VaVoiceMode::kMono;
+    va_v.unison_voices = 2;
+
+    ParametricTimbre t_va;
+    t_va.key = "va_lead_01";
+    t_va.name = "Hyper Saw Lead";
+    t_va.category = Category::kSynthLead;
+    t_va.engine_type_id = kEngineTypeVa;
+    t_va.va_parameters = va_v;
+    assert(bundle.add_timbre(t_va) == Error::kNone);
+
+    FmVoiceParameters fm_v = make_self_made_voice(7, 3, "FM Bell Poly");
+    ParametricTimbre t_fm;
+    t_fm.key = "fm_bell_01";
+    t_fm.name = "FM Bell Poly";
+    t_fm.category = Category::kMalletBells;
+    t_fm.engine_type_id = kEngineTypeFm;
+    t_fm.fm_parameters = fm_v;
+    assert(bundle.add_timbre(t_fm) == Error::kNone);
+
+    std::vector<uint8_t> bytes = bundle.serialize();
+    auto d_res = ParametricBundle::deserialize(bytes);
+    assert(d_res);
+    ParametricBundle deserialized = d_res.take();
+    assert(deserialized.timbres().size() == 2);
+    assert(deserialized.timbres()[0].key == "va_lead_01");
+    assert(deserialized.timbres()[0].name == "Hyper Saw Lead");
+    assert(deserialized.timbres()[0].category == Category::kSynthLead);
+    assert(deserialized.timbres()[0].engine_type_id == kEngineTypeVa);
+    assert(deserialized.timbres()[0].va_parameters == va_v);
+
+    assert(deserialized.timbres()[1].key == "fm_bell_01");
+    assert(deserialized.timbres()[1].name == "FM Bell Poly");
+    assert(deserialized.timbres()[1].category == Category::kMalletBells);
+    assert(deserialized.timbres()[1].engine_type_id == kEngineTypeFm);
+    assert(deserialized.timbres()[1].fm_parameters == fm_v);
+
+    std::cout << "  ✓ VA and mixed parametric bundle round-trip bit-identical passed\n";
+  }
+
   std::cout << "All sysex_6op_test checks passed!\n";
   return 0;
 }

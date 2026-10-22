@@ -139,6 +139,11 @@ target_link_libraries(librarian_sysex_test PRIVATE velora_librarian_service)
 target_include_directories(librarian_sysex_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
 add_test(NAME librarian_sysex_test COMMAND librarian_sysex_test)
 
+# Story 12.9: Init and factory FM/VA timbres in the Library
+add_executable(story_12_9_test tests/story_12_9_test.cpp)
+target_link_libraries(story_12_9_test PRIVATE velora_librarian_service velora_host velora_ui)
+add_test(NAME story_12_9_test COMMAND story_12_9_test)
+
 # Service tests over a real UDS client, the idle-safe Recent write rule, crash injection in the service, and the LibraryClient.
 add_executable(librarian_service_test tests/library_service_test.cpp)
 target_link_libraries(librarian_service_test PRIVATE velora_librarian_service)

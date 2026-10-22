@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include "velora/format/bundle.hpp"
+#include "velora/format/parametric_bundle.hpp"
 #include "velora/format/hash.hpp"
 #include "velora/format/protected_format.hpp"
 #include "velora/format/protected_verify.hpp"
@@ -216,6 +217,55 @@ static DescribeResult describe_bundle_impl(const std::string& bundle_dir, const 
   } else {
     auto rd = fmt::BundleReader::open_file(bundle_dir + "/" + host::kBundleFileName);
     if (!rd) {
+      if (rd.error() == fmt::Error::kBadMagic) {
+        auto pb_res = fmt::ParametricBundle::read_file(bundle_dir + "/" + host::kBundleFileName);
+        if (pb_res) {
+          fmt::ParametricBundle pb = pb_res.take();
+          const fmt::Uuid& lib_uuid = pb.library_id();
+          const fmt::Digest256& bundle_digest = pb.bundle_id();
+          if (fmt::uuid_to_string(lib_uuid) != library_name_dir || fmt::to_hex(bundle_digest) != bundle_name) {
+            res.status = DescribeStatus::kIdentityMismatch;
+            res.why = "the bundle's library_id / bundle_id disagree with its path";
+            return res;
+          }
+          CatalogMeta meta;
+          MetaState ms = read_catalog_meta(bundle_dir, meta);
+          res.from_meta = ms == MetaState::kValid;
+          if (ms == MetaState::kUnreadable) {
+            res.status = DescribeStatus::kMetaUnreadable;
+            res.why = "catalog.meta is unreadable, malformed, oversized or from a newer format";
+            return res;
+          }
+          LibraryRecord& rec = res.record;
+          rec.library_id = library_name_dir;
+          rec.bundle_id = bundle_name;
+          rec.kind = LibraryKind::kUser;
+          for (const auto& t : pb.timbres()) {
+            InstrumentRecord ir;
+            ir.key = t.key;
+            ir.name = t.name.empty() ? t.key : t.name;
+            ir.category = static_cast<std::uint32_t>(fmt::id(t.category));
+            ir.sample_count = 0;
+            ir.region_count = 0;
+            ir.bytes = 0;
+            if (res.from_meta) {
+              for (const auto& mi : meta.instruments) {
+                if (mi.key == t.key) {
+                  ir.category = static_cast<std::uint32_t>(fmt::id(mi.category));
+                  if (!mi.name.empty()) ir.name = mi.name;
+                  break;
+                }
+              }
+            }
+            rec.instruments.push_back(std::move(ir));
+          }
+          rec.name = res.from_meta && !meta.library_name.empty() ? meta.library_name : pb.name();
+          rec.source_kind = res.from_meta && !meta.source_kind.empty() ? meta.source_kind : "sysex";
+          rec.source_path = res.from_meta ? meta.source_path : std::string();
+          res.status = DescribeStatus::kOk;
+          return res;
+        }
+      }
       res.status = DescribeStatus::kUnreadable;
       res.why = std::string("bundle does not open: ") + fmt::to_string(rd.error());
       return res;

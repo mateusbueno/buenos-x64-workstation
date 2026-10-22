@@ -11,6 +11,7 @@
 #include "velora/format/error.hpp"
 #include "velora/format/hash.hpp"
 #include "velora/format/sysex_6op.hpp"
+#include "velora/format/va_format.hpp"
 
 namespace velora::format {
 
@@ -27,6 +28,7 @@ struct ParametricTimbre {
   Category category{Category::kSynthPoly};
   uint32_t engine_type_id{kEngineTypeFm};
   FmVoiceParameters fm_parameters;
+  VaVoiceParameters va_parameters;
 
   friend bool operator==(const ParametricTimbre&, const ParametricTimbre&) = default;
 };
