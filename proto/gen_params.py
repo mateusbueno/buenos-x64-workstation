@@ -344,7 +344,7 @@ def emit_host(r):
     P = r["params"]
     o = [HEADER, "#pragma once\n\n#include <array>\n#include <cstddef>\n#include <cstdint>\n#include <string_view>\n\n",
          "namespace velora::host::param_names {\n\n",
-         "struct ParamName {\n  std::uint16_t id;\n  const char* name;\n  const char* unit;\n  std::int16_t enum_index;  // index into kEnums, -1 when not an enum\n};\n\n",
+         "struct ParamName {\n  std::uint16_t id;\n  const char* name;\n  const char* unit;\n  std::int16_t enum_index;  // index into kEnums, -1 when not an enum\n  const char* locale_key;\n};\n\n",
          "struct EnumInfo {\n  const char* name;\n  std::size_t count;\n  const char* const* values;\n};\n\n"]
     en_names = list(r["enums"].keys())
     for en in en_names:
@@ -357,7 +357,8 @@ def emit_host(r):
     o.append(f"inline constexpr std::array<ParamName, {len(P)}> kParamNames{{{{\n")
     for p in P:
         ei = en_names.index(p["enum"]) if p["type"] == "enum" else -1
-        o.append("    {%d, %s, %s, %d},\n" % (p["id"], json.dumps(p["name"]), json.dumps(p["unit"]), ei))
+        loc_key = p.get("locale_key", "")
+        o.append("    {%d, %s, %s, %d, %s},\n" % (p["id"], json.dumps(p["name"]), json.dumps(p["unit"]), ei, json.dumps(loc_key)))
     o.append("}};\n\n")
     o.append("""constexpr const ParamName* find_name(std::uint32_t id) noexcept {
   for (const ParamName& n : kParamNames)
@@ -369,6 +370,12 @@ constexpr std::uint16_t id_of(std::string_view name) noexcept {
   for (const ParamName& n : kParamNames)
     if (name == n.name) return n.id;
   return 0;
+}
+
+constexpr const char* locale_key_of(std::uint32_t id) noexcept {
+  for (const ParamName& n : kParamNames)
+    if (n.id == id) return n.locale_key;
+  return "";
 }
 
 }  // namespace velora::host::param_names

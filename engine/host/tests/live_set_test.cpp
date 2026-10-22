@@ -24,6 +24,7 @@
 #include "velora/core/arpeggiator.hpp"
 #include "velora/core/engine_registry.hpp"
 #include "velora/core/params_gen.hpp"
+#include "velora/host/params_names_gen.hpp"
 #include "velora/core/snapshot.hpp"
 #include "velora/core/test_tone_engine.hpp"
 
@@ -990,6 +991,114 @@ void test_arpeggiator_registry_and_live_set_defaults() {
   CHECK(snap.parts[0].arp.latch == false);
 }
 
+// Story 12.8: FM and VA timbre parameters in the versioned formats
+void test_fm_va_timbre_parameters_live_set_roundtrip_and_rollback() {
+  using namespace velora::core::params;
+  namespace pn = velora::host::param_names;
+
+  // 1. Parameter Registry checks (Story 12.8 AC 1)
+  const ParamDef* fm_alg = find(1000);
+  CHECK(fm_alg != nullptr && fm_alg->cls == Class::kPerformance);
+  CHECK(fm_alg->assignable == true);
+  CHECK(std::string(pn::locale_key_of(1000)) == "fm.param.algorithm");
+
+  const ParamDef* fm_fb = find(1001);
+  CHECK(fm_fb != nullptr && fm_fb->cls == Class::kPerformance);
+  CHECK(fm_fb->assignable == true);
+  CHECK(std::string(pn::locale_key_of(1001)) == "fm.param.feedback");
+
+  const ParamDef* va_cutoff = find(1231);
+  CHECK(va_cutoff != nullptr && va_cutoff->cls == Class::kPerformance);
+  CHECK(va_cutoff->assignable == true);
+  CHECK(std::string(pn::locale_key_of(1231)) == "va.param.cutoff");
+
+  const ParamDef* va_res = find(1232);
+  CHECK(va_res != nullptr && va_res->cls == Class::kPerformance);
+  CHECK(va_res->assignable == true);
+  CHECK(std::string(pn::locale_key_of(1232)) == "va.param.resonance");
+
+  // 2. Build Live Set with FM and VA parts (Story 12.8 AC 2)
+  lsp::LiveSet live_set = make_default_live_set(fixtures::uuid_n(128), "FM and VA Live Set", 8);
+  fixtures::clear_fixture_arp(live_set);
+
+  // Part 0: FM Engine (3)
+  lsp::Part* p_fm = live_set.mutable_parts(0);
+  p_fm->mutable_engine()->set_engine_type_id(3);
+  fixtures::entry(p_fm->mutable_engine()->mutable_params(), 1000, 5.0f);  // Algorithm 5
+  fixtures::entry(p_fm->mutable_engine()->mutable_params(), 1001, 6.0f);  // Feedback 6
+  fixtures::entry(p_fm->mutable_engine()->mutable_params(), 1003, 42.0f); // LFO Speed 42
+  fixtures::entry(p_fm->mutable_engine()->mutable_params(), 1028, 95.0f); // OP1 Total Level 95
+  fixtures::entry(p_fm->mutable_engine()->mutable_params(), 1029, 2.0f);  // OP1 Coarse Ratio 2
+
+  // Part 1: VA Engine (4)
+  lsp::Part* p_va = live_set.mutable_parts(1);
+  p_va->mutable_engine()->set_engine_type_id(4);
+  fixtures::entry(p_va->mutable_engine()->mutable_params(), 1200, 0.0f);  // Saw wave
+  fixtures::entry(p_va->mutable_engine()->mutable_params(), 1220, 85.0f); // Mix Osc1 85%
+  fixtures::entry(p_va->mutable_engine()->mutable_params(), 1231, 1450.0f); // Cutoff 1450 Hz
+  fixtures::entry(p_va->mutable_engine()->mutable_params(), 1232, 38.0f); // Resonance 38%
+  fixtures::entry(p_va->mutable_engine()->mutable_params(), 1240, 15.0f); // Amp Attack 15 ms
+  fixtures::entry(p_va->mutable_engine()->mutable_params(), 1264, 45.0f); // Glide 45 ms
+
+  // Assign encoders: K1 -> fm_feedback (1001), K2 -> va_filter_cutoff (1231)
+  live_set.set_assign(0, 1001);
+  live_set.set_assign(1, 1231);
+
+  // Add Scene 1 with performance parameter overrides (never timbre assignment)
+  lsp::Scene* sc = live_set.add_scenes();
+  sc->set_name("Chorus Lead");
+  for (int i = 0; i < 8; ++i) sc->add_parts();
+  fixtures::entry(sc->mutable_parts(0)->mutable_engine_params(), 1001, 7.0f);
+  fixtures::entry(sc->mutable_parts(1)->mutable_engine_params(), 1231, 3500.0f);
+
+  // 3. Write and Round-Trip to store
+  TmpDir td;
+  StoreOptions so;
+  so.dir = td.path;
+  std::unique_ptr<LiveSetStore> st;
+  CHECK(LiveSetStore::open(so, st) == Status::kOk);
+  CHECK(st->write(live_set) == Status::kOk);
+
+  LoadResult lr;
+  CHECK(st->read(live_set.id(), lr) == Status::kOk);
+  CHECK(lr.live_set.parts(0).engine().engine_type_id() == 3);
+  CHECK(lr.live_set.parts(0).engine().params_size() == 5);
+  CHECK(lr.live_set.parts(1).engine().engine_type_id() == 4);
+  CHECK(lr.live_set.parts(1).engine().params_size() == 6);
+  CHECK(lr.live_set.scenes_size() == 1);
+  CHECK(lr.live_set.scenes(0).parts(0).engine_params_size() == 1);
+  CHECK(lr.live_set.scenes(0).parts(0).engine_params(0).param_id() == 1001);
+  CHECK(lr.live_set.scenes(0).parts(0).engine_params(0).value() == 7.0f);
+  CHECK(lr.live_set.scenes(0).parts(1).engine_params_size() == 1);
+  CHECK(lr.live_set.scenes(0).parts(1).engine_params(0).param_id() == 1231);
+  CHECK(lr.live_set.scenes(0).parts(1).engine_params(0).value() == 3500.0f);
+  CHECK(lr.live_set.assign(0) == 1001);
+  CHECK(lr.live_set.assign(1) == 1231);
+
+  // Verify write back is byte-identical
+  std::string original_bytes = bytes_of(lr.live_set);
+  CHECK(st->write(lr.live_set) == Status::kOk);
+  CHECK(slurp(st->path_for(live_set.id())) == original_bytes);
+
+  // 4. Rollback to N-1 simulation (Story 12.8 AC 3)
+  const EngineAvailability legacy_availability = [](std::uint32_t id) {
+    return id == 1 || id == 2; // only Sample (1) and Organ (2) compiled in
+  };
+  auto states = resolve_parts(lr.live_set, legacy_availability);
+  CHECK(states[0] == PartState::kEngineNotAvailable); // FM plays silent, never substituted
+  CHECK(states[1] == PartState::kEngineNotAvailable); // VA plays silent, never substituted
+
+  // Unknown fields preserved when written back by N-1 reader
+  std::string file_content;
+  CHECK(serialize(lr.live_set, file_content) == Status::kOk);
+  LoadResult nminus1_lr;
+  CHECK(parse(file_content, ReadOptions{}, nminus1_lr) == Status::kOk);
+  CHECK(nminus1_lr.live_set.parts(0).engine().engine_type_id() == 3);
+  CHECK(nminus1_lr.live_set.parts(0).engine().params_size() == 5);
+  CHECK(nminus1_lr.live_set.parts(1).engine().engine_type_id() == 4);
+  CHECK(nminus1_lr.live_set.parts(1).engine().params_size() == 6);
+}
+
 }  // namespace
 
 int main() {
@@ -1008,6 +1117,7 @@ int main() {
   test_hostile_input();
   test_corpus();
   test_arpeggiator_registry_and_live_set_defaults();
+  test_fm_va_timbre_parameters_live_set_roundtrip_and_rollback();
   if (g_fail) {
     std::printf("live_set_tests: %d failure(s)\n", g_fail);
     return 1;
