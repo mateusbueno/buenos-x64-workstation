@@ -4,10 +4,21 @@
 #include "velora/ui/theme.hpp"
 
 #include <cstdio>
+#include <algorithm>
 
 namespace velora::ui {
 
-PerformanceView::PerformanceView(WsClient* client) : client_(client) {}
+PerformanceView::PerformanceView(WsClient* client) : client_(client) {
+  parts_.resize(8);
+  for (size_t i = 0; i < 8; ++i) {
+    parts_[i].timbre_name = "";
+    parts_[i].category = "";
+    parts_[i].volume = 0.75f;
+    parts_[i].enabled = true;
+    parts_[i].is_empty = (i >= 4);
+    parts_[i].missing_library = false;
+  }
+}
 
 PerformanceView::~PerformanceView() {
   root_ = nullptr;
@@ -19,6 +30,22 @@ PerformanceView::~PerformanceView() {
   scene_tile_objs_.clear();
   scene_title_objs_.clear();
   scene_sub_objs_.clear();
+  part_card_objs_.clear();
+  part_num_objs_.clear();
+  part_led_objs_.clear();
+  part_power_objs_.clear();
+  part_power_lbl_objs_.clear();
+  part_name_objs_.clear();
+  part_cat_objs_.clear();
+  part_vol_track_objs_.clear();
+  part_vol_fill_objs_.clear();
+  status_normal_container_ = nullptr;
+  lbl_status_voices_ = nullptr;
+  lbl_status_streaming_ = nullptr;
+  lbl_status_rotary_ = nullptr;
+  btn_status_rev_ = nullptr;
+  lbl_status_rev_ = nullptr;
+  lbl_status_takeover_ = nullptr;
 }
 
 bool PerformanceView::create(lv_obj_t* parent) {
@@ -164,6 +191,112 @@ bool PerformanceView::create(lv_obj_t* parent) {
   lv_obj_set_scrollable(part_area_, false);
   lv_obj_add_style(part_area_, Theme::style_root(), LV_PART_MAIN);
 
+  // 8 Part Strips
+  part_card_objs_.resize(8);
+  part_num_objs_.resize(8);
+  part_led_objs_.resize(8);
+  part_power_objs_.resize(8);
+  part_power_lbl_objs_.resize(8);
+  part_name_objs_.resize(8);
+  part_cat_objs_.resize(8);
+  part_vol_track_objs_.resize(8);
+  part_vol_fill_objs_.resize(8);
+
+  int32_t strip_w = 115;
+  int32_t strip_h = 282;
+
+  for (int i = 0; i < 8; ++i) {
+    lv_obj_t* card = lv_obj_create(part_area_);
+    lv_obj_set_size(card, strip_w, strip_h);
+    lv_obj_set_pos(card, start_x + i * (strip_w + gap), sp.space_2);
+    lv_obj_set_scrollable(card, false);
+    lv_obj_set_clickable(card, true);
+    lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, r.md, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, p.line, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, sp.space_2, LV_PART_MAIN);
+    lv_obj_add_event_cb(card, part_card_click_cb, LV_EVENT_CLICKED, this);
+
+    // Number + LED dot row
+    lv_obj_t* lbl_n = lv_label_create(card);
+    char n_buf[8];
+    std::snprintf(n_buf, sizeof(n_buf), "%d", i + 1);
+    lv_label_set_text(lbl_n, n_buf);
+    lv_obj_add_style(lbl_n, Theme::style_text_muted(), LV_PART_MAIN);
+    lv_obj_set_pos(lbl_n, 4, 4);
+
+    lv_obj_t* led = lv_obj_create(card);
+    lv_obj_set_size(led, 8, 8);
+    lv_obj_set_pos(led, 22, 8);
+    lv_obj_set_scrollable(led, false);
+    lv_obj_set_style_radius(led, r.full, LV_PART_MAIN);
+
+    // Power toggle button (>=56 px touch target)
+    lv_obj_t* btn_p = lv_obj_create(card);
+    lv_obj_set_size(btn_p, 56, 56);
+    lv_obj_set_pos(btn_p, strip_w - 56 - sp.space_2, 0);
+    lv_obj_set_scrollable(btn_p, false);
+    lv_obj_set_clickable(btn_p, true);
+    lv_obj_set_style_bg_opa(btn_p, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn_p, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(btn_p, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(btn_p, part_power_click_cb, LV_EVENT_CLICKED, this);
+
+    lv_obj_t* lbl_p = lv_label_create(btn_p);
+    lv_label_set_text(lbl_p, tr("performance.part.power").c_str());
+    lv_obj_align(lbl_p, LV_ALIGN_CENTER, 0, 0);
+
+    // Timbre name (2 lines, end ellipsis)
+    lv_obj_t* lbl_nm = lv_label_create(card);
+    lv_obj_set_size(lbl_nm, strip_w - sp.space_4, 38);
+    lv_obj_set_pos(lbl_nm, 4, 58);
+    lv_label_set_long_mode(lbl_nm, LV_LABEL_LONG_DOT);
+    lv_label_set_text(lbl_nm, "");
+    lv_obj_add_style(lbl_nm, Theme::style_text(), LV_PART_MAIN);
+
+    // Category / status label
+    lv_obj_t* lbl_c = lv_label_create(card);
+    lv_obj_set_size(lbl_c, strip_w - sp.space_4, 20);
+    lv_obj_set_pos(lbl_c, 4, 98);
+    lv_label_set_text(lbl_c, "");
+    lv_obj_add_style(lbl_c, Theme::style_text_muted(), LV_PART_MAIN);
+
+    // Vertical Volume Bar (width 16, height 120)
+    int32_t vol_h = 120;
+    int32_t vol_w = 16;
+    lv_obj_t* vol_track = lv_obj_create(card);
+    lv_obj_set_size(vol_track, vol_w, vol_h);
+    lv_obj_set_pos(vol_track, (strip_w - sp.space_4 - vol_w) / 2, 130);
+    lv_obj_set_scrollable(vol_track, false);
+    lv_obj_set_style_bg_color(vol_track, p.raised, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(vol_track, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(vol_track, p.line_strong, LV_PART_MAIN);
+    lv_obj_set_style_border_width(vol_track, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(vol_track, r.sm, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(vol_track, 0, LV_PART_MAIN);
+
+    lv_obj_t* vol_fill = lv_obj_create(vol_track);
+    lv_obj_set_size(vol_fill, vol_w, 0);
+    lv_obj_align(vol_fill, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_scrollable(vol_fill, false);
+    lv_obj_set_style_bg_color(vol_fill, p.accent, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(vol_fill, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(vol_fill, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(vol_fill, r.sm, LV_PART_MAIN);
+
+    part_card_objs_[i] = card;
+    part_num_objs_[i] = lbl_n;
+    part_led_objs_[i] = led;
+    part_power_objs_[i] = btn_p;
+    part_power_lbl_objs_[i] = lbl_p;
+    part_name_objs_[i] = lbl_nm;
+    part_cat_objs_[i] = lbl_c;
+    part_vol_track_objs_[i] = vol_track;
+    part_vol_fill_objs_[i] = vol_fill;
+  }
+
   // 6. Status Bar: 1024x56, pos (0, 544)
   status_bar_ = lv_obj_create(root_);
   lv_obj_set_size(status_bar_, 1024, sp.device_status);
@@ -171,14 +304,67 @@ bool PerformanceView::create(lv_obj_t* parent) {
   lv_obj_set_scrollable(status_bar_, false);
   lv_obj_add_style(status_bar_, Theme::style_topbar(), LV_PART_MAIN);
 
-  lv_obj_t* lbl_stat = lv_label_create(status_bar_);
-  lv_label_set_text(lbl_stat, tr("shell.hint.ready").c_str());
-  lv_obj_add_style(lbl_stat, Theme::style_text_muted(), LV_PART_MAIN);
-  lv_obj_align(lbl_stat, LV_ALIGN_LEFT_MID, sp.screen_gutter, 0);
+  // Status normal container
+  status_normal_container_ = lv_obj_create(status_bar_);
+  lv_obj_set_size(status_normal_container_, 1024, sp.device_status);
+  lv_obj_set_pos(status_normal_container_, 0, 0);
+  lv_obj_set_scrollable(status_normal_container_, false);
+  lv_obj_set_style_bg_opa(status_normal_container_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(status_normal_container_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(status_normal_container_, 0, LV_PART_MAIN);
+
+  // VOICES n / max
+  lbl_status_voices_ = lv_label_create(status_normal_container_);
+  char v_buf[64];
+  std::snprintf(v_buf, sizeof(v_buf), "%s %u / %u", tr("performance.status.voices").c_str(), voices_active_, voices_max_);
+  lv_label_set_text(lbl_status_voices_, v_buf);
+  lv_obj_add_style(lbl_status_voices_, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_align(lbl_status_voices_, LV_ALIGN_LEFT_MID, sp.screen_gutter, 0);
+
+  // STREAMING OK
+  lbl_status_streaming_ = lv_label_create(status_normal_container_);
+  lv_label_set_text(lbl_status_streaming_, tr("performance.status.streaming_ok").c_str());
+  lv_obj_set_style_text_color(lbl_status_streaming_, p.ok, LV_PART_MAIN);
+  lv_obj_align(lbl_status_streaming_, LV_ALIGN_LEFT_MID, sp.screen_gutter + 180, 0);
+
+  // ROTARY
+  lbl_status_rotary_ = lv_label_create(status_normal_container_);
+  lv_label_set_text(lbl_status_rotary_, tr("performance.status.rotary_slow").c_str());
+  lv_obj_set_style_text_color(lbl_status_rotary_, p.accent, LV_PART_MAIN);
+  lv_obj_align(lbl_status_rotary_, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_hidden(lbl_status_rotary_, true);
+
+  // REV button (opens Effects surface)
+  btn_status_rev_ = lv_obj_create(status_normal_container_);
+  lv_obj_set_size(btn_status_rev_, 100, sp.device_status);
+  lv_obj_align(btn_status_rev_, LV_ALIGN_RIGHT_MID, -sp.screen_gutter, 0);
+  lv_obj_set_scrollable(btn_status_rev_, false);
+  lv_obj_set_clickable(btn_status_rev_, true);
+  lv_obj_set_style_bg_opa(btn_status_rev_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(btn_status_rev_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(btn_status_rev_, 0, LV_PART_MAIN);
+  lv_obj_add_event_cb(btn_status_rev_, rev_click_cb, LV_EVENT_CLICKED, this);
+
+  lbl_status_rev_ = lv_label_create(btn_status_rev_);
+  char rev_buf[32];
+  std::snprintf(rev_buf, sizeof(rev_buf), "%s %d%%", tr("performance.status.rev").c_str(), static_cast<int>(rev_send_ * 100.0f));
+  lv_label_set_text(lbl_status_rev_, rev_buf);
+  lv_obj_set_style_text_color(lbl_status_rev_, p.accent, LV_PART_MAIN);
+  lv_obj_align(lbl_status_rev_, LV_ALIGN_CENTER, 0, 0);
+
+  // Status takeover label (warning takeover line)
+  lbl_status_takeover_ = lv_label_create(status_bar_);
+  lv_obj_set_size(lbl_status_takeover_, 1024 - 2 * sp.screen_gutter, sp.device_status);
+  lv_label_set_text(lbl_status_takeover_, "");
+  lv_obj_set_style_text_color(lbl_status_takeover_, p.warn, LV_PART_MAIN);
+  lv_obj_align(lbl_status_takeover_, LV_ALIGN_LEFT_MID, sp.screen_gutter, 0);
+  lv_obj_set_hidden(lbl_status_takeover_, true);
 
   set_live_set(tr("performance.hero.default_name"), 0, false);
   update_scene_tiles();
   update_top_bar_modes();
+  update_part_strips();
+  update_status_bar();
   return true;
 }
 
@@ -270,6 +456,86 @@ void PerformanceView::recall_scene(int32_t scene_idx) {
   }
 }
 
+void PerformanceView::set_parts(const std::vector<PartStripData>& parts) {
+  parts_ = parts;
+  if (parts_.size() < 8) {
+    parts_.resize(8);
+  }
+
+  // Check for any missing library warnings
+  bool found_missing = false;
+  for (size_t i = 0; i < 8; ++i) {
+    if (parts_[i].missing_library) {
+      char w_buf[64];
+      std::snprintf(w_buf, sizeof(w_buf), "%s %zu: %s",
+                    tr("performance.mode.part").c_str(),
+                    i + 1,
+                    tr("performance.part.missing_library").c_str());
+      set_warning_takeover(w_buf);
+      found_missing = true;
+      break;
+    }
+  }
+
+  if (!found_missing && warning_active_) {
+    clear_warning_takeover();
+  }
+
+  update_part_strips();
+}
+
+void PerformanceView::set_part_enabled(int32_t part_idx, bool enabled) {
+  if (part_idx < 0 || part_idx >= 8) return;
+  parts_[part_idx].enabled = enabled;
+  update_part_strips();
+
+  if (on_part_toggle_) {
+    on_part_toggle_(part_idx, enabled);
+  }
+}
+
+void PerformanceView::set_part_volume(int32_t part_idx, float volume) {
+  if (part_idx < 0 || part_idx >= 8) return;
+  parts_[part_idx].volume = std::clamp(volume, 0.0f, 1.0f);
+  update_part_strips();
+}
+
+void PerformanceView::set_status(uint32_t voices_active, uint32_t voices_max, bool streaming_ok, int32_t rotary_state, float rev_send) {
+  voices_active_ = voices_active;
+  voices_max_ = voices_max;
+  streaming_ok_ = streaming_ok;
+  rotary_state_ = rotary_state;
+  rev_send_ = rev_send;
+  update_status_bar();
+}
+
+void PerformanceView::set_warning_takeover(const std::string& warning_text) {
+  warning_active_ = true;
+  warning_text_ = warning_text;
+
+  if (lbl_status_takeover_) {
+    std::string text = "⚠ " + warning_text;
+    lv_label_set_text(lbl_status_takeover_, text.c_str());
+    lv_obj_set_hidden(lbl_status_takeover_, false);
+  }
+  if (status_normal_container_) {
+    lv_obj_set_hidden(status_normal_container_, true);
+  }
+}
+
+void PerformanceView::clear_warning_takeover() {
+  warning_active_ = false;
+  warning_text_.clear();
+
+  if (lbl_status_takeover_) {
+    lv_label_set_text(lbl_status_takeover_, "");
+    lv_obj_set_hidden(lbl_status_takeover_, true);
+  }
+  if (status_normal_container_) {
+    lv_obj_set_hidden(status_normal_container_, false);
+  }
+}
+
 void PerformanceView::update_scene_tiles() {
   if (scene_tile_objs_.empty()) return;
 
@@ -348,6 +614,130 @@ void PerformanceView::update_top_bar_modes() {
   lv_obj_set_style_text_color(lbl_mode_knobs_, p.accent, LV_PART_MAIN);
 }
 
+void PerformanceView::update_part_strips() {
+  if (part_card_objs_.empty()) return;
+
+  const auto& p = Theme::current();
+
+  for (size_t i = 0; i < 8; ++i) {
+    if (i >= parts_.size()) break;
+
+    const auto& pt = parts_[i];
+    lv_obj_t* led = part_led_objs_[i];
+    lv_obj_t* lbl_p = part_power_lbl_objs_[i];
+    lv_obj_t* lbl_nm = part_name_objs_[i];
+    lv_obj_t* lbl_c = part_cat_objs_[i];
+    lv_obj_t* fill = part_vol_fill_objs_[i];
+
+    // Volume level: height in range [0..120]
+    int32_t fill_h = static_cast<int32_t>(120.0f * std::clamp(pt.volume, 0.0f, 1.0f));
+    lv_obj_set_size(fill, 16, fill_h);
+
+    if (pt.is_empty) {
+      // Empty part: muted styling, "— empty"
+      lv_obj_set_style_bg_opa(led, LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_border_color(led, p.muted, LV_PART_MAIN);
+      lv_obj_set_style_border_width(led, 1, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_p, tr("performance.part.power").c_str());
+      lv_obj_set_style_text_color(lbl_p, p.muted, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_nm, "");
+      lv_label_set_text(lbl_c, tr("performance.part.empty").c_str());
+      lv_obj_set_style_text_color(lbl_c, p.muted, LV_PART_MAIN);
+
+      lv_obj_set_style_bg_color(fill, p.muted, LV_PART_MAIN);
+    } else if (pt.missing_library) {
+      // Missing library: warn text in place of category
+      lv_obj_set_style_bg_color(led, p.warn, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(led, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(led, 0, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_p, tr("performance.part.power").c_str());
+      lv_obj_set_style_text_color(lbl_p, p.warn, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_nm, pt.timbre_name.c_str());
+      lv_obj_set_style_text_color(lbl_nm, p.text, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_c, tr("performance.part.missing_library").c_str());
+      lv_obj_set_style_text_color(lbl_c, p.warn, LV_PART_MAIN);
+
+      lv_obj_set_style_bg_color(fill, p.warn, LV_PART_MAIN);
+    } else if (!pt.enabled) {
+      // Off part: muted at full opacity, hollow ring, "OFF" tag
+      lv_obj_set_style_bg_opa(led, LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_border_color(led, p.muted, LV_PART_MAIN);
+      lv_obj_set_style_border_width(led, 1, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_p, tr("performance.part.power").c_str());
+      lv_obj_set_style_text_color(lbl_p, p.muted, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_nm, pt.timbre_name.c_str());
+      lv_obj_set_style_text_color(lbl_nm, p.muted, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_c, tr("performance.part.off").c_str());
+      lv_obj_set_style_text_color(lbl_c, p.muted, LV_PART_MAIN);
+
+      lv_obj_set_style_bg_color(fill, p.muted, LV_PART_MAIN);
+    } else {
+      // Normal active part
+      lv_obj_set_style_bg_color(led, p.accent, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(led, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(led, 0, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_p, tr("performance.part.power").c_str());
+      lv_obj_set_style_text_color(lbl_p, p.accent, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_nm, pt.timbre_name.c_str());
+      lv_obj_set_style_text_color(lbl_nm, p.text, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_c, pt.category.c_str());
+      lv_obj_set_style_text_color(lbl_c, p.muted, LV_PART_MAIN);
+
+      lv_obj_set_style_bg_color(fill, p.accent, LV_PART_MAIN);
+    }
+  }
+}
+
+void PerformanceView::update_status_bar() {
+  if (!lbl_status_voices_) return;
+
+  const auto& p = Theme::current();
+
+  // Voices
+  char v_buf[64];
+  std::snprintf(v_buf, sizeof(v_buf), "%s %u / %u", tr("performance.status.voices").c_str(), voices_active_, voices_max_);
+  lv_label_set_text(lbl_status_voices_, v_buf);
+
+  // Streaming status
+  if (streaming_ok_) {
+    lv_label_set_text(lbl_status_streaming_, tr("performance.status.streaming_ok").c_str());
+    lv_obj_set_style_text_color(lbl_status_streaming_, p.ok, LV_PART_MAIN);
+  }
+
+  // Rotary
+  if (rotary_state_ < 0) {
+    lv_obj_set_hidden(lbl_status_rotary_, true);
+  } else {
+    lv_obj_set_hidden(lbl_status_rotary_, false);
+    if (rotary_state_ == 0) {
+      lv_label_set_text(lbl_status_rotary_, tr("performance.status.rotary_stop").c_str());
+      lv_obj_set_style_text_color(lbl_status_rotary_, p.muted, LV_PART_MAIN);
+    } else if (rotary_state_ == 1) {
+      lv_label_set_text(lbl_status_rotary_, tr("performance.status.rotary_slow").c_str());
+      lv_obj_set_style_text_color(lbl_status_rotary_, p.accent, LV_PART_MAIN);
+    } else {
+      lv_label_set_text(lbl_status_rotary_, tr("performance.status.rotary_fast").c_str());
+      lv_obj_set_style_text_color(lbl_status_rotary_, p.accent, LV_PART_MAIN);
+    }
+  }
+
+  // REV %
+  char rev_buf[32];
+  std::snprintf(rev_buf, sizeof(rev_buf), "%s %d%%", tr("performance.status.rev").c_str(), static_cast<int>(rev_send_ * 100.0f));
+  lv_label_set_text(lbl_status_rev_, rev_buf);
+}
+
 void PerformanceView::update_from_state(const ws::v1::State& state) {
   for (const auto& pv : state.performance_init()) {
     if (pv.param_id() == ws::v1::PARAM_TEMPO_BPM) {
@@ -404,6 +794,44 @@ void PerformanceView::scene_click_cb(lv_event_t* e) {
       self->recall_scene(static_cast<int32_t>(i));
       break;
     }
+  }
+}
+
+void PerformanceView::part_card_click_cb(lv_event_t* e) {
+  auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+  if (!self) return;
+
+  auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+  for (size_t i = 0; i < self->part_card_objs_.size(); ++i) {
+    if (self->part_card_objs_[i] == target) {
+      if (self->on_part_select_) {
+        self->on_part_select_(static_cast<int32_t>(i));
+      }
+      break;
+    }
+  }
+}
+
+void PerformanceView::part_power_click_cb(lv_event_t* e) {
+  auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+  if (!self) return;
+
+  auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+  for (size_t i = 0; i < self->part_power_objs_.size(); ++i) {
+    if (self->part_power_objs_[i] == target) {
+      bool new_state = !self->parts_[i].enabled;
+      self->set_part_enabled(static_cast<int32_t>(i), new_state);
+      break;
+    }
+  }
+}
+
+void PerformanceView::rev_click_cb(lv_event_t* e) {
+  auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+  if (!self) return;
+
+  if (self->on_rev_click_) {
+    self->on_rev_click_();
   }
 }
 

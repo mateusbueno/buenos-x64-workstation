@@ -87,5 +87,15 @@
   "performance.mode.knobs": "KNOBS",
   "performance.mode.part": "PART",
   "performance.mode.all": "ALL",
-  "performance.mode.assign": "ASSIGN"
+  "performance.mode.assign": "ASSIGN",
+  "performance.part.power": "⏻",
+  "performance.part.off": "OFF",
+  "performance.part.empty": "— empty",
+  "performance.part.missing_library": "Missing library",
+  "performance.status.voices": "VOICES",
+  "performance.status.streaming_ok": "● STREAMING OK",
+  "performance.status.rotary_slow": "ROTARY SLOW",
+  "performance.status.rotary_fast": "ROTARY FAST",
+  "performance.status.rotary_stop": "ROTARY STOP",
+  "performance.status.rev": "REV"
 }

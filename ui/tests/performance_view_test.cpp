@@ -83,7 +83,84 @@ static void test_performance_view() {
   view.on_panel_event(PanelEvent::button_press(MCU_BTN_SCENE_NEXT));
   assert(view.current_scene() == 3);
 
-  // 7. Test state update from protobuf State
+  // 7. Test Part Strips (Story 4.21)
+  assert(view.part_count() == 8);
+
+  // Check strip geometry and touch target min
+  for (size_t i = 0; i < 8; ++i) {
+    lv_obj_t* card = view.part_card(i);
+    assert(card != nullptr);
+    assert(lv_obj_get_width(card) == 115);
+    assert(lv_obj_get_height(card) == 282);
+
+    lv_obj_t* pwr = view.part_power_btn(i);
+    assert(pwr != nullptr);
+    // Touch target >= 56 px
+    assert(lv_obj_get_width(pwr) >= 56);
+    assert(lv_obj_get_height(pwr) >= 56);
+  }
+
+  // Populate parts with diverse states
+  std::vector<PartStripData> test_parts(8);
+  test_parts[0] = {"Concert Grand", "Piano", 0.85f, true, false, false};
+  test_parts[1] = {"Warm Pad", "Synth Pad", 0.60f, true, false, false};
+  test_parts[2] = {"Chamber Strings", "Strings", 0.50f, false, false, false}; // Off part
+  test_parts[3] = {"Upright Bass", "A. Bass", 0.70f, true, false, false};
+  test_parts[4] = {"", "", 0.0f, false, true, false}; // Empty part
+  test_parts[5] = {"", "", 0.0f, false, true, false};
+  test_parts[6] = {"", "", 0.0f, false, true, false};
+  test_parts[7] = {"Solo Trumpet", "Brass", 0.40f, true, false, false};
+
+  view.set_parts(test_parts);
+  assert(view.part_data(0).timbre_name == "Concert Grand");
+  assert(view.part_data(2).enabled == false);
+  assert(view.part_data(4).is_empty == true);
+
+  // Test callbacks
+  int toggled_part = -1;
+  bool toggled_state = false;
+  view.set_part_toggle_callback([&](int32_t idx, bool state) {
+    toggled_part = idx;
+    toggled_state = state;
+  });
+
+  view.set_part_enabled(2, true);
+  assert(view.part_data(2).enabled == true);
+  assert(toggled_part == 2);
+  assert(toggled_state == true);
+
+  view.set_part_volume(0, 0.95f);
+  assert(view.part_data(0).volume == 0.95f);
+
+  // 8. Test Missing Library warning takeover
+  assert(!view.is_warning_active());
+
+  test_parts[1].missing_library = true;
+  view.set_parts(test_parts);
+  assert(view.is_warning_active());
+  assert(!view.warning_text().empty());
+
+  // Clear warning
+  test_parts[1].missing_library = false;
+  view.set_parts(test_parts);
+  assert(!view.is_warning_active());
+
+  // 9. Test Status Bar and REV button
+  bool rev_clicked = false;
+  view.set_rev_click_callback([&]() {
+    rev_clicked = true;
+  });
+
+  view.set_status(32, 128, true, 1, 0.40f);
+
+  assert(view.rev_button() != nullptr);
+  assert(lv_obj_get_height(view.rev_button()) >= 56);
+
+  // Simulate REV button click
+  lv_obj_send_event(view.rev_button(), LV_EVENT_CLICKED, nullptr);
+  assert(rev_clicked);
+
+  // 10. Test state update from protobuf State
   ws::v1::State st;
   st.set_live_set_name("Sunday Morning");
   st.mutable_edits()->set_current_dirty(false);

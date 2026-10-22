@@ -19,8 +19,21 @@ struct SceneTileData {
   bool is_empty{false};
 };
 
+struct PartStripData {
+  std::string timbre_name;
+  std::string category;
+  float volume{0.75f};
+  bool enabled{true};
+  bool is_empty{false};
+  bool missing_library{false};
+};
+
 class PerformanceView {
  public:
+  using PartToggleCallback = std::function<void(int32_t part_idx, bool enabled)>;
+  using PartSelectCallback = std::function<void(int32_t part_idx)>;
+  using RevClickCallback = std::function<void()>;
+
   explicit PerformanceView(WsClient* client = nullptr);
   ~PerformanceView();
 
@@ -37,6 +50,18 @@ class PerformanceView {
   void set_scenes(const std::vector<SceneTileData>& scenes, int32_t current_scene_idx);
   void set_modes(bool drawbars, bool scenes_mode, int32_t knob_mode, int32_t knob_part = 1);
 
+  // Story 4.21 Setters
+  void set_parts(const std::vector<PartStripData>& parts);
+  void set_part_enabled(int32_t part_idx, bool enabled);
+  void set_part_volume(int32_t part_idx, float volume);
+  void set_status(uint32_t voices_active, uint32_t voices_max, bool streaming_ok, int32_t rotary_state, float rev_send);
+  void set_warning_takeover(const std::string& warning_text);
+  void clear_warning_takeover();
+
+  void set_part_toggle_callback(PartToggleCallback cb) { on_part_toggle_ = std::move(cb); }
+  void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
+  void set_rev_click_callback(RevClickCallback cb) { on_rev_click_ = std::move(cb); }
+
   void recall_scene(int32_t scene_idx);
 
   // Accessors for testing
@@ -52,12 +77,31 @@ class PerformanceView {
   float tempo() const noexcept { return current_bpm_; }
   bool has_unsaved_edits() const noexcept { return has_unsaved_edits_; }
 
+  size_t part_count() const noexcept { return parts_.size(); }
+  const PartStripData& part_data(size_t idx) const { return parts_[idx]; }
+  bool is_warning_active() const noexcept { return warning_active_; }
+  const std::string& warning_text() const noexcept { return warning_text_; }
+
+  lv_obj_t* part_card(size_t idx) const { return part_card_objs_[idx]; }
+  lv_obj_t* part_power_btn(size_t idx) const { return part_power_objs_[idx]; }
+  lv_obj_t* rev_button() const noexcept { return btn_status_rev_; }
+
  private:
   static void scene_click_cb(lv_event_t* e);
+  static void part_card_click_cb(lv_event_t* e);
+  static void part_power_click_cb(lv_event_t* e);
+  static void rev_click_cb(lv_event_t* e);
+
   void update_scene_tiles();
   void update_top_bar_modes();
+  void update_part_strips();
+  void update_status_bar();
 
   WsClient* client_{nullptr};
+
+  PartToggleCallback on_part_toggle_;
+  PartSelectCallback on_part_select_;
+  RevClickCallback on_rev_click_;
 
   lv_obj_t* root_{nullptr};
   lv_obj_t* top_bar_{nullptr};
@@ -86,6 +130,37 @@ class PerformanceView {
   std::vector<lv_obj_t*> scene_tile_objs_;
   std::vector<lv_obj_t*> scene_title_objs_;
   std::vector<lv_obj_t*> scene_sub_objs_;
+
+  // Part Strip elements (8 parts)
+  std::vector<PartStripData> parts_;
+  std::vector<lv_obj_t*> part_card_objs_;
+  std::vector<lv_obj_t*> part_num_objs_;
+  std::vector<lv_obj_t*> part_led_objs_;
+  std::vector<lv_obj_t*> part_power_objs_;
+  std::vector<lv_obj_t*> part_power_lbl_objs_;
+  std::vector<lv_obj_t*> part_name_objs_;
+  std::vector<lv_obj_t*> part_cat_objs_;
+  std::vector<lv_obj_t*> part_vol_track_objs_;
+  std::vector<lv_obj_t*> part_vol_fill_objs_;
+
+  // Status Bar elements
+  lv_obj_t* status_normal_container_{nullptr};
+  lv_obj_t* lbl_status_voices_{nullptr};
+  lv_obj_t* lbl_status_streaming_{nullptr};
+  lv_obj_t* lbl_status_rotary_{nullptr};
+  lv_obj_t* btn_status_rev_{nullptr};
+  lv_obj_t* lbl_status_rev_{nullptr};
+
+  // Status Bar warning takeover
+  lv_obj_t* lbl_status_takeover_{nullptr};
+  bool warning_active_{false};
+  std::string warning_text_;
+
+  uint32_t voices_active_{0};
+  uint32_t voices_max_{128};
+  bool streaming_ok_{true};
+  int32_t rotary_state_{-1}; // -1 = hide, 0 = STOP, 1 = SLOW, 2 = FAST
+  float rev_send_{0.25f};
 
   int32_t current_scene_idx_{-1};
   std::string live_set_name_;
