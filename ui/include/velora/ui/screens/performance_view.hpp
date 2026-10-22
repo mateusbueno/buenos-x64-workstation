@@ -32,6 +32,8 @@ struct PartStripData {
   bool enabled{true};
   bool is_empty{false};
   bool missing_library{false};
+  bool pickup_pending{false};
+  float physical_fader_pos{0.0f};
 };
 
 class PerformanceView {
@@ -73,6 +75,16 @@ class PerformanceView {
   bool is_scene_led_dipping() const noexcept { return scene_led_dipping_; }
   void handle_part_scene_press(int32_t btn_idx, bool pressed, uint64_t timestamp_us = 0);
 
+  // Story 4.24 Features: Pickup Ghost & Status Takeover
+  void set_pickup_pending(int32_t part_idx, float physical_pos);
+  void handle_fader_move(int32_t part_idx, float physical_pos);
+  bool is_part_pickup_pending(size_t idx) const {
+    return (idx < parts_.size()) ? parts_[idx].pickup_pending : false;
+  }
+  int32_t active_pickup_fader() const noexcept { return active_pickup_fader_; }
+  lv_obj_t* part_ghost(size_t idx) const { return (idx < part_ghost_objs_.size()) ? part_ghost_objs_[idx] : nullptr; }
+  lv_obj_t* part_chevron(size_t idx) const { return (idx < part_chevron_objs_.size()) ? part_chevron_objs_[idx] : nullptr; }
+
   void set_part_toggle_callback(PartToggleCallback cb) { on_part_toggle_ = std::move(cb); }
   void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
   void set_rev_click_callback(RevClickCallback cb) { on_rev_click_ = std::move(cb); }
@@ -111,6 +123,7 @@ class PerformanceView {
   void update_top_bar_modes();
   void update_part_strips();
   void update_status_bar();
+  void update_pickup_takeover();
 
   WsClient* client_{nullptr};
 
@@ -157,6 +170,8 @@ class PerformanceView {
   std::vector<lv_obj_t*> part_cat_objs_;
   std::vector<lv_obj_t*> part_vol_track_objs_;
   std::vector<lv_obj_t*> part_vol_fill_objs_;
+  std::vector<lv_obj_t*> part_ghost_objs_;
+  std::vector<lv_obj_t*> part_chevron_objs_;
 
   // Status Bar elements
   lv_obj_t* status_normal_container_{nullptr};
@@ -188,6 +203,9 @@ class PerformanceView {
   int32_t mode_knobs_{0}; // 0 = PART, 1 = ALL, 2 = ASSIGN
   int32_t knob_part_{1};
   int32_t selected_knob_part_idx_{0};
+
+  // Pickup & Fader tracking
+  int32_t active_pickup_fader_{-1};
 
   // Button tracking
   uint64_t part_btn_press_time_[8]{0};

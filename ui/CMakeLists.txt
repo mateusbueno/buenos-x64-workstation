@@ -120,6 +120,11 @@ target_link_libraries(parts_scenes_toggle_test PRIVATE velora_ui)
 add_test(NAME parts_scenes_toggle_test COMMAND parts_scenes_toggle_test)
 set_tests_properties(parts_scenes_toggle_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
+add_executable(pickup_ghost_test tests/pickup_ghost_test.cpp)
+target_link_libraries(pickup_ghost_test PRIVATE velora_ui)
+add_test(NAME pickup_ghost_test COMMAND pickup_ghost_test)
+set_tests_properties(pickup_ghost_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
 add_test(NAME ui_resilience_test COMMAND ui_resilience_test)

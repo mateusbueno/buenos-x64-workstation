@@ -39,6 +39,8 @@ PerformanceView::~PerformanceView() {
   part_cat_objs_.clear();
   part_vol_track_objs_.clear();
   part_vol_fill_objs_.clear();
+  part_ghost_objs_.clear();
+  part_chevron_objs_.clear();
   status_normal_container_ = nullptr;
   lbl_status_voices_ = nullptr;
   lbl_status_streaming_ = nullptr;
@@ -201,6 +203,8 @@ bool PerformanceView::create(lv_obj_t* parent) {
   part_cat_objs_.resize(8);
   part_vol_track_objs_.resize(8);
   part_vol_fill_objs_.resize(8);
+  part_ghost_objs_.resize(8);
+  part_chevron_objs_.resize(8);
 
   int32_t strip_w = 115;
   int32_t strip_h = 282;
@@ -286,6 +290,25 @@ bool PerformanceView::create(lv_obj_t* parent) {
     lv_obj_set_style_border_width(vol_fill, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(vol_fill, r.sm, LV_PART_MAIN);
 
+    // Ghost line (3px warn line with 2px bg keylines -> 7px tall, 24px wide)
+    lv_obj_t* ghost = lv_obj_create(card);
+    lv_obj_set_size(ghost, 24, 7);
+    lv_obj_set_pos(ghost, (strip_w - sp.space_4 - 24) / 2, 130);
+    lv_obj_set_scrollable(ghost, false);
+    lv_obj_set_style_bg_color(ghost, p.warn, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ghost, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(ghost, p.bg, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ghost, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(ghost, 0, LV_PART_MAIN);
+    lv_obj_set_hidden(ghost, true);
+
+    // Direction chevron
+    lv_obj_t* chev = lv_label_create(card);
+    lv_label_set_text(chev, "");
+    lv_obj_set_style_text_color(chev, p.warn, LV_PART_MAIN);
+    lv_obj_set_pos(chev, (strip_w - sp.space_4 + vol_w) / 2 + 4, 130);
+    lv_obj_set_hidden(chev, true);
+
     part_card_objs_[i] = card;
     part_num_objs_[i] = lbl_n;
     part_led_objs_[i] = led;
@@ -295,6 +318,8 @@ bool PerformanceView::create(lv_obj_t* parent) {
     part_cat_objs_[i] = lbl_c;
     part_vol_track_objs_[i] = vol_track;
     part_vol_fill_objs_[i] = vol_fill;
+    part_ghost_objs_[i] = ghost;
+    part_chevron_objs_[i] = chev;
   }
 
   // 6. Status Bar: 1024x56, pos (0, 544)
@@ -706,6 +731,32 @@ void PerformanceView::update_part_strips() {
 
       lv_obj_set_style_bg_color(fill, p.accent, LV_PART_MAIN);
     }
+
+    // Pickup Ghost & Chevron
+    lv_obj_t* ghost = part_ghost_objs_[i];
+    lv_obj_t* chev = part_chevron_objs_[i];
+    if (pt.pickup_pending) {
+      lv_obj_set_hidden(ghost, false);
+      lv_obj_set_hidden(chev, false);
+
+      // Card outline: 2px warn
+      lv_obj_set_style_border_color(card, p.warn, LV_PART_MAIN);
+      lv_obj_set_style_border_width(card, 2, LV_PART_MAIN);
+
+      // Ghost vertical position across Volume Bar (height 120, pos y 130)
+      int32_t ghost_y = 130 + 120 - static_cast<int32_t>(120.0f * pt.physical_fader_pos) - 3;
+      lv_obj_set_y(ghost, ghost_y);
+      lv_obj_set_y(chev, ghost_y - 4);
+
+      if (pt.physical_fader_pos < pt.volume) {
+        lv_label_set_text(chev, tr("pickup.chevron.up").c_str());
+      } else {
+        lv_label_set_text(chev, tr("pickup.chevron.down").c_str());
+      }
+    } else {
+      lv_obj_set_hidden(ghost, true);
+      lv_obj_set_hidden(chev, true);
+    }
   }
 }
 
@@ -843,7 +894,78 @@ LedLevel PerformanceView::button_led_level(size_t index) const {
   return LedLevel::Off;
 }
 
+void PerformanceView::set_pickup_pending(int32_t part_idx, float physical_pos) {
+  if (part_idx < 0 || part_idx >= 8) return;
+  parts_[part_idx].pickup_pending = true;
+  parts_[part_idx].physical_fader_pos = std::clamp(physical_pos, 0.0f, 1.0f);
+  active_pickup_fader_ = part_idx;
+  update_part_strips();
+  update_pickup_takeover();
+}
+
+void PerformanceView::handle_fader_move(int32_t part_idx, float physical_pos) {
+  if (part_idx < 0 || part_idx >= 8) return;
+  float pos = std::clamp(physical_pos, 0.0f, 1.0f);
+
+  if (parts_[part_idx].pickup_pending) {
+    bool was_below = (parts_[part_idx].physical_fader_pos <= parts_[part_idx].volume);
+    bool now_above = (pos >= parts_[part_idx].volume);
+    bool was_above = (parts_[part_idx].physical_fader_pos >= parts_[part_idx].volume);
+    bool now_below = (pos <= parts_[part_idx].volume);
+
+    if ((was_below && now_above) || (was_above && now_below)) {
+      // Crossed stored value -> Takeover achieved!
+      parts_[part_idx].pickup_pending = false;
+      parts_[part_idx].volume = pos;
+      parts_[part_idx].physical_fader_pos = pos;
+      if (active_pickup_fader_ == part_idx) {
+        active_pickup_fader_ = -1;
+        for (size_t k = 0; k < 8; ++k) {
+          if (parts_[k].pickup_pending) {
+            active_pickup_fader_ = static_cast<int32_t>(k);
+            break;
+          }
+        }
+      }
+    } else {
+      parts_[part_idx].physical_fader_pos = pos;
+      active_pickup_fader_ = part_idx;
+    }
+  } else {
+    // Already taken over, volume follows fader
+    parts_[part_idx].volume = pos;
+    parts_[part_idx].physical_fader_pos = pos;
+  }
+
+  update_part_strips();
+  update_pickup_takeover();
+}
+
+void PerformanceView::update_pickup_takeover() {
+  if (active_pickup_fader_ >= 0 && active_pickup_fader_ < 8 && parts_[active_pickup_fader_].pickup_pending) {
+    const auto& pt = parts_[active_pickup_fader_];
+    char buf[64];
+    int pct = static_cast<int>(pt.volume * 100.0f + 0.5f);
+    std::string chev = (pt.physical_fader_pos < pt.volume) ? tr("pickup.chevron.up") : tr("pickup.chevron.down");
+    std::snprintf(buf, sizeof(buf), "%s %s %d → %d%%", chev.c_str(), tr("performance.status.fader").c_str(), active_pickup_fader_ + 1, pct);
+    set_warning_takeover(buf);
+  } else {
+    if (warning_active_ && warning_text_.find(tr("performance.status.fader")) != std::string::npos) {
+      clear_warning_takeover();
+    }
+  }
+}
+
 void PerformanceView::on_panel_event(const PanelEvent& ev) {
+  if (ev.type == PanelEventType::Fader) {
+    if (ev.id >= MCU_CTRL_FADER_1 && ev.id <= MCU_CTRL_FADER_8) {
+      int32_t part_idx = static_cast<int32_t>(ev.id - MCU_CTRL_FADER_1);
+      float pos = static_cast<float>(ev.delta) / 4095.0f;
+      handle_fader_move(part_idx, pos);
+    }
+    return;
+  }
+
   if (ev.type == PanelEventType::Button) {
     if (ev.pressed && ev.id == MCU_BTN_TOGGLE_PARTS_SCENES) {
       toggle_parts_scenes_mode();
