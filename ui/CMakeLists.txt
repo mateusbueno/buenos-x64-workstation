@@ -44,6 +44,7 @@ add_library(velora_ui
   src/screens/effects_view.cpp
   src/screens/performance_view.cpp
   src/screens/launcher_view.cpp
+  src/screens/setlist_view.cpp
   src/navigation_controller.cpp
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
@@ -145,6 +146,11 @@ add_executable(on_screen_keyboard_test tests/on_screen_keyboard_test.cpp)
 target_link_libraries(on_screen_keyboard_test PRIVATE velora_ui)
 add_test(NAME on_screen_keyboard_test COMMAND on_screen_keyboard_test)
 set_tests_properties(on_screen_keyboard_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(setlist_view_test tests/setlist_view_test.cpp)
+target_link_libraries(setlist_view_test PRIVATE velora_ui)
+add_test(NAME setlist_view_test COMMAND setlist_view_test)
+set_tests_properties(setlist_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)

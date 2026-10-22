@@ -26,6 +26,10 @@ class OnScreenKeyboard {
   bool create(lv_obj_t* parent = nullptr);
 
   void open(const std::string& initial_text = "", KeyboardLayout layout = KeyboardLayout::EN);
+  void open(const std::string& initial_text, ConfirmCallback on_confirm, KeyboardLayout layout = KeyboardLayout::EN) {
+    set_confirm_callback(std::move(on_confirm));
+    open(initial_text, layout);
+  }
   void close();
   bool is_open() const noexcept { return is_open_; }
 

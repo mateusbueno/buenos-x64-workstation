@@ -8,6 +8,7 @@
 #include "velora/ui/screens/performance_view.hpp"
 #include "velora/ui/screens/launcher_view.hpp"
 #include "velora/ui/screens/effects_view.hpp"
+#include "velora/ui/screens/setlist_view.hpp"
 
 namespace velora::ui {
 
@@ -42,6 +43,7 @@ class NavigationController {
   PerformanceView& performance_view() noexcept { return performance_view_; }
   LauncherView& launcher_view() noexcept { return launcher_view_; }
   EffectsView& effects_view() noexcept { return effects_view_; }
+  SetlistView& setlist_view() noexcept { return setlist_view_; }
 
   // Testing helpers
   int live_set_step_count() const noexcept { return live_set_step_count_; }
@@ -56,6 +58,7 @@ class NavigationController {
   PerformanceView performance_view_;
   LauncherView launcher_view_;
   EffectsView effects_view_;
+  SetlistView setlist_view_;
 
   SurfaceId current_surface_{SurfaceId::Performance};
   SurfaceId previous_surface_{SurfaceId::Performance};

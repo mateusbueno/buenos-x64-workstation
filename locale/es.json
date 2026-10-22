@@ -121,5 +121,16 @@
   "osk.shift": "⇧",
   "osk.backspace": "⌫",
   "osk.mode_123": "123",
-  "osk.mode_abc": "ABC"
+  "osk.mode_abc": "ABC",
+  "setlist.title": "SETLISTS",
+  "setlist.empty.no_setlists_yet": "Aún no hay setlists.",
+  "setlist.action.new_setlist": "+ Nuevo setlist",
+  "setlist.action.add_live_set": "+ Añadir Live Set",
+  "setlist.header.your_setlists": "TUS SETLISTS",
+  "setlist.header.songs_drag_or_hold": "CANCIONES · ARRASTRAR O MANTENER ▲▼ PARA REORDENAR",
+  "setlist.hint.load_setlist": "cargar setlist",
+  "setlist.hint.jump_to_song": "ir a canción",
+  "setlist.hint.reassurance_keeps_playing": "Cargar un setlist mantiene sonando el sonido actual",
+  "setlist.meta.songs_count": "%d canciones",
+  "setlist.meta.scenes_count": "%d escenas"
 }

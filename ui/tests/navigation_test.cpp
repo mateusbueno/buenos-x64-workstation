@@ -24,6 +24,7 @@ static void test_navigation() {
   assert(!lv_obj_is_hidden(nav.performance_view().root_container()));
   assert(lv_obj_is_hidden(nav.launcher_view().skeleton().root_container()));
   assert(lv_obj_is_hidden(nav.effects_view().skeleton().root_container()));
+  assert(lv_obj_is_hidden(nav.setlist_view().skeleton().root_container()));
 
   // 2. EXIT on Performance is a NO-OP
   nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
@@ -66,6 +67,17 @@ static void test_navigation() {
   assert(nav.current_surface() == SurfaceId::Effects);
 
   // Second EXIT returns to the surface Launcher was opened from (Performance)
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  assert(nav.current_surface() == SurfaceId::Performance);
+
+  // 5b. Launcher navigation to Setlist (index 1)
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_MENU));
+  assert(nav.current_surface() == SurfaceId::Launcher);
+  nav.launcher_view().set_highlight(1);
+  assert(nav.launcher_view().is_tile_available(1));
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_WRITE));
+  assert(nav.current_surface() == SurfaceId::Setlist);
+  assert(!lv_obj_is_hidden(nav.setlist_view().skeleton().root_container()));
   nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
