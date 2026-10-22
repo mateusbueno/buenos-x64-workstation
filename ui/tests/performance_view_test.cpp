@@ -188,9 +188,58 @@ static void test_performance_view() {
   std::cout << "[PASS] test_performance_view\n";
 }
 
+static void test_top_bar_tempo_clock_source_and_clock_lost() {
+  lv_init();
+  Locale::instance().initialize("", "en");
+
+  HeadlessAdapter adapter;
+  assert(adapter.initialize(1024, 600));
+
+  PerformanceView view;
+  assert(view.create());
+
+  // 1. Clock source Internal shows tempo
+  view.set_clock_source("Internal");
+  view.set_tempo(72.0f);
+  assert(view.clock_source() == "Internal");
+  assert(!view.is_clock_lost());
+  assert(view.tempo() == 72.0f);
+
+  // 2. Clock source DIN / USB
+  view.set_clock_source("DIN");
+  assert(view.clock_source() == "DIN");
+
+  view.set_clock_source("USB");
+  assert(view.clock_source() == "USB");
+
+  // 3. Throttled tempo updates (twice per second max)
+  view.set_tempo(73.0f, 1000);
+  assert(view.tempo() == 73.0f);
+
+  view.set_tempo(74.0f, 1200); // 200 ms later: throttled
+  assert(view.tempo() == 73.0f);
+
+  view.set_tempo(75.0f, 1600); // 600 ms later: updated
+  assert(view.tempo() == 75.0f);
+
+  // 4. Clock lost state
+  view.set_clock_lost(true);
+  assert(view.is_clock_lost());
+  assert(view.is_warning_active());
+
+  // Resume clock clears clock lost and warning takeover
+  view.set_clock_lost(false);
+  assert(!view.is_clock_lost());
+  assert(!view.is_warning_active());
+
+  adapter.shutdown();
+  std::cout << "[PASS] test_top_bar_tempo_clock_source_and_clock_lost\n";
+}
+
 int main() {
   std::cout << "Running performance_view_test...\n";
   test_performance_view();
+  test_top_bar_tempo_clock_source_and_clock_lost();
   std::cout << "All performance view tests passed!\n";
   return 0;
 }

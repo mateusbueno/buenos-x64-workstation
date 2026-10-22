@@ -643,12 +643,53 @@ bool PerformanceView::create(lv_obj_t* parent) {
   return true;
 }
 
-void PerformanceView::set_tempo(float bpm) {
+void PerformanceView::set_tempo(float bpm, uint64_t timestamp_ms) {
+  if (clock_source_ == "DIN" || clock_source_ == "USB") {
+    if (timestamp_ms > 0 && last_tempo_update_ms_ > 0 && timestamp_ms < last_tempo_update_ms_ + 500) {
+      return;
+    }
+    last_tempo_update_ms_ = timestamp_ms;
+  }
   current_bpm_ = bpm;
-  if (lbl_tempo_) {
+  update_tempo_display();
+}
+
+void PerformanceView::set_clock_source(const std::string& source) {
+  clock_source_ = source;
+  update_tempo_display();
+}
+
+void PerformanceView::set_clock_lost(bool lost) {
+  clock_lost_ = lost;
+  update_tempo_display();
+}
+
+void PerformanceView::update_tempo_display() {
+  if (!lbl_tempo_) return;
+  const auto& p = Theme::current();
+
+  if (clock_lost_) {
+    std::string text = "⚠ " + tr("shell.top_bar.clock_lost");
+    lv_label_set_text(lbl_tempo_, text.c_str());
+    lv_obj_set_style_text_color(lbl_tempo_, p.warn, LV_PART_MAIN);
+
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), tr("performance.status.clock_lost_takeover").c_str(), static_cast<int>(std::round(current_bpm_)));
+    set_warning_takeover(buf);
+  } else {
+    lv_obj_set_style_text_color(lbl_tempo_, p.text, LV_PART_MAIN);
+
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "♩ %.1f", bpm);
+    if (clock_source_ == "DIN" || clock_source_ == "USB") {
+      std::snprintf(buf, sizeof(buf), "♩ %.0f · %s", current_bpm_, clock_source_.c_str());
+    } else {
+      std::snprintf(buf, sizeof(buf), "♩ %.0f", current_bpm_);
+    }
     lv_label_set_text(lbl_tempo_, buf);
+
+    if (warning_active_ && warning_text_.find("CLOCK") != std::string::npos) {
+      clear_warning_takeover();
+    }
   }
 }
 
@@ -805,7 +846,7 @@ void PerformanceView::set_warning_takeover(const std::string& warning_text) {
   warning_text_ = warning_text;
 
   if (lbl_status_takeover_) {
-    std::string text = "⚠ " + warning_text;
+    std::string text = (warning_text.rfind("⚠", 0) == 0) ? warning_text : ("⚠ " + warning_text);
     lv_label_set_text(lbl_status_takeover_, text.c_str());
     lv_obj_set_hidden(lbl_status_takeover_, false);
   }

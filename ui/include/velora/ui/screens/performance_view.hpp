@@ -59,7 +59,12 @@ class PerformanceView {
   void on_panel_event(const PanelEvent& ev);
 
   // Setters for direct UI control
-  void set_tempo(float bpm);
+  void set_tempo(float bpm, uint64_t timestamp_ms = 0);
+  void set_clock_source(const std::string& source);
+  void set_clock_lost(bool lost);
+  bool is_clock_lost() const noexcept { return clock_lost_; }
+  const std::string& clock_source() const noexcept { return clock_source_; }
+  void update_tempo_display();
   void set_setlist_context(const std::string& setlist_name, int32_t current_idx, int32_t total_count);
   void set_live_set(const std::string& name, int32_t index, bool dirty = false);
   void set_next_live_set(const std::string& title, const std::string& status_text, bool ready = true);
@@ -267,6 +272,9 @@ class PerformanceView {
   std::string live_set_name_;
   float current_bpm_{120.0f};
   bool has_unsaved_edits_{false};
+  std::string clock_source_{"Internal"};
+  bool clock_lost_{false};
+  uint64_t last_tempo_update_ms_{0};
 
   // Modes
   bool mode_drawbars_{false};

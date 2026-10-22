@@ -198,10 +198,10 @@ development_status:
   7-2-event-processor-framework-and-arpeggiator-note-generation: done
   7-3-swing-latch-and-arpeggiator-performance-behaviour: done
   7-4-arpeggiator-settings-in-live-sets-and-scenes: done
-  7-5-part-surface-arpeggiator-section-and-live-set-tempo: backlog
+  7-5-part-surface-arpeggiator-section-and-live-set-tempo: done
   7-6-external-midi-clock-follower-and-clock-lost-behaviour: done
   7-7-clock-source-setting-and-din-usb-clock-inputs: backlog
-  7-8-top-bar-tempo-clock-source-and-clock-lost-display: backlog
+  7-8-top-bar-tempo-clock-source-and-clock-lost-display: done
   7-9-arpeggiator-timing-acceptance-on-the-board: backlog
   epic-7-retrospective: optional
 

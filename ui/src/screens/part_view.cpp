@@ -19,6 +19,26 @@ std::string midi_note_to_name(int32_t note) {
   return std::string(buf);
 }
 
+std::string format_cldr_percent(int pct) {
+  const std::string& lang = Locale::instance().current_locale();
+  if (lang == "es" || lang == "pt-BR") {
+    return std::to_string(pct) + " %";
+  }
+  return std::to_string(pct) + "%";
+}
+
+const char* kArpRateNames[] = {
+  "1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T", "1/32T"
+};
+
+const char* kArpModeKeys[] = {
+  "part_view.arp.mode.up",
+  "part_view.arp.mode.down",
+  "part_view.arp.mode.up_down",
+  "part_view.arp.mode.random",
+  "part_view.arp.mode.as_played"
+};
+
 }  // namespace
 
 PartView::PartView(WsClient* client)
@@ -85,7 +105,8 @@ bool PartView::create(lv_obj_t* parent) {
       "part_view.nav.level_output",
       "part_view.nav.sound",
       "part_view.nav.envelope_eq",
-      "part_view.nav.effects_sends"
+      "part_view.nav.effects_sends",
+      "part_view.nav.arpeggiator"
   };
 
   for (size_t i = 0; i < nav_item_objs_.size(); ++i) {
@@ -281,6 +302,29 @@ void PartView::set_eq(float low_db, float mid_db, float mid_freq_hz, float high_
 void PartView::set_sends(float reverb_send, float delay_send) {
   reverb_send_ = std::clamp(reverb_send, 0.0f, 1.0f);
   delay_send_ = std::clamp(delay_send, 0.0f, 1.0f);
+  rebuild_panel();
+}
+
+void PartView::set_arp(bool on, int32_t mode, int32_t rate, int32_t octaves, float gate, float swing, bool latch) {
+  auto& a = arp_settings_[part_idx_];
+  a.on = on;
+  a.mode = std::clamp(mode, 0, 4);
+  a.rate = std::clamp(rate, 0, 7);
+  a.octaves = std::clamp(octaves, 1, 4);
+  a.gate = std::clamp(gate, 0.05f, 1.0f);
+  a.swing = std::clamp(swing, 0.50f, 0.75f);
+  a.latch = latch;
+  rebuild_panel();
+}
+
+void PartView::set_tempo(float bpm) {
+  tempo_bpm_ = std::clamp(bpm, 20.0f, 300.0f);
+  rebuild_panel();
+}
+
+void PartView::set_clock_source(const std::string& source, bool read_only) {
+  clock_source_ = source;
+  tempo_read_only_ = read_only;
   rebuild_panel();
 }
 
@@ -643,6 +687,61 @@ void PartView::rebuild_panel() {
       field_objs_.push_back(card);
       field_val_objs_.push_back(lbl_v);
     }
+  } else if (current_section_ == PartSection::Arpeggiator) {
+    const auto& a = arp_settings_[part_idx_];
+
+    char gate_buf[32], swing_buf[32], tempo_buf[64];
+    std::snprintf(gate_buf, sizeof(gate_buf), "%s", format_cldr_percent(static_cast<int>(std::round(a.gate * 100.0f))).c_str());
+    std::snprintf(swing_buf, sizeof(swing_buf), "%s", format_cldr_percent(static_cast<int>(std::round(a.swing * 100.0f))).c_str());
+
+    if (tempo_read_only_) {
+      std::snprintf(tempo_buf, sizeof(tempo_buf), "♩ %.0f · %s", tempo_bpm_, clock_source_.c_str());
+    } else {
+      std::snprintf(tempo_buf, sizeof(tempo_buf), "♩ %.1f", tempo_bpm_);
+    }
+
+    struct ArpFieldDef {
+      std::string label_key;
+      std::string val_text;
+    };
+
+    std::vector<ArpFieldDef> defs = {
+        {"part_view.arp.on", a.on ? tr("part_view.zone.on") : tr("part_view.zone.off")},
+        {"part_view.arp.mode", tr(kArpModeKeys[std::clamp(a.mode, 0, 4)])},
+        {"part_view.arp.rate", kArpRateNames[std::clamp(a.rate, 0, 7)]},
+        {"part_view.arp.octaves", std::to_string(a.octaves)},
+        {"part_view.arp.gate", gate_buf},
+        {"part_view.arp.swing", swing_buf},
+        {"part_view.arp.latch", a.latch ? tr("part_view.zone.on") : tr("part_view.zone.off")},
+        {"part_view.arp.tempo", tempo_buf}
+    };
+
+    for (size_t i = 0; i < defs.size(); ++i) {
+      lv_obj_t* card = lv_obj_create(panel_col_);
+      lv_obj_set_size(card, 720, 50);
+      lv_obj_set_scrollable(card, false);
+      lv_obj_set_clickable(card, true);
+      lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_color(card, p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+      lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+      lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+      lv_obj_add_event_cb(card, on_field_click, LV_EVENT_CLICKED, this);
+
+      lv_obj_t* lbl_h = lv_label_create(card);
+      lv_label_set_text(lbl_h, tr(defs[i].label_key).c_str());
+      lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+      lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+      lv_obj_t* lbl_v = lv_label_create(card);
+      lv_label_set_text(lbl_v, defs[i].val_text.c_str());
+      lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+      lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+      field_objs_.push_back(card);
+      field_val_objs_.push_back(lbl_v);
+    }
   }
 
   update_field_focus_ui();
@@ -689,7 +788,12 @@ void PartView::select_timbre(size_t index) {
   if (index >= timbres_catalog_.size()) return;
   timbre_name_ = timbres_catalog_[index].name;
   category_name_ = timbres_catalog_[index].category;
-  mark_edits();
+  has_unsaved_edits_ = true;
+  if (on_timbre_change_) {
+    on_timbre_change_(part_idx_, timbres_catalog_[index].id);
+  } else if (on_edit_) {
+    on_edit_(part_idx_);
+  }
   close_timbre_picker();
   rebuild_top_bar();
   rebuild_panel();
@@ -886,6 +990,55 @@ void PartView::on_panel_event(const PanelEvent& ev) {
         default:
           break;
       }
+    } else if (current_section_ == PartSection::Arpeggiator) {
+      auto& a = arp_settings_[part_idx_];
+      switch (field_focus_idx_) {
+        case 0:
+          a.on = !a.on;
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          break;
+        case 1:
+          a.mode = std::clamp(a.mode + ev.delta, 0, 4);
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          break;
+        case 2:
+          a.rate = std::clamp(a.rate + ev.delta, 0, 7);
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          break;
+        case 3:
+          a.octaves = std::clamp(a.octaves + ev.delta, 1, 4);
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          break;
+        case 4:
+          a.gate = std::clamp(a.gate + (ev.delta * 0.05f), 0.05f, 1.0f);
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          break;
+        case 5:
+          a.swing = std::clamp(a.swing + (ev.delta * 0.01f), 0.50f, 0.75f);
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          break;
+        case 6:
+          a.latch = !a.latch;
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          break;
+        case 7:
+          if (!tempo_read_only_) {
+            tempo_bpm_ = std::clamp(tempo_bpm_ + (ev.delta * 1.0f), 20.0f, 300.0f);
+            mark_edits();
+            if (on_tempo_edit_) on_tempo_edit_(tempo_bpm_);
+          }
+          break;
+        default:
+          break;
+      }
+      rebuild_panel();
     }
     return;
   }
@@ -903,6 +1056,26 @@ void PartView::on_panel_event(const PanelEvent& ev) {
         case 5: eq_mid_db_ = std::clamp(eq_mid_db_ + (ev.delta * 0.5f), -12.0f, 12.0f); break;
         case 6: eq_mid_freq_hz_ = std::clamp(eq_mid_freq_hz_ + (ev.delta * 50.0f), 200.0f, 8000.0f); break;
         case 7: eq_high_db_ = std::clamp(eq_high_db_ + (ev.delta * 0.5f), -12.0f, 12.0f); break;
+      }
+      mark_edits();
+      rebuild_panel();
+      return;
+    } else if (current_section_ == PartSection::Arpeggiator) {
+      auto& a = arp_settings_[part_idx_];
+      switch (enc_idx) {
+        case 0: a.on = !a.on; if (on_arp_edit_) on_arp_edit_(part_idx_, a); break;
+        case 1: a.mode = std::clamp(a.mode + ev.delta, 0, 4); if (on_arp_edit_) on_arp_edit_(part_idx_, a); break;
+        case 2: a.rate = std::clamp(a.rate + ev.delta, 0, 7); if (on_arp_edit_) on_arp_edit_(part_idx_, a); break;
+        case 3: a.octaves = std::clamp(a.octaves + ev.delta, 1, 4); if (on_arp_edit_) on_arp_edit_(part_idx_, a); break;
+        case 4: a.gate = std::clamp(a.gate + (ev.delta * 0.05f), 0.05f, 1.0f); if (on_arp_edit_) on_arp_edit_(part_idx_, a); break;
+        case 5: a.swing = std::clamp(a.swing + (ev.delta * 0.01f), 0.50f, 0.75f); if (on_arp_edit_) on_arp_edit_(part_idx_, a); break;
+        case 6: a.latch = !a.latch; if (on_arp_edit_) on_arp_edit_(part_idx_, a); break;
+        case 7:
+          if (!tempo_read_only_) {
+            tempo_bpm_ = std::clamp(tempo_bpm_ + (ev.delta * 1.0f), 20.0f, 300.0f);
+            if (on_tempo_edit_) on_tempo_edit_(tempo_bpm_);
+          }
+          break;
       }
       mark_edits();
       rebuild_panel();
@@ -961,6 +1134,19 @@ void PartView::on_panel_event(const PanelEvent& ev) {
         rebuild_panel();
       } else if (current_section_ == PartSection::EffectsSends && field_focus_idx_ == 0) {
         open_inserts_chain();
+      } else if (current_section_ == PartSection::Arpeggiator) {
+        auto& a = arp_settings_[part_idx_];
+        if (field_focus_idx_ == 0) {
+          a.on = !a.on;
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          rebuild_panel();
+        } else if (field_focus_idx_ == 6) {
+          a.latch = !a.latch;
+          mark_edits();
+          if (on_arp_edit_) on_arp_edit_(part_idx_, a);
+          rebuild_panel();
+        }
       }
       return;
     }
@@ -975,7 +1161,12 @@ void PartView::on_panel_event(const PanelEvent& ev) {
 }
 
 void PartView::update_from_state(const ws::v1::State& state) {
-  // Update state from ws::v1::State if needed
+  for (const auto& pv : state.performance_init()) {
+    if (pv.param_id() == ws::v1::PARAM_TEMPO_BPM) {
+      set_tempo(pv.value());
+      break;
+    }
+  }
 }
 
 void PartView::on_nav_item_click(lv_event_t* e) {

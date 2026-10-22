@@ -73,8 +73,21 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     navigate_to(surface_before_launcher_);
   });
 
+  part_view_.set_on_timbre_change([this](int32_t part_idx, const std::string& timbre_id) {
+    set_pending_edits(true, true, "Part " + std::to_string(part_idx + 1) + " timbre");
+  });
+
   part_view_.set_on_edit([this](int32_t part_idx) {
-    set_pending_edits(true, true, "Part " + std::to_string(part_idx + 1) + " edit");
+    set_pending_edits(true, false, "Part " + std::to_string(part_idx + 1) + " edit");
+  });
+
+  part_view_.set_on_arp_edit([this](int32_t part_idx, const ArpSettings& settings) {
+    set_pending_edits(true, false, "Part " + std::to_string(part_idx + 1) + " arpeggiator");
+  });
+
+  part_view_.set_on_tempo_edit([this](float bpm) {
+    performance_view_.set_tempo(bpm);
+    set_pending_edits(true, false, "Tempo");
   });
 
   part_view_.set_on_open_inserts([this](int32_t part_idx) {
@@ -280,7 +293,11 @@ void NavigationController::handle_write_confirmed(ws::v1::WriteScope scope, cons
 
 void NavigationController::set_pending_edits(bool pending, bool has_timbre, const std::string& summary) {
   manual_pending_edits_ = pending;
-  has_timbre_edit_ = has_timbre;
+  if (!pending) {
+    has_timbre_edit_ = false;
+  } else if (has_timbre) {
+    has_timbre_edit_ = true;
+  }
   change_summary_text_ = summary;
   performance_view_.set_live_set(performance_view_.live_set_name(), 0, pending);
 }
@@ -291,6 +308,7 @@ void NavigationController::update_from_state(const ws::v1::State& state) {
   setlist_browser_view_.update_from_state(state);
   scenes_view_.update_from_state(state);
   settings_view_.update_from_state(state);
+  part_view_.update_from_state(state);
 
   if (state.has_edits()) {
     manual_pending_edits_ = state.edits().current_dirty();

@@ -21,7 +21,18 @@ enum class PartSection {
   SoundEngine,
   EnvelopeEQ,
   EffectsSends,
+  Arpeggiator,
   Count
+};
+
+struct ArpSettings {
+  bool on{false};
+  int32_t mode{0}; // 0: Up, 1: Down, 2: Up-Down, 3: Random, 4: As played
+  int32_t rate{1}; // 0: 1/4, 1: 1/8, 2: 1/16, 3: 1/32, 4: 1/4T, 5: 1/8T, 6: 1/16T, 7: 1/32T
+  int32_t octaves{1}; // 1..4
+  float gate{0.50f}; // 0.05..1.00 (5% to 100%)
+  float swing{0.50f}; // 0.50..0.75 (50% to 75%)
+  bool latch{false};
 };
 
 struct TimbreItem {
@@ -35,6 +46,9 @@ class PartView {
   using CloseCallback = std::function<void()>;
   using PartEditCallback = std::function<void(int32_t part_idx)>;
   using OpenInsertsCallback = std::function<void(int32_t part_idx)>;
+  using TimbreChangeCallback = std::function<void(int32_t part_idx, const std::string& timbre_id)>;
+  using ArpEditCallback = std::function<void(int32_t part_idx, const ArpSettings& settings)>;
+  using TempoEditCallback = std::function<void(float bpm)>;
 
   explicit PartView(WsClient* client = nullptr);
   ~PartView();
@@ -47,6 +61,9 @@ class PartView {
   void set_on_close(CloseCallback cb) { on_close_ = std::move(cb); }
   void set_on_edit(PartEditCallback cb) { on_edit_ = std::move(cb); }
   void set_on_open_inserts(OpenInsertsCallback cb) { on_open_inserts_ = std::move(cb); }
+  void set_on_timbre_change(TimbreChangeCallback cb) { on_timbre_change_ = std::move(cb); }
+  void set_on_arp_edit(ArpEditCallback cb) { on_arp_edit_ = std::move(cb); }
+  void set_on_tempo_edit(TempoEditCallback cb) { on_tempo_edit_ = std::move(cb); }
 
   // Part data accessors & mutators
   void set_part_index(int32_t idx);
@@ -107,6 +124,17 @@ class PartView {
   float delay_send() const noexcept { return delay_send_; }
   void open_inserts_chain();
 
+  // Arpeggiator (Story 7.5)
+  void set_arp(bool on, int32_t mode, int32_t rate, int32_t octaves, float gate, float swing, bool latch);
+  const ArpSettings& arp() const noexcept { return arp_settings_[part_idx_]; }
+
+  // Tempo (Story 7.5 & 7.8)
+  void set_tempo(float bpm);
+  float tempo() const noexcept { return tempo_bpm_; }
+  void set_clock_source(const std::string& source, bool read_only);
+  bool is_tempo_read_only() const noexcept { return tempo_read_only_; }
+  const std::string& clock_source() const noexcept { return clock_source_; }
+
   void set_power(bool on);
   bool is_powered_on() const noexcept { return power_on_; }
 
@@ -150,6 +178,9 @@ class PartView {
   CloseCallback on_close_;
   PartEditCallback on_edit_;
   OpenInsertsCallback on_open_inserts_;
+  TimbreChangeCallback on_timbre_change_;
+  ArpEditCallback on_arp_edit_;
+  TempoEditCallback on_tempo_edit_;
 
   int32_t part_idx_{0};
   std::string timbre_name_{"German Grand D-274"};
@@ -190,6 +221,12 @@ class PartView {
   // Effects Sends
   float reverb_send_{0.25f};
   float delay_send_{0.15f};
+
+  // Arpeggiator (Story 7.5 & 7.8)
+  std::array<ArpSettings, 8> arp_settings_{};
+  float tempo_bpm_{120.0f};
+  bool tempo_read_only_{false};
+  std::string clock_source_{"Internal"};
 
   PartSection current_section_{PartSection::Timbre};
   int32_t field_focus_idx_{0}; // Focused field inside current section

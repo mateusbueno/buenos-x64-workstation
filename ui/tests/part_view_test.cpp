@@ -198,6 +198,130 @@ void test_part_view_envelope_eq_and_effects() {
   std::cout << "[PASS] test_part_view_envelope_eq_and_effects\n";
 }
 
+void test_part_view_arpeggiator_section() {
+  PartView view(nullptr);
+  bool ok = view.create(lv_screen_active());
+  assert(ok);
+
+  // Switch to Arpeggiator section
+  view.set_section(PartSection::Arpeggiator);
+  assert(view.current_section() == PartSection::Arpeggiator);
+
+  const auto& a_init = view.arp();
+  assert(!a_init.on);
+  assert(a_init.mode == 0); // Up
+  assert(a_init.rate == 1); // 1/8
+  assert(a_init.octaves == 1);
+  assert(view.tempo() == 120.0f);
+
+  // 1. Field 0: Arp On/Off toggle via VALUE turn
+  PanelEvent enc_turn;
+  enc_turn.type = PanelEventType::Encoder;
+  enc_turn.id = MCU_CTRL_VALUE_ENCODER;
+  enc_turn.delta = 1;
+  view.on_panel_event(enc_turn);
+  assert(view.arp().on);
+
+  // 2. Field 1: Mode -> switch to Down (1)
+  PanelEvent click_f1;
+  // Use panel encoder 2 directly
+  PanelEvent enc_mode;
+  enc_mode.type = PanelEventType::Encoder;
+  enc_mode.id = MCU_CTRL_ENCODER_2;
+  enc_mode.delta = 1;
+  view.on_panel_event(enc_mode);
+  assert(view.arp().mode == 1);
+
+  // 3. Field 2: Rate -> switch to 1/16 (2)
+  PanelEvent enc_rate;
+  enc_rate.type = PanelEventType::Encoder;
+  enc_rate.id = MCU_CTRL_ENCODER_3;
+  enc_rate.delta = 1;
+  view.on_panel_event(enc_rate);
+  assert(view.arp().rate == 2);
+
+  // 4. Field 3: Octaves -> switch to 2
+  PanelEvent enc_oct;
+  enc_oct.type = PanelEventType::Encoder;
+  enc_oct.id = MCU_CTRL_ENCODER_4;
+  enc_oct.delta = 1;
+  view.on_panel_event(enc_oct);
+  assert(view.arp().octaves == 2);
+
+  // 5. Field 4: Gate -> increase by 5%
+  PanelEvent enc_gate;
+  enc_gate.type = PanelEventType::Encoder;
+  enc_gate.id = MCU_CTRL_ENCODER_5;
+  enc_gate.delta = 1;
+  view.on_panel_event(enc_gate);
+  assert(view.arp().gate >= 0.54f && view.arp().gate <= 0.56f);
+
+  // 6. Field 5: Swing -> increase by 1%
+  PanelEvent enc_swing;
+  enc_swing.type = PanelEventType::Encoder;
+  enc_swing.id = MCU_CTRL_ENCODER_6;
+  enc_swing.delta = 1;
+  view.on_panel_event(enc_swing);
+  assert(view.arp().swing >= 0.509f && view.arp().swing <= 0.511f);
+
+  // 7. Field 6: Latch -> toggle on
+  PanelEvent enc_latch;
+  enc_latch.type = PanelEventType::Encoder;
+  enc_latch.id = MCU_CTRL_ENCODER_7;
+  enc_latch.delta = 1;
+  view.on_panel_event(enc_latch);
+  assert(view.arp().latch);
+
+  // 8. Field 7: Tempo -> increase to 125 BPM
+  PanelEvent enc_tempo;
+  enc_tempo.type = PanelEventType::Encoder;
+  enc_tempo.id = MCU_CTRL_ENCODER_8;
+  enc_tempo.delta = 5;
+  view.on_panel_event(enc_tempo);
+  assert(view.tempo() == 125.0f);
+
+  // 9. Read-only tempo when external clock source is set
+  view.set_clock_source("DIN", true);
+  assert(view.is_tempo_read_only());
+  assert(view.clock_source() == "DIN");
+  view.on_panel_event(enc_tempo);
+  assert(view.tempo() == 125.0f); // Did not change because it's read-only
+
+  std::cout << "[PASS] test_part_view_arpeggiator_section\n";
+}
+
+void test_part_view_write_scope_arpeggiator_scene_available() {
+  NavigationController nav(nullptr);
+  bool ok = nav.initialize();
+  assert(ok);
+
+  // Start with clean state
+  assert(!nav.has_pending_edits());
+
+  // Edit arpeggiator on part 1
+  nav.part_view().set_section(PartSection::Arpeggiator);
+  PanelEvent enc_turn;
+  enc_turn.type = PanelEventType::Encoder;
+  enc_turn.id = MCU_CTRL_VALUE_ENCODER;
+  enc_turn.delta = 1;
+  nav.part_view().on_panel_event(enc_turn);
+
+  assert(nav.has_pending_edits());
+
+  // Open Write Dialog: Scene scope MUST be available because arp edits are scene-scoped!
+  nav.open_write_dialog();
+  assert(nav.write_dialog().is_scene_scope_available());
+  nav.write_dialog().close();
+
+  // Now change timbre on part: this is a timbre edit, so Scene scope becomes disabled!
+  nav.part_view().select_timbre(1);
+  nav.open_write_dialog();
+  assert(!nav.write_dialog().is_scene_scope_available());
+  nav.write_dialog().close();
+
+  std::cout << "[PASS] test_part_view_write_scope_arpeggiator_scene_available\n";
+}
+
 void test_part_view_navigation_controller_integration() {
   NavigationController nav(nullptr);
   bool ok = nav.initialize();
@@ -247,6 +371,8 @@ int main() {
   test_part_view_zone_and_level_edits();
   test_part_view_sound_engine();
   test_part_view_envelope_eq_and_effects();
+  test_part_view_arpeggiator_section();
+  test_part_view_write_scope_arpeggiator_scene_available();
   test_part_view_navigation_controller_integration();
 
   std::cout << "All PartView tests passed successfully!\n";
