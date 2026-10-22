@@ -23,6 +23,7 @@
 #include "velora/core/fm_engine.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/sample_engine.hpp"
+#include "velora/core/va_engine.hpp"
 #include "velora/format/bundle.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/fs_port.hpp"
@@ -642,6 +643,31 @@ void test_fm_part_floor_reservation() {
   CHECK(rig.br->arbiter().floor_cost(fm_id) == 0);
 }
 
+void test_va_part_floor_reservation() {
+  Rig rig;
+  core::VaEngine va;
+  CHECK(rig.br->bind_engine(va));
+
+  // 1. Live Set with a VA part: VA floor is reserved (64 voices * 4 = 256 cost units)
+  const std::string lib = install_library(rig.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet s = base_set(27);
+  sample_part(s, 0, lib, "dc.sfz");
+  s.mutable_parts(1)->mutable_engine()->set_engine_type_id(4);  // VA
+  const host::LiveSetLoadResult res = rig.loader.load(s);
+  CHECK(res.ok());
+  CHECK(res.parts[1].state == core::PartState::kReady);
+  const std::uint32_t va_id = static_cast<std::uint32_t>(core::EngineTypeId::kVa);
+  CHECK(rig.br->arbiter().floor_cost(va_id) == 64 * 4);
+  CHECK(rig.br->arbiter().floor_cost(static_cast<std::uint32_t>(core::EngineTypeId::kSample)) > 0);
+
+  // 2. Live Set with NO VA part: VA floor is zero
+  lsp::LiveSet s_no_va = base_set(28);
+  sample_part(s_no_va, 0, lib, "dc.sfz");
+  const host::LiveSetLoadResult res2 = rig.loader.load(s_no_va);
+  CHECK(res2.ok());
+  CHECK(rig.br->arbiter().floor_cost(va_id) == 0);
+}
+
 int main() {
   test_layer_and_states();
   test_split_b2_c3();
@@ -650,6 +676,7 @@ int main() {
   test_missing_library_and_instrument();
   test_fm_part_silent_organ_ready();
   test_fm_part_floor_reservation();
+  test_va_part_floor_reservation();
   test_no_sample_part_floor_zero();
   test_without_sample_engine();
   test_second_load_replaces_first();

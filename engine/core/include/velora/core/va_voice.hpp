@@ -101,7 +101,14 @@ class VaVoice {
 
   void stop() noexcept {
     held_ = false;
-    if (!sustained_) {
+    if (!sustained_ && !is_steal_fading_) {
+      trigger_release();
+    }
+  }
+
+  void key_released() noexcept {
+    held_ = false;
+    if (!sustained_ && !is_steal_fading_) {
       trigger_release();
     }
   }
@@ -143,9 +150,11 @@ class VaVoice {
   bool is_active() const noexcept { return active_; }
   bool is_held() const noexcept { return held_; }
   bool is_sustained() const noexcept { return sustained_; }
+  bool is_steal_fading() const noexcept { return is_steal_fading_; }
   float last_level() const noexcept { return last_level_; }
 
   VoiceState voice_state() const noexcept {
+    if (is_steal_fading_) return VoiceState::kReleasing;
     if (held_) return VoiceState::kHeld;
     if (sustained_) return VoiceState::kSustained;
     return VoiceState::kReleasing;

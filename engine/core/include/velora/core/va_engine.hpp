@@ -27,6 +27,7 @@ class VaEngine final : public Engine {
 
   EngineStatus start_voice(uint32_t channel, uint32_t note, uint32_t velocity16) noexcept override;
   EngineStatus stop_voice(uint32_t channel, uint32_t note) noexcept override;
+  void key_released(uint32_t channel, uint32_t note) noexcept override;
   void set_param(uint32_t param_id, float value) noexcept override;
   void render(float* left, float* right, uint32_t frames) noexcept override;
   void render_split(float* const* left, float* const* right, uint32_t frames) noexcept override;

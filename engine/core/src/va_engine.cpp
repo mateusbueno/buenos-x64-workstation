@@ -117,7 +117,10 @@ EngineStatus VaEngine::start_voice(uint32_t channel, uint32_t note, uint32_t vel
     }
 
     // Allocate new mono voice
-    uint32_t slot = allocate_voice_slot(channel, note);
+    uint32_t slot = acquire_slot(channel, note);
+    if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
+      return EngineStatus::kPoolExhausted;
+    }
     part_mono_slots_[part_idx] = static_cast<int32_t>(slot);
     voices_[slot].start(channel, note7, velocity16, params, sample_rate_);
     voices_[slot].set_start_time(frame_clock_);
@@ -127,12 +130,24 @@ EngineStatus VaEngine::start_voice(uint32_t channel, uint32_t note, uint32_t vel
   }
 
   // Polyphonic mode
-  uint32_t slot = allocate_voice_slot(channel, note);
+  uint32_t slot = acquire_slot(channel, note);
+  if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
+    return EngineStatus::kPoolExhausted;
+  }
   voices_[slot].start(channel, note7, velocity16, params, sample_rate_);
   voices_[slot].set_start_time(frame_clock_);
   voices_[slot].set_sustain(part_sustain_[part_idx]);
   voices_[slot].set_pitch_bend(part_pitch_bend_[part_idx]);
   return EngineStatus::kOk;
+}
+
+void VaEngine::key_released(uint32_t channel, uint32_t note) noexcept {
+  uint8_t note7 = static_cast<uint8_t>(std::clamp(note, 0u, 127u));
+  for (auto& v : voices_) {
+    if (v.is_active() && v.channel() == channel && v.note() == note7 && v.is_held()) {
+      v.key_released();
+    }
+  }
 }
 
 EngineStatus VaEngine::stop_voice(uint32_t channel, uint32_t note) noexcept {
@@ -230,7 +245,7 @@ bool VaEngine::voice_info(uint32_t slot, VoiceInfo& out) const noexcept {
 }
 
 bool VaEngine::begin_steal_fade(uint32_t slot, uint32_t ramp_frames) noexcept {
-  if (slot >= kVoiceCapacity || !voices_[slot].is_active()) {
+  if (slot >= kVoiceCapacity || !voices_[slot].is_active() || voices_[slot].is_steal_fading()) {
     return false;
   }
   voices_[slot].begin_steal_fade(ramp_frames);

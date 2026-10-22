@@ -287,7 +287,7 @@ development_status:
   12-4-receive-6-op-sysex-over-usb-midi-and-din: backlog
   12-5-fm-voices-in-the-shared-pool-with-a-128-voice-floor: done
   12-6-clean-room-virtual-analog-voice-in-the-engine-core: done
-  12-7-va-voices-in-the-shared-pool-with-a-64-voice-floor: backlog
+  12-7-va-voices-in-the-shared-pool-with-a-64-voice-floor: done
   12-8-fm-and-va-timbre-parameters-in-the-versioned-formats: done
   12-9-init-and-factory-fm-va-timbres-in-the-library: done
   12-10-design-story-fm-and-va-sound-sections-and-not-available-stat: done
