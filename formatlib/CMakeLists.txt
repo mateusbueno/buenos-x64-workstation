@@ -62,7 +62,9 @@ add_library(velora_format STATIC
   src/sf2_import.cpp
   src/category.cpp
   src/json_lite.cpp
-  src/locale_catalog.cpp)
+  src/locale_catalog.cpp
+  src/sysex_6op.cpp
+  src/parametric_bundle.cpp)
 add_library(velora::format ALIAS velora_format)
 target_include_directories(velora_format PUBLIC include PRIVATE src)
 # Dependency rule: formatlib links only libFLAC; it never uses engine/core or engine/host.
@@ -114,6 +116,12 @@ add_library(velora::format_protected_writer ALIAS velora_format_protected_writer
 target_include_directories(velora_format_protected_writer PUBLIC include PRIVATE src)
 target_link_libraries(velora_format_protected_writer PUBLIC velora_format PRIVATE OpenSSL::Crypto)
 target_compile_options(velora_format_protected_writer PRIVATE ${VELORA_FORMAT_WARN})
+
+add_executable(format_sysex_test tests/sysex_6op_test.cpp)
+target_link_libraries(format_sysex_test PRIVATE velora_format)
+target_compile_options(format_sysex_test PRIVATE
+  $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall -Wextra>)
+add_test(NAME format_sysex_test COMMAND format_sysex_test)
 
 foreach(t hash_test bundle_test wav_test)
   add_executable(format_${t} tests/${t}.cpp)

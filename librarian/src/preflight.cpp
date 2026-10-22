@@ -18,6 +18,7 @@
 #include "velora/format/instrument_model.hpp"
 #include "velora/format/sf2_import.hpp"
 #include "velora/format/sfz_import.hpp"
+#include "velora/format/sysex_6op.hpp"
 #include "velora/librarian/category_suggest.hpp"
 
 namespace velora::librarian {
@@ -50,12 +51,17 @@ struct Counter {
 bool importable(const fs::path& p) {
   std::string e = p.extension().string();
   for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  return e == ".sfz" || e == ".sf2";
+  return e == ".sfz" || e == ".sf2" || e == ".syx";
 }
 bool is_sf2(const fs::path& p) {
   std::string e = p.extension().string();
   for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return e == ".sf2";
+}
+bool is_syx(const fs::path& p) {
+  std::string e = p.extension().string();
+  for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return e == ".syx";
 }
 bool has_wav_ext(const std::string& path) {
   std::string e = fs::path(path).extension().string();
@@ -257,6 +263,7 @@ struct Analysis {
   RowStatus skip_status = RowStatus::kSkippedDamaged;
   std::string detail;
   bool sf2 = false;
+  std::string format = "sfz";
   std::string library_id;
   std::vector<Timbre> timbres;  // skipped: exactly one, with an empty key and pcm 0
 };
@@ -373,6 +380,7 @@ Analysis analyze_sfz(const fs::path& file, const fs::path* root, Counter& cnt) {
 Analysis analyze_sf2(const fs::path& file, Counter& cnt) {
   Analysis a;
   a.sf2 = true;
+  a.format = "sf2";
   const std::string path = file.string();
   a.library_id = fmt::uuid_to_string(fmt::library_id_from_source(file.generic_string()));
   auto skip = [&](RowStatus st, std::string why) {
@@ -407,7 +415,49 @@ Analysis analyze_sf2(const fs::path& file, Counter& cnt) {
   return a;
 }
 
+Analysis analyze_sysex(const fs::path& file, Counter& cnt) {
+  Analysis a;
+  a.format = "sysex";
+  const std::string path = file.string();
+  a.library_id = fmt::uuid_to_string(fmt::library_id_from_source(file.generic_string()));
+  auto skip = [&](RowStatus st, std::string why) {
+    a.skipped = true;
+    a.skip_status = st;
+    a.detail = std::move(why);
+    Timbre t;
+    t.name = file.stem().string();
+    t.size = file_size_of(path);
+    t.suggested = fmt::Category::kSynthPoly;
+    a.timbres.assign(1, t);
+    return a;
+  };
+  add_dep(a, path);
+  auto cf = std::make_shared<CountingFile>(path, cnt);
+  if (!cf->ok()) return skip(RowStatus::kSkippedDamaged, path + ": cannot open");
+
+  std::vector<uint8_t> bytes(cf->size());
+  if (!cf->read(0, bytes.data(), bytes.size())) {
+    return skip(RowStatus::kSkippedDamaged, path + ": cannot read");
+  }
+
+  fmt::SysexParseResult parsed = fmt::parse_sysex_memory(bytes);
+  if (!parsed.ok() || parsed.voices.empty()) {
+    return skip(RowStatus::kSkippedDamaged, path + ": " + fmt::kSysexDamagedMessage);
+  }
+  for (const auto& v : parsed.voices) {
+    Timbre t;
+    t.name = v.name;
+    t.key = std::to_string(v.slot);
+    t.pcm = 0; // Pure parametric synth timbre, zero PCM bytes
+    t.size = bytes.size() / parsed.voices.size();
+    t.suggested = fmt::Category::kSynthPoly; // Synth Poly is default
+    a.timbres.push_back(std::move(t));
+  }
+  return a;
+}
+
 Analysis analyze_file(const fs::path& file, const fs::path* root, Counter& cnt) {
+  if (is_syx(file)) return analyze_sysex(file, cnt);
   return is_sf2(file) ? analyze_sf2(file, cnt) : analyze_sfz(file, root, cnt);
 }
 
@@ -549,7 +599,7 @@ class Scan {
       r.path = real.string();
       r.rel_path = rel;
       r.name = t.name;
-      r.format = a.sf2 ? "sf2" : "sfz";
+      r.format = a.format;
       r.library_id = a.library_id;
       r.instrument_key = t.key;
       r.size_bytes = t.size;

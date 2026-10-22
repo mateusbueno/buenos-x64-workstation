@@ -62,7 +62,7 @@ constexpr const char* kSchemaV2Ddl =
     "CREATE TABLE IF NOT EXISTS libraries("
     " library_id TEXT PRIMARY KEY CHECK(length(library_id) BETWEEN 1 AND 64),"
     " name TEXT NOT NULL,"
-    " source_kind TEXT NOT NULL CHECK(source_kind IN ('sfz','sf2')),"
+    " source_kind TEXT NOT NULL CHECK(source_kind IN ('sfz','sf2','sysex')),"
     " source_path TEXT NOT NULL DEFAULT '',"
     " bundle_id TEXT NOT NULL CHECK(length(bundle_id) > 0),"
     " instrument_count INTEGER NOT NULL CHECK(instrument_count >= 0),"
@@ -487,6 +487,21 @@ CatalogStatus Catalog::migrate_forward(std::uint32_t from) {
         if (rc == SQLITE_OK && sqlite3_step(q.st) == SQLITE_ROW) have_kind = sqlite3_column_int(q.st, 0) > 0;
       }
       st = have_kind ? CatalogStatus::kOk : exec(kSchemaV3Ddl);
+    } else if (v == 3) {
+      // Step 3 -> 4 (Story 12.3): allows source_kind 'sysex'
+      st = exec("CREATE TABLE libraries_v4("
+                " library_id TEXT PRIMARY KEY CHECK(length(library_id) BETWEEN 1 AND 64),"
+                " name TEXT NOT NULL,"
+                " source_kind TEXT NOT NULL CHECK(source_kind IN ('sfz','sf2','sysex')),"
+                " source_path TEXT NOT NULL DEFAULT '',"
+                " bundle_id TEXT NOT NULL CHECK(length(bundle_id) > 0),"
+                " instrument_count INTEGER NOT NULL CHECK(instrument_count >= 0),"
+                " imported_seq INTEGER NOT NULL,"
+                " kind TEXT NOT NULL DEFAULT 'user' CHECK(kind IN ('user','factory')));");
+      if (st == CatalogStatus::kOk)
+        st = exec("INSERT INTO libraries_v4 SELECT library_id, name, source_kind, source_path, bundle_id, instrument_count, imported_seq, kind FROM libraries;");
+      if (st == CatalogStatus::kOk) st = exec("DROP TABLE libraries;");
+      if (st == CatalogStatus::kOk) st = exec("ALTER TABLE libraries_v4 RENAME TO libraries;");
     } else {
       last_error_ = "no migration from schema_version " + std::to_string(v);
       rollback();

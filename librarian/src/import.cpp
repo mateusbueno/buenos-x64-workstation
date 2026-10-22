@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 
@@ -21,6 +22,8 @@
 #include "velora/format/hash.hpp"
 #include "velora/format/sf2_import.hpp"
 #include "velora/format/sfz_import.hpp"
+#include "velora/format/sysex_6op.hpp"
+#include "velora/format/parametric_bundle.hpp"
 #include "velora/format/wav_source.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/librarian/category_suggest.hpp"
@@ -298,7 +301,7 @@ std::string build_catalog_meta(const ImportOptions& opt, const fmt::BundleReader
   const fs::path abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
   // Build-only mode (content-pack): the catalog.meta of a vendor pack names the source file, never the packer's directory layout.
   meta.source_path = opt.bundle_sink ? fs::path(opt.sfz_path).filename().string() : (ec ? opt.sfz_path : abs.generic_string());
-  meta.source_kind = is_sf2_path(opt.sfz_path) ? "sf2" : "sfz";
+  meta.source_kind = is_syx_path(opt.sfz_path) ? "sysex" : is_sf2_path(opt.sfz_path) ? "sf2" : "sfz";
   const auto def_cat = fmt::parse_assignable_category(opt.category);
   const bool single = opt.source_timbres ? opt.source_timbres == 1 : rd.instruments().size() == 1;
   for (const auto& ins : rd.instruments()) {
@@ -780,7 +783,170 @@ bool is_sf2_path(const std::string& path) {
   return ext == ".sf2";
 }
 
-ImportResult import_file(const ImportOptions& opt) { return is_sf2_path(opt.sfz_path) ? import_sf2(opt) : import_sfz(opt); }
+bool is_syx_path(const std::string& path) {
+  std::string ext = fs::path(path).extension().string();
+  for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return ext == ".syx";
+}
+
+ImportResult import_sysex(const ImportOptions& opt) {
+  ImportResult res;
+  auto fail = [&](Status s, std::string why) -> ImportResult& { return fail_res(res, s, std::move(why)); };
+  if (opt.sfz_path.empty() || (opt.root.empty() && !opt.bundle_sink))
+    return fail(Status::kInvalidArgument, "a SysEx file and a data root are required");
+  if (const std::string why = category_problem(opt.category); !why.empty()) return fail(Status::kInvalidArgument, why);
+  if (const std::string why = meta_options_problem(opt); !why.empty()) return fail(Status::kInvalidArgument, why);
+  fmt::Uuid vendor_id{};
+  bool has_vendor_id = false;
+  if (const std::string why = library_id_problem(opt, vendor_id, has_vendor_id); !why.empty()) return fail(Status::kInvalidArgument, why);
+  if (!opt.bundle_sink) {
+    struct stat st;
+    if (::stat(opt.root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+      return fail(Status::kInvalidArgument, "the data root " + opt.root + " is not an existing directory");
+  }
+
+  // 1. Parse using formatlib 6-OP parser
+  fmt::SysexParseResult parsed = fmt::parse_sysex_file(opt.sfz_path);
+  res.suggested_category = fmt::Category::kSynthPoly;
+  res.timbres_total = parsed.voices.empty() ? 1 : parsed.voices.size();
+
+  if (!parsed.ok() || parsed.voices.empty()) {
+    res.status = Status::kSkipped;
+    res.reason_code = ReasonCode::kDamaged;
+    res.failing_path = opt.sfz_path;
+    res.reasons.push_back(opt.sfz_path + ": " + fmt::kSysexDamagedMessage);
+    return res;
+  }
+
+  std::error_code ec;
+  const fs::path abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
+  if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
+
+  const fmt::Uuid will_be = has_vendor_id ? vendor_id : fmt::library_id_from_source(abs.generic_string());
+  if (!opt.bundle_sink && !opt.root.empty() && factory_library_installed(opt.root, fmt::uuid_to_string(will_be))) {
+    return fail(Status::kFactoryProtected, "the library of " + opt.sfz_path + " is a factory library installed from a protected bundle; a user import cannot replace it");
+  }
+
+  // Determine category
+  fmt::Category cat = fmt::Category::kSynthPoly;
+  if (!opt.category.empty()) {
+    auto parsed_cat = fmt::parse_assignable_category(opt.category);
+    if (parsed_cat && fmt::is_assignable(*parsed_cat)) cat = *parsed_cat;
+  }
+
+  std::string lib_name = !opt.library_name.empty() ? opt.library_name : abs.stem().string();
+
+  auto bundle_res = fmt::ParametricBundle::from_sysex(parsed, abs.generic_string(), lib_name, cat);
+  if (!bundle_res) return fail(Status::kInvalidArgument, "failed to create parametric bundle");
+  fmt::ParametricBundle bundle = bundle_res.take();
+  if (has_vendor_id) bundle.set_library_id(vendor_id);
+
+  // Apply per-instrument overrides if any
+  for (const auto& o : opt.instrument_meta) {
+    for (auto& t : bundle.timbres()) {
+      if (t.key == o.key) {
+        if (!o.name.empty()) t.name = o.name;
+        if (!o.category.empty()) {
+          auto c = fmt::parse_assignable_category(o.category);
+          if (c && fmt::is_assignable(*c)) t.category = *c;
+        }
+      }
+    }
+  }
+
+  std::vector<uint8_t> bundle_bytes = bundle.serialize();
+  fmt::Digest256 bundle_id = fmt::Sha256::hash(bundle_bytes);
+  std::string bundle_id_str = fmt::to_hex(bundle_id);
+  std::string lib_id_str = fmt::uuid_to_string(bundle.library_id());
+
+  res.library_id = lib_id_str;
+  res.bundle_id = bundle_id_str;
+  res.timbres_total = bundle.timbres().size();
+  res.timbres_published = bundle.timbres().size();
+  res.preset_count = bundle.timbres().size();
+
+  if (opt.bundle_sink) {
+    res.status = Status::kOk;
+    return res;
+  }
+
+  RootLock rl;
+  if (!lock_root(opt, res, rl)) return res;
+
+  std::string cur_link = rl.lib_root + "/" + lib_id_str + "/" + host::kCurrentLinkName;
+  char buf[PATH_MAX];
+  bool had_current = ::readlink(cur_link.c_str(), buf, sizeof buf - 1) > 0;
+  std::string old_bundle_id = had_current ? std::string(buf) : "";
+
+  std::string staging_dir = rl.lib_root + "/.staging/syx-" + bundle_id_str.substr(0, 8) + "-" + std::to_string(::getpid());
+  std::filesystem::create_directories(staging_dir, ec);
+  if (ec) return fail(Status::kIo, "cannot create staging dir " + staging_dir);
+
+  std::string staged_bundle = staging_dir + "/" + host::kBundleFileName;
+  {
+    std::ofstream f(staged_bundle, std::ios::binary);
+    if (!f.is_open()) return fail(Status::kIo, "cannot write staged bundle");
+    f.write(reinterpret_cast<const char*>(bundle_bytes.data()), bundle_bytes.size());
+    if (!f.good()) return fail(Status::kIo, "write error on staged bundle");
+  }
+
+  CatalogMeta cm;
+  cm.format_version = kCatalogMetaFormatVersion;
+  cm.library_name = lib_name;
+  cm.source_kind = "sysex";
+  cm.source_path = abs.generic_string();
+  for (const auto& t : bundle.timbres()) {
+    CatalogMetaInstrument mi;
+    mi.key = t.key;
+    mi.name = t.name;
+    mi.category = t.category;
+    cm.instruments.push_back(std::move(mi));
+  }
+  std::string meta_txt = catalog_meta_text(cm);
+  {
+    std::ofstream f(staging_dir + "/" + kCatalogMetaFileName);
+    f << meta_txt;
+  }
+
+  fsync_path(staged_bundle, false);
+  fsync_path(staging_dir, true);
+
+  std::string lib_dest_dir = rl.lib_root + "/" + lib_id_str;
+  std::filesystem::create_directories(lib_dest_dir, ec);
+  std::string final_bundle_dir = lib_dest_dir + "/" + bundle_id_str;
+  if (std::filesystem::exists(final_bundle_dir)) {
+    std::filesystem::remove_all(final_bundle_dir, ec);
+  }
+  std::filesystem::rename(staging_dir, final_bundle_dir, ec);
+  if (ec) return fail(Status::kIo, "cannot move staged bundle to " + final_bundle_dir);
+  fsync_path(lib_dest_dir, true);
+
+  std::string symlink_tmp = lib_dest_dir + "/.current.tmp." + std::to_string(::getpid());
+  ::unlink(symlink_tmp.c_str());
+  if (::symlink(bundle_id_str.c_str(), symlink_tmp.c_str()) != 0) {
+    return fail(Status::kIo, "symlink failed");
+  }
+  if (::rename(symlink_tmp.c_str(), cur_link.c_str()) != 0) {
+    ::unlink(symlink_tmp.c_str());
+    return fail(Status::kIo, "cannot flip current symlink");
+  }
+  fsync_path(lib_dest_dir, true);
+
+  res.status = Status::kOk;
+  res.bundle_created = true;
+  res.current_flipped = true;
+  res.bundle_dir = final_bundle_dir;
+  if (had_current && old_bundle_id == bundle_id_str) {
+    res.bundle_created = false;
+    res.current_flipped = false;
+  }
+  return res;
+}
+
+ImportResult import_file(const ImportOptions& opt) {
+  if (is_syx_path(opt.sfz_path)) return import_sysex(opt);
+  return is_sf2_path(opt.sfz_path) ? import_sf2(opt) : import_sfz(opt);
+}
 
 ImportResult import_sf2(const ImportOptions& opt) {
   ImportResult res;

@@ -133,6 +133,12 @@ target_link_libraries(librarian_catalog_test PRIVATE velora_librarian_service)
 add_test(NAME librarian_catalog_test COMMAND librarian_catalog_test)
 set_tests_properties(librarian_catalog_test PROPERTIES TIMEOUT 120)
 
+# Story 12.3: 6-OP SysEx import through librarian (preflight scan, 32-voice bank, single voice dump, damaged rejection).
+add_executable(librarian_sysex_test tests/sysex_import_test.cpp)
+target_link_libraries(librarian_sysex_test PRIVATE velora_librarian_service)
+target_include_directories(librarian_sysex_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+add_test(NAME librarian_sysex_test COMMAND librarian_sysex_test)
+
 # Service tests over a real UDS client, the idle-safe Recent write rule, crash injection in the service, and the LibraryClient.
 add_executable(librarian_service_test tests/library_service_test.cpp)
 target_link_libraries(librarian_service_test PRIVATE velora_librarian_service)

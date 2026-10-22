@@ -243,8 +243,10 @@ std::string category_problem(const std::string& category);
 
 ImportResult import_sfz(const ImportOptions& opt);
 ImportResult import_sf2(const ImportOptions& opt);   // Story 5.3
-ImportResult import_file(const ImportOptions& opt);  // by extension: .sf2 -> import_sf2, else import_sfz
+ImportResult import_sysex(const ImportOptions& opt); // Story 12.3
+ImportResult import_file(const ImportOptions& opt);  // by extension: .syx -> import_sysex, .sf2 -> import_sf2, else import_sfz
 bool is_sf2_path(const std::string& path);           // extension .sf2, case-insensitive
+bool is_syx_path(const std::string& path);           // extension .syx, case-insensitive
 
 // Removes leftovers of crashed imports: everything under <root>/lib/.staging/ except the lock.
 // Called by import_sfz under the lock; exposed for tests and a future service start-up.

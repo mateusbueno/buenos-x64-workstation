@@ -5,7 +5,7 @@
 //   meta(key TEXT PRIMARY KEY, value INTEGER)              'schema_version' (= kCatalogSchemaVersion) and 'next_seq', the persisted sequence counter
 //   live_set_favorites(live_set_id TEXT PRIMARY KEY, added_seq INTEGER NOT NULL)            (schema 1)
 //   live_set_recent(live_set_id TEXT PRIMARY KEY, last_played_seq INTEGER NOT NULL)         (schema 1)
-//   libraries(library_id TEXT PRIMARY KEY, name, source_kind 'sfz'|'sf2', source_path, bundle_id, instrument_count, imported_seq)   (schema 2, Story 5.6)
+//   libraries(library_id TEXT PRIMARY KEY, name, source_kind 'sfz'|'sf2'|'sysex', source_path, bundle_id, instrument_count, imported_seq)   (schema 2, Story 5.6; sysex Story 12.3)
 //   instruments(library_id -> libraries ON DELETE CASCADE, instrument_key, name, category CHECK 1..17, sample_count, region_count, bytes,
 //               PRIMARY KEY(library_id, instrument_key))                                                                     (schema 2, Story 5.6)
 //   libraries.kind TEXT NOT NULL DEFAULT 'user' CHECK(kind IN ('user','factory'))                                                   (schema 3, Story 6.4)
@@ -21,8 +21,7 @@
 //
 // Version policy: a database whose schema_version is newer than kSchemaVersion is refused (kSchemaTooNew) and left untouched; an older one is
 // migrated forward after a PRAGMA quick_check (the only integrity check; none on a matching version). Version 2 (Story 5.6) adds the libraries and
-// instruments tables and keeps every favorite and recent row; version 3 (Story 6.4) adds libraries.kind (every existing row becomes 'user'); migrations are forward-only, one transaction each. A file that is not a SQLite database, or a SQLite database that is not a catalog, is refused (kNotACatalog /
-// kCorrupt); it is never overwritten.
+// instruments tables and keeps every favorite and recent row; version 3 (Story 6.4) adds libraries.kind; version 4 (Story 12.3) adds 'sysex' to source_kind.
 //
 // No exception crosses this API: every call returns a typed CatalogStatus.
 #include <atomic>
@@ -41,7 +40,7 @@ struct sqlite3_stmt;
 
 namespace velora::librarian {
 
-inline constexpr std::uint32_t kCatalogSchemaVersion = 3;
+inline constexpr std::uint32_t kCatalogSchemaVersion = 4;
 inline constexpr std::size_t kMaxRecent = 20;
 // 2048 favorites of 64-byte ids (~135 KB) always fit one Library API frame (262144 bytes) together with Recent.
 inline constexpr std::size_t kMaxFavorites = 2048;

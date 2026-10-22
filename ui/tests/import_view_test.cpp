@@ -137,6 +137,40 @@ void test_import_view_drive_removed() {
   std::cout << "[PASS] test_import_view_drive_removed\n";
 }
 
+void test_import_view_sysex_rows() {
+  ImportView view;
+  view.create(lv_screen_active());
+
+  std::vector<ImportItem> items = {
+    {"FM_EP1.syx", 163, "Import 6-OP SysEx", Category::kSynthPoly, true, ImportItemStatus::Ready, false},
+    {"FM_BANK.syx", 4104, "Import 6-OP SysEx", Category::kSynthPoly, true, ImportItemStatus::Ready, false}
+  };
+
+  view.set_drive_info("USB DRIVE", 4267, 100ULL * 1024 * 1024 * 1024);
+  view.set_items(items);
+
+  assert(view.items().size() == 2);
+  assert(view.items()[0].format_str == "Import 6-OP SysEx");
+  assert(view.items()[0].category == Category::kSynthPoly);
+  assert(view.items()[0].status == ImportItemStatus::Ready);
+  assert(view.items()[1].format_str == "Import 6-OP SysEx");
+  assert(view.items()[1].category == Category::kSynthPoly);
+  assert(view.items()[1].status == ImportItemStatus::Ready);
+
+  // Apply to all can change the category of the entire SysEx bank
+  view.on_panel_event(PanelEvent::button_press(MCU_BTN_VALUE_PUSH));
+  assert(view.category_picker().is_visible());
+  view.category_picker().set_selected_category(Category::kSynthLead);
+  view.category_picker().set_apply_to_all(true);
+  view.category_picker().on_panel_event(PanelEvent::button_press(MCU_BTN_WRITE));
+
+  assert(!view.category_picker().is_visible());
+  assert(view.items()[0].category == Category::kSynthLead);
+  assert(view.items()[1].category == Category::kSynthLead);
+
+  std::cout << "[PASS] test_import_view_sysex_rows\n";
+}
+
 int main() {
   lv_init();
   Locale::instance().initialize("", "en");
@@ -150,6 +184,7 @@ int main() {
   test_import_view_category_picker_apply_all();
   test_import_view_storage_check_and_progress();
   test_import_view_drive_removed();
+  test_import_view_sysex_rows();
 
   std::cout << "All ImportView tests passed!\n";
   return 0;

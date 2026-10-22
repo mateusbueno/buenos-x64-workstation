@@ -303,7 +303,7 @@ static DescribeResult describe_bundle_impl(const std::string& bundle_dir, const 
   rec.name = res.from_meta && !meta.library_name.empty() ? meta.library_name
              : rec.instruments.size() == 1                ? rec.instruments[0].name
                                                           : rec.library_id;
-  rec.source_kind = res.from_meta && (meta.source_kind == "sfz" || meta.source_kind == "sf2")
+  rec.source_kind = res.from_meta && (meta.source_kind == "sfz" || meta.source_kind == "sf2" || meta.source_kind == "sysex")
                         ? meta.source_kind
                         : (looks_like_sf2_key(rec.instruments[0].key) ? "sf2" : "sfz");
   rec.source_path = res.from_meta ? meta.source_path : std::string();

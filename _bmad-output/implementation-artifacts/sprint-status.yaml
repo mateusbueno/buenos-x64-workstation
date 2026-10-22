@@ -283,7 +283,7 @@ development_status:
   epic-12: in-progress
   12-1-clean-room-6-operator-fm-voice-in-the-engine-core: done
   12-2-fm-null-test-against-an-unshipped-reference-oracle: backlog
-  12-3-import-6-op-sysex-banks-and-single-voices-from-files-usb-a-a: backlog
+  12-3-import-6-op-sysex-banks-and-single-voices-from-files-usb-a-a: done
   12-4-receive-6-op-sysex-over-usb-midi-and-din: backlog
   12-5-fm-voices-in-the-shared-pool-with-a-128-voice-floor: backlog
   12-6-clean-room-virtual-analog-voice-in-the-engine-core: backlog

@@ -28,7 +28,7 @@ inline const char* to_string(LibraryKind k) { return k == LibraryKind::kFactory 
 struct LibraryRecord {
   std::string library_id;         // canonical UUID string
   std::string name;
-  std::string source_kind;        // "sfz" | "sf2"
+  std::string source_kind;        // "sfz" | "sf2" | "sysex"
   std::string source_path;        // where it was imported from (empty for a bundle that predates catalog.meta)
   std::string bundle_id;          // the `current` bundle (64 lowercase hex)
   LibraryKind kind = LibraryKind::kUser;  // Story 6.4
