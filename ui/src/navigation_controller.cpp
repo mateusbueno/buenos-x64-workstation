@@ -630,6 +630,9 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
           part_view_.on_panel_event(press_ev);
           return;
         }
+        if (part_view_.handle_exit_step()) {
+          return;
+        }
         navigate_to(surface_before_launcher_);
         return;
       }

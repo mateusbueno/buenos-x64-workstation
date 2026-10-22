@@ -225,6 +225,11 @@ target_link_libraries(epic10_settings_test PRIVATE velora_ui)
 add_test(NAME epic10_settings_test COMMAND epic10_settings_test)
 set_tests_properties(epic10_settings_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
+add_executable(epic12_fm_va_test tests/epic12_fm_va_test.cpp)
+target_link_libraries(epic12_fm_va_test PRIVATE velora_ui)
+add_test(NAME epic12_fm_va_test COMMAND epic12_fm_va_test)
+set_tests_properties(epic12_fm_va_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
 add_test(NAME ui_resilience_test COMMAND ui_resilience_test)

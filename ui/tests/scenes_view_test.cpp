@@ -151,11 +151,8 @@ void test_navigation_controller_scenes_integration() {
   assert(nav.scenes_view().selected_slot() == 2);
 
   // EXIT returns to Performance
-  PanelEvent exit_ev;
-  exit_ev.type = PanelEventType::Button;
-  exit_ev.id = MCU_BTN_EXIT;
-  exit_ev.pressed = true;
-  nav.on_panel_event(exit_ev);
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
   // Open Launcher via MENU button, highlight Scenes (index 4), activate
@@ -170,7 +167,8 @@ void test_navigation_controller_scenes_integration() {
   nav.launcher_view().activate_highlighted();
   assert(nav.current_surface() == SurfaceId::Scenes);
 
-  nav.on_panel_event(exit_ev);
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
   std::cout << "[PASS] test_navigation_controller_scenes_integration\n";

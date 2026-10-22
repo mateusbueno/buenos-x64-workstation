@@ -169,11 +169,8 @@ void test_navigation_and_top_bar_context() {
   assert(nav.current_surface() == SurfaceId::SetlistBrowser);
 
   // EXIT returns to Performance
-  PanelEvent exit_ev;
-  exit_ev.type = PanelEventType::Button;
-  exit_ev.id = MCU_BTN_EXIT;
-  exit_ev.pressed = true;
-  nav.on_panel_event(exit_ev);
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
   // 2. Open Setlist Browser from Top Bar setlist context click (UX-DR12)
@@ -183,7 +180,8 @@ void test_navigation_and_top_bar_context() {
   assert(nav.current_surface() == SurfaceId::SetlistBrowser);
   assert(!lv_obj_is_hidden(nav.setlist_browser_view().skeleton().root_container()));
 
-  nav.on_panel_event(exit_ev);
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
   std::cout << "[PASS] test_navigation_and_top_bar_context\n";

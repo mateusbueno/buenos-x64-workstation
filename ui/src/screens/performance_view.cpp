@@ -119,6 +119,10 @@ bool PerformanceView::create(lv_obj_t* parent) {
       self->simulate_touch_up(target);
     } else if (code == LV_EVENT_LONG_PRESSED) {
       self->simulate_long_press(target);
+    } else if (code == LV_EVENT_CLICKED) {
+      if (self->on_rev_click_) {
+        self->on_rev_click_();
+      }
     }
   }, LV_EVENT_ALL, this);
 
@@ -674,6 +678,10 @@ bool PerformanceView::create(lv_obj_t* parent) {
       self->simulate_touch_up(target);
     } else if (code == LV_EVENT_LONG_PRESSED) {
       self->simulate_long_press(target);
+    } else if (code == LV_EVENT_CLICKED) {
+      if (self->on_rev_click_) {
+        self->on_rev_click_();
+      }
     }
   }, LV_EVENT_ALL, this);
 
@@ -884,22 +892,44 @@ void PerformanceView::set_parts(const std::vector<PartStripData>& parts) {
     parts_.resize(8);
   }
 
-  // Check for any missing library warnings
-  bool found_missing = false;
+  // Check for any needs update or missing library warnings
+  std::vector<size_t> update_indices;
+  std::string update_ver = "1.4";
+  size_t first_missing = 0;
   for (size_t i = 0; i < 8; ++i) {
-    if (parts_[i].missing_library) {
-      char w_buf[64];
-      std::snprintf(w_buf, sizeof(w_buf), "%s %zu: %s",
-                    tr("performance.mode.part").c_str(),
-                    i + 1,
-                    tr("performance.part.missing_library").c_str());
-      set_warning_takeover(w_buf);
-      found_missing = true;
-      break;
+    if (parts_[i].needs_update) {
+      update_indices.push_back(i + 1);
+      if (!parts_[i].needs_update_version.empty()) {
+        update_ver = parts_[i].needs_update_version;
+      }
+    } else if (parts_[i].missing_library && first_missing == 0) {
+      first_missing = i + 1;
     }
   }
 
-  if (!found_missing && warning_active_) {
+  if (!update_indices.empty()) {
+    char w_buf[128];
+    if (update_indices.size() == 1) {
+      std::snprintf(w_buf, sizeof(w_buf), "! PART %zu NEEDS UPDATE %s · SILENT",
+                    update_indices[0], update_ver.c_str());
+    } else {
+      std::string parts_str;
+      for (size_t k = 0; k < update_indices.size(); ++k) {
+        if (k > 0) parts_str += " · ";
+        parts_str += std::to_string(update_indices[k]);
+      }
+      std::snprintf(w_buf, sizeof(w_buf), "! PARTS %s NEED UPDATE %s · SILENT",
+                    parts_str.c_str(), update_ver.c_str());
+    }
+    set_warning_takeover(w_buf);
+  } else if (first_missing > 0) {
+    char w_buf[64];
+    std::snprintf(w_buf, sizeof(w_buf), "%s %zu: %s",
+                  tr("performance.mode.part").c_str(),
+                  first_missing,
+                  tr("performance.part.missing_library").c_str());
+    set_warning_takeover(w_buf);
+  } else if (warning_active_) {
     clear_warning_takeover();
   }
 
@@ -1086,6 +1116,25 @@ void PerformanceView::update_part_strips() {
       lv_obj_set_style_text_color(lbl_c, p.muted, LV_PART_MAIN);
 
       lv_obj_set_style_bg_color(fill, p.muted, LV_PART_MAIN);
+    } else if (pt.needs_update) {
+      // Needs update: warn ring, timbre name, "! Needs update X.Y" in warn text, silent fader
+      lv_obj_set_style_bg_color(led, p.warn, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(led, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(led, 0, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_p, tr("performance.part.power").c_str());
+      lv_obj_set_style_text_color(lbl_p, p.warn, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_nm, pt.timbre_name.c_str());
+      lv_obj_set_style_text_color(lbl_nm, p.text, LV_PART_MAIN);
+
+      char tag_buf[64];
+      std::string ver = pt.needs_update_version.empty() ? "1.4" : pt.needs_update_version;
+      std::snprintf(tag_buf, sizeof(tag_buf), tr("performance.part.needs_update").c_str(), ver.c_str());
+      lv_label_set_text(lbl_c, tag_buf);
+      lv_obj_set_style_text_color(lbl_c, p.warn, LV_PART_MAIN);
+
+      lv_obj_set_style_bg_color(fill, p.warn, LV_PART_MAIN);
     } else if (pt.missing_library) {
       // Missing library: warn text in place of category
       lv_obj_set_style_bg_color(led, p.warn, LV_PART_MAIN);

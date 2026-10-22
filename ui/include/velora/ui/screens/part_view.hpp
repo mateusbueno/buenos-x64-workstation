@@ -35,6 +35,104 @@ struct ArpSettings {
   bool latch{false};
 };
 
+enum class EngineType {
+  Sample = 1,
+  Organ = 2,
+  Fm = 3,
+  Va = 4
+};
+
+enum class FmSoundGroup {
+  Algorithm = 0,
+  Operators,
+  PitchEnv,
+  Lfo,
+  Count
+};
+
+struct FmOperator {
+  float ratio{1.0f};      // 0.50 .. 32.00
+  int32_t level{99};      // 0 .. 99
+  int32_t attack{20};     // 0 .. 99
+  int32_t decay{60};      // 0 .. 99
+  int32_t sustain{70};    // 0 .. 99
+  int32_t release{50};    // 0 .. 99
+};
+
+struct FmSettings {
+  int32_t algorithm{5};    // 1 .. 32
+  int32_t feedback{4};     // 0 .. 7 (on OP 6)
+  std::array<FmOperator, 6> operators;
+  int32_t pitch_rates[4]{99, 99, 99, 60};
+  int32_t pitch_levels[4]{50, 50, 50, 50};
+  int32_t lfo_wave{0};     // 0: Sine, 1: Triangle, 2: Saw up, 3: Saw down, 4: Square, 5: S&H
+  int32_t lfo_speed{35};   // 0 .. 99
+  int32_t lfo_delay{12};   // 0 .. 99
+  int32_t lfo_pitch_depth{8}; // 0 .. 99
+  int32_t lfo_amp_depth{0};   // 0 .. 99
+  bool lfo_key_sync{true};
+  int32_t brightness_offset{64}; // 0 .. 127
+};
+
+enum class VaSoundGroup {
+  Oscillators = 0,
+  Mixer,
+  Filter,
+  Envelopes,
+  Lfo,
+  Voice,
+  Count
+};
+
+struct VaSettings {
+  int32_t osc1_wave{0};    // 0: Saw, 1: Pulse, 2: Triangle, 3: Sine
+  int32_t osc1_octave{0};  // -2 .. +2
+  int32_t osc1_detune{0};  // -50 .. +50 cents
+  int32_t osc1_pulse_width{50}; // 0 .. 100 %
+  int32_t osc2_wave{1};    // Pulse
+  int32_t osc2_octave{0};
+  int32_t osc2_detune{5};
+  int32_t osc2_pulse_width{50};
+
+  int32_t mix_osc1{80};    // 0 .. 100
+  int32_t mix_osc2{65};
+  int32_t mix_sub{20};
+  int32_t mix_noise{0};
+
+  int32_t filter_type{0};  // 0: LP 24, 1: LP 12, 2: BP, 3: HP
+  int32_t cutoff{74};      // 0 .. 127
+  int32_t resonance{22};   // 0 .. 100
+  int32_t drive{10};       // 0 .. 100
+  int32_t key_track{50};   // 0 .. 100 %
+  int32_t env_amount{40};  // -100 .. +100
+  int32_t velocity{35};    // 0 .. 100
+
+  int32_t amp_attack{4};
+  int32_t amp_decay{52};
+  int32_t amp_sustain{70};
+  int32_t amp_release{38};
+  int32_t filter_attack{4};
+  int32_t filter_decay{52};
+  int32_t filter_sustain{70};
+  int32_t filter_release{38};
+
+  int32_t lfo_wave{1};     // 0: Sine, 1: Triangle, 2: Saw up, 3: Square, 4: S&H
+  int32_t lfo_rate{42};
+  int32_t lfo_delay{0};
+  bool lfo_key_sync{false};
+  int32_t lfo_to_pitch{6};
+  int32_t lfo_to_filter{20};
+  int32_t lfo_to_amp{0};
+
+  int32_t voice_mode{0};   // 0: Poly, 1: Mono, 2: Legato
+  int32_t unison_voices{4}; // 1 .. 8
+  int32_t unison_detune{18}; // 0 .. 100
+  int32_t glide_time{0};   // 0 .. 100
+  int32_t glide_mode{1};   // 0: Glide always, 1: Glide legato only
+
+  int32_t brightness_offset{64}; // 0 .. 127
+};
+
 struct TimbreItem {
   std::string id;
   std::string name;
@@ -93,7 +191,34 @@ class PartView {
   float volume() const noexcept { return volume_; }
   bool is_aux_output() const noexcept { return aux_output_; }
 
-  bool is_organ() const noexcept;
+  void set_engine_type(EngineType type);
+  EngineType engine_type() const noexcept { return engine_type_; }
+  bool is_organ() const noexcept { return engine_type_ == EngineType::Organ; }
+  bool is_fm() const noexcept { return engine_type_ == EngineType::Fm; }
+  bool is_va() const noexcept { return engine_type_ == EngineType::Va; }
+  bool is_sample() const noexcept { return engine_type_ == EngineType::Sample; }
+
+  void set_engine_unavailable(bool unavail, const std::string& required_version = "1.4");
+  bool is_engine_unavailable() const noexcept { return is_engine_unavailable_; }
+  const std::string& required_version() const noexcept { return required_version_; }
+
+  // FM accessors & mutators (Story 12.11)
+  void set_fm_group(FmSoundGroup group);
+  FmSoundGroup fm_group() const noexcept { return fm_sound_group_; }
+  const FmSettings& fm_settings() const noexcept { return fm_settings_; }
+  FmSettings& fm_settings() noexcept { return fm_settings_; }
+  std::string fm_modulators_string() const;
+
+  // VA accessors & mutators (Story 12.12)
+  void set_va_group(VaSoundGroup group);
+  VaSoundGroup va_group() const noexcept { return va_sound_group_; }
+  const VaSettings& va_settings() const noexcept { return va_settings_; }
+  VaSettings& va_settings() noexcept { return va_settings_; }
+
+  bool sound_group_focus() const noexcept { return sound_group_focus_; }
+  bool is_sound_group_focus() const noexcept { return sound_group_focus_; }
+  bool is_editing_field() const noexcept { return is_editing_field_; }
+  bool handle_exit_step();
 
   // Sound Engine parameters
   void set_sample_sound(float brightness, float cutoff_hz, float resonance, float vel_sense);
@@ -219,6 +344,17 @@ class PartView {
   int32_t organ_key_click_{4};
   int32_t organ_vibrato_{3}; // C3
   int32_t organ_rotary_speed_{1}; // Slow
+
+  // Sound Engine (FM & VA)
+  EngineType engine_type_{EngineType::Sample};
+  bool is_engine_unavailable_{false};
+  std::string required_version_{"1.4"};
+  FmSettings fm_settings_{};
+  VaSettings va_settings_{};
+  FmSoundGroup fm_sound_group_{FmSoundGroup::Algorithm};
+  VaSoundGroup va_sound_group_{VaSoundGroup::Oscillators};
+  bool sound_group_focus_{true};
+  bool is_editing_field_{false};
 
   // Envelope & EQ
   float attack_ms_{10.0f};

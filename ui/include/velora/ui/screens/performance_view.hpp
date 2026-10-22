@@ -35,6 +35,8 @@ struct PartStripData {
   bool missing_library{false};
   bool pickup_pending{false};
   float physical_fader_pos{0.0f};
+  bool needs_update{false};
+  std::string needs_update_version{"1.4"};
 };
 
 struct AssignSlotData {

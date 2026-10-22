@@ -280,7 +280,7 @@ development_status:
   11-19-brand-assets-integration-final-typeface-app-icon-and-boot-ar: backlog
   epic-11-retrospective: optional
 
-  epic-12: backlog
+  epic-12: in-progress
   12-1-clean-room-6-operator-fm-voice-in-the-engine-core: backlog
   12-2-fm-null-test-against-an-unshipped-reference-oracle: backlog
   12-3-import-6-op-sysex-banks-and-single-voices-from-files-usb-a-a: backlog
@@ -290,9 +290,9 @@ development_status:
   12-7-va-voices-in-the-shared-pool-with-a-64-voice-floor: backlog
   12-8-fm-and-va-timbre-parameters-in-the-versioned-formats: backlog
   12-9-init-and-factory-fm-va-timbres-in-the-library: backlog
-  12-10-design-story-fm-and-va-sound-sections-and-not-available-stat: review
-  12-11-part-surface-sound-section-for-fm-timbres: backlog
-  12-12-part-surface-sound-section-for-va-timbres: backlog
+  12-10-design-story-fm-and-va-sound-sections-and-not-available-stat: done
+  12-11-part-surface-sound-section-for-fm-timbres: done
+  12-12-part-surface-sound-section-for-va-timbres: done
   12-13-velora-studio-part-editor-sound-sections-for-fm-and-va: backlog
   12-14-fm-and-va-firmware-update-reaches-shipped-v1-units: backlog
   epic-12-retrospective: optional

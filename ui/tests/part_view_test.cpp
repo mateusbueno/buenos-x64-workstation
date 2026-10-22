@@ -338,11 +338,8 @@ void test_part_view_navigation_controller_integration() {
   assert(nav.part_view().part_index() == 0);
 
   // EXIT returns to Performance
-  PanelEvent exit_ev;
-  exit_ev.type = PanelEventType::Button;
-  exit_ev.id = MCU_BTN_EXIT;
-  exit_ev.pressed = true;
-  nav.on_panel_event(exit_ev);
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
   // 2. Select knob part 3 and push VALUE -> opens Part surface for Part 3 (index 2)
@@ -351,7 +348,8 @@ void test_part_view_navigation_controller_integration() {
   assert(nav.current_surface() == SurfaceId::Part);
   assert(nav.part_view().part_index() == 2);
 
-  nav.on_panel_event(exit_ev);
+  nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
+  nav.on_panel_event(PanelEvent::button_release(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
   std::cout << "[PASS] test_part_view_navigation_controller_integration\n";
