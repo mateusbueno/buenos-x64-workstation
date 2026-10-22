@@ -204,6 +204,7 @@ bool PerformanceView::create(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(tile, sp.space_1, LV_PART_MAIN);
     lv_obj_set_style_radius(tile, r.md, LV_PART_MAIN);
     lv_obj_add_event_cb(tile, scene_click_cb, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(tile, scene_long_press_cb, LV_EVENT_LONG_PRESSED, this);
 
     lv_obj_t* lbl_t = lv_label_create(tile);
     lv_obj_align(lbl_t, LV_ALIGN_TOP_LEFT, 0, 2);
@@ -1122,6 +1123,10 @@ void PerformanceView::handle_part_scene_press(int32_t btn_idx, bool pressed, uin
       // Long press (>= 500 ms) in PARTS mode: selects knob target without toggling
       if (!mode_scenes_) {
         select_knob_part(btn_idx);
+      } else {
+        if (on_scene_long_press_) {
+          on_scene_long_press_(btn_idx);
+        }
       }
     } else {
       // Short press
@@ -1596,6 +1601,21 @@ void PerformanceView::scene_click_cb(lv_event_t* e) {
   for (size_t i = 0; i < self->scene_tile_objs_.size(); ++i) {
     if (self->scene_tile_objs_[i] == target) {
       self->recall_scene(static_cast<int32_t>(i));
+      break;
+    }
+  }
+}
+
+void PerformanceView::scene_long_press_cb(lv_event_t* e) {
+  auto* self = static_cast<PerformanceView*>(lv_event_get_user_data(e));
+  if (!self) return;
+
+  auto* target = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+  for (size_t i = 0; i < self->scene_tile_objs_.size(); ++i) {
+    if (self->scene_tile_objs_[i] == target) {
+      if (self->on_scene_long_press_) {
+        self->on_scene_long_press_(static_cast<int32_t>(i));
+      }
       break;
     }
   }

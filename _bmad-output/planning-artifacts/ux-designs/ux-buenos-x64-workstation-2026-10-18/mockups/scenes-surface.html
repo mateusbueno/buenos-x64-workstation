@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Scenes Surface Mockup</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#ecebe8;font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#151515}
+.wrap{max-width:1180px;margin:auto;padding:28px 16px 60px}
+h1{font-size:22px;font-weight:500;margin:0 0 6px}
+h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#4d4d4d;margin:38px 0 6px}
+h3{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:14px 0 4px;font-weight:600}
+p{color:#4d4d4d;max-width:900px;margin:0 0 12px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media (max-width:760px){.pair{grid-template-columns:1fr}}
+figure{margin:0}
+figcaption{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:0 0 4px 2px}
+.frame{background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab);padding:10px;border-radius:12px}
+.scr{aspect-ratio:1024/600;width:100%;border-radius:6px;overflow:hidden;position:relative;container-type:inline-size;font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif;background:var(--bg);color:var(--text)}
+.s{--u:calc(100cqw/1024);position:absolute;inset:0;display:grid;grid-template-rows:calc(56*var(--u)) 1fr calc(56*var(--u))}
+.bar{display:flex;align-items:center;justify-content:space-between;padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(15*var(--u));letter-spacing:.12em;text-transform:uppercase}
+.bar b{color:var(--accent);font-weight:600}
+.cnt{padding:calc(16*var(--u)) calc(22*var(--u));display:flex;flex-direction:column;justify-content:space-between}
+.scenes-grid{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(2,1fr);gap:calc(12*var(--u));height:calc(270*var(--u))}
+.scene-card{background:var(--surface);border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(8*var(--u));padding:calc(12*var(--u));display:flex;flex-direction:column;justify-content:space-between;position:relative}
+.scene-card.active{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.scene-card.selected{border:calc(3*var(--u)) solid var(--accent);background:var(--raised)}
+.scene-card.active.selected{border-color:var(--text)}
+.scene-card.empty{border:calc(2*var(--u)) dashed var(--line-strong);background:transparent}
+.scene-card .head{display:flex;justify-content:space-between;align-items:center}
+.scene-card .num{font-size:calc(16*var(--u));font-weight:600;opacity:.8}
+.scene-card .cur-tag{font-size:calc(12*var(--u));font-weight:700;letter-spacing:.1em;display:flex;align-items:center;gap:calc(4*var(--u))}
+.scene-card .name{font-size:calc(22*var(--u));font-weight:500;line-height:1.2;margin:calc(4*var(--u)) 0}
+.scene-card .sub{font-size:calc(13*var(--u));color:var(--muted);letter-spacing:.06em}
+.scene-card.active .sub{color:var(--on-accent);opacity:.85}
+.reassurance-line{font-size:calc(13*var(--u));letter-spacing:.08em;color:var(--muted);text-transform:uppercase;display:flex;align-items:center;gap:calc(6*var(--u))}
+.reassurance-line b{color:var(--accent);font-weight:400}
+.action-strip{display:flex;gap:calc(10*var(--u));align-items:center}
+.act-btn{flex:1;height:calc(56*var(--u));background:var(--surface);border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(8*var(--u));display:flex;align-items:center;justify-content:center;font-size:calc(16*var(--u));font-weight:500;letter-spacing:.04em;color:var(--text);gap:calc(6*var(--u))}
+.act-btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}
+.hint{display:flex;gap:calc(26*var(--u));align-items:center;padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(14*var(--u));letter-spacing:.06em}
+.hint b{color:var(--text);font-weight:400;border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(5*var(--u));padding:calc(2*var(--u)) calc(7*var(--u));margin-right:calc(6*var(--u))}
+.notes{background:#fff;border:1px solid #d6d4cf;border-radius:8px;padding:10px 14px 10px 30px;font-size:13px;color:#3d3d3d;margin:10px 0}
+.notes li{margin:4px 0}
+.t-stage{--bg:#0b0d0c;--surface:#151917;--raised:#202622;--line:#2b322e;--line-strong:#5a6860;--text:#e7ebe8;--muted:#88938c;--accent:#9fbaa8;--on-accent:#0b0d0c;--warn:#cdb86c;}
+.t-studio{--bg:#f2f4f2;--surface:#e3e8e4;--raised:#ffffff;--line:#cbd4cd;--line-strong:#728a77;--text:#131714;--muted:#5a635c;--accent:#466853;--on-accent:#f2f4f2;--warn:#725f1e;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Velora 73: Scenes Surface</h1>
+<p>The Scenes surface allows the player to inspect, recall, create, rename, duplicate, reorder and clear scenes (slots 1–8) for the current Live Set. Slots are drawn in Scene Tile style with the currently active scene marked ▶ and filled, existing scenes displaying their titles and timbre summaries, and empty slots shown dashed.</p>
+
+<ul class="notes">
+<li><b>Slots 1–8.</b> Displayed in a 4×2 grid. The currently sounding scene has full accent fill and on-accent text, plus the ▶ current tag. Highlighted/selected slot has a 3 px accent border and raised elevation. Empty slots have dashed border.</li>
+<li><b>Touch targets.</b> All action buttons (New scene, Rename, Duplicate, Move ◀ ▶, Clear) are at least 56 px tall.</li>
+<li><b>Audio continuity.</b> Sound continues uninterrupted while browsing and editing scenes. Edits are flagged with ◆ on the Live Set and become permanent when saved with WRITE (Scene).</li>
+<li><b>Guards.</b> The current scene cannot be cleared while it is the only remaining scene in the Live Set.</li>
+</ul>
+
+<h2>1 · Scenes Surface (Stage &amp; Studio Themes)</h2>
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (Palco)</figcaption>
+<div class="frame"><div class="scr t-stage"><div class="s">
+  <div class="bar"><span>SCENES · <b>PERFECT</b></span><span>5 / 8 SLOTS USED</span></div>
+  <div class="cnt">
+    <div class="scenes-grid">
+      <div class="scene-card active">
+        <div class="head"><span class="num">01</span><span class="cur-tag">▶ CURRENT</span></div>
+        <div class="name">Intro Piano</div>
+        <div class="sub">Grand Piano + Warm Pad</div>
+      </div>
+      <div class="scene-card selected">
+        <div class="head"><span class="num">02</span></div>
+        <div class="name">Verse Acoustic</div>
+        <div class="sub">Acoustic Piano Solo</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">03</span></div>
+        <div class="name">Chorus Full</div>
+        <div class="sub">Piano + Strings + Brass</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">04</span></div>
+        <div class="name">Bridge Organ</div>
+        <div class="sub">B3 Drawbars 888 + Leslie</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">05</span></div>
+        <div class="name">Outro Solo</div>
+        <div class="sub">Grand Piano Reverb</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">06</span></div>
+        <div class="name" style="color:var(--muted)">— Empty —</div>
+        <div class="sub">Slot available</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">07</span></div>
+        <div class="name" style="color:var(--muted)">— Empty —</div>
+        <div class="sub">Slot available</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">08</span></div>
+        <div class="name" style="color:var(--muted)">— Empty —</div>
+        <div class="sub">Slot available</div>
+      </div>
+    </div>
+    <div class="reassurance-line">
+      <span>Edits become permanent with Write (Scene) · Live Set is marked <b>◆</b></span>
+    </div>
+    <div class="action-strip">
+      <div class="act-btn primary">+ New Scene</div>
+      <div class="act-btn">Rename</div>
+      <div class="act-btn">Duplicate</div>
+      <div class="act-btn">Move ◀ ▶</div>
+      <div class="act-btn">Clear</div>
+    </div>
+  </div>
+  <div class="hint">
+    <span><b>VALUE</b>select slot</span>
+    <span><b>WRITE</b>recall scene</span>
+    <span><b>EXIT</b>back to Performance</span>
+    <span style="margin-left:auto">Hold <b>WRITE</b> to save scene</span>
+  </div>
+</div></div></div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (Estúdio)</figcaption>
+<div class="frame"><div class="scr t-studio"><div class="s">
+  <div class="bar"><span>SCENES · <b>PERFECT</b></span><span>5 / 8 SLOTS USED</span></div>
+  <div class="cnt">
+    <div class="scenes-grid">
+      <div class="scene-card active">
+        <div class="head"><span class="num">01</span><span class="cur-tag">▶ CURRENT</span></div>
+        <div class="name">Intro Piano</div>
+        <div class="sub">Grand Piano + Warm Pad</div>
+      </div>
+      <div class="scene-card selected">
+        <div class="head"><span class="num">02</span></div>
+        <div class="name">Verse Acoustic</div>
+        <div class="sub">Acoustic Piano Solo</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">03</span></div>
+        <div class="name">Chorus Full</div>
+        <div class="sub">Piano + Strings + Brass</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">04</span></div>
+        <div class="name">Bridge Organ</div>
+        <div class="sub">B3 Drawbars 888 + Leslie</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">05</span></div>
+        <div class="name">Outro Solo</div>
+        <div class="sub">Grand Piano Reverb</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">06</span></div>
+        <div class="name" style="color:var(--muted)">— Empty —</div>
+        <div class="sub">Slot available</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">07</span></div>
+        <div class="name" style="color:var(--muted)">— Empty —</div>
+        <div class="sub">Slot available</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">08</span></div>
+        <div class="name" style="color:var(--muted)">— Empty —</div>
+        <div class="sub">Slot available</div>
+      </div>
+    </div>
+    <div class="reassurance-line">
+      <span>Edits become permanent with Write (Scene) · Live Set is marked <b>◆</b></span>
+    </div>
+    <div class="action-strip">
+      <div class="act-btn primary">+ New Scene</div>
+      <div class="act-btn">Rename</div>
+      <div class="act-btn">Duplicate</div>
+      <div class="act-btn">Move ◀ ▶</div>
+      <div class="act-btn">Clear</div>
+    </div>
+  </div>
+  <div class="hint">
+    <span><b>VALUE</b>select slot</span>
+    <span><b>WRITE</b>recall scene</span>
+    <span><b>EXIT</b>back to Performance</span>
+    <span style="margin-left:auto">Hold <b>WRITE</b> to save scene</span>
+  </div>
+</div></div></div>
+</figure>
+</div>
+
+<h2>2 · Pseudo-localization (+40% with ÁÇÊÕÑ Ação)</h2>
+<div class="pair">
+<figure>
+<figcaption>Stage Theme · +40%</figcaption>
+<div class="frame"><div class="scr t-stage"><div class="s">
+  <div class="bar"><span>ÇÊÑÁS · <b>PÉRFÉÇT ÁÇ</b></span><span>5 / 8 SLÓTS ÁÇÊ</span></div>
+  <div class="cnt">
+    <div class="scenes-grid">
+      <div class="scene-card active">
+        <div class="head"><span class="num">01</span><span class="cur-tag">▶ ÁTÚÁL</span></div>
+        <div class="name">Íñtrõ Píáñõ ÁÇ</div>
+        <div class="sub">Gráñd Píáñõ + Wárm Pád ÁÇÊ</div>
+      </div>
+      <div class="scene-card selected">
+        <div class="head"><span class="num">02</span></div>
+        <div class="name">Vêrsõ Áçõústíçõ ÁÇ</div>
+        <div class="sub">Píáñõ Áçõústíçõ Sõlõ ÁÇ</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">03</span></div>
+        <div class="name">Rêfrãõ Çõmplêtõ ÁÇ</div>
+        <div class="sub">Píáñõ + Çõrdás + Mêtáís ÁÇ</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">04</span></div>
+        <div class="name">Põñtê Órgãõ B3 ÁÇ</div>
+        <div class="sub">Dráwbárs 888 + Lêslíê ÁÇ</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">05</span></div>
+        <div class="name">Sõlõ Fíñál ÁÇÊÕÑ</div>
+        <div class="sub">Píáñõ Çõm Rêvêrb ÁÇÊÕ</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">06</span></div>
+        <div class="name" style="color:var(--muted)">— Vázíõ ÁÇ —</div>
+        <div class="sub">Slõt dísõñívêl ÁÇ</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">07</span></div>
+        <div class="name" style="color:var(--muted)">— Vázíõ ÁÇ —</div>
+        <div class="sub">Slõt dísõñívêl ÁÇ</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">08</span></div>
+        <div class="name" style="color:var(--muted)">— Vázíõ ÁÇ —</div>
+        <div class="sub">Slõt dísõñívêl ÁÇ</div>
+      </div>
+    </div>
+    <div class="reassurance-line">
+      <span>Êdízõês sálvás çõm Wrítê (Çêñá) · Lívê Sêt mórçádõ <b>◆</b></span>
+    </div>
+    <div class="action-strip">
+      <div class="act-btn primary">+ Ñõvá Çêñá ÁÇ</div>
+      <div class="act-btn">Rêñõmêár ÁÇ</div>
+      <div class="act-btn">Dúplíçár ÁÇ</div>
+      <div class="act-btn">Mõvêr ◀ ▶</div>
+      <div class="act-btn">Límpár ÁÇ</div>
+    </div>
+  </div>
+  <div class="hint">
+    <span><b>VALUE</b>sêlêçíõñár</span>
+    <span><b>WRITE</b>çárrêgár</span>
+    <span><b>EXIT</b>võltár ÁÇ</span>
+    <span style="margin-left:auto">Sêgúrê <b>WRITE</b> p/ sálvár</span>
+  </div>
+</div></div></div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme · +40%</figcaption>
+<div class="frame"><div class="scr t-studio"><div class="s">
+  <div class="bar"><span>ÇÊÑÁS · <b>PÉRFÉÇT ÁÇ</b></span><span>5 / 8 SLÓTS ÁÇÊ</span></div>
+  <div class="cnt">
+    <div class="scenes-grid">
+      <div class="scene-card active">
+        <div class="head"><span class="num">01</span><span class="cur-tag">▶ ÁTÚÁL</span></div>
+        <div class="name">Íñtrõ Píáñõ ÁÇ</div>
+        <div class="sub">Gráñd Píáñõ + Wárm Pád ÁÇÊ</div>
+      </div>
+      <div class="scene-card selected">
+        <div class="head"><span class="num">02</span></div>
+        <div class="name">Vêrsõ Áçõústíçõ ÁÇ</div>
+        <div class="sub">Píáñõ Áçõústíçõ Sõlõ ÁÇ</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">03</span></div>
+        <div class="name">Rêfrãõ Çõmplêtõ ÁÇ</div>
+        <div class="sub">Píáñõ + Çõrdás + Mêtáís ÁÇ</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">04</span></div>
+        <div class="name">Põñtê Órgãõ B3 ÁÇ</div>
+        <div class="sub">Dráwbárs 888 + Lêslíê ÁÇ</div>
+      </div>
+      <div class="scene-card">
+        <div class="head"><span class="num">05</span></div>
+        <div class="name">Sõlõ Fíñál ÁÇÊÕÑ</div>
+        <div class="sub">Píáñõ Çõm Rêvêrb ÁÇÊÕ</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">06</span></div>
+        <div class="name" style="color:var(--muted)">— Vázíõ ÁÇ —</div>
+        <div class="sub">Slõt dísõñívêl ÁÇ</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">07</span></div>
+        <div class="name" style="color:var(--muted)">— Vázíõ ÁÇ —</div>
+        <div class="sub">Slõt dísõñívêl ÁÇ</div>
+      </div>
+      <div class="scene-card empty">
+        <div class="head"><span class="num">08</span></div>
+        <div class="name" style="color:var(--muted)">— Vázíõ ÁÇ —</div>
+        <div class="sub">Slõt dísõñívêl ÁÇ</div>
+      </div>
+    </div>
+    <div class="reassurance-line">
+      <span>Êdízõês sálvás çõm Wrítê (Çêñá) · Lívê Sêt mórçádõ <b>◆</b></span>
+    </div>
+    <div class="action-strip">
+      <div class="act-btn primary">+ Ñõvá Çêñá ÁÇ</div>
+      <div class="act-btn">Rêñõmêár ÁÇ</div>
+      <div class="act-btn">Dúplíçár ÁÇ</div>
+      <div class="act-btn">Mõvêr ◀ ▶</div>
+      <div class="act-btn">Límpár ÁÇ</div>
+    </div>
+  </div>
+  <div class="hint">
+    <span><b>VALUE</b>sêlêçíõñár</span>
+    <span><b>WRITE</b>çárrêgár</span>
+    <span><b>EXIT</b>võltár ÁÇ</span>
+    <span style="margin-left:auto">Sêgúrê <b>WRITE</b> p/ sálvár</span>
+  </div>
+</div></div></div>
+</figure>
+</div>
+
+</div>
+</body>
+</html>

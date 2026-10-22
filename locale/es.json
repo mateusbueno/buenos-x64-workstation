@@ -153,5 +153,19 @@
   "action_sheet.foot.write": "confirmar",
   "action_sheet.foot.exit": "cancelar",
   "action_sheet.eyebrow.live_set": "Live Set",
-  "action_sheet.eyebrow.setlist": "Setlist"
+  "action_sheet.eyebrow.setlist": "Setlist",
+  "scenes.title": "ESCENAS",
+  "scenes.slots_used": "%d / 8 SLOTS USADOS",
+  "scenes.tag.current": "▶ ACTUAL",
+  "scenes.empty_slot": "— Vacío —",
+  "scenes.slot_available": "Slot disponible",
+  "scenes.reassurance": "Las ediciones se guardan con Write (Escena) · Live Set marcado con ◆",
+  "scenes.action.new_scene": "+ Nueva Escena",
+  "scenes.action.rename": "Renombrar",
+  "scenes.action.duplicate": "Duplicar",
+  "scenes.action.move": "Mover ◀ ▶",
+  "scenes.action.clear": "Limpiar",
+  "scenes.hint.select_slot": "seleccionar slot",
+  "scenes.hint.recall_scene": "cargar escena",
+  "scenes.hint.hold_write_to_save": "Mantén WRITE para guardar escena"
 }

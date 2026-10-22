@@ -153,5 +153,19 @@
   "action_sheet.foot.write": "confirm",
   "action_sheet.foot.exit": "cancel",
   "action_sheet.eyebrow.live_set": "Live Set",
-  "action_sheet.eyebrow.setlist": "Setlist"
+  "action_sheet.eyebrow.setlist": "Setlist",
+  "scenes.title": "SCENES",
+  "scenes.slots_used": "%d / 8 SLOTS USED",
+  "scenes.tag.current": "▶ CURRENT",
+  "scenes.empty_slot": "— Empty —",
+  "scenes.slot_available": "Slot available",
+  "scenes.reassurance": "Edits become permanent with Write (Scene) · Live Set is marked ◆",
+  "scenes.action.new_scene": "+ New Scene",
+  "scenes.action.rename": "Rename",
+  "scenes.action.duplicate": "Duplicate",
+  "scenes.action.move": "Move ◀ ▶",
+  "scenes.action.clear": "Clear",
+  "scenes.hint.select_slot": "select slot",
+  "scenes.hint.recall_scene": "recall scene",
+  "scenes.hint.hold_write_to_save": "Hold WRITE to save scene"
 }

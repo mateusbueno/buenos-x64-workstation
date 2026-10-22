@@ -48,6 +48,7 @@ class PerformanceView {
   using PartSelectCallback = std::function<void(int32_t part_idx)>;
   using RevClickCallback = std::function<void()>;
   using SetlistClickCallback = std::function<void()>;
+  using SceneLongPressCallback = std::function<void(int32_t slot_idx)>;
 
   explicit PerformanceView(WsClient* client = nullptr);
   ~PerformanceView();
@@ -128,6 +129,7 @@ class PerformanceView {
   void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
   void set_rev_click_callback(RevClickCallback cb) { on_rev_click_ = std::move(cb); }
   void set_setlist_click_callback(SetlistClickCallback cb) { on_setlist_click_ = std::move(cb); }
+  void set_scene_long_press_callback(SceneLongPressCallback cb) { on_scene_long_press_ = std::move(cb); }
 
   void recall_scene(int32_t scene_idx);
 
@@ -142,6 +144,7 @@ class PerformanceView {
   lv_obj_t* status_bar() const noexcept { return status_bar_; }
 
   int32_t current_scene() const noexcept { return current_scene_idx_; }
+  const std::vector<SceneTileData>& scenes() const noexcept { return scenes_; }
   const std::string& live_set_name() const noexcept { return live_set_name_; }
   float tempo() const noexcept { return current_bpm_; }
   bool has_unsaved_edits() const noexcept { return has_unsaved_edits_; }
@@ -157,6 +160,7 @@ class PerformanceView {
 
  private:
   static void scene_click_cb(lv_event_t* e);
+  static void scene_long_press_cb(lv_event_t* e);
   static void part_card_click_cb(lv_event_t* e);
   static void part_power_click_cb(lv_event_t* e);
   static void rev_click_cb(lv_event_t* e);
@@ -176,6 +180,7 @@ class PerformanceView {
   PartSelectCallback on_part_select_;
   RevClickCallback on_rev_click_;
   SetlistClickCallback on_setlist_click_;
+  SceneLongPressCallback on_scene_long_press_;
 
   lv_obj_t* root_{nullptr};
   lv_obj_t* top_bar_{nullptr};
