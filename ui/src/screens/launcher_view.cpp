@@ -8,10 +8,10 @@ LauncherView::LauncherView() {
   tiles_ = {
     {LauncherTileId::SetlistBrowser, "launcher.tile.setlist_browser", true},
     {LauncherTileId::Setlist,        "launcher.tile.setlist",         true},
-    {LauncherTileId::Library,        "launcher.tile.library",         false}, // Available Epic 5
+    {LauncherTileId::Library,        "launcher.tile.library",         true},
     {LauncherTileId::Effects,        "launcher.tile.effects",         true},
     {LauncherTileId::Scenes,         "launcher.tile.scenes",          true},
-    {LauncherTileId::Import,         "launcher.tile.import",          false}, // Available Epic 5
+    {LauncherTileId::Import,         "launcher.tile.import",          true},
     {LauncherTileId::Settings,       "launcher.tile.settings",        true},
   };
 }

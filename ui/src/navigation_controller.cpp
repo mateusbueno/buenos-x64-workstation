@@ -10,7 +10,10 @@ NavigationController::NavigationController(WsClient* client)
       setlist_view_(client),
       setlist_browser_view_(client),
       scenes_view_(client),
-      part_view_(client) {}
+      part_view_(client),
+      settings_view_(client),
+      library_view_(client),
+      import_view_(client) {}
 
 NavigationController::~NavigationController() = default;
 
@@ -28,6 +31,9 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   if (!scenes_view_.create(parent)) return false;
   if (!part_view_.create(parent)) return false;
   if (!settings_view_.create(parent)) return false;
+  if (!library_view_.create(parent)) return false;
+  if (!import_view_.create(parent)) return false;
+  if (!notice_toast_.create(parent)) return false;
   if (!write_dialog_.create(parent)) return false;
 
   write_dialog_.set_on_write([this](ws::v1::WriteScope scope, const std::string& name) {
@@ -95,6 +101,36 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     navigate_to(SurfaceId::Effects);
   });
 
+  part_view_.set_on_open_library([this](int32_t part_idx) {
+    surface_before_launcher_ = current_surface_;
+    library_view_.set_mode(LibraryMode::ChooseForPart, part_idx);
+    navigate_to(SurfaceId::Library);
+  });
+
+  library_view_.set_on_close([this]() {
+    navigate_to(surface_before_launcher_);
+  });
+
+  library_view_.set_on_timbre_selected([this](int32_t part_idx, const std::string& timbre_id) {
+    part_view_.set_timbre(timbre_id, "");
+    set_pending_edits(true, true, "Part " + std::to_string(part_idx + 1) + " timbre");
+  });
+
+  import_view_.set_on_close([this]() {
+    navigate_to(surface_before_launcher_);
+  });
+
+  import_view_.set_on_import_finished([this](uint32_t imp, uint32_t skp) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), tr("notice.import_finished").c_str(), imp, skp);
+    notice_toast_.show(buf, "");
+  });
+
+  notice_toast_.set_on_action([this]() {
+    surface_before_launcher_ = current_surface_;
+    navigate_to(SurfaceId::Import);
+  });
+
   settings_view_.set_on_close([this]() {
     navigate_to(surface_before_launcher_);
   });
@@ -137,6 +173,12 @@ bool NavigationController::initialize(lv_obj_t* parent) {
       case LauncherTileId::Scenes:
         navigate_to(SurfaceId::Scenes);
         break;
+      case LauncherTileId::Library:
+        navigate_to(SurfaceId::Library);
+        break;
+      case LauncherTileId::Import:
+        navigate_to(SurfaceId::Import);
+        break;
       case LauncherTileId::Settings:
         navigate_to(SurfaceId::Settings);
         break;
@@ -157,6 +199,8 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   hide_surface(SurfaceId::Scenes);
   hide_surface(SurfaceId::Part);
   hide_surface(SurfaceId::Settings);
+  hide_surface(SurfaceId::Library);
+  hide_surface(SurfaceId::Import);
   show_surface(SurfaceId::Performance);
 
   current_surface_ = SurfaceId::Performance;
@@ -192,6 +236,12 @@ void NavigationController::show_surface(SurfaceId surface) {
     case SurfaceId::Settings:
       root = settings_view_.skeleton().root_container();
       break;
+    case SurfaceId::Library:
+      root = library_view_.skeleton().root_container();
+      break;
+    case SurfaceId::Import:
+      root = import_view_.skeleton().root_container();
+      break;
     default:
       break;
   }
@@ -226,6 +276,12 @@ void NavigationController::hide_surface(SurfaceId surface) {
       break;
     case SurfaceId::Settings:
       root = settings_view_.skeleton().root_container();
+      break;
+    case SurfaceId::Library:
+      root = library_view_.skeleton().root_container();
+      break;
+    case SurfaceId::Import:
+      root = import_view_.skeleton().root_container();
       break;
     default:
       break;
@@ -324,57 +380,43 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
     return;
   }
 
-  // Handle WRITE hold vs short press
+  // Handle WRITE hold vs short press:
+  // On Performance and Scenes, WRITE hold (0.5s) triggers WriteDialog / Save Scene.
+  // On other surfaces (Launcher, Library, Import, Settings, Part, SetlistBrowser), WRITE is immediate confirm on press!
   if (ev.type == PanelEventType::Button && ev.id == MCU_BTN_WRITE) {
-    if (ev.pressed) {
-      write_btn_down_time_us_ = (ev.timestamp_us > 0) ? ev.timestamp_us : 1;
-      return;
-    } else {
-      uint64_t dur = (ev.timestamp_us > write_btn_down_time_us_ && write_btn_down_time_us_ > 0) ?
-                     (ev.timestamp_us - write_btn_down_time_us_) : 0;
-      write_btn_down_time_us_ = 0;
-      if (dur >= write_hold_threshold_us_) {
-        if (has_pending_edits()) {
-          open_write_dialog();
-        } else {
+    if (current_surface_ == SurfaceId::Performance || current_surface_ == SurfaceId::Scenes) {
+      if (ev.pressed) {
+        write_btn_down_time_us_ = (ev.timestamp_us > 0) ? ev.timestamp_us : 1;
+        return;
+      } else {
+        uint64_t dur = (ev.timestamp_us > write_btn_down_time_us_ && write_btn_down_time_us_ > 0) ?
+                       (ev.timestamp_us - write_btn_down_time_us_) : 0;
+        write_btn_down_time_us_ = 0;
+        if (dur >= write_hold_threshold_us_) {
+          if (has_pending_edits()) {
+            open_write_dialog();
+          } else {
+            show_nothing_to_write_hint();
+          }
+          return;
+        }
+
+        // Short press release (< 0.5s): forward to active surface
+        PanelEvent short_press = ev;
+        short_press.pressed = true;
+        if (current_surface_ == SurfaceId::Performance) {
           show_nothing_to_write_hint();
+        } else if (current_surface_ == SurfaceId::Scenes) {
+          scenes_view_.on_panel_event(short_press);
         }
         return;
       }
-
-      // Short press release (< 0.5s): forward to active surface
-      PanelEvent short_press = ev;
-      short_press.pressed = true;
-      switch (current_surface_) {
-        case SurfaceId::Performance:
-          show_nothing_to_write_hint();
-          break;
-        case SurfaceId::Scenes:
-          scenes_view_.on_panel_event(short_press);
-          break;
-        case SurfaceId::Part:
-          part_view_.on_panel_event(short_press);
-          break;
-        case SurfaceId::Settings:
-          settings_view_.on_panel_event(short_press);
-          break;
-        case SurfaceId::Setlist:
-          setlist_view_.on_panel_event(short_press);
-          break;
-        case SurfaceId::SetlistBrowser:
-          setlist_browser_view_.on_panel_event(short_press);
-          break;
-        case SurfaceId::Effects:
-          effects_view_.on_panel_event(short_press);
-          break;
-        case SurfaceId::Launcher:
-          launcher_view_.on_panel_event(short_press);
-          break;
-        default:
-          break;
-      }
-      return;
     }
+  }
+
+  if (notice_toast_.is_visible() && ev.type == PanelEventType::Button && ev.pressed && ev.id == MCU_BTN_EXIT) {
+    notice_toast_.hide();
+    return;
   }
 
   // Global Encoders and Knob Mode toggle: operate per current mode across ANY surface
@@ -494,6 +536,18 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
         navigate_to(surface_before_launcher_);
         return;
       }
+      if (current_surface_ == SurfaceId::Library) {
+        navigate_to(surface_before_launcher_);
+        return;
+      }
+      if (current_surface_ == SurfaceId::Import) {
+        if (import_view_.category_picker().is_visible()) {
+          import_view_.on_panel_event(ev);
+          return;
+        }
+        navigate_to(surface_before_launcher_);
+        return;
+      }
       navigate_back();
       return;
     }
@@ -525,13 +579,35 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
     case SurfaceId::Settings:
       settings_view_.on_panel_event(ev);
       break;
+    case SurfaceId::Library:
+      library_view_.on_panel_event(ev);
+      break;
+    case SurfaceId::Import:
+      import_view_.on_panel_event(ev);
+      break;
     default:
       break;
   }
 }
 
 void NavigationController::on_midi_note(uint8_t note_number) {
+  if (current_surface_ == SurfaceId::Library) {
+    library_view_.on_midi_note(note_number);
+  }
   part_view_.on_midi_note(note_number);
+}
+
+void NavigationController::on_usb_drive_inserted(const std::string& drive_name, const std::vector<ImportItem>& items) {
+  uint64_t total_size = 0;
+  for (const auto& it : items) total_size += it.size_bytes;
+  import_view_.set_drive_info(drive_name, total_size, 50ULL * 1024 * 1024 * 1024);
+  import_view_.set_items(items);
+  notice_toast_.show(tr("notice.usb_drive_found"), tr("notice.action.import"), 8000);
+}
+
+void NavigationController::tick(uint32_t elapsed_ms) {
+  notice_toast_.tick(elapsed_ms);
+  import_view_.tick(elapsed_ms);
 }
 
 }  // namespace velora::ui

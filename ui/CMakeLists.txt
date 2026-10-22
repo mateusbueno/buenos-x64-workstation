@@ -49,6 +49,8 @@ add_library(velora_ui
   src/screens/scenes_view.cpp
   src/screens/part_view.cpp
   src/screens/settings_view.cpp
+  src/screens/import_view.cpp
+  src/screens/library_view.cpp
   src/navigation_controller.cpp
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
@@ -56,6 +58,8 @@ add_library(velora_ui
   src/components/on_screen_keyboard.cpp
   src/components/action_sheet.cpp
   src/components/write_dialog.cpp
+  src/components/category_picker.cpp
+  src/components/notice_toast.cpp
   src/virtual_panel.cpp
   src/theme.cpp
   src/adapters/headless_adapter.cpp
@@ -177,6 +181,26 @@ add_executable(part_view_test tests/part_view_test.cpp)
 target_link_libraries(part_view_test PRIVATE velora_ui)
 add_test(NAME part_view_test COMMAND part_view_test)
 set_tests_properties(part_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(category_picker_test tests/category_picker_test.cpp)
+target_link_libraries(category_picker_test PRIVATE velora_ui)
+add_test(NAME category_picker_test COMMAND category_picker_test)
+set_tests_properties(category_picker_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(notice_toast_test tests/notice_toast_test.cpp)
+target_link_libraries(notice_toast_test PRIVATE velora_ui)
+add_test(NAME notice_toast_test COMMAND notice_toast_test)
+set_tests_properties(notice_toast_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(import_view_test tests/import_view_test.cpp)
+target_link_libraries(import_view_test PRIVATE velora_ui)
+add_test(NAME import_view_test COMMAND import_view_test)
+set_tests_properties(import_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(library_view_test tests/library_view_test.cpp)
+target_link_libraries(library_view_test PRIVATE velora_ui)
+add_test(NAME library_view_test COMMAND library_view_test)
+set_tests_properties(library_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
 add_executable(settings_view_test tests/settings_view_test.cpp)
 target_link_libraries(settings_view_test PRIVATE velora_ui)

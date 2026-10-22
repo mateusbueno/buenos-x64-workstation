@@ -215,14 +215,35 @@ bool PartView::create(lv_obj_t* parent) {
 }
 
 void PartView::rebuild_top_bar() {
-  char buf[128];
-  std::snprintf(buf, sizeof(buf), "%s · %s · %s",
-                tr("part_view.title_prefix").c_str(),
-                timbre_name_.c_str(),
-                category_name_.c_str());
-  char title_formatted[128];
-  std::snprintf(title_formatted, sizeof(title_formatted), buf, part_idx_ + 1);
-  skeleton_.set_title(title_formatted);
+  if (is_missing_library_) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Part %d · %s", part_idx_ + 1, tr("library.missing").c_str());
+    skeleton_.set_title(buf);
+  } else {
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "%s · %s · %s",
+                  tr("part_view.title_prefix").c_str(),
+                  timbre_name_.c_str(),
+                  category_name_.c_str());
+    char title_formatted[128];
+    std::snprintf(title_formatted, sizeof(title_formatted), buf, part_idx_ + 1);
+    skeleton_.set_title(title_formatted);
+  }
+}
+
+void PartView::set_missing_library(bool missing) {
+  is_missing_library_ = missing;
+  rebuild_top_bar();
+  rebuild_panel();
+}
+
+void PartView::set_favorite(bool fav) {
+  is_favorite_ = fav;
+  rebuild_panel();
+}
+
+void PartView::toggle_favorite() {
+  set_favorite(!is_favorite_);
 }
 
 void PartView::set_part_index(int32_t idx) {
@@ -1198,7 +1219,13 @@ void PartView::on_field_click(lv_event_t* e) {
 
 void PartView::on_change_timbre_click(lv_event_t* e) {
   auto* self = static_cast<PartView*>(lv_event_get_user_data(e));
-  if (self) self->open_timbre_picker();
+  if (self) {
+    if (self->on_open_library_) {
+      self->on_open_library_(self->part_idx_);
+    } else {
+      self->open_timbre_picker();
+    }
+  }
 }
 
 void PartView::on_picker_item_click(lv_event_t* e) {

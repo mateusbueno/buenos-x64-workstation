@@ -81,19 +81,19 @@ static void test_navigation() {
   nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 
-  // 6. Disabled tiles in Launcher (Library = 2, Import = 5)
+  // 6. Library tile in Launcher (Library = 2)
   nav.on_panel_event(PanelEvent::button_press(MCU_BTN_MENU));
   assert(nav.current_surface() == SurfaceId::Launcher);
 
   // Move to Library (index 2)
   nav.launcher_view().set_highlight(2);
-  assert(!nav.launcher_view().is_tile_available(2));
+  assert(nav.launcher_view().is_tile_available(2));
 
-  // Press WRITE: should NOT navigate
+  // Press WRITE: navigates to Library
   nav.on_panel_event(PanelEvent::button_press(MCU_BTN_WRITE));
-  assert(nav.current_surface() == SurfaceId::Launcher);
+  assert(nav.current_surface() == SurfaceId::Library);
 
-  // EXIT closes Launcher back to Performance
+  // EXIT returns back to Performance
   nav.on_panel_event(PanelEvent::button_press(MCU_BTN_EXIT));
   assert(nav.current_surface() == SurfaceId::Performance);
 

@@ -47,6 +47,7 @@ class PartView {
   using PartEditCallback = std::function<void(int32_t part_idx)>;
   using OpenInsertsCallback = std::function<void(int32_t part_idx)>;
   using TimbreChangeCallback = std::function<void(int32_t part_idx, const std::string& timbre_id)>;
+  using OpenLibraryCallback = std::function<void(int32_t part_idx)>;
   using ArpEditCallback = std::function<void(int32_t part_idx, const ArpSettings& settings)>;
   using TempoEditCallback = std::function<void(float bpm)>;
 
@@ -62,6 +63,7 @@ class PartView {
   void set_on_edit(PartEditCallback cb) { on_edit_ = std::move(cb); }
   void set_on_open_inserts(OpenInsertsCallback cb) { on_open_inserts_ = std::move(cb); }
   void set_on_timbre_change(TimbreChangeCallback cb) { on_timbre_change_ = std::move(cb); }
+  void set_on_open_library(OpenLibraryCallback cb) { on_open_library_ = std::move(cb); }
   void set_on_arp_edit(ArpEditCallback cb) { on_arp_edit_ = std::move(cb); }
   void set_on_tempo_edit(TempoEditCallback cb) { on_tempo_edit_ = std::move(cb); }
 
@@ -72,6 +74,13 @@ class PartView {
   void set_timbre(const std::string& name, const std::string& category);
   const std::string& timbre_name() const noexcept { return timbre_name_; }
   const std::string& category_name() const noexcept { return category_name_; }
+
+  void set_missing_library(bool missing);
+  bool is_missing_library() const noexcept { return is_missing_library_; }
+
+  void set_favorite(bool fav);
+  bool is_favorite() const noexcept { return is_favorite_; }
+  void toggle_favorite();
 
   void set_zone(int32_t low_key, int32_t high_key, int32_t octave, int32_t transpose, bool kb_on);
   int32_t low_key() const noexcept { return low_key_; }
@@ -179,12 +188,15 @@ class PartView {
   PartEditCallback on_edit_;
   OpenInsertsCallback on_open_inserts_;
   TimbreChangeCallback on_timbre_change_;
+  OpenLibraryCallback on_open_library_;
   ArpEditCallback on_arp_edit_;
   TempoEditCallback on_tempo_edit_;
 
   int32_t part_idx_{0};
   std::string timbre_name_{"German Grand D-274"};
   std::string category_name_{"ACOUSTIC PIANO"};
+  bool is_missing_library_{false};
+  bool is_favorite_{false};
   int32_t low_key_{21};   // A0
   int32_t high_key_{108}; // C8
   int32_t octave_{0};

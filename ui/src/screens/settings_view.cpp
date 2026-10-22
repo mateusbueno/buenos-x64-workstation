@@ -59,6 +59,10 @@ SettingsView::SettingsView(WsClient* client)
   // Built-in factory default assign map: {401, 400, 113, 112, 116, 117, 200, 115}
   global_default_slots_ = {401, 400, 113, 112, 116, 117, 200, 115};
   live_set_slots_ = global_default_slots_;
+  libraries_ = {
+    {"factory", "Factory Library", 1284, 412ULL * 1024 * 1024 * 1024, true},
+    {"stage_pianos", "Stage Pianos Collection", 7, 18ULL * 1024 * 1024 * 1024, false}
+  };
 }
 
 SettingsView::~SettingsView() = default;
@@ -89,6 +93,7 @@ bool SettingsView::create(lv_obj_t* parent) {
 
   build_sidebar();
   build_detail();
+  build_storage_detail();
   create_picker_modal();
 
   update_sidebar_ui();
@@ -144,7 +149,7 @@ void SettingsView::build_sidebar() {
     lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 4);
 
     lv_obj_t* sub = lv_label_create(row);
-    if (i == 3) {
+    if (i == 3 || i == 5) {
       lv_label_set_text(sub, "");
       lv_obj_set_hidden(sub, true);
     } else {
@@ -523,11 +528,191 @@ void SettingsView::update_picker_ui() {
   }
 }
 
+static std::string format_storage_size(uint64_t bytes, const std::string& locale_code) {
+  double gb = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+  char buf[32];
+  if (locale_code == "pt-BR" || locale_code == "es") {
+    snprintf(buf, sizeof(buf), "%.1f GB", gb);
+    for (char* p = buf; *p; ++p) {
+      if (*p == '.') *p = ',';
+    }
+  } else {
+    snprintf(buf, sizeof(buf), "%.1f GB", gb);
+  }
+  return std::string(buf);
+}
+
+void SettingsView::build_storage_detail() {
+  const auto& p = Theme::current();
+  const auto& sp = Theme::spacing();
+  const auto& r = Theme::radius();
+  lv_obj_t* content = skeleton_.content_area();
+
+  // Storage container: width 764px, full height 488px, pos x=260, y=0
+  storage_container_ = lv_obj_create(content);
+  lv_obj_set_size(storage_container_, 764, 488);
+  lv_obj_set_pos(storage_container_, 260, 0);
+  lv_obj_set_scrollable(storage_container_, false);
+  lv_obj_set_style_bg_color(storage_container_, p.bg, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(storage_container_, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(storage_container_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(storage_container_, sp.space_3, LV_PART_MAIN);
+  lv_obj_set_flex_flow(storage_container_, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_hidden(storage_container_, true);
+
+  // Free SSD label (e.g. "240.5 GB free of 480 GB")
+  lbl_storage_ssd_ = lv_label_create(storage_container_);
+  lv_obj_add_style(lbl_storage_ssd_, Theme::style_text(), LV_PART_MAIN);
+  set_storage_info(storage_free_bytes_, storage_total_bytes_);
+
+  // Error label
+  lbl_storage_error_ = lv_label_create(storage_container_);
+  lv_label_set_text(lbl_storage_error_, "");
+  lv_obj_set_style_text_color(lbl_storage_error_, p.warn, LV_PART_MAIN);
+
+  // Section title: Installed Libraries
+  lv_obj_t* lbl_inst = lv_label_create(storage_container_);
+  lv_label_set_text(lbl_inst, tr("storage.installed_libraries").c_str());
+  lv_obj_add_style(lbl_inst, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_set_style_pad_top(lbl_inst, sp.space_2, LV_PART_MAIN);
+
+  // List of libraries container
+  storage_list_obj_ = lv_obj_create(storage_container_);
+  lv_obj_set_size(storage_list_obj_, LV_PCT(100), 320);
+  lv_obj_set_style_bg_opa(storage_list_obj_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(storage_list_obj_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(storage_list_obj_, 0, LV_PART_MAIN);
+  lv_obj_set_flex_flow(storage_list_obj_, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(storage_list_obj_, sp.space_2, LV_PART_MAIN);
+
+  rebuild_storage_list();
+}
+
+void SettingsView::rebuild_storage_list() {
+  if (!storage_list_obj_) return;
+  lv_obj_clean(storage_list_obj_);
+
+  const auto& p = Theme::current();
+  const auto& sp = Theme::spacing();
+  const auto& r = Theme::radius();
+  const std::string& loc = Locale::instance().current_locale();
+
+  for (size_t i = 0; i < libraries_.size(); ++i) {
+    const auto& lib = libraries_[i];
+
+    lv_obj_t* row = lv_obj_create(storage_list_obj_);
+    lv_obj_set_size(row, LV_PCT(100), 56);
+    lv_obj_set_style_bg_color(row, p.surface, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(row, p.line, LV_PART_MAIN);
+    lv_obj_set_style_border_width(row, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, r.md, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(row, sp.space_3, LV_PART_MAIN);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Left info
+    lv_obj_t* col_info = lv_obj_create(row);
+    lv_obj_set_size(col_info, 480, LV_PCT(100));
+    lv_obj_set_style_bg_opa(col_info, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(col_info, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(col_info, 0, LV_PART_MAIN);
+    lv_obj_set_flex_flow(col_info, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(col_info, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    lv_obj_t* lbl_name = lv_label_create(col_info);
+    lv_label_set_text(lbl_name, lib.name.c_str());
+    lv_obj_add_style(lbl_name, Theme::style_text(), LV_PART_MAIN);
+
+    std::string sz = format_storage_size(lib.size_bytes, loc);
+    char meta_buf[128];
+    snprintf(meta_buf, sizeof(meta_buf), "%u timbres · %s", lib.timbre_count, sz.c_str());
+    lv_obj_t* lbl_meta = lv_label_create(col_info);
+    lv_label_set_text(lbl_meta, meta_buf);
+    lv_obj_add_style(lbl_meta, Theme::style_text_muted(), LV_PART_MAIN);
+
+    // Remove button (if not factory)
+    if (lib.id != "factory") {
+      lv_obj_t* btn_rem = lv_obj_create(row);
+      lv_obj_set_size(btn_rem, 110, 40);
+      lv_obj_set_style_bg_color(btn_rem, p.raised, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(btn_rem, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_color(btn_rem, p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(btn_rem, 1, LV_PART_MAIN);
+      lv_obj_set_style_radius(btn_rem, r.sm, LV_PART_MAIN);
+      lv_obj_set_flex_flow(btn_rem, LV_FLEX_FLOW_ROW);
+      lv_obj_set_flex_align(btn_rem, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+      lv_obj_t* lbl_rem = lv_label_create(btn_rem);
+      lv_label_set_text(lbl_rem, tr("storage.remove_library").c_str());
+      lv_obj_set_style_text_color(lbl_rem, p.warn, LV_PART_MAIN);
+
+      std::string captured_id = lib.id;
+      lv_obj_add_event_cb(btn_rem, [](lv_event_t* e) {
+        auto* pair = static_cast<std::pair<SettingsView*, std::string>*>(lv_event_get_user_data(e));
+        if (pair && pair->first) {
+          pair->first->remove_library(pair->second);
+        }
+      }, LV_EVENT_CLICKED, new std::pair<SettingsView*, std::string>(this, captured_id));
+    }
+  }
+}
+
+void SettingsView::set_storage_info(uint64_t free_bytes, uint64_t total_bytes) {
+  storage_free_bytes_ = free_bytes;
+  storage_total_bytes_ = total_bytes;
+  if (lbl_storage_ssd_) {
+    const std::string& loc = Locale::instance().current_locale();
+    std::string free_str = format_storage_size(storage_free_bytes_, loc);
+    std::string total_str = format_storage_size(storage_total_bytes_, loc);
+    char buf[128];
+    snprintf(buf, sizeof(buf), tr("storage.ssd_free").c_str(), free_str.c_str(), total_str.c_str());
+    lv_label_set_text(lbl_storage_ssd_, buf);
+  }
+}
+
+void SettingsView::set_installed_libraries(std::vector<InstalledLibraryInfo> libs) {
+  libraries_ = std::move(libs);
+  rebuild_storage_list();
+}
+
+bool SettingsView::remove_library(const std::string& lib_id) {
+  for (auto it = libraries_.begin(); it != libraries_.end(); ++it) {
+    if (it->id == lib_id) {
+      if (it->in_use) {
+        storage_error_ = tr("storage.in_use_refused");
+        if (lbl_storage_error_) {
+          lv_label_set_text(lbl_storage_error_, storage_error_.c_str());
+        }
+        return false;
+      }
+      storage_free_bytes_ += it->size_bytes;
+      libraries_.erase(it);
+      storage_error_.clear();
+      if (lbl_storage_error_) {
+        lv_label_set_text(lbl_storage_error_, "");
+      }
+      set_storage_info(storage_free_bytes_, storage_total_bytes_);
+      rebuild_storage_list();
+      return true;
+    }
+  }
+  return false;
+}
+
 void SettingsView::select_section(SettingsSection section) {
-  // Only KnobsGlobalAssign is supported in Story 4.35
-  if (section == SettingsSection::KnobsGlobalAssign) {
+  if (section == SettingsSection::KnobsGlobalAssign || section == SettingsSection::StorageLibrary) {
     current_section_ = section;
     update_sidebar_ui();
+    if (detail_container_ && storage_container_) {
+      if (current_section_ == SettingsSection::StorageLibrary) {
+        lv_obj_set_hidden(detail_container_, true);
+        lv_obj_set_hidden(storage_container_, false);
+      } else {
+        lv_obj_set_hidden(detail_container_, false);
+        lv_obj_set_hidden(storage_container_, true);
+      }
+    }
   }
 }
 

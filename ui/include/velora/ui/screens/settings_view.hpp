@@ -29,6 +29,14 @@ enum class AssignScope : uint8_t {
   ThisLiveSet = 1,
 };
 
+struct InstalledLibraryInfo {
+  std::string id;
+  std::string name;
+  uint32_t timbre_count{0};
+  uint64_t size_bytes{0};
+  bool in_use{false};
+};
+
 struct AssignableParamItem {
   uint32_t param_id{0};
   std::string name;
@@ -56,6 +64,12 @@ class SettingsView {
   // Navigation / Selection
   void select_section(SettingsSection section);
   SettingsSection selected_section() const noexcept { return current_section_; }
+
+  void set_storage_info(uint64_t free_bytes, uint64_t total_bytes);
+  void set_installed_libraries(std::vector<InstalledLibraryInfo> libs);
+  const std::vector<InstalledLibraryInfo>& installed_libraries() const noexcept { return libraries_; }
+  bool remove_library(const std::string& lib_id);
+  const std::string& storage_error() const noexcept { return storage_error_; }
 
   void set_scope(AssignScope scope);
   AssignScope scope() const noexcept { return current_scope_; }
@@ -92,6 +106,8 @@ class SettingsView {
  private:
   void build_sidebar();
   void build_detail();
+  void build_storage_detail();
+  void rebuild_storage_list();
   void update_sidebar_ui();
   void update_knob_cards_ui();
   void update_reassurance_ui();
@@ -144,6 +160,16 @@ class SettingsView {
   lv_obj_t* picker_title_{nullptr};
   lv_obj_t* picker_list_{nullptr};
   std::vector<lv_obj_t*> picker_row_objs_;
+
+  // Storage & Library UI
+  lv_obj_t* storage_container_{nullptr};
+  lv_obj_t* lbl_storage_ssd_{nullptr};
+  lv_obj_t* lbl_storage_error_{nullptr};
+  lv_obj_t* storage_list_obj_{nullptr};
+  std::vector<InstalledLibraryInfo> libraries_;
+  uint64_t storage_free_bytes_{240ULL * 1024 * 1024 * 1024};
+  uint64_t storage_total_bytes_{480ULL * 1024 * 1024 * 1024};
+  std::string storage_error_;
   std::vector<uint32_t> picker_param_ids_;
 };
 

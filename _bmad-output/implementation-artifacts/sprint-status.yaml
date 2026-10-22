@@ -159,18 +159,18 @@ development_status:
   5-7-import-preflight-batch-scan-free-space-and-duplicates: done
   5-8-import-execution-survives-drive-removal-and-power-loss: done
   5-9-sandboxed-librarian-and-read-only-usb-a-drives-on-the-board: backlog
-  5-10-design-story-notice-toast-mockup: review
-  5-11-design-story-category-picker-mockup: review
-  5-12-import-surface-rows-categories-and-apply-to-all: backlog
-  5-13-import-surface-progress-background-and-failure-states: backlog
-  5-14-usb-drive-found-notice: backlog
+  5-10-design-story-notice-toast-mockup: done
+  5-11-design-story-category-picker-mockup: done
+  5-12-import-surface-rows-categories-and-apply-to-all: done
+  5-13-import-surface-progress-background-and-failure-states: done
+  5-14-usb-drive-found-notice: done
   5-15-300-gb-ssd-library-imports-and-plays-end-to-end: backlog
-  5-16-library-surface-search-categories-favorites-and-recent: backlog
-  5-17-choose-a-timbre-for-a-part-with-audition: backlog
-  5-18-design-story-action-sheet-library-variants-missing-library-r: review
-  5-19-favorites-by-long-press-and-from-the-part-surface: backlog
-  5-20-missing-library-state-and-recovery: backlog
-  5-21-storage-library-free-space-installed-libraries-and-removal: backlog
+  5-16-library-surface-search-categories-favorites-and-recent: done
+  5-17-choose-a-timbre-for-a-part-with-audition: done
+  5-18-design-story-action-sheet-library-variants-missing-library-r: done
+  5-19-favorites-by-long-press-and-from-the-part-surface: done
+  5-20-missing-library-state-and-recovery: done
+  5-21-storage-library-free-space-installed-libraries-and-removal: done
   epic-5-retrospective: optional
 
   epic-6: in-progress

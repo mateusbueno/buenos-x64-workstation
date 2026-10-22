@@ -13,6 +13,9 @@
 #include "velora/ui/screens/scenes_view.hpp"
 #include "velora/ui/screens/part_view.hpp"
 #include "velora/ui/screens/settings_view.hpp"
+#include "velora/ui/screens/library_view.hpp"
+#include "velora/ui/screens/import_view.hpp"
+#include "velora/ui/components/notice_toast.hpp"
 #include "velora/ui/components/write_dialog.hpp"
 
 namespace velora::ui {
@@ -27,7 +30,9 @@ enum class SurfaceId {
   SetlistBrowser,
   Scenes,
   Part,
-  Settings
+  Settings,
+  Library,
+  Import
 };
 
 class NavigationController {
@@ -54,7 +59,13 @@ class NavigationController {
   ScenesView& scenes_view() noexcept { return scenes_view_; }
   PartView& part_view() noexcept { return part_view_; }
   SettingsView& settings_view() noexcept { return settings_view_; }
+  LibraryView& library_view() noexcept { return library_view_; }
+  ImportView& import_view() noexcept { return import_view_; }
+  NoticeToast& notice_toast() noexcept { return notice_toast_; }
   WriteDialog& write_dialog() noexcept { return write_dialog_; }
+
+  void on_usb_drive_inserted(const std::string& drive_name, const std::vector<ImportItem>& items);
+  void tick(uint32_t elapsed_ms);
 
   void on_midi_note(uint8_t note_number);
 
@@ -82,6 +93,9 @@ class NavigationController {
   ScenesView scenes_view_;
   PartView part_view_;
   SettingsView settings_view_;
+  LibraryView library_view_;
+  ImportView import_view_;
+  NoticeToast notice_toast_;
   WriteDialog write_dialog_;
 
   SurfaceId current_surface_{SurfaceId::Performance};

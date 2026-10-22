@@ -38,6 +38,11 @@ bool SurfaceSkeleton::create(lv_obj_t* parent) {
   lv_obj_align(lbl_title_, LV_ALIGN_LEFT_MID, sp.space_5, 0);
   lv_obj_add_style(lbl_title_, Theme::style_text(), LV_PART_MAIN);
 
+  lbl_right_ = lv_label_create(top_bar_);
+  lv_label_set_text(lbl_right_, "");
+  lv_obj_align(lbl_right_, LV_ALIGN_RIGHT_MID, -sp.space_5, 0);
+  lv_obj_add_style(lbl_right_, Theme::style_text_muted(), LV_PART_MAIN);
+
   // Content Area: 1024x488 (600 - 56 - 56)
   int32_t content_h = 600 - sp.device_topbar - sp.device_hint;
   content_area_ = lv_obj_create(root_);
@@ -58,6 +63,12 @@ bool SurfaceSkeleton::create(lv_obj_t* parent) {
 void SurfaceSkeleton::set_title(const std::string& title) {
   if (lbl_title_) {
     lv_label_set_text(lbl_title_, title.c_str());
+  }
+}
+
+void SurfaceSkeleton::set_right_text(const std::string& text) {
+  if (lbl_right_) {
+    lv_label_set_text(lbl_right_, text.c_str());
   }
 }
 
