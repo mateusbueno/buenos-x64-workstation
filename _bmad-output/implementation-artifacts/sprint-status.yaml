@@ -286,7 +286,7 @@ development_status:
   12-3-import-6-op-sysex-banks-and-single-voices-from-files-usb-a-a: done
   12-4-receive-6-op-sysex-over-usb-midi-and-din: backlog
   12-5-fm-voices-in-the-shared-pool-with-a-128-voice-floor: backlog
-  12-6-clean-room-virtual-analog-voice-in-the-engine-core: backlog
+  12-6-clean-room-virtual-analog-voice-in-the-engine-core: done
   12-7-va-voices-in-the-shared-pool-with-a-64-voice-floor: backlog
   12-8-fm-and-va-timbre-parameters-in-the-versioned-formats: backlog
   12-9-init-and-factory-fm-va-timbres-in-the-library: backlog
