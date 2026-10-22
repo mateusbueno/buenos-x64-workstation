@@ -85,6 +85,19 @@ class PerformanceView {
   lv_obj_t* part_ghost(size_t idx) const { return (idx < part_ghost_objs_.size()) ? part_ghost_objs_[idx] : nullptr; }
   lv_obj_t* part_chevron(size_t idx) const { return (idx < part_chevron_objs_.size()) ? part_chevron_objs_[idx] : nullptr; }
 
+  // Story 4.25 Features: Drawbars & Organ Card
+  bool has_organ_part() const;
+  void toggle_drawbars_mixer_mode();
+  bool is_drawbars_mode() const noexcept { return mode_drawbars_; }
+  void set_drawbar(size_t index, uint8_t value);
+  uint8_t drawbar(size_t index) const { return (index < 9) ? drawbars_[index] : 0; }
+  std::string registration_string() const;
+  void set_rotary_speed(int32_t speed);
+  int32_t rotary_speed() const noexcept { return organ_rotary_speed_; }
+  bool drawbars_led_blinking() const noexcept { return drawbars_led_blinking_; }
+  lv_obj_t* organ_card() const noexcept { return organ_card_obj_; }
+  lv_obj_t* drawbar_col(size_t index) const { return (index < drawbar_col_objs_.size()) ? drawbar_col_objs_[index] : nullptr; }
+
   void set_part_toggle_callback(PartToggleCallback cb) { on_part_toggle_ = std::move(cb); }
   void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
   void set_rev_click_callback(RevClickCallback cb) { on_rev_click_ = std::move(cb); }
@@ -97,6 +110,8 @@ class PerformanceView {
   lv_obj_t* hero() const noexcept { return hero_; }
   lv_obj_t* scene_strip() const noexcept { return scene_strip_; }
   lv_obj_t* part_area() const noexcept { return part_area_; }
+  lv_obj_t* mixer_container() const noexcept { return mixer_container_; }
+  lv_obj_t* drawbars_container() const noexcept { return drawbars_container_; }
   lv_obj_t* status_bar() const noexcept { return status_bar_; }
 
   int32_t current_scene() const noexcept { return current_scene_idx_; }
@@ -124,6 +139,7 @@ class PerformanceView {
   void update_part_strips();
   void update_status_bar();
   void update_pickup_takeover();
+  void update_drawbars_ui();
 
   WsClient* client_{nullptr};
 
@@ -159,7 +175,8 @@ class PerformanceView {
   std::vector<lv_obj_t*> scene_title_objs_;
   std::vector<lv_obj_t*> scene_sub_objs_;
 
-  // Part Strip elements (8 parts)
+  // Mixer Container (8 Part Strips)
+  lv_obj_t* mixer_container_{nullptr};
   std::vector<PartStripData> parts_;
   std::vector<lv_obj_t*> part_card_objs_;
   std::vector<lv_obj_t*> part_num_objs_;
@@ -172,6 +189,25 @@ class PerformanceView {
   std::vector<lv_obj_t*> part_vol_fill_objs_;
   std::vector<lv_obj_t*> part_ghost_objs_;
   std::vector<lv_obj_t*> part_chevron_objs_;
+
+  // Drawbars Container (Organ Card + 9 Drawbar Columns)
+  lv_obj_t* drawbars_container_{nullptr};
+  lv_obj_t* organ_card_obj_{nullptr};
+  lv_obj_t* lbl_organ_meta_{nullptr};
+  lv_obj_t* lbl_organ_title_{nullptr};
+  lv_obj_t* lbl_organ_cat_{nullptr};
+  lv_obj_t* lbl_organ_reg_{nullptr};
+  lv_obj_t* lbl_organ_details_{nullptr};
+
+  std::vector<lv_obj_t*> drawbar_col_objs_;
+  std::vector<lv_obj_t*> drawbar_track_objs_;
+  std::vector<lv_obj_t*> drawbar_head_objs_;
+  std::vector<lv_obj_t*> drawbar_val_objs_;
+
+  uint8_t drawbars_[9] = {8, 8, 8, 6, 0, 0, 0, 0, 0};
+  int32_t organ_part_idx_{3};
+  int32_t organ_rotary_speed_{1}; // 0 = STOP, 1 = SLOW, 2 = FAST
+  bool drawbars_led_blinking_{false};
 
   // Status Bar elements
   lv_obj_t* status_normal_container_{nullptr};

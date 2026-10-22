@@ -109,5 +109,9 @@
   "launcher.tile.scenes": "Escenas",
   "launcher.tile.import": "Importar",
   "launcher.tile.settings": "Ajustes",
-  "launcher.status.not_available": "No disponible"
+  "launcher.status.not_available": "No disponible",
+  "organ.no_organ_notice": "No hay órgano en este Live Set",
+  "organ.meta.drawbars": "DRAWBARS",
+  "organ.meta.percussion": "Perc 3rd Slow",
+  "organ.meta.vibrato": "V3"
 }

@@ -133,8 +133,8 @@ development_status:
   4-22-navigation-rules-menu-and-the-launcher: done
   4-23-parts-scenes-toggle-and-the-part-scene-buttons: done
   4-24-pickup-ghost-and-the-status-bar-takeover: done
-  4-25-drawbars-mixer-toggle-with-the-organ-card-and-drawbar-column: backlog
-  4-26-part-all-assign-toggle-and-encoder-led-rings: backlog
+  4-25-drawbars-mixer-toggle-with-the-organ-card-and-drawbar-column: done
+  4-26-part-all-assign-toggle-and-encoder-led-rings: ready-for-dev
   4-27-assign-overlay: backlog
   4-28-on-screen-keyboard: backlog
   4-29-setlist-surface: backlog

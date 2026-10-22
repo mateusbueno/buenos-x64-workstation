@@ -193,6 +193,15 @@ bool PerformanceView::create(lv_obj_t* parent) {
   lv_obj_set_scrollable(part_area_, false);
   lv_obj_add_style(part_area_, Theme::style_root(), LV_PART_MAIN);
 
+  // Mixer Container (8 Part Strips)
+  mixer_container_ = lv_obj_create(part_area_);
+  lv_obj_set_size(mixer_container_, 1024, sp.device_part_area);
+  lv_obj_set_pos(mixer_container_, 0, 0);
+  lv_obj_set_scrollable(mixer_container_, false);
+  lv_obj_set_style_bg_opa(mixer_container_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(mixer_container_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(mixer_container_, 0, LV_PART_MAIN);
+
   // 8 Part Strips
   part_card_objs_.resize(8);
   part_num_objs_.resize(8);
@@ -210,7 +219,7 @@ bool PerformanceView::create(lv_obj_t* parent) {
   int32_t strip_h = 282;
 
   for (int i = 0; i < 8; ++i) {
-    lv_obj_t* card = lv_obj_create(part_area_);
+    lv_obj_t* card = lv_obj_create(mixer_container_);
     lv_obj_set_size(card, strip_w, strip_h);
     lv_obj_set_pos(card, start_x + i * (strip_w + gap), sp.space_2);
     lv_obj_set_scrollable(card, false);
@@ -320,6 +329,140 @@ bool PerformanceView::create(lv_obj_t* parent) {
     part_vol_fill_objs_[i] = vol_fill;
     part_ghost_objs_[i] = ghost;
     part_chevron_objs_[i] = chev;
+  }
+
+  // Drawbars Container (Organ Card + 9 Drawbar Columns)
+  drawbars_container_ = lv_obj_create(part_area_);
+  lv_obj_set_size(drawbars_container_, 1024, sp.device_part_area);
+  lv_obj_set_pos(drawbars_container_, 0, 0);
+  lv_obj_set_scrollable(drawbars_container_, false);
+  lv_obj_set_style_bg_opa(drawbars_container_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(drawbars_container_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(drawbars_container_, 0, LV_PART_MAIN);
+  lv_obj_set_hidden(drawbars_container_, true);
+
+  // Organ Card: 310x282 at pos (22, 8)
+  organ_card_obj_ = lv_obj_create(drawbars_container_);
+  lv_obj_set_size(organ_card_obj_, 310, strip_h);
+  lv_obj_set_pos(organ_card_obj_, sp.screen_gutter, sp.space_2);
+  lv_obj_set_scrollable(organ_card_obj_, false);
+  lv_obj_set_style_bg_color(organ_card_obj_, p.surface, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(organ_card_obj_, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(organ_card_obj_, r.md, LV_PART_MAIN);
+  lv_obj_set_style_border_color(organ_card_obj_, p.accent, LV_PART_MAIN);
+  lv_obj_set_style_border_width(organ_card_obj_, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(organ_card_obj_, sp.space_3, LV_PART_MAIN);
+
+  lbl_organ_meta_ = lv_label_create(organ_card_obj_);
+  lv_label_set_text(lbl_organ_meta_, "");
+  lv_obj_add_style(lbl_organ_meta_, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_set_pos(lbl_organ_meta_, 4, 4);
+
+  lbl_organ_title_ = lv_label_create(organ_card_obj_);
+  lv_label_set_text(lbl_organ_title_, "");
+  lv_obj_add_style(lbl_organ_title_, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_set_pos(lbl_organ_title_, 4, 34);
+
+  lbl_organ_cat_ = lv_label_create(organ_card_obj_);
+  lv_label_set_text(lbl_organ_cat_, "");
+  lv_obj_set_style_text_color(lbl_organ_cat_, p.accent, LV_PART_MAIN);
+  lv_obj_set_pos(lbl_organ_cat_, 4, 62);
+
+  lbl_organ_details_ = lv_label_create(organ_card_obj_);
+  lv_label_set_text(lbl_organ_details_, "");
+  lv_obj_add_style(lbl_organ_details_, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_set_pos(lbl_organ_details_, 4, 98);
+
+  lbl_organ_reg_ = lv_label_create(organ_card_obj_);
+  lv_label_set_text(lbl_organ_reg_, "");
+  lv_obj_add_style(lbl_organ_reg_, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_set_pos(lbl_organ_reg_, 4, 218);
+
+  // 9 Drawbar Columns
+  drawbar_col_objs_.resize(9);
+  drawbar_track_objs_.resize(9);
+  drawbar_head_objs_.resize(9);
+  drawbar_val_objs_.resize(9);
+
+  const char* footages[9] = {"16'", "5⅓'", "8'", "4'", "2⅔'", "2'", "1⅗'", "1⅓'", "1'"};
+  int32_t dbs_start_x = 348;
+  int32_t col_w = 64;
+  int32_t col_gap = 9;
+
+  for (size_t i = 0; i < 9; ++i) {
+    lv_obj_t* col = lv_obj_create(drawbars_container_);
+    lv_obj_set_size(col, col_w, strip_h);
+    lv_obj_set_pos(col, dbs_start_x + static_cast<int32_t>(i) * (col_w + col_gap), sp.space_2);
+    lv_obj_set_scrollable(col, false);
+    lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(col, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(col, 0, LV_PART_MAIN);
+
+    // Footage label
+    lv_obj_t* lbl_ft = lv_label_create(col);
+    lv_label_set_text(lbl_ft, footages[i]);
+    lv_obj_add_style(lbl_ft, Theme::style_text_muted(), LV_PART_MAIN);
+    lv_obj_align(lbl_ft, LV_ALIGN_TOP_MID, 0, 4);
+
+    // Track
+    int32_t track_w = 28;
+    int32_t track_h = 200;
+    lv_obj_t* track = lv_obj_create(col);
+    lv_obj_set_size(track, track_w, track_h);
+    lv_obj_align(track, LV_ALIGN_TOP_MID, 0, 28);
+    lv_obj_set_scrollable(track, false);
+    lv_obj_set_style_bg_color(track, p.raised, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(track, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(track, p.line_strong, LV_PART_MAIN);
+    lv_obj_set_style_border_width(track, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(track, r.sm, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(track, 0, LV_PART_MAIN);
+
+    // Rod
+    lv_obj_t* rod = lv_obj_create(track);
+    lv_obj_set_size(rod, 4, track_h);
+    lv_obj_align(rod, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_scrollable(rod, false);
+    lv_obj_set_style_bg_color(rod, p.line_strong, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(rod, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(rod, 0, LV_PART_MAIN);
+
+    // Head (28x24)
+    lv_obj_t* head = lv_obj_create(track);
+    lv_obj_set_size(head, track_w, 24);
+    lv_obj_set_pos(head, 0, 0);
+    lv_obj_set_scrollable(head, false);
+    lv_obj_set_style_radius(head, r.sm, LV_PART_MAIN);
+
+    const auto& inv = Theme::invariant();
+    if (i == 0 || i == 1) {
+      // Brown: 16', 5⅓'
+      lv_obj_set_style_bg_color(head, inv.drawbar_brown, LV_PART_MAIN);
+      lv_obj_set_style_border_width(head, 0, LV_PART_MAIN);
+    } else if (i == 2 || i == 3 || i == 5 || i == 8) {
+      // White: 8', 4', 2', 1'
+      lv_obj_set_style_bg_color(head, inv.drawbar_white, LV_PART_MAIN);
+      lv_obj_set_style_border_width(head, 0, LV_PART_MAIN);
+    } else {
+      // Black: 2⅔', 1⅗', 1⅓'
+      lv_obj_set_style_bg_color(head, inv.drawbar_black, LV_PART_MAIN);
+      lv_obj_set_style_border_color(head, p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(head, 1, LV_PART_MAIN);
+    }
+    lv_obj_set_style_bg_opa(head, LV_OPA_COVER, LV_PART_MAIN);
+
+    // Value label below track
+    lv_obj_t* lbl_val = lv_label_create(col);
+    char val_buf[4];
+    std::snprintf(val_buf, sizeof(val_buf), "%u", drawbars_[i]);
+    lv_label_set_text(lbl_val, val_buf);
+    lv_obj_add_style(lbl_val, Theme::style_text(), LV_PART_MAIN);
+    lv_obj_align(lbl_val, LV_ALIGN_BOTTOM_MID, 0, -4);
+
+    drawbar_col_objs_[i] = col;
+    drawbar_track_objs_[i] = track;
+    drawbar_head_objs_[i] = head;
+    drawbar_val_objs_[i] = lbl_val;
   }
 
   // 6. Status Bar: 1024x56, pos (0, 544)
@@ -464,6 +607,11 @@ void PerformanceView::set_modes(bool drawbars, bool scenes_mode, int32_t knob_mo
   mode_scenes_ = scenes_mode;
   mode_knobs_ = knob_mode;
   knob_part_ = knob_part;
+  if (mixer_container_) lv_obj_set_hidden(mixer_container_, mode_drawbars_);
+  if (drawbars_container_) lv_obj_set_hidden(drawbars_container_, !mode_drawbars_);
+  if (mode_drawbars_) {
+    update_drawbars_ui();
+  }
   update_top_bar_modes();
 }
 
@@ -507,6 +655,9 @@ void PerformanceView::set_parts(const std::vector<PartStripData>& parts) {
   }
 
   update_part_strips();
+  if (mode_drawbars_) {
+    update_drawbars_ui();
+  }
 }
 
 void PerformanceView::set_part_enabled(int32_t part_idx, bool enabled) {
@@ -523,6 +674,9 @@ void PerformanceView::set_part_volume(int32_t part_idx, float volume) {
   if (part_idx < 0 || part_idx >= 8) return;
   parts_[part_idx].volume = std::clamp(volume, 0.0f, 1.0f);
   update_part_strips();
+  if (mode_drawbars_) {
+    update_drawbars_ui();
+  }
 }
 
 void PerformanceView::set_status(uint32_t voices_active, uint32_t voices_max, bool streaming_ok, int32_t rotary_state, float rev_send) {
@@ -835,6 +989,9 @@ void PerformanceView::toggle_parts_scenes_mode() {
   mode_scenes_ = !mode_scenes_;
   update_top_bar_modes();
   update_part_strips();
+  if (mode_drawbars_) {
+    update_drawbars_ui();
+  }
 }
 
 void PerformanceView::select_knob_part(int32_t part_idx) {
@@ -956,8 +1113,150 @@ void PerformanceView::update_pickup_takeover() {
   }
 }
 
+bool PerformanceView::has_organ_part() const {
+  for (size_t i = 0; i < parts_.size(); ++i) {
+    if (parts_[i].is_empty) continue;
+    const auto& cat = parts_[i].category;
+    const auto& nm = parts_[i].timbre_name;
+    if (cat == "Organ" || cat == "organ" || cat == "Órgão" || cat == "Órgano" ||
+        cat == tr("category.organ.short") || cat == tr("category.organ.full") ||
+        nm.find("Organ") != std::string::npos || nm.find("organ") != std::string::npos ||
+        nm.find("B3") != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void PerformanceView::toggle_drawbars_mixer_mode() {
+  if (!has_organ_part()) {
+    drawbars_led_blinking_ = true;
+    set_warning_takeover(tr("organ.no_organ_notice"));
+    return;
+  }
+
+  drawbars_led_blinking_ = false;
+  mode_drawbars_ = !mode_drawbars_;
+
+  if (mode_drawbars_) {
+    // Determine active organ part
+    if (selected_knob_part_idx_ >= 0 && selected_knob_part_idx_ < static_cast<int32_t>(parts_.size()) &&
+        !parts_[selected_knob_part_idx_].is_empty &&
+        (parts_[selected_knob_part_idx_].category == "Organ" ||
+         parts_[selected_knob_part_idx_].category == tr("category.organ.short") ||
+         parts_[selected_knob_part_idx_].timbre_name.find("Organ") != std::string::npos ||
+         parts_[selected_knob_part_idx_].timbre_name.find("B3") != std::string::npos)) {
+      organ_part_idx_ = selected_knob_part_idx_;
+    } else {
+      for (size_t i = 0; i < parts_.size(); ++i) {
+        if (!parts_[i].is_empty &&
+            (parts_[i].category == "Organ" ||
+             parts_[i].category == tr("category.organ.short") ||
+             parts_[i].timbre_name.find("Organ") != std::string::npos ||
+             parts_[i].timbre_name.find("B3") != std::string::npos)) {
+          organ_part_idx_ = static_cast<int32_t>(i);
+          break;
+        }
+      }
+    }
+
+    if (mixer_container_) lv_obj_set_hidden(mixer_container_, true);
+    if (drawbars_container_) lv_obj_set_hidden(drawbars_container_, false);
+    update_drawbars_ui();
+  } else {
+    if (mixer_container_) lv_obj_set_hidden(mixer_container_, false);
+    if (drawbars_container_) lv_obj_set_hidden(drawbars_container_, true);
+    update_part_strips();
+  }
+
+  update_top_bar_modes();
+}
+
+void PerformanceView::set_drawbar(size_t index, uint8_t value) {
+  if (index >= 9) return;
+  drawbars_[index] = std::min<uint8_t>(value, 8);
+  update_drawbars_ui();
+}
+
+std::string PerformanceView::registration_string() const {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%u%u %u%u%u%u %u%u%u",
+                drawbars_[0], drawbars_[1],
+                drawbars_[2], drawbars_[3], drawbars_[4], drawbars_[5],
+                drawbars_[6], drawbars_[7], drawbars_[8]);
+  return std::string(buf);
+}
+
+void PerformanceView::set_rotary_speed(int32_t speed) {
+  organ_rotary_speed_ = std::clamp(speed, 0, 2);
+  rotary_state_ = organ_rotary_speed_;
+  update_drawbars_ui();
+  update_status_bar();
+}
+
+void PerformanceView::update_drawbars_ui() {
+  if (!drawbars_container_ || !lbl_organ_meta_) return;
+
+  char meta_buf[64];
+  std::snprintf(meta_buf, sizeof(meta_buf), "%s %d · %s",
+                tr("performance.mode.part").c_str(),
+                organ_part_idx_ + 1,
+                tr("organ.meta.drawbars").c_str());
+  lv_label_set_text(lbl_organ_meta_, meta_buf);
+
+  std::string organ_name = "Organ";
+  std::string organ_cat = tr("category.organ.short");
+  if (organ_part_idx_ >= 0 && organ_part_idx_ < static_cast<int32_t>(parts_.size())) {
+    if (!parts_[organ_part_idx_].timbre_name.empty()) {
+      organ_name = parts_[organ_part_idx_].timbre_name;
+    }
+    if (!parts_[organ_part_idx_].category.empty()) {
+      organ_cat = parts_[organ_part_idx_].category;
+    }
+  }
+  lv_label_set_text(lbl_organ_title_, organ_name.c_str());
+  lv_label_set_text(lbl_organ_cat_, organ_cat.c_str());
+
+  std::string rot_str = (organ_rotary_speed_ == 0) ? tr("performance.status.rotary_stop")
+                        : (organ_rotary_speed_ == 1) ? tr("performance.status.rotary_slow")
+                        : tr("performance.status.rotary_fast");
+
+  char details_buf[128];
+  std::snprintf(details_buf, sizeof(details_buf), "%s · %s\n%s",
+                tr("organ.meta.percussion").c_str(),
+                tr("organ.meta.vibrato").c_str(),
+                rot_str.c_str());
+  lv_label_set_text(lbl_organ_details_, details_buf);
+
+  std::string reg = registration_string();
+  lv_label_set_text(lbl_organ_reg_, reg.c_str());
+
+  for (size_t i = 0; i < 9; ++i) {
+    if (i >= drawbar_head_objs_.size()) break;
+
+    uint8_t val = drawbars_[i];
+    int32_t head_y = static_cast<int32_t>(val * 22);
+    lv_obj_set_y(drawbar_head_objs_[i], head_y);
+
+    char val_buf[4];
+    std::snprintf(val_buf, sizeof(val_buf), "%u", val);
+    lv_label_set_text(drawbar_val_objs_[i], val_buf);
+  }
+}
+
 void PerformanceView::on_panel_event(const PanelEvent& ev) {
   if (ev.type == PanelEventType::Fader) {
+    if (mode_drawbars_) {
+      if (ev.id >= MCU_CTRL_FADER_1 && ev.id <= MCU_CTRL_FADER_8) {
+        size_t idx = static_cast<size_t>(ev.id - MCU_CTRL_FADER_1);
+        uint8_t val = static_cast<uint8_t>(std::round((static_cast<float>(ev.delta) / 4095.0f) * 8.0f));
+        set_drawbar(idx, val);
+      } else if (ev.id == MCU_CTRL_FADER_9) {
+        uint8_t val = static_cast<uint8_t>(std::round((static_cast<float>(ev.delta) / 4095.0f) * 8.0f));
+        set_drawbar(8, val);
+      }
+      return;
+    }
     if (ev.id >= MCU_CTRL_FADER_1 && ev.id <= MCU_CTRL_FADER_8) {
       int32_t part_idx = static_cast<int32_t>(ev.id - MCU_CTRL_FADER_1);
       float pos = static_cast<float>(ev.delta) / 4095.0f;
@@ -967,6 +1266,18 @@ void PerformanceView::on_panel_event(const PanelEvent& ev) {
   }
 
   if (ev.type == PanelEventType::Button) {
+    if (ev.pressed && ev.id == MCU_BTN_TOGGLE_DRAWBARS_MIXER) {
+      toggle_drawbars_mixer_mode();
+      return;
+    }
+    if (ev.pressed && ev.id == MCU_BTN_ROTARY_STOP) {
+      set_rotary_speed(0);
+      return;
+    }
+    if (ev.pressed && ev.id == MCU_BTN_ROTARY_SF) {
+      set_rotary_speed(organ_rotary_speed_ == 2 ? 1 : 2);
+      return;
+    }
     if (ev.pressed && ev.id == MCU_BTN_TOGGLE_PARTS_SCENES) {
       toggle_parts_scenes_mode();
       return;

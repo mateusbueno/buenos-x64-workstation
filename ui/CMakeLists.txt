@@ -125,6 +125,11 @@ target_link_libraries(pickup_ghost_test PRIVATE velora_ui)
 add_test(NAME pickup_ghost_test COMMAND pickup_ghost_test)
 set_tests_properties(pickup_ghost_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
+add_executable(drawbars_view_test tests/drawbars_view_test.cpp)
+target_link_libraries(drawbars_view_test PRIVATE velora_ui)
+add_test(NAME drawbars_view_test COMMAND drawbars_view_test)
+set_tests_properties(drawbars_view_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
 add_test(NAME ui_resilience_test COMMAND ui_resilience_test)
