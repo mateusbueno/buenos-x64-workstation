@@ -22,6 +22,7 @@ set(VELORA_CORE_SOURCES
   src/transport_clock.cpp
   src/clock_follower.cpp
   src/arpeggiator.cpp
+  src/fm_engine.cpp
   src/block_renderer.cpp)
 add_library(velora_core STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
 add_library(velora::core ALIAS velora_core)
@@ -59,6 +60,10 @@ add_test(NAME params_tests COMMAND params_tests)
 add_executable(engine_tests tests/engine_test.cpp)
 target_link_libraries(engine_tests PRIVATE velora_core)
 add_test(NAME engine_tests COMMAND engine_tests)
+
+add_executable(fm_engine_tests tests/fm_engine_test.cpp)
+target_link_libraries(fm_engine_tests PRIVATE velora_core)
+add_test(NAME fm_engine_tests COMMAND fm_engine_tests)
 
 add_executable(organ_tests tests/organ_test.cpp)
 target_link_libraries(organ_tests PRIVATE velora_core)
