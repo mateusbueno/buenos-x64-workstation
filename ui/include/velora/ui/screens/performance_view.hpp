@@ -36,6 +36,12 @@ struct PartStripData {
   float physical_fader_pos{0.0f};
 };
 
+struct AssignSlotData {
+  std::string param_name;
+  std::string value_str;
+  bool is_assigned{true};
+};
+
 class PerformanceView {
  public:
   using PartToggleCallback = std::function<void(int32_t part_idx, bool enabled)>;
@@ -102,10 +108,20 @@ class PerformanceView {
   void cycle_knob_mode();
   int32_t knob_mode() const noexcept { return mode_knobs_; }
   LedLevel knob_mode_led(uint8_t led_id) const;
-  void handle_encoder_turn(size_t encoder_idx, int16_t delta);
+  void handle_encoder_turn(size_t encoder_idx, int16_t delta, uint64_t timestamp_ms = 0);
   void set_encoder_value(size_t encoder_idx, float val);
   float encoder_ring_value(size_t encoder_idx) const;
   uint8_t encoder_ring_fill(size_t encoder_idx) const;
+
+  // Story 4.27 Features: ASSIGN Overlay
+  void set_assign_slots(const std::vector<AssignSlotData>& slots);
+  void show_assign_overlay(int32_t active_knob_idx, uint64_t timestamp_ms = 0);
+  void hide_assign_overlay();
+  bool is_assign_overlay_visible() const noexcept { return assign_overlay_visible_; }
+  int32_t active_assign_knob() const noexcept { return active_assign_knob_; }
+  void update_assign_timer(uint64_t now_ms);
+  lv_obj_t* assign_overlay() const noexcept { return assign_overlay_; }
+  lv_obj_t* assign_slot_card(size_t idx) const { return (idx < assign_slot_objs_.size()) ? assign_slot_objs_[idx] : nullptr; }
 
   void set_part_toggle_callback(PartToggleCallback cb) { on_part_toggle_ = std::move(cb); }
   void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
@@ -149,6 +165,7 @@ class PerformanceView {
   void update_status_bar();
   void update_pickup_takeover();
   void update_drawbars_ui();
+  void update_assign_overlay_ui();
 
   WsClient* client_{nullptr};
 
@@ -257,6 +274,18 @@ class PerformanceView {
 
   // Pickup & Fader tracking
   int32_t active_pickup_fader_{-1};
+
+  // Story 4.27 ASSIGN Overlay
+  lv_obj_t* assign_overlay_{nullptr};
+  lv_obj_t* lbl_assign_header_{nullptr};
+  std::vector<AssignSlotData> assign_slots_;
+  std::vector<lv_obj_t*> assign_slot_objs_;
+  std::vector<lv_obj_t*> assign_label_objs_;
+  std::vector<lv_obj_t*> assign_name_objs_;
+  std::vector<lv_obj_t*> assign_val_objs_;
+  bool assign_overlay_visible_{false};
+  int32_t active_assign_knob_{-1};
+  uint64_t assign_overlay_show_time_ms_{0};
 
   // Button tracking
   uint64_t part_btn_press_time_[8]{0};

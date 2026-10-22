@@ -135,6 +135,11 @@ target_link_libraries(encoder_rings_test PRIVATE velora_ui)
 add_test(NAME encoder_rings_test COMMAND encoder_rings_test)
 set_tests_properties(encoder_rings_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
 
+add_executable(assign_overlay_test tests/assign_overlay_test.cpp)
+target_link_libraries(assign_overlay_test PRIVATE velora_ui)
+add_test(NAME assign_overlay_test COMMAND assign_overlay_test)
+set_tests_properties(assign_overlay_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
 add_test(NAME ui_resilience_test COMMAND ui_resilience_test)

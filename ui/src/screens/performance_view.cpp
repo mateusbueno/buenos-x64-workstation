@@ -29,6 +29,17 @@ PerformanceView::PerformanceView(WsClient* client) : client_(client) {
     all_encoder_offsets_[k] = 0.0f;
     assign_encoder_values_[k] = 0.5f;
   }
+
+  assign_slots_ = {
+    {"Filter cutoff", "62", true},
+    {"Reverb send", "35", true},
+    {"Drawbar 16′", "8", true},
+    {"Attack time", "14", true},
+    {"Chorus depth", "41", true},
+    {"Part 2 volume", "78", true},
+    {"Rotary speed", "Slow", true},
+    {"", "", false}
+  };
 }
 
 PerformanceView::~PerformanceView() {
@@ -59,6 +70,12 @@ PerformanceView::~PerformanceView() {
   btn_status_rev_ = nullptr;
   lbl_status_rev_ = nullptr;
   lbl_status_takeover_ = nullptr;
+  assign_overlay_ = nullptr;
+  lbl_assign_header_ = nullptr;
+  assign_slot_objs_.clear();
+  assign_label_objs_.clear();
+  assign_name_objs_.clear();
+  assign_val_objs_.clear();
 }
 
 bool PerformanceView::create(lv_obj_t* parent) {
@@ -475,6 +492,82 @@ bool PerformanceView::create(lv_obj_t* parent) {
     drawbar_head_objs_[i] = head;
     drawbar_val_objs_[i] = lbl_val;
   }
+
+  // Story 4.27: ASSIGN Overlay (980x282 at pos (22, 8))
+  assign_overlay_ = lv_obj_create(part_area_);
+  lv_obj_set_size(assign_overlay_, 980, strip_h);
+  lv_obj_set_pos(assign_overlay_, sp.screen_gutter, sp.space_2);
+  lv_obj_set_scrollable(assign_overlay_, false);
+  lv_obj_set_style_bg_color(assign_overlay_, p.raised, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(assign_overlay_, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(assign_overlay_, p.line_strong, LV_PART_MAIN);
+  lv_obj_set_style_border_width(assign_overlay_, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(assign_overlay_, r.md, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(assign_overlay_, 0, LV_PART_MAIN);
+  lv_obj_set_hidden(assign_overlay_, true);
+
+  lbl_assign_header_ = lv_label_create(assign_overlay_);
+  lv_label_set_text(lbl_assign_header_, tr("assign.overlay.heading").c_str());
+  lv_obj_add_style(lbl_assign_header_, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_set_pos(lbl_assign_header_, 12, 10);
+
+  assign_slot_objs_.resize(8);
+  assign_label_objs_.resize(8);
+  assign_name_objs_.resize(8);
+  assign_val_objs_.resize(8);
+
+  int32_t card_w = 233;
+  int32_t card_h = 115;
+  int32_t gap_x = 8;
+  int32_t gap_y = 8;
+  int32_t start_grid_x = 12;
+  int32_t start_grid_y = 36;
+
+  for (size_t i = 0; i < 8; ++i) {
+    size_t row = i / 4;
+    size_t col = i % 4;
+
+    lv_obj_t* card = lv_obj_create(assign_overlay_);
+    lv_obj_set_size(card, card_w, card_h);
+    lv_obj_set_pos(card, start_grid_x + static_cast<int32_t>(col) * (card_w + gap_x),
+                         start_grid_y + static_cast<int32_t>(row) * (card_h + gap_y));
+    lv_obj_set_scrollable(card, false);
+    lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, p.line_strong, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, r.md, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 6, LV_PART_MAIN);
+
+    // K label
+    lv_obj_t* lbl_k = lv_label_create(card);
+    char k_buf[8];
+    std::snprintf(k_buf, sizeof(k_buf), "K%zu", i + 1);
+    lv_label_set_text(lbl_k, k_buf);
+    lv_obj_set_style_text_color(lbl_k, p.muted, LV_PART_MAIN);
+    lv_obj_set_pos(lbl_k, 6, 4);
+
+    // Parameter name
+    lv_obj_t* lbl_nm = lv_label_create(card);
+    lv_obj_set_size(lbl_nm, card_w - 20, 38);
+    lv_obj_set_pos(lbl_nm, 6, 26);
+    lv_label_set_long_mode(lbl_nm, LV_LABEL_LONG_DOT);
+    lv_label_set_text(lbl_nm, "");
+    lv_obj_add_style(lbl_nm, Theme::style_text(), LV_PART_MAIN);
+
+    // Value
+    lv_obj_t* lbl_v = lv_label_create(card);
+    lv_obj_set_pos(lbl_v, 6, 68);
+    lv_label_set_text(lbl_v, "");
+    lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+
+    assign_slot_objs_[i] = card;
+    assign_label_objs_[i] = lbl_k;
+    assign_name_objs_[i] = lbl_nm;
+    assign_val_objs_[i] = lbl_v;
+  }
+
+  update_assign_overlay_ui();
 
   // 6. Status Bar: 1024x56, pos (0, 544)
   status_bar_ = lv_obj_create(root_);
@@ -1268,6 +1361,9 @@ void PerformanceView::cycle_knob_mode() {
       all_encoder_offsets_[k] = 0.0f;
     }
   }
+  if (mode_knobs_ != 2 && assign_overlay_visible_) {
+    hide_assign_overlay();
+  }
   update_top_bar_modes();
   update_part_strips();
 }
@@ -1285,7 +1381,85 @@ LedLevel PerformanceView::knob_mode_led(uint8_t led_id) const {
   }
 }
 
-void PerformanceView::handle_encoder_turn(size_t encoder_idx, int16_t delta) {
+void PerformanceView::set_assign_slots(const std::vector<AssignSlotData>& slots) {
+  assign_slots_ = slots;
+  if (assign_slots_.size() < 8) {
+    assign_slots_.resize(8);
+  }
+  update_assign_overlay_ui();
+}
+
+void PerformanceView::show_assign_overlay(int32_t active_knob_idx, uint64_t timestamp_ms) {
+  active_assign_knob_ = active_knob_idx;
+  assign_overlay_show_time_ms_ = (timestamp_ms > 0) ? timestamp_ms : 1;
+  assign_overlay_visible_ = true;
+
+  if (assign_overlay_) {
+    lv_obj_set_hidden(assign_overlay_, false);
+    update_assign_overlay_ui();
+  }
+}
+
+void PerformanceView::hide_assign_overlay() {
+  assign_overlay_visible_ = false;
+  active_assign_knob_ = -1;
+  assign_overlay_show_time_ms_ = 0;
+
+  if (assign_overlay_) {
+    lv_obj_set_hidden(assign_overlay_, true);
+  }
+}
+
+void PerformanceView::update_assign_timer(uint64_t now_ms) {
+  if (!assign_overlay_visible_) return;
+  if (assign_overlay_show_time_ms_ > 0 && now_ms >= assign_overlay_show_time_ms_ + 3000) {
+    hide_assign_overlay();
+  }
+}
+
+void PerformanceView::update_assign_overlay_ui() {
+  if (!assign_overlay_) return;
+  const auto& p = Theme::current();
+
+  for (size_t i = 0; i < 8; ++i) {
+    if (i >= assign_slot_objs_.size()) break;
+
+    lv_obj_t* card = assign_slot_objs_[i];
+    lv_obj_t* lbl_k = assign_label_objs_[i];
+    lv_obj_t* lbl_n = assign_name_objs_[i];
+    lv_obj_t* lbl_v = assign_val_objs_[i];
+
+    bool is_active_knob = (static_cast<int32_t>(i) == active_assign_knob_);
+    const auto& slot = (i < assign_slots_.size()) ? assign_slots_[i] : AssignSlotData{"", "", false};
+
+    if (is_active_knob) {
+      // Turned knob's slot raised with 3 px accent border and accent K label
+      lv_obj_set_style_bg_color(card, p.raised, LV_PART_MAIN);
+      lv_obj_set_style_border_color(card, p.accent, LV_PART_MAIN);
+      lv_obj_set_style_border_width(card, 3, LV_PART_MAIN);
+      lv_obj_set_style_text_color(lbl_k, p.accent, LV_PART_MAIN);
+    } else {
+      lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+      lv_obj_set_style_border_color(card, p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+      lv_obj_set_style_text_color(lbl_k, p.muted, LV_PART_MAIN);
+    }
+
+    if (slot.is_assigned) {
+      lv_label_set_text(lbl_n, slot.param_name.c_str());
+      lv_obj_set_style_text_color(lbl_n, p.text, LV_PART_MAIN);
+
+      lv_label_set_text(lbl_v, slot.value_str.c_str());
+      lv_obj_set_hidden(lbl_v, false);
+    } else {
+      lv_label_set_text(lbl_n, tr("assign.slot.not_assigned").c_str());
+      lv_obj_set_style_text_color(lbl_n, p.muted, LV_PART_MAIN);
+      lv_obj_set_hidden(lbl_v, true);
+    }
+  }
+}
+
+void PerformanceView::handle_encoder_turn(size_t encoder_idx, int16_t delta, uint64_t timestamp_ms) {
   if (encoder_idx >= 8) return;
   float step = static_cast<float>(delta) * 0.01f;
 
@@ -1298,7 +1472,15 @@ void PerformanceView::handle_encoder_turn(size_t encoder_idx, int16_t delta) {
       part_encoder_values_[p][encoder_idx] = std::clamp(part_base_values_[p][encoder_idx] + all_encoder_offsets_[encoder_idx], 0.0f, 1.0f);
     }
   } else {
+    // ASSIGN mode
     assign_encoder_values_[encoder_idx] = std::clamp(assign_encoder_values_[encoder_idx] + step, 0.0f, 1.0f);
+    if (encoder_idx < assign_slots_.size() && assign_slots_[encoder_idx].is_assigned) {
+      int val_pct = static_cast<int>(std::round(assign_encoder_values_[encoder_idx] * 100.0f));
+      char vbuf[16];
+      std::snprintf(vbuf, sizeof(vbuf), "%d", val_pct);
+      assign_slots_[encoder_idx].value_str = vbuf;
+    }
+    show_assign_overlay(static_cast<int32_t>(encoder_idx), timestamp_ms);
   }
 }
 
@@ -1339,7 +1521,7 @@ uint8_t PerformanceView::encoder_ring_fill(size_t encoder_idx) const {
 void PerformanceView::on_panel_event(const PanelEvent& ev) {
   if (ev.type == PanelEventType::Encoder) {
     if (ev.id >= MCU_CTRL_ENCODER_1 && ev.id <= MCU_CTRL_ENCODER_8) {
-      handle_encoder_turn(ev.id - MCU_CTRL_ENCODER_1, static_cast<int16_t>(ev.delta));
+      handle_encoder_turn(ev.id - MCU_CTRL_ENCODER_1, static_cast<int16_t>(ev.delta), ev.timestamp_us / 1000);
       return;
     }
     return;

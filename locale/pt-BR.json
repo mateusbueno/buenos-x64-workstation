@@ -113,5 +113,7 @@
   "organ.no_organ_notice": "Nenhum órgão neste Live Set",
   "organ.meta.drawbars": "DRAWBARS",
   "organ.meta.percussion": "Perc 3rd Slow",
-  "organ.meta.vibrato": "V3"
+  "organ.meta.vibrato": "V3",
+  "assign.overlay.heading": "ASSIGN · ENCODERS (ESTE LIVE SET)",
+  "assign.slot.not_assigned": "Não atribuído"
 }
