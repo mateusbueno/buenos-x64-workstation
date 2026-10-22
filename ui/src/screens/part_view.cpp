@@ -82,7 +82,10 @@ bool PartView::create(lv_obj_t* parent) {
   const std::string nav_keys[] = {
       "part_view.nav.timbre",
       "part_view.nav.zone_keyboard",
-      "part_view.nav.level_output"
+      "part_view.nav.level_output",
+      "part_view.nav.sound",
+      "part_view.nav.envelope_eq",
+      "part_view.nav.effects_sends"
   };
 
   for (size_t i = 0; i < nav_item_objs_.size(); ++i) {
@@ -229,6 +232,64 @@ void PartView::set_level_output(float volume, bool aux_output) {
   rebuild_panel();
 }
 
+bool PartView::is_organ() const noexcept {
+  return category_name_ == "ORGAN" || timbre_name_.find("Organ") != std::string::npos || timbre_name_.find("B3") != std::string::npos;
+}
+
+std::string PartView::registration_string() const {
+  char buf[16];
+  std::snprintf(buf, sizeof(buf), "%u%u %u%u%u%u %u%u%u",
+                organ_drawbars_[0], organ_drawbars_[1], organ_drawbars_[2],
+                organ_drawbars_[3], organ_drawbars_[4], organ_drawbars_[5],
+                organ_drawbars_[6], organ_drawbars_[7], organ_drawbars_[8]);
+  return std::string(buf);
+}
+
+void PartView::set_sample_sound(float brightness, float cutoff_hz, float resonance, float vel_sense) {
+  brightness_ = std::clamp(brightness, 0.0f, 1.0f);
+  cutoff_hz_ = std::clamp(cutoff_hz, 20.0f, 20000.0f);
+  resonance_ = std::clamp(resonance, 0.0f, 1.0f);
+  vel_sense_ = std::clamp(vel_sense, 0.0f, 1.0f);
+  rebuild_panel();
+}
+
+void PartView::set_organ_drawbars(const uint8_t drawbars[9]) {
+  if (drawbars) {
+    for (size_t i = 0; i < 9; ++i) {
+      organ_drawbars_[i] = std::clamp(static_cast<int>(drawbars[i]), 0, 8);
+    }
+  }
+  rebuild_panel();
+}
+
+void PartView::set_envelope(float attack_ms, float decay_ms, float sustain, float release_ms) {
+  attack_ms_ = std::clamp(attack_ms, 0.0f, 5000.0f);
+  decay_ms_ = std::clamp(decay_ms, 0.0f, 5000.0f);
+  sustain_ = std::clamp(sustain, 0.0f, 1.0f);
+  release_ms_ = std::clamp(release_ms, 0.0f, 5000.0f);
+  rebuild_panel();
+}
+
+void PartView::set_eq(float low_db, float mid_db, float mid_freq_hz, float high_db) {
+  eq_low_db_ = std::clamp(low_db, -12.0f, 12.0f);
+  eq_mid_db_ = std::clamp(mid_db, -12.0f, 12.0f);
+  eq_mid_freq_hz_ = std::clamp(mid_freq_hz, 200.0f, 8000.0f);
+  eq_high_db_ = std::clamp(high_db, -12.0f, 12.0f);
+  rebuild_panel();
+}
+
+void PartView::set_sends(float reverb_send, float delay_send) {
+  reverb_send_ = std::clamp(reverb_send, 0.0f, 1.0f);
+  delay_send_ = std::clamp(delay_send, 0.0f, 1.0f);
+  rebuild_panel();
+}
+
+void PartView::open_inserts_chain() {
+  if (on_open_inserts_) {
+    on_open_inserts_(part_idx_);
+  }
+}
+
 void PartView::set_power(bool on) {
   power_on_ = on;
   const auto& p = Theme::current();
@@ -353,18 +414,207 @@ void PartView::rebuild_panel() {
       field_objs_.push_back(card);
       field_val_objs_.push_back(lbl_v);
     }
-  } else if (current_section_ == PartSection::LevelOutput) {
-    // 2 Fields: Volume, Output Routing
-    char vol_buf[32];
-    std::snprintf(vol_buf, sizeof(vol_buf), "%d%%", static_cast<int>(volume_ * 100.0f));
+  } else if (current_section_ == PartSection::SoundEngine) {
+    if (is_organ()) {
+      // Organ sound section
+      lv_obj_t* hdr_card = lv_obj_create(panel_col_);
+      lv_obj_set_size(hdr_card, 720, 60);
+      lv_obj_set_scrollable(hdr_card, false);
+      lv_obj_set_style_bg_color(hdr_card, p.surface, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(hdr_card, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_color(hdr_card, p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(hdr_card, 1, LV_PART_MAIN);
+      lv_obj_set_style_radius(hdr_card, r.sm, LV_PART_MAIN);
+      lv_obj_set_style_pad_hor(hdr_card, sp.space_3, LV_PART_MAIN);
 
-    struct LevelFieldDef {
+      lv_obj_t* lbl_reg_title = lv_label_create(hdr_card);
+      lv_label_set_text(lbl_reg_title, tr("performance.mode.drawbars").c_str());
+      lv_obj_add_style(lbl_reg_title, Theme::style_text_muted(), LV_PART_MAIN);
+      lv_obj_align(lbl_reg_title, LV_ALIGN_LEFT_MID, 0, 0);
+
+      lv_obj_t* lbl_reg_val = lv_label_create(hdr_card);
+      std::string reg = registration_string();
+      lv_label_set_text(lbl_reg_val, reg.c_str());
+      lv_obj_add_style(lbl_reg_val, Theme::style_text(), LV_PART_MAIN);
+      lv_obj_align(lbl_reg_val, LV_ALIGN_RIGHT_MID, 0, 0);
+
+      static const char* vc_names[] = {"Off", "V1", "C1", "V2", "C2", "V3", "C3"};
+      static const char* rot_names[] = {"Stop", "Slow", "Fast"};
+
+      struct OrganFieldDef {
+        std::string label_key;
+        std::string val_text;
+      };
+      std::vector<OrganFieldDef> defs = {
+          {"part_view.sound.percussion", organ_percussion_on_ ? tr("part_view.zone.on") : tr("part_view.zone.off")},
+          {"part_view.sound.key_click", std::to_string(organ_key_click_)},
+          {"part_view.sound.vibrato_chorus", vc_names[std::clamp(organ_vibrato_, 0, 6)]},
+          {"part_view.sound.leakage", std::to_string(organ_key_click_)},
+          {"part_view.sound.rotary", rot_names[std::clamp(organ_rotary_speed_, 0, 2)]}
+      };
+
+      for (size_t i = 0; i < defs.size(); ++i) {
+        lv_obj_t* card = lv_obj_create(panel_col_);
+        lv_obj_set_size(card, 720, sp.touch_target_min);
+        lv_obj_set_scrollable(card, false);
+        lv_obj_set_clickable(card, true);
+        lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(card, p.line_strong, LV_PART_MAIN);
+        lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+        lv_obj_add_event_cb(card, on_field_click, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* lbl_h = lv_label_create(card);
+        lv_label_set_text(lbl_h, tr(defs[i].label_key).c_str());
+        lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+        lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_t* lbl_v = lv_label_create(card);
+        lv_label_set_text(lbl_v, defs[i].val_text.c_str());
+        lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+        lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+        field_objs_.push_back(card);
+        field_val_objs_.push_back(lbl_v);
+      }
+    } else {
+      // Sample sound section
+      char b_buf[32], c_buf[32], r_buf[32], v_buf[32];
+      std::snprintf(b_buf, sizeof(b_buf), "%d%%", static_cast<int>(brightness_ * 100.0f));
+      std::snprintf(c_buf, sizeof(c_buf), "%d Hz", static_cast<int>(cutoff_hz_));
+      std::snprintf(r_buf, sizeof(r_buf), "%d%%", static_cast<int>(resonance_ * 100.0f));
+      std::snprintf(v_buf, sizeof(v_buf), "%d%%", static_cast<int>(vel_sense_ * 100.0f));
+
+      struct SampleFieldDef {
+        std::string label_key;
+        std::string val_text;
+      };
+      std::vector<SampleFieldDef> defs = {
+          {"part_view.sound.brightness", b_buf},
+          {"part_view.sound.cutoff", c_buf},
+          {"part_view.sound.resonance", r_buf},
+          {"part_view.sound.vel_sense", v_buf}
+      };
+
+      for (size_t i = 0; i < defs.size(); ++i) {
+        lv_obj_t* card = lv_obj_create(panel_col_);
+        lv_obj_set_size(card, 720, sp.touch_target_min);
+        lv_obj_set_scrollable(card, false);
+        lv_obj_set_clickable(card, true);
+        lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(card, p.line_strong, LV_PART_MAIN);
+        lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+        lv_obj_add_event_cb(card, on_field_click, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* lbl_h = lv_label_create(card);
+        lv_label_set_text(lbl_h, tr(defs[i].label_key).c_str());
+        lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+        lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_t* lbl_v = lv_label_create(card);
+        lv_label_set_text(lbl_v, defs[i].val_text.c_str());
+        lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+        lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+        field_objs_.push_back(card);
+        field_val_objs_.push_back(lbl_v);
+      }
+    }
+  } else if (current_section_ == PartSection::EnvelopeEQ) {
+    char a_buf[32], d_buf[32], s_buf[32], rel_buf[32];
+    char eq_l_buf[32], eq_m_buf[32], eq_mf_buf[32], eq_h_buf[32];
+    std::snprintf(a_buf, sizeof(a_buf), "%d ms", static_cast<int>(attack_ms_));
+    std::snprintf(d_buf, sizeof(d_buf), "%d ms", static_cast<int>(decay_ms_));
+    std::snprintf(s_buf, sizeof(s_buf), "%d%%", static_cast<int>(sustain_ * 100.0f));
+    std::snprintf(rel_buf, sizeof(rel_buf), "%d ms", static_cast<int>(release_ms_));
+
+    std::snprintf(eq_l_buf, sizeof(eq_l_buf), "%+.1f dB", eq_low_db_);
+    std::snprintf(eq_m_buf, sizeof(eq_m_buf), "%+.1f dB", eq_mid_db_);
+    std::snprintf(eq_mf_buf, sizeof(eq_mf_buf), "%d Hz", static_cast<int>(eq_mid_freq_hz_));
+    std::snprintf(eq_h_buf, sizeof(eq_h_buf), "%+.1f dB", eq_high_db_);
+
+    struct EnvEqFieldDef {
       std::string label_key;
       std::string val_text;
     };
-    std::vector<LevelFieldDef> defs = {
-        {"part_view.level.volume", vol_buf},
-        {"part_view.level.routing", aux_output_ ? tr("part_view.level.aux") : tr("part_view.level.main")}
+    std::vector<EnvEqFieldDef> defs = {
+        {"part_view.env.attack", a_buf},
+        {"part_view.env.decay", d_buf},
+        {"part_view.env.sustain", s_buf},
+        {"part_view.env.release", rel_buf},
+        {"part_view.eq.low", eq_l_buf},
+        {"part_view.eq.mid", eq_m_buf},
+        {"part_view.eq.mid_freq", eq_mf_buf},
+        {"part_view.eq.high", eq_h_buf}
+    };
+
+    for (size_t i = 0; i < defs.size(); ++i) {
+      lv_obj_t* card = lv_obj_create(panel_col_);
+      lv_obj_set_size(card, 720, sp.touch_target_min);
+      lv_obj_set_scrollable(card, false);
+      lv_obj_set_clickable(card, true);
+      lv_obj_set_style_bg_color(card, p.surface, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_color(card, p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+      lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+      lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+      lv_obj_add_event_cb(card, on_field_click, LV_EVENT_CLICKED, this);
+
+      lv_obj_t* lbl_h = lv_label_create(card);
+      lv_label_set_text(lbl_h, tr(defs[i].label_key).c_str());
+      lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+      lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+      lv_obj_t* lbl_v = lv_label_create(card);
+      lv_label_set_text(lbl_v, defs[i].val_text.c_str());
+      lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+      lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+      field_objs_.push_back(card);
+      field_val_objs_.push_back(lbl_v);
+    }
+  } else if (current_section_ == PartSection::EffectsSends) {
+    // 1. Open Inserts Button (56px touch target)
+    lv_obj_t* btn_ins = lv_obj_create(panel_col_);
+    lv_obj_set_size(btn_ins, 720, sp.touch_target_min);
+    lv_obj_set_scrollable(btn_ins, false);
+    lv_obj_set_clickable(btn_ins, true);
+    lv_obj_set_style_bg_color(btn_ins, p.raised, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(btn_ins, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(btn_ins, p.line_strong, LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn_ins, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(btn_ins, r.sm, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(btn_ins, sp.space_3, LV_PART_MAIN);
+    lv_obj_add_event_cb(btn_ins, [](lv_event_t* e) {
+      auto* self = static_cast<PartView*>(lv_event_get_user_data(e));
+      if (self) self->open_inserts_chain();
+    }, LV_EVENT_CLICKED, this);
+
+    lv_obj_t* lbl_ins = lv_label_create(btn_ins);
+    lv_label_set_text(lbl_ins, tr("part_view.fx.open_inserts").c_str());
+    lv_obj_add_style(lbl_ins, Theme::style_text(), LV_PART_MAIN);
+    lv_obj_align(lbl_ins, LV_ALIGN_CENTER, 0, 0);
+
+    field_objs_.push_back(btn_ins);
+
+    // 2. Reverb & Delay Sends
+    char rev_buf[32], dly_buf[32];
+    std::snprintf(rev_buf, sizeof(rev_buf), "%d%%", static_cast<int>(reverb_send_ * 100.0f));
+    std::snprintf(dly_buf, sizeof(dly_buf), "%d%%", static_cast<int>(delay_send_ * 100.0f));
+
+    struct FxSendDef {
+      std::string label_key;
+      std::string val_text;
+    };
+    std::vector<FxSendDef> defs = {
+        {"part_view.fx.reverb_send", rev_buf},
+        {"part_view.fx.delay_send", dly_buf}
     };
 
     for (size_t i = 0; i < defs.size(); ++i) {
@@ -534,8 +784,156 @@ void PartView::on_panel_event(const PanelEvent& ev) {
           break;
       }
       rebuild_panel();
+    } else if (current_section_ == PartSection::SoundEngine) {
+      if (is_organ()) {
+        switch (field_focus_idx_) {
+          case 0:
+            organ_percussion_on_ = !organ_percussion_on_;
+            mark_edits();
+            break;
+          case 1:
+            organ_key_click_ = std::clamp(organ_key_click_ + ev.delta, 0, 8);
+            mark_edits();
+            break;
+          case 2:
+            organ_vibrato_ = std::clamp(organ_vibrato_ + ev.delta, 0, 6);
+            mark_edits();
+            break;
+          case 3:
+            organ_key_click_ = std::clamp(organ_key_click_ + ev.delta, 0, 8);
+            mark_edits();
+            break;
+          case 4:
+            organ_rotary_speed_ = std::clamp(organ_rotary_speed_ + ev.delta, 0, 2);
+            mark_edits();
+            break;
+          default:
+            break;
+        }
+      } else {
+        switch (field_focus_idx_) {
+          case 0:
+            brightness_ = std::clamp(brightness_ + (ev.delta * 0.02f), 0.0f, 1.0f);
+            mark_edits();
+            break;
+          case 1:
+            cutoff_hz_ = std::clamp(cutoff_hz_ + (ev.delta * 200.0f), 20.0f, 20000.0f);
+            mark_edits();
+            break;
+          case 2:
+            resonance_ = std::clamp(resonance_ + (ev.delta * 0.02f), 0.0f, 1.0f);
+            mark_edits();
+            break;
+          case 3:
+            vel_sense_ = std::clamp(vel_sense_ + (ev.delta * 0.02f), 0.0f, 1.0f);
+            mark_edits();
+            break;
+          default:
+            break;
+        }
+      }
+      rebuild_panel();
+    } else if (current_section_ == PartSection::EnvelopeEQ) {
+      switch (field_focus_idx_) {
+        case 0:
+          attack_ms_ = std::clamp(attack_ms_ + (ev.delta * 10.0f), 0.0f, 5000.0f);
+          mark_edits();
+          break;
+        case 1:
+          decay_ms_ = std::clamp(decay_ms_ + (ev.delta * 10.0f), 0.0f, 5000.0f);
+          mark_edits();
+          break;
+        case 2:
+          sustain_ = std::clamp(sustain_ + (ev.delta * 0.02f), 0.0f, 1.0f);
+          mark_edits();
+          break;
+        case 3:
+          release_ms_ = std::clamp(release_ms_ + (ev.delta * 10.0f), 0.0f, 5000.0f);
+          mark_edits();
+          break;
+        case 4:
+          eq_low_db_ = std::clamp(eq_low_db_ + (ev.delta * 0.5f), -12.0f, 12.0f);
+          mark_edits();
+          break;
+        case 5:
+          eq_mid_db_ = std::clamp(eq_mid_db_ + (ev.delta * 0.5f), -12.0f, 12.0f);
+          mark_edits();
+          break;
+        case 6:
+          eq_mid_freq_hz_ = std::clamp(eq_mid_freq_hz_ + (ev.delta * 50.0f), 200.0f, 8000.0f);
+          mark_edits();
+          break;
+        case 7:
+          eq_high_db_ = std::clamp(eq_high_db_ + (ev.delta * 0.5f), -12.0f, 12.0f);
+          mark_edits();
+          break;
+        default:
+          break;
+      }
+      rebuild_panel();
+    } else if (current_section_ == PartSection::EffectsSends) {
+      switch (field_focus_idx_) {
+        case 1:
+          reverb_send_ = std::clamp(reverb_send_ + (ev.delta * 0.02f), 0.0f, 1.0f);
+          mark_edits();
+          rebuild_panel();
+          break;
+        case 2:
+          delay_send_ = std::clamp(delay_send_ + (ev.delta * 0.02f), 0.0f, 1.0f);
+          mark_edits();
+          rebuild_panel();
+          break;
+        default:
+          break;
+      }
     }
     return;
+  }
+
+  // Physical Encoders 1..8
+  if (ev.type == PanelEventType::Encoder && ev.id >= MCU_CTRL_ENCODER_1 && ev.id <= MCU_CTRL_ENCODER_8) {
+    size_t enc_idx = static_cast<size_t>(ev.id - MCU_CTRL_ENCODER_1);
+    if (current_section_ == PartSection::EnvelopeEQ) {
+      switch (enc_idx) {
+        case 0: attack_ms_ = std::clamp(attack_ms_ + (ev.delta * 10.0f), 0.0f, 5000.0f); break;
+        case 1: decay_ms_ = std::clamp(decay_ms_ + (ev.delta * 10.0f), 0.0f, 5000.0f); break;
+        case 2: sustain_ = std::clamp(sustain_ + (ev.delta * 0.02f), 0.0f, 1.0f); break;
+        case 3: release_ms_ = std::clamp(release_ms_ + (ev.delta * 10.0f), 0.0f, 5000.0f); break;
+        case 4: eq_low_db_ = std::clamp(eq_low_db_ + (ev.delta * 0.5f), -12.0f, 12.0f); break;
+        case 5: eq_mid_db_ = std::clamp(eq_mid_db_ + (ev.delta * 0.5f), -12.0f, 12.0f); break;
+        case 6: eq_mid_freq_hz_ = std::clamp(eq_mid_freq_hz_ + (ev.delta * 50.0f), 200.0f, 8000.0f); break;
+        case 7: eq_high_db_ = std::clamp(eq_high_db_ + (ev.delta * 0.5f), -12.0f, 12.0f); break;
+      }
+      mark_edits();
+      rebuild_panel();
+      return;
+    } else if (current_section_ == PartSection::SoundEngine) {
+      if (is_organ()) {
+        if (enc_idx < 8) {
+          organ_drawbars_[enc_idx] = std::clamp(organ_drawbars_[enc_idx] + ev.delta, 0, 8);
+          mark_edits();
+          rebuild_panel();
+        }
+      } else {
+        switch (enc_idx) {
+          case 0: brightness_ = std::clamp(brightness_ + (ev.delta * 0.02f), 0.0f, 1.0f); break;
+          case 1: cutoff_hz_ = std::clamp(cutoff_hz_ + (ev.delta * 200.0f), 20.0f, 20000.0f); break;
+          case 2: resonance_ = std::clamp(resonance_ + (ev.delta * 0.02f), 0.0f, 1.0f); break;
+          case 3: vel_sense_ = std::clamp(vel_sense_ + (ev.delta * 0.02f), 0.0f, 1.0f); break;
+        }
+        mark_edits();
+        rebuild_panel();
+      }
+      return;
+    } else if (current_section_ == PartSection::EffectsSends) {
+      switch (enc_idx) {
+        case 0: reverb_send_ = std::clamp(reverb_send_ + (ev.delta * 0.02f), 0.0f, 1.0f); break;
+        case 1: delay_send_ = std::clamp(delay_send_ + (ev.delta * 0.02f), 0.0f, 1.0f); break;
+      }
+      mark_edits();
+      rebuild_panel();
+      return;
+    }
   }
 
   if (ev.type == PanelEventType::Button && ev.pressed) {
@@ -557,6 +955,12 @@ void PartView::on_panel_event(const PanelEvent& ev) {
         aux_output_ = !aux_output_;
         mark_edits();
         rebuild_panel();
+      } else if (current_section_ == PartSection::SoundEngine && is_organ() && field_focus_idx_ == 0) {
+        organ_percussion_on_ = !organ_percussion_on_;
+        mark_edits();
+        rebuild_panel();
+      } else if (current_section_ == PartSection::EffectsSends && field_focus_idx_ == 0) {
+        open_inserts_chain();
       }
       return;
     }

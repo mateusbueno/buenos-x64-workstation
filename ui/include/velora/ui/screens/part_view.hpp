@@ -18,6 +18,9 @@ enum class PartSection {
   Timbre = 0,
   ZoneKeyboard,
   LevelOutput,
+  SoundEngine,
+  EnvelopeEQ,
+  EffectsSends,
   Count
 };
 
@@ -31,6 +34,7 @@ class PartView {
  public:
   using CloseCallback = std::function<void()>;
   using PartEditCallback = std::function<void(int32_t part_idx)>;
+  using OpenInsertsCallback = std::function<void(int32_t part_idx)>;
 
   explicit PartView(WsClient* client = nullptr);
   ~PartView();
@@ -42,6 +46,7 @@ class PartView {
 
   void set_on_close(CloseCallback cb) { on_close_ = std::move(cb); }
   void set_on_edit(PartEditCallback cb) { on_edit_ = std::move(cb); }
+  void set_on_open_inserts(OpenInsertsCallback cb) { on_open_inserts_ = std::move(cb); }
 
   // Part data accessors & mutators
   void set_part_index(int32_t idx);
@@ -61,6 +66,46 @@ class PartView {
   void set_level_output(float volume, bool aux_output);
   float volume() const noexcept { return volume_; }
   bool is_aux_output() const noexcept { return aux_output_; }
+
+  bool is_organ() const noexcept;
+
+  // Sound Engine parameters
+  void set_sample_sound(float brightness, float cutoff_hz, float resonance, float vel_sense);
+  float brightness() const noexcept { return brightness_; }
+  float cutoff_hz() const noexcept { return cutoff_hz_; }
+  float resonance() const noexcept { return resonance_; }
+  float vel_sense() const noexcept { return vel_sense_; }
+
+  void set_organ_drawbars(const uint8_t drawbars[9]);
+  uint8_t drawbar(size_t idx) const { return (idx < 9) ? organ_drawbars_[idx] : 0; }
+  std::string registration_string() const;
+  void set_organ_percussion(bool on) { organ_percussion_on_ = on; mark_edits(); }
+  bool organ_percussion() const noexcept { return organ_percussion_on_; }
+  void set_organ_key_click(int32_t val) { organ_key_click_ = std::clamp(val, 0, 8); mark_edits(); }
+  int32_t organ_key_click() const noexcept { return organ_key_click_; }
+  void set_organ_vibrato(int32_t val) { organ_vibrato_ = std::clamp(val, 0, 6); mark_edits(); }
+  int32_t organ_vibrato() const noexcept { return organ_vibrato_; }
+  void set_organ_rotary(int32_t speed) { organ_rotary_speed_ = std::clamp(speed, 0, 2); mark_edits(); }
+  int32_t organ_rotary() const noexcept { return organ_rotary_speed_; }
+
+  // Envelope & EQ
+  void set_envelope(float attack_ms, float decay_ms, float sustain, float release_ms);
+  float attack_ms() const noexcept { return attack_ms_; }
+  float decay_ms() const noexcept { return decay_ms_; }
+  float sustain() const noexcept { return sustain_; }
+  float release_ms() const noexcept { return release_ms_; }
+
+  void set_eq(float low_db, float mid_db, float mid_freq_hz, float high_db);
+  float eq_low_db() const noexcept { return eq_low_db_; }
+  float eq_mid_db() const noexcept { return eq_mid_db_; }
+  float eq_mid_freq_hz() const noexcept { return eq_mid_freq_hz_; }
+  float eq_high_db() const noexcept { return eq_high_db_; }
+
+  // Effects Sends
+  void set_sends(float reverb_send, float delay_send);
+  float reverb_send() const noexcept { return reverb_send_; }
+  float delay_send() const noexcept { return delay_send_; }
+  void open_inserts_chain();
 
   void set_power(bool on);
   bool is_powered_on() const noexcept { return power_on_; }
@@ -104,6 +149,7 @@ class PartView {
   SurfaceSkeleton skeleton_;
   CloseCallback on_close_;
   PartEditCallback on_edit_;
+  OpenInsertsCallback on_open_inserts_;
 
   int32_t part_idx_{0};
   std::string timbre_name_{"German Grand D-274"};
@@ -117,6 +163,33 @@ class PartView {
   bool aux_output_{false};
   bool power_on_{true};
   bool has_unsaved_edits_{false};
+
+  // Sound Engine (Sample)
+  float brightness_{0.75f};
+  float cutoff_hz_{12000.0f};
+  float resonance_{0.20f};
+  float vel_sense_{0.80f};
+
+  // Sound Engine (Organ)
+  uint8_t organ_drawbars_[9]{8, 8, 8, 0, 0, 0, 0, 0, 0};
+  bool organ_percussion_on_{true};
+  int32_t organ_key_click_{4};
+  int32_t organ_vibrato_{3}; // C3
+  int32_t organ_rotary_speed_{1}; // Slow
+
+  // Envelope & EQ
+  float attack_ms_{10.0f};
+  float decay_ms_{400.0f};
+  float sustain_{0.70f};
+  float release_ms_{350.0f};
+  float eq_low_db_{0.0f};
+  float eq_mid_db_{0.0f};
+  float eq_mid_freq_hz_{1000.0f};
+  float eq_high_db_{0.0f};
+
+  // Effects Sends
+  float reverb_send_{0.25f};
+  float delay_send_{0.15f};
 
   PartSection current_section_{PartSection::Timbre};
   int32_t field_focus_idx_{0}; // Focused field inside current section

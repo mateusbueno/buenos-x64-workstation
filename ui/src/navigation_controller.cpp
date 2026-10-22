@@ -76,6 +76,11 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     set_pending_edits(true, true, "Part " + std::to_string(part_idx + 1) + " edit");
   });
 
+  part_view_.set_on_open_inserts([this](int32_t part_idx) {
+    surface_before_launcher_ = current_surface_;
+    navigate_to(SurfaceId::Effects);
+  });
+
   launcher_view_.set_tile_select_callback([this](LauncherTileId tile) {
     switch (tile) {
       case LauncherTileId::Effects:

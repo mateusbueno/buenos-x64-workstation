@@ -113,6 +113,91 @@ void test_part_view_zone_and_level_edits() {
   std::cout << "[PASS] test_part_view_zone_and_level_edits\n";
 }
 
+void test_part_view_sound_engine() {
+  PartView view(nullptr);
+  bool ok = view.create(lv_screen_active());
+  assert(ok);
+
+  // 1. Sample Part Sound Engine
+  view.set_timbre("German Grand D-274", "ACOUSTIC PIANO");
+  assert(!view.is_organ());
+  view.set_section(PartSection::SoundEngine);
+  assert(view.current_section() == PartSection::SoundEngine);
+
+  view.set_sample_sound(0.70f, 10000.0f, 0.30f, 0.85f);
+  assert(view.brightness() == 0.70f);
+  assert(view.cutoff_hz() == 10000.0f);
+  assert(view.resonance() == 0.30f);
+  assert(view.vel_sense() == 0.85f);
+
+  // Physical Encoder 1 adjusts Brightness
+  PanelEvent enc1;
+  enc1.type = PanelEventType::Encoder;
+  enc1.id = MCU_CTRL_ENCODER_1;
+  enc1.delta = 2;
+  view.on_panel_event(enc1);
+  assert(view.brightness() > 0.70f);
+
+  // 2. Organ Part Sound Engine
+  view.set_timbre("B3 Tonewheel Organ", "ORGAN");
+  assert(view.is_organ());
+  view.set_section(PartSection::SoundEngine);
+
+  uint8_t dbs[9] = {8, 8, 8, 0, 0, 0, 0, 0, 4};
+  view.set_organ_drawbars(dbs);
+  assert(view.drawbar(0) == 8);
+  assert(view.drawbar(8) == 4);
+  assert(view.registration_string() == "88 8000 004");
+
+  view.set_organ_percussion(true);
+  assert(view.organ_percussion());
+
+  view.set_organ_rotary(2); // Fast
+  assert(view.organ_rotary() == 2);
+
+  std::cout << "[PASS] test_part_view_sound_engine\n";
+}
+
+void test_part_view_envelope_eq_and_effects() {
+  PartView view(nullptr);
+  bool ok = view.create(lv_screen_active());
+  assert(ok);
+
+  // 1. Envelope & EQ
+  view.set_section(PartSection::EnvelopeEQ);
+  assert(view.current_section() == PartSection::EnvelopeEQ);
+
+  view.set_envelope(20.0f, 350.0f, 0.65f, 400.0f);
+  assert(view.attack_ms() == 20.0f);
+  assert(view.decay_ms() == 350.0f);
+  assert(view.sustain() == 0.65f);
+  assert(view.release_ms() == 400.0f);
+
+  view.set_eq(2.0f, -1.5f, 1500.0f, 3.0f);
+  assert(view.eq_low_db() == 2.0f);
+  assert(view.eq_mid_db() == -1.5f);
+  assert(view.eq_mid_freq_hz() == 1500.0f);
+  assert(view.eq_high_db() == 3.0f);
+
+  // 2. Effects Sends & Open Inserts
+  view.set_section(PartSection::EffectsSends);
+  assert(view.current_section() == PartSection::EffectsSends);
+
+  view.set_sends(0.40f, 0.20f);
+  assert(view.reverb_send() == 0.40f);
+  assert(view.delay_send() == 0.20f);
+
+  bool inserts_opened = false;
+  view.set_on_open_inserts([&](int32_t idx) {
+    inserts_opened = true;
+  });
+
+  view.open_inserts_chain();
+  assert(inserts_opened);
+
+  std::cout << "[PASS] test_part_view_envelope_eq_and_effects\n";
+}
+
 void test_part_view_navigation_controller_integration() {
   NavigationController nav(nullptr);
   bool ok = nav.initialize();
@@ -160,6 +245,8 @@ int main() {
   test_part_view_creation_and_navigation();
   test_part_view_timbre_picker();
   test_part_view_zone_and_level_edits();
+  test_part_view_sound_engine();
+  test_part_view_envelope_eq_and_effects();
   test_part_view_navigation_controller_integration();
 
   std::cout << "All PartView tests passed successfully!\n";
