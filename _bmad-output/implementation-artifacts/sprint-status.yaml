@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-18-2026 19:03
-last_updated: 10-19-2026 01:50
+last_updated: 10-22-2026 15:30
 project: Ladiani Velora 73
 project_key: NOKEY
 tracking_system: file-system
@@ -256,7 +256,7 @@ development_status:
   10-6-large-text-on-performance-and-reduced-motion: done
   10-7-pt-br-and-es-locale-catalogs-and-language-selection: done
   10-8-pseudo-localization-qa-and-truncation-rules: done
-  epic-10-retrospective: optional
+  epic-10-retrospective: done
 
   epic-11: in-progress
   11-1-trademark-clearance-and-inpi-filing-for-ladiani-and-velora: backlog
