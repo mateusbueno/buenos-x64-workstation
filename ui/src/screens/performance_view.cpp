@@ -623,11 +623,21 @@ void PerformanceView::update_part_strips() {
     if (i >= parts_.size()) break;
 
     const auto& pt = parts_[i];
+    lv_obj_t* card = part_card_objs_[i];
     lv_obj_t* led = part_led_objs_[i];
     lv_obj_t* lbl_p = part_power_lbl_objs_[i];
     lv_obj_t* lbl_nm = part_name_objs_[i];
     lv_obj_t* lbl_c = part_cat_objs_[i];
     lv_obj_t* fill = part_vol_fill_objs_[i];
+
+    // Knob-target selection border (PARTS mode)
+    if (!mode_scenes_ && static_cast<int32_t>(i) == selected_knob_part_idx_) {
+      lv_obj_set_style_border_color(card, p.accent, LV_PART_MAIN);
+      lv_obj_set_style_border_width(card, Theme::spacing().selection_border, LV_PART_MAIN);
+    } else {
+      lv_obj_set_style_border_color(card, p.line, LV_PART_MAIN);
+      lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    }
 
     // Volume level: height in range [0..120]
     int32_t fill_h = static_cast<int32_t>(120.0f * std::clamp(pt.volume, 0.0f, 1.0f));
@@ -770,15 +780,88 @@ void PerformanceView::update_from_state(const ws::v1::State& state) {
   }
 }
 
-void PerformanceView::on_panel_event(const PanelEvent& ev) {
-  if (ev.type == PanelEventType::Button && ev.pressed) {
-    if (ev.id == MCU_BTN_SCENE_PREV) {
-      if (current_scene_idx_ > 0) {
-        recall_scene(current_scene_idx_ - 1);
+void PerformanceView::toggle_parts_scenes_mode() {
+  mode_scenes_ = !mode_scenes_;
+  update_top_bar_modes();
+  update_part_strips();
+}
+
+void PerformanceView::select_knob_part(int32_t part_idx) {
+  selected_knob_part_idx_ = std::clamp(part_idx, 0, 7);
+  knob_part_ = selected_knob_part_idx_ + 1;
+  mode_knobs_ = 0; // PART mode
+  update_part_strips();
+  update_top_bar_modes();
+}
+
+void PerformanceView::handle_part_scene_press(int32_t btn_idx, bool pressed, uint64_t timestamp_us) {
+  if (btn_idx < 0 || btn_idx >= 8) return;
+
+  if (pressed) {
+    part_btn_press_time_[btn_idx] = (timestamp_us > 0) ? timestamp_us : 1;
+  } else {
+    uint64_t press_t = part_btn_press_time_[btn_idx];
+    uint64_t duration = (timestamp_us > press_t && press_t > 0) ? (timestamp_us - press_t) : 0;
+    part_btn_press_time_[btn_idx] = 0;
+
+    if (duration >= 500000) {
+      // Long press (>= 500 ms) in PARTS mode: selects knob target without toggling
+      if (!mode_scenes_) {
+        select_knob_part(btn_idx);
       }
-    } else if (ev.id == MCU_BTN_SCENE_NEXT) {
-      if (current_scene_idx_ < 7) {
-        recall_scene(current_scene_idx_ + 1);
+    } else {
+      // Short press
+      if (!mode_scenes_) {
+        set_part_enabled(btn_idx, !parts_[btn_idx].enabled);
+      } else {
+        // SCENES mode: recall scene if non-empty
+        if (btn_idx < static_cast<int32_t>(scenes_.size()) && !scenes_[btn_idx].is_empty) {
+          recall_scene(btn_idx);
+          scene_led_dipping_ = true;
+          scene_dip_start_us_ = timestamp_us;
+        }
+      }
+    }
+  }
+}
+
+LedLevel PerformanceView::button_led_level(size_t index) const {
+  if (index >= 8) return LedLevel::Off;
+
+  if (!mode_scenes_) {
+    return parts_[index].enabled ? LedLevel::Strong : LedLevel::Off;
+  }
+
+  // SCENES mode
+  if (static_cast<int32_t>(index) == current_scene_idx_) {
+    if (scene_led_dipping_) return LedLevel::Off;
+    return LedLevel::Strong;
+  }
+  if (index < scenes_.size() && !scenes_[index].is_empty) {
+    return LedLevel::Weak;
+  }
+  return LedLevel::Off;
+}
+
+void PerformanceView::on_panel_event(const PanelEvent& ev) {
+  if (ev.type == PanelEventType::Button) {
+    if (ev.pressed && ev.id == MCU_BTN_TOGGLE_PARTS_SCENES) {
+      toggle_parts_scenes_mode();
+      return;
+    }
+    if (ev.id >= MCU_BTN_PART_SCENE_1 && ev.id <= MCU_BTN_PART_SCENE_8) {
+      handle_part_scene_press(static_cast<int32_t>(ev.id - MCU_BTN_PART_SCENE_1), ev.pressed, ev.timestamp_us);
+      return;
+    }
+    if (ev.pressed) {
+      if (ev.id == MCU_BTN_SCENE_PREV) {
+        if (current_scene_idx_ > 0) {
+          recall_scene(current_scene_idx_ - 1);
+        }
+      } else if (ev.id == MCU_BTN_SCENE_NEXT) {
+        if (current_scene_idx_ < 7) {
+          recall_scene(current_scene_idx_ + 1);
+        }
       }
     }
   }

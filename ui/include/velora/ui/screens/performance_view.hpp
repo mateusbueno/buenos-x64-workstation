@@ -13,6 +13,12 @@ namespace velora::ui {
 
 class WsClient;
 
+enum class LedLevel {
+  Off = 0,
+  Weak = 1,
+  Strong = 2
+};
+
 struct SceneTileData {
   std::string name;
   std::string sub_label;
@@ -57,6 +63,15 @@ class PerformanceView {
   void set_status(uint32_t voices_active, uint32_t voices_max, bool streaming_ok, int32_t rotary_state, float rev_send);
   void set_warning_takeover(const std::string& warning_text);
   void clear_warning_takeover();
+
+  // Story 4.23 Features
+  void toggle_parts_scenes_mode();
+  void select_knob_part(int32_t part_idx);
+  int32_t selected_knob_part() const noexcept { return selected_knob_part_idx_; }
+  bool is_scenes_mode() const noexcept { return mode_scenes_; }
+  LedLevel button_led_level(size_t index) const;
+  bool is_scene_led_dipping() const noexcept { return scene_led_dipping_; }
+  void handle_part_scene_press(int32_t btn_idx, bool pressed, uint64_t timestamp_us = 0);
 
   void set_part_toggle_callback(PartToggleCallback cb) { on_part_toggle_ = std::move(cb); }
   void set_part_select_callback(PartSelectCallback cb) { on_part_select_ = std::move(cb); }
@@ -172,6 +187,12 @@ class PerformanceView {
   bool mode_scenes_{false};
   int32_t mode_knobs_{0}; // 0 = PART, 1 = ALL, 2 = ASSIGN
   int32_t knob_part_{1};
+  int32_t selected_knob_part_idx_{0};
+
+  // Button tracking
+  uint64_t part_btn_press_time_[8]{0};
+  bool scene_led_dipping_{false};
+  uint64_t scene_dip_start_us_{0};
 };
 
 }  // namespace velora::ui
