@@ -24,6 +24,7 @@ EffectsView::~EffectsView() {
   view_container_ = nullptr;
   row_items_.clear();
   bypass_controls_.clear();
+  output_controls_.clear();
 }
 
 bool EffectsView::create(lv_obj_t* parent) {
@@ -40,21 +41,36 @@ bool EffectsView::create(lv_obj_t* parent) {
 
   const auto& sp = Theme::spacing();
 
-  // Part selector at top of content area: P1..P8
-  std::vector<std::string> part_labels = {"P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"};
-  if (!part_selector_.create(skeleton_.content_area(), part_labels, 110)) {
+  // Top Section Selector: INSERTS, SENDS, MASTER, OUTPUTS
+  std::vector<std::string> sec_labels = {
+    tr("effects.section.inserts"),
+    tr("effects.section.sends"),
+    tr("effects.section.master"),
+    tr("effects.section.outputs")
+  };
+  if (!section_selector_.create(skeleton_.content_area(), sec_labels, 120)) {
     return false;
   }
-  lv_obj_set_pos(part_selector_.container(), sp.space_5, sp.space_3);
+  lv_obj_set_pos(section_selector_.container(), sp.space_5, sp.space_2);
+  section_selector_.set_on_change([this](int32_t idx) {
+    select_section(static_cast<EffectsSection>(idx));
+  });
+
+  // Part selector for Inserts: P1..P8
+  std::vector<std::string> part_labels = {"P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"};
+  if (!part_selector_.create(skeleton_.content_area(), part_labels, 90)) {
+    return false;
+  }
+  lv_obj_set_pos(part_selector_.container(), sp.space_5, 68);
   part_selector_.set_on_change([this](int32_t idx) {
     select_part(static_cast<uint32_t>(idx));
   });
 
-  // Main container for subviews (chain list, picker, or param editor)
+  // Main container for subviews
   view_container_ = lv_obj_create(skeleton_.content_area());
-  lv_obj_set_size(view_container_, 992, 400);
-  lv_obj_set_pos(view_container_, sp.space_5, 75);
-  lv_obj_set_scrollable(view_container_, false);
+  lv_obj_set_size(view_container_, 992, 345);
+  lv_obj_set_pos(view_container_, sp.space_5, 130);
+  lv_obj_set_scrollable(view_container_, true);
   lv_obj_set_style_bg_opa(view_container_, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_border_width(view_container_, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(view_container_, 0, LV_PART_MAIN);
@@ -70,6 +86,29 @@ bool EffectsView::create(lv_obj_t* parent) {
 
   render_current_mode();
   return true;
+}
+
+void EffectsView::select_section(EffectsSection sec) {
+  section_ = sec;
+  section_selector_.set_selected_index(static_cast<int32_t>(sec));
+  mode_ = EffectsViewMode::ChainList;
+
+  // Show part selector only in Inserts section
+  if (part_selector_.container()) {
+    lv_obj_set_hidden(part_selector_.container(), sec != EffectsSection::Inserts);
+  }
+
+  // Adjust view_container pos and height based on section
+  const auto& sp = Theme::spacing();
+  if (sec == EffectsSection::Inserts) {
+    lv_obj_set_pos(view_container_, sp.space_5, 130);
+    lv_obj_set_size(view_container_, 992, 345);
+  } else {
+    lv_obj_set_pos(view_container_, sp.space_5, 68);
+    lv_obj_set_size(view_container_, 992, 407);
+  }
+
+  render_current_mode();
 }
 
 void EffectsView::update_from_state(const ws::v1::State& state) {
@@ -98,7 +137,7 @@ void EffectsView::on_panel_event(const PanelEvent& ev) {
   }
 
   if (ev.type == PanelEventType::Encoder && ev.id == MCU_CTRL_VALUE_ENCODER) {
-    if (mode_ == EffectsViewMode::ChainList) {
+    if (section_ == EffectsSection::Inserts && mode_ == EffectsViewMode::ChainList) {
       part_selector_.on_value_turn(ev.delta);
     }
   }
@@ -129,7 +168,6 @@ void EffectsView::select_part(uint32_t part) {
 void EffectsView::add_insert(ws::v1::InsertType type) {
   auto* ps = const_cast<ws::v1::PartState*>(get_part_state(selected_part_));
   if (!ps) {
-    // If state doesn't have this part yet, create parts
     while (current_state_.parts_size() <= static_cast<int>(selected_part_)) {
       auto* new_part = current_state_.add_parts();
       new_part->set_part(static_cast<uint32_t>(current_state_.parts_size() - 1));
@@ -167,7 +205,6 @@ void EffectsView::remove_insert(int32_t slot_idx) {
   auto* ps = const_cast<ws::v1::PartState*>(get_part_state(selected_part_));
   if (!ps || slot_idx < 0 || slot_idx >= ps->inserts_size()) return;
 
-  // Rebuild inserts without slot_idx
   std::vector<ws::v1::InsertSlot> kept;
   for (int i = 0; i < ps->inserts_size(); ++i) {
     if (i != slot_idx) {
@@ -236,12 +273,144 @@ void EffectsView::send_current_chain() {
   client_->send_command(msg);
 }
 
+void EffectsView::set_part_send_levels(uint32_t part, float reverb, float delay) {
+  if (part > 7) return;
+
+  auto* ps = const_cast<ws::v1::PartState*>(get_part_state(part));
+  if (!ps) {
+    while (current_state_.parts_size() <= static_cast<int>(part)) {
+      auto* np = current_state_.add_parts();
+      np->set_part(static_cast<uint32_t>(current_state_.parts_size() - 1));
+    }
+    ps = current_state_.mutable_parts(part);
+  }
+  ps->set_send_reverb(reverb);
+  ps->set_send_delay(delay);
+
+  if (client_) {
+    ws::v1::ClientMessage msg;
+    msg.set_request_id(101);
+    auto* cmd = msg.mutable_set_send_levels();
+    cmd->set_part(part);
+    cmd->set_reverb(reverb);
+    cmd->set_delay(delay);
+    client_->send_command(msg);
+  }
+  render_current_mode();
+}
+
+void EffectsView::set_part_output(uint32_t part, ws::v1::PartOutput out) {
+  if (part > 7) return;
+
+  auto* ps = const_cast<ws::v1::PartState*>(get_part_state(part));
+  if (!ps) {
+    while (current_state_.parts_size() <= static_cast<int>(part)) {
+      auto* np = current_state_.add_parts();
+      np->set_part(static_cast<uint32_t>(current_state_.parts_size() - 1));
+    }
+    ps = current_state_.mutable_parts(part);
+  }
+  ps->set_output(out);
+
+  if (client_) {
+    ws::v1::ClientMessage msg;
+    msg.set_request_id(102);
+    auto* cmd = msg.mutable_set_part_output();
+    cmd->set_part(part);
+    cmd->set_output(out);
+    client_->send_command(msg);
+  }
+  render_current_mode();
+}
+
+void EffectsView::set_master_eq(float low_db, float mid_gain_db, float mid_freq_hz, float high_db, bool bypass) {
+  (void)low_db; (void)mid_gain_db; (void)mid_freq_hz; (void)high_db; (void)bypass;
+  if (client_) {
+    ws::v1::ClientMessage msg;
+    msg.set_request_id(103);
+    auto* cmd = msg.mutable_set_master_params();
+    auto* v1 = cmd->add_values();
+    v1->set_param_id(ws::v1::PARAM_MASTER_EQ_LOW_GAIN);
+    v1->set_value(low_db);
+    auto* v2 = cmd->add_values();
+    v2->set_param_id(ws::v1::PARAM_MASTER_EQ_MID_GAIN);
+    v2->set_value(mid_gain_db);
+    auto* v3 = cmd->add_values();
+    v3->set_param_id(ws::v1::PARAM_MASTER_EQ_MID_FREQ);
+    v3->set_value(mid_freq_hz);
+    auto* v4 = cmd->add_values();
+    v4->set_param_id(ws::v1::PARAM_MASTER_EQ_HIGH_GAIN);
+    v4->set_value(high_db);
+    auto* v5 = cmd->add_values();
+    v5->set_param_id(ws::v1::PARAM_MASTER_EQ_BYPASS);
+    v5->set_value(bypass ? 1.0f : 0.0f);
+    client_->send_command(msg);
+  }
+}
+
+void EffectsView::set_master_comp(float thresh_db, float ratio, float attack_ms, float release_ms, float makeup_db, bool bypass) {
+  (void)thresh_db; (void)ratio; (void)attack_ms; (void)release_ms; (void)makeup_db; (void)bypass;
+  if (client_) {
+    ws::v1::ClientMessage msg;
+    msg.set_request_id(104);
+    auto* cmd = msg.mutable_set_master_params();
+    auto* v1 = cmd->add_values();
+    v1->set_param_id(ws::v1::PARAM_MASTER_COMP_THRESHOLD);
+    v1->set_value(thresh_db);
+    auto* v2 = cmd->add_values();
+    v2->set_param_id(ws::v1::PARAM_MASTER_COMP_RATIO);
+    v2->set_value(ratio);
+    auto* v3 = cmd->add_values();
+    v3->set_param_id(ws::v1::PARAM_MASTER_COMP_ATTACK);
+    v3->set_value(attack_ms);
+    auto* v4 = cmd->add_values();
+    v4->set_param_id(ws::v1::PARAM_MASTER_COMP_RELEASE);
+    v4->set_value(release_ms);
+    auto* v5 = cmd->add_values();
+    v5->set_param_id(ws::v1::PARAM_MASTER_COMP_MAKEUP);
+    v5->set_value(makeup_db);
+    auto* v6 = cmd->add_values();
+    v6->set_param_id(ws::v1::PARAM_MASTER_COMP_BYPASS);
+    v6->set_value(bypass ? 1.0f : 0.0f);
+    client_->send_command(msg);
+  }
+}
+
+void EffectsView::set_line_in_level(float level) {
+  if (client_) {
+    ws::v1::ClientMessage msg;
+    msg.set_request_id(105);
+    auto* cmd = msg.mutable_set_performance_param();
+    cmd->set_param_id(ws::v1::PARAM_LINE_IN_LEVEL);
+    cmd->set_value(level);
+    client_->send_command(msg);
+  }
+}
+
 void EffectsView::render_current_mode() {
   if (!view_container_) return;
   lv_obj_clean(view_container_);
   row_items_.clear();
   bypass_controls_.clear();
+  output_controls_.clear();
 
+  switch (section_) {
+    case EffectsSection::Inserts:
+      render_inserts_section();
+      break;
+    case EffectsSection::Sends:
+      render_sends_section();
+      break;
+    case EffectsSection::Master:
+      render_master_section();
+      break;
+    case EffectsSection::Outputs:
+      render_outputs_section();
+      break;
+  }
+}
+
+void EffectsView::render_inserts_section() {
   switch (mode_) {
     case EffectsViewMode::ChainList:
       render_chain_list();
@@ -335,7 +504,6 @@ void EffectsView::render_param_editor() {
   const auto& slot = ps->inserts(selected_slot_);
   const auto& sp = Theme::spacing();
 
-  // Bypass toggle row at top of parameter editor
   auto bypass_row = std::make_unique<ListRow>();
   bypass_row->create(view_container_, 992, 56);
   lv_obj_set_pos(bypass_row->container(), 0, 0);
@@ -346,7 +514,6 @@ void EffectsView::render_param_editor() {
   });
   row_items_.push_back(std::move(bypass_row));
 
-  // Parameters list
   int32_t y = 56 + sp.space_2;
   for (int p_idx = 0; p_idx < slot.params_size(); ++p_idx) {
     auto p_row = std::make_unique<ListRow>();
@@ -362,6 +529,109 @@ void EffectsView::render_param_editor() {
     p_row->set_meta(val_buf);
 
     row_items_.push_back(std::move(p_row));
+    y += 56 + sp.space_2;
+  }
+}
+
+void EffectsView::render_sends_section() {
+  const auto& sp = Theme::spacing();
+
+  // Reverb master row
+  auto rev_row = std::make_unique<ListRow>();
+  rev_row->create(view_container_, 992, 56);
+  lv_obj_set_pos(rev_row->container(), 0, 0);
+  rev_row->set_title(tr("effects.reverb"));
+  rev_row->set_meta("Hall · 2.0s · 100%");
+  row_items_.push_back(std::move(rev_row));
+
+  // Delay master row
+  auto dly_row = std::make_unique<ListRow>();
+  dly_row->create(view_container_, 992, 56);
+  lv_obj_set_pos(dly_row->container(), 0, 56 + sp.space_2);
+  dly_row->set_title(tr("effects.delay"));
+  dly_row->set_meta("350ms · 35% FB · 100%");
+  row_items_.push_back(std::move(dly_row));
+
+  // Per-part send rows
+  int32_t y = 112 + sp.space_2 * 2;
+  for (uint32_t i = 0; i < 8; ++i) {
+    auto row = std::make_unique<ListRow>();
+    row->create(view_container_, 992, 56);
+    lv_obj_set_pos(row->container(), 0, y);
+
+    char title_buf[32];
+    std::snprintf(title_buf, sizeof(title_buf), "Part %u", i + 1);
+    row->set_title(title_buf);
+
+    const auto* ps = get_part_state(i);
+    float r = ps ? ps->send_reverb() : 0.0f;
+    float d = ps ? ps->send_delay() : 0.0f;
+    char meta_buf[64];
+    std::snprintf(meta_buf, sizeof(meta_buf), "Rev: %.0f%% · Delay: %.0f%%", r * 100.0f, d * 100.0f);
+    row->set_meta(meta_buf);
+
+    uint32_t part_idx = i;
+    row->set_on_select([this, part_idx, r, d](ListRow*) {
+      float next_r = (r >= 0.9f) ? 0.0f : (r + 0.25f);
+      set_part_send_levels(part_idx, next_r, d);
+    });
+
+    row_items_.push_back(std::move(row));
+    y += 56 + sp.space_2;
+  }
+}
+
+void EffectsView::render_master_section() {
+  const auto& sp = Theme::spacing();
+
+  // 1. Master EQ row
+  auto eq_row = std::make_unique<ListRow>();
+  eq_row->create(view_container_, 992, 56);
+  lv_obj_set_pos(eq_row->container(), 0, 0);
+  eq_row->set_title(tr("effects.master.eq"));
+  eq_row->set_meta("Low 0dB · Mid 0dB (1.0 kHz) · High 0dB");
+  row_items_.push_back(std::move(eq_row));
+
+  // 2. Master Compressor row
+  auto comp_row = std::make_unique<ListRow>();
+  comp_row->create(view_container_, 992, 56);
+  lv_obj_set_pos(comp_row->container(), 0, 56 + sp.space_2);
+  comp_row->set_title(tr("effects.master.comp"));
+  comp_row->set_meta("Thr -12dB · Ratio 2.0:1 · Makeup 0dB · GR: 0.0 dB");
+  row_items_.push_back(std::move(comp_row));
+
+  // 3. Line in level row
+  auto line_row = std::make_unique<ListRow>();
+  line_row->create(view_container_, 992, 56);
+  lv_obj_set_pos(line_row->container(), 0, 112 + sp.space_2 * 2);
+  line_row->set_title(tr("effects.master.line_in"));
+  line_row->set_meta("0%");
+  row_items_.push_back(std::move(line_row));
+}
+
+void EffectsView::render_outputs_section() {
+  const auto& sp = Theme::spacing();
+  int32_t y = 0;
+
+  for (uint32_t i = 0; i < 8; ++i) {
+    auto row = std::make_unique<ListRow>();
+    row->create(view_container_, 992, 56);
+    lv_obj_set_pos(row->container(), 0, y);
+
+    char title_buf[32];
+    std::snprintf(title_buf, sizeof(title_buf), "Part %u", i + 1);
+    row->set_title(title_buf);
+
+    const auto* ps = get_part_state(i);
+    bool is_aux = (ps && ps->output() == ws::v1::PART_OUTPUT_AUX);
+    row->set_meta(is_aux ? tr("effects.output.aux") : tr("effects.output.main"));
+
+    uint32_t part_idx = i;
+    row->set_on_select([this, part_idx, is_aux](ListRow*) {
+      set_part_output(part_idx, is_aux ? ws::v1::PART_OUTPUT_MAIN : ws::v1::PART_OUTPUT_AUX);
+    });
+
+    row_items_.push_back(std::move(row));
     y += 56 + sp.space_2;
   }
 }

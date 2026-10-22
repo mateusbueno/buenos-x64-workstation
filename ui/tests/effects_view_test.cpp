@@ -58,6 +58,28 @@ static void test_effects_view() {
   view.handle_error(err);
   assert(view.skeleton().hint_bar().right_text() == "FX budget exceeded");
 
+  // 8. Test Sends section
+  view.select_section(EffectsSection::Sends);
+  assert(view.current_section() == EffectsSection::Sends);
+  view.set_part_send_levels(0, 0.45f, 0.20f);
+
+  // 9. Test Master section
+  view.select_section(EffectsSection::Master);
+  assert(view.current_section() == EffectsSection::Master);
+  view.set_master_eq(2.0f, -1.0f, 1500.0f, 3.0f, false);
+  view.set_master_comp(-15.0f, 3.0f, 20.0f, 150.0f, 2.0f, false);
+  view.set_line_in_level(0.75f);
+
+  // 10. Test Outputs section
+  view.select_section(EffectsSection::Outputs);
+  assert(view.current_section() == EffectsSection::Outputs);
+  view.set_part_output(0, ws::v1::PART_OUTPUT_AUX);
+  view.set_part_output(1, ws::v1::PART_OUTPUT_MAIN);
+
+  // 11. Switch back to Inserts
+  view.select_section(EffectsSection::Inserts);
+  assert(view.current_section() == EffectsSection::Inserts);
+
   lv_timer_handler();
   adapter.shutdown();
 

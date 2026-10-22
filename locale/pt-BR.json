@@ -60,5 +60,16 @@
   "effects.insert.compressor": "Compressor",
   "effects.bypass.active": "ATIVO",
   "effects.bypass.bypassed": "BYPASS",
-  "effects.error.budget_exceeded": "Orçamento de FX excedido"
+  "effects.error.budget_exceeded": "Orçamento de FX excedido",
+  "effects.section.inserts": "INSERTS",
+  "effects.section.sends": "ENVIOS",
+  "effects.section.master": "MASTER",
+  "effects.section.outputs": "SAÍDAS",
+  "effects.reverb": "Reverb",
+  "effects.delay": "Delay",
+  "effects.output.main": "MAIN",
+  "effects.output.aux": "AUX",
+  "effects.master.eq": "EQ Master",
+  "effects.master.comp": "Compressor Master",
+  "effects.master.line_in": "Nível Entrada Linha"
 }
