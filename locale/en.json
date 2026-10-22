@@ -50,5 +50,15 @@
   "hint.reassurance.nothing_to_write": "Nothing to write",
   "hint.reassurance.hold_write": "Hold WRITE to write",
   "list_row.tag.now": "NOW",
-  "list_row.indicator.unsaved": "◆"
+  "list_row.indicator.unsaved": "◆",
+  "effects.title": "Effects",
+  "effects.add_effect": "+ Add Effect",
+  "effects.insert.rotary": "Rotary",
+  "effects.insert.chorus_phaser": "Chorus / Phaser",
+  "effects.insert.ep_amp": "EP Amp",
+  "effects.insert.eq": "EQ",
+  "effects.insert.compressor": "Compressor",
+  "effects.bypass.active": "ACTIVE",
+  "effects.bypass.bypassed": "BYPASS",
+  "effects.error.budget_exceeded": "FX budget exceeded"
 }

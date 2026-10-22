@@ -50,5 +50,15 @@
   "hint.reassurance.nothing_to_write": "Nada para salvar",
   "hint.reassurance.hold_write": "Segure WRITE para salvar",
   "list_row.tag.now": "NOW",
-  "list_row.indicator.unsaved": "◆"
+  "list_row.indicator.unsaved": "◆",
+  "effects.title": "Efeitos",
+  "effects.add_effect": "+ Adicionar Efeito",
+  "effects.insert.rotary": "Rotary",
+  "effects.insert.chorus_phaser": "Chorus / Phaser",
+  "effects.insert.ep_amp": "EP Amp",
+  "effects.insert.eq": "EQ",
+  "effects.insert.compressor": "Compressor",
+  "effects.bypass.active": "ATIVO",
+  "effects.bypass.bypassed": "BYPASS",
+  "effects.error.budget_exceeded": "Orçamento de FX excedido"
 }

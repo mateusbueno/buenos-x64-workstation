@@ -41,6 +41,10 @@ class WsClient {
   // Register callback invoked on the UI/client thread when State changes
   void set_state_callback(StateCallback cb);
 
+  // Register callback invoked when the server reports a command Error
+  using ErrorCallback = std::function<void(const ws::v1::Error&)>;
+  void set_error_callback(ErrorCallback cb);
+
   // Send a command to the engine
   bool send_command(const ws::v1::ClientMessage& msg);
 
@@ -64,6 +68,7 @@ class WsClient {
   mutable std::mutex state_mutex_;
   ws::v1::State latest_state_;
   StateCallback state_cb_;
+  ErrorCallback error_cb_;
 
   std::thread worker_thread_;
   int active_fd_{-1};

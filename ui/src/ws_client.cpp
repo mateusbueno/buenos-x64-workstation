@@ -74,6 +74,11 @@ void WsClient::set_state_callback(StateCallback cb) {
   state_cb_ = std::move(cb);
 }
 
+void WsClient::set_error_callback(ErrorCallback cb) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  error_cb_ = std::move(cb);
+}
+
 bool WsClient::send_command(const ws::v1::ClientMessage& msg) {
   std::lock_guard<std::mutex> lock(send_mutex_);
   if (active_fd_ < 0 || !connected_.load()) return false;
@@ -218,6 +223,15 @@ void WsClient::run_worker() {
         }
         if (cb) {
           cb(smsg.state());
+        }
+      } else if (smsg.has_error()) {
+        ErrorCallback ecb;
+        {
+          std::lock_guard<std::mutex> lock(state_mutex_);
+          ecb = error_cb_;
+        }
+        if (ecb) {
+          ecb(smsg.error());
         }
       }
     }
