@@ -8,7 +8,7 @@ add_library(velora_offline STATIC
 target_include_directories(velora_offline PUBLIC src)
 # The sample engine renders from a bundle: the loader lives in engine/host (it links formatlib).
 # Live Set rendering loads the Live Set through the control side (protobuf), the same loader as engine-host.
-target_link_libraries(velora_offline PUBLIC velora_core velora_host velora_control)
+target_link_libraries(velora_offline PUBLIC velora_core velora_host velora_control velora_format)
 
 add_executable(velora-offline-render src/render_main.cpp)
 target_link_libraries(velora-offline-render PRIVATE velora_offline)
@@ -46,6 +46,10 @@ target_link_libraries(velora-null-test PRIVATE velora_offline)
 # --- Live Set golden fixtures (Story 4.3): the generator is built so the committed fixtures can be regenerated on purpose ------
 add_executable(live-set-fixture-gen tests/live_set/make_fixtures.cpp)
 target_link_libraries(live-set-fixture-gen PRIVATE velora_offline)
+
+# --- FM suite fixtures (Story 12.2): generates .syx and .mid test fixtures ---
+add_executable(fm-fixture-gen tests/fm_suite/make_fixtures.cpp)
+target_link_libraries(fm-fixture-gen PRIVATE velora_offline)
 
 # --- unit tests --------------------------------------------------------------
 add_executable(offline_render_tests tests/offline_render_tests.cpp)
@@ -1042,3 +1046,110 @@ endforeach()
 add_custom_target(update-arp-golden
   COMMAND velora-offline-render ${_arp_good} --out ${_arp}/arp.wav
   DEPENDS velora-offline-render)
+
+# --- FM null test suite against MSFA reference oracle (Story 12.2) --------------------------------------
+set(_fm_suite ${CMAKE_CURRENT_SOURCE_DIR}/tests/fm_suite)
+set(_fm_cases
+  fm_algo01_feedback
+  fm_algo05_epiano
+  fm_algo16_parallel
+  fm_algo32_all_carriers
+  fm_envelope_decay_release)
+
+# Cleanup fixture for FM render outputs
+set(_fm_clean_outputs "")
+foreach(_c IN LISTS _fm_cases)
+  list(APPEND _fm_clean_outputs ${_out}/${_c}.wav)
+endforeach()
+list(APPEND _fm_clean_outputs
+  ${_out}/fm_neg_feedback.wav
+  ${_out}/fm_neg_algo.wav
+  ${_out}/fm_neg_gain.wav)
+
+add_test(NAME fm_render_clean COMMAND ${CMAKE_COMMAND} -E remove -f ${_fm_clean_outputs})
+set_tests_properties(fm_render_clean PROPERTIES FIXTURES_SETUP fm_clean)
+
+# Positive null tests for each fixture
+foreach(_c IN LISTS _fm_cases)
+  add_test(NAME offline_render_${_c}
+           COMMAND velora-offline-render --engine fm
+                   --syx ${_fm_suite}/golden/${_c}.syx
+                   --midi ${_fm_suite}/golden/${_c}.mid
+                   --tail-seconds 1.0
+                   --out ${_out}/${_c}.wav)
+  set_tests_properties(offline_render_${_c} PROPERTIES FIXTURES_REQUIRED fm_clean FIXTURES_SETUP ${_c}_ready)
+
+  add_test(NAME null_test_${_c}
+           COMMAND velora-null-test --case ${_fm_suite}/golden/${_c}.case --candidate ${_out}/${_c}.wav)
+  set_tests_properties(null_test_${_c} PROPERTIES FIXTURES_REQUIRED ${_c}_ready PASS_REGULAR_EXPRESSION "overall: PASS")
+endforeach()
+
+# Negative controls deliberately fail the null test on residual
+# 1. Feedback discrepancy: changing feedback on fm_algo16_parallel (0 -> 7)
+add_test(NAME offline_render_fm_neg_feedback
+         COMMAND velora-offline-render --engine fm
+                 --syx ${_fm_suite}/golden/fm_algo16_parallel.syx
+                 --midi ${_fm_suite}/golden/fm_algo16_parallel.mid
+                 --tail-seconds 1.0
+                 --negative feedback
+                 --out ${_out}/fm_neg_feedback.wav)
+set_tests_properties(offline_render_fm_neg_feedback PROPERTIES FIXTURES_REQUIRED fm_clean FIXTURES_SETUP fm_neg_feedback_ready)
+add_test(NAME null_test_fm_neg_feedback_fails
+         COMMAND velora-null-test --case ${_fm_suite}/golden/fm_algo16_parallel.case --candidate ${_out}/fm_neg_feedback.wav)
+set_tests_properties(null_test_fm_neg_feedback_fails PROPERTIES FIXTURES_REQUIRED fm_neg_feedback_ready
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+
+# 2. Algorithm discrepancy: changing algorithm on fm_algo01_feedback (1 -> 32)
+add_test(NAME offline_render_fm_neg_algo
+         COMMAND velora-offline-render --engine fm
+                 --syx ${_fm_suite}/golden/fm_algo01_feedback.syx
+                 --midi ${_fm_suite}/golden/fm_algo01_feedback.mid
+                 --tail-seconds 1.0
+                 --negative algo
+                 --out ${_out}/fm_neg_algo.wav)
+set_tests_properties(offline_render_fm_neg_algo PROPERTIES FIXTURES_REQUIRED fm_clean FIXTURES_SETUP fm_neg_algo_ready)
+add_test(NAME null_test_fm_neg_algo_fails
+         COMMAND velora-null-test --case ${_fm_suite}/golden/fm_algo01_feedback.case --candidate ${_out}/fm_neg_algo.wav)
+set_tests_properties(null_test_fm_neg_algo_fails PROPERTIES FIXTURES_REQUIRED fm_neg_algo_ready
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+
+# 3. Gain discrepancy: changing OP gain on fm_algo01_feedback
+add_test(NAME offline_render_fm_neg_gain
+         COMMAND velora-offline-render --engine fm
+                 --syx ${_fm_suite}/golden/fm_algo01_feedback.syx
+                 --midi ${_fm_suite}/golden/fm_algo01_feedback.mid
+                 --tail-seconds 1.0
+                 --negative gain
+                 --out ${_out}/fm_neg_gain.wav)
+set_tests_properties(offline_render_fm_neg_gain PROPERTIES FIXTURES_REQUIRED fm_clean FIXTURES_SETUP fm_neg_gain_ready)
+add_test(NAME null_test_fm_neg_gain_fails
+         COMMAND velora-null-test --case ${_fm_suite}/golden/fm_algo01_feedback.case --candidate ${_out}/fm_neg_gain.wav)
+set_tests_properties(null_test_fm_neg_gain_fails PROPERTIES FIXTURES_REQUIRED fm_neg_gain_ready
+                     PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
+
+# CLI error handling tests
+add_test(NAME offline_render_fm_rejects_missing_syx
+         COMMAND velora-offline-render --engine fm --midi ${_fm_suite}/golden/fm_algo01_feedback.mid --out ${_out}/never.wav)
+set_tests_properties(offline_render_fm_rejects_missing_syx PROPERTIES
+                     PASS_REGULAR_EXPRESSION "error: --engine fm needs --syx")
+
+add_test(NAME offline_render_fm_rejects_syx_without_fm
+         COMMAND velora-offline-render ${_render_args} --syx ${_fm_suite}/golden/fm_algo01_feedback.syx --out ${_out}/never.wav)
+set_tests_properties(offline_render_fm_rejects_syx_without_fm PROPERTIES
+                     PASS_REGULAR_EXPRESSION "error: --syx, --voice-slot and --negative need --engine fm")
+
+add_test(NAME offline_render_fm_rejects_bad_negative
+         COMMAND velora-offline-render --engine fm --syx ${_fm_suite}/golden/fm_algo01_feedback.syx
+                 --midi ${_fm_suite}/golden/fm_algo01_feedback.mid --negative unknown --out ${_out}/never.wav)
+set_tests_properties(offline_render_fm_rejects_bad_negative PROPERTIES
+                     PASS_REGULAR_EXPRESSION "error: unknown --negative option 'unknown'")
+
+# Custom target to regenerate all FM golden WAVs using the reference oracle
+add_custom_target(update-fm-goldens
+  COMMAND fm-fixture-gen ${_fm_suite}/golden
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/oracle/render-fm-oracle.sh ${_fm_suite}/golden/fm_algo01_feedback.syx 1 ${_fm_suite}/golden/fm_algo01_feedback.mid ${_fm_suite}/golden/fm_algo01_feedback.wav
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/oracle/render-fm-oracle.sh ${_fm_suite}/golden/fm_algo05_epiano.syx 1 ${_fm_suite}/golden/fm_algo05_epiano.mid ${_fm_suite}/golden/fm_algo05_epiano.wav
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/oracle/render-fm-oracle.sh ${_fm_suite}/golden/fm_algo16_parallel.syx 1 ${_fm_suite}/golden/fm_algo16_parallel.mid ${_fm_suite}/golden/fm_algo16_parallel.wav
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/oracle/render-fm-oracle.sh ${_fm_suite}/golden/fm_algo32_all_carriers.syx 1 ${_fm_suite}/golden/fm_algo32_all_carriers.mid ${_fm_suite}/golden/fm_algo32_all_carriers.wav
+  COMMAND ${CMAKE_SOURCE_DIR}/tools/oracle/render-fm-oracle.sh ${_fm_suite}/golden/fm_envelope_decay_release.syx 1 ${_fm_suite}/golden/fm_envelope_decay_release.mid ${_fm_suite}/golden/fm_envelope_decay_release.wav
+  DEPENDS fm-fixture-gen)

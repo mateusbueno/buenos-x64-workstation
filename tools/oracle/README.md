@@ -1,14 +1,14 @@
 # tools/oracle
 
-Role: the reference renderers used **only by test tooling** as the oracles of the sample-engine null tests: sfizz for SFZ (Story 1.15) and
-FluidSynth for SF2 (Story 5.3).
+Role: the reference renderers used **only by test tooling** as the oracles of the audio null tests: sfizz for SFZ (Story 1.15),
+FluidSynth for SF2 (Story 5.3), and MSFA (Music Synthesizer for Android / Dexed core) for 6-operator FM synthesis (Story 12.2).
 
 They are never linked into a shipped target, no oracle source is vendored here (this directory holds scripts and this file; the sources live
 in the git-ignored `.work/`), and `tools/ci/check_third_party_notices.py` fails if oracle sources are committed, `.gitignore` loses the
 `/tools/oracle/.work/` rule, sfizz or FluidSynth becomes a submodule, a shipped CMake file references `tools/oracle` or `sfizz`, or any
 shipped CMake file mentions FluidSynth. Only the vendored BSD-2 SFZ parser (`formatlib/third_party`, see `THIRD_PARTY_NOTICES.md`) ships;
-the SF2 reader is clean-room code written from the public SoundFont 2.04 specification. License review of sfizz:
-`_bmad-output/business/11-12-sfizz-license-check.md`. FluidSynth is LGPL-2.1: that is why it is only ever *run as a separate process* on
+the SF2 reader and the 6-operator FM engine are clean-room code written from public specifications and mathematical models. License review of sfizz:
+`_bmad-output/business/11-12-sfizz-license-check.md`. FluidSynth is LGPL-2.1 and MSFA is Apache-2.0: they are only ever *run as separate processes* on
 fixtures, built into `.work/` on the machine that regenerates goldens, and never distributed, linked, vendored or copied from.
 
 ## Scripts
@@ -41,6 +41,15 @@ fixtures, built into `.work/` on the machine that regenerates goldens, and never
 - Goldens of the SF2 suite: `tools/offline-render/tests/sf2_suite/regenerate_goldens.sh <build dir>` (needs the oracle). Its README
   (`tools/offline-render/tests/sf2_suite/README.md`) lists, with the FluidSynth source lines, every place where the oracle departs from the SoundFont
   specification and how the suite compensates (the `-g 0.8409` above is one of them).
+
+- `build-fm-oracle.sh` -- clones https://github.com/google/music-synthesizer-for-android.git into `tools/oracle/.work/msfa`
+  (override with `VELORA_ORACLE_DIR`), checks out commit `f67d41d313b7dc85f6fb99e79e515cc9d208cfff`, and builds the
+  `fm_oracle_render` CLI with the test adapter `tools/oracle-adapter/fm_oracle_render.cpp`. Prints the binary path
+  (`.work/bin/fm_oracle_render`); a second run returns immediately via `.msfa-built-commit`. Exit code 77 = compiler or network missing.
+- `render-fm-oracle.sh <file.syx> <voice_slot> <file.mid> <out.wav>` -- renders the SysEx voice (1..32) and MIDI events
+  at 48 kHz using MSFA's `Dx7Note` into a 48 kHz stereo WAV file with `1.0 / 2^27` normalization. Uses `VELORA_FM_ORACLE` if set,
+  else builds the oracle; exits 77 when unavailable.
+- Goldens of the FM suite: `tools/offline-render/tests/fm_suite/regenerate_goldens.sh`.
 
 ## What the oracle's output needs before a null test
 

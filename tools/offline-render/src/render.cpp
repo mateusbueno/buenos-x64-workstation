@@ -6,6 +6,7 @@
 
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/contact_events.hpp"
+#include "velora/core/fm_engine.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/param_events.hpp"
@@ -251,6 +252,21 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     // Channels 8..15 have no organ part: their notes are refused (engine not available), not played as test tone.
     for (std::uint32_t ch = OrganEngine::kPartCount; ch < 16; ++ch)
       br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kFm));
+  }
+
+  std::unique_ptr<FmEngine> fm;
+  if (opt.engine == EngineKind::kFm) {
+    fm = std::make_unique<FmEngine>(static_cast<float>(kSampleRate));
+    for (std::uint32_t ch = 0; ch < FmEngine::kPartCount; ++ch) {
+      fm->set_part_voice_params(ch, opt.fm_params);
+    }
+    if (!br->bind_engine(*fm)) {
+      error = "cannot bind the FM engine";
+      return false;
+    }
+    for (std::uint32_t ch = 0; ch < 16; ++ch) {
+      br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kFm));
+    }
   }
 
   out.sample_rate = kSampleRate;

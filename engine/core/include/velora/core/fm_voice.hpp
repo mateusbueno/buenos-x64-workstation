@@ -29,6 +29,7 @@ class FmVoice {
     is_steal_fading_ = false;
     steal_fade_gain_ = 1.0f;
     steal_fade_step_ = 0.0f;
+    brightness_offset_ = params.brightness_offset;
     start_time_ = 0; // will be updated by engine frame clock
 
     alg_def_ = get_fm_algorithm_def(params.algorithm);
@@ -48,14 +49,13 @@ class FmVoice {
     // Initialize each operator
     for (int i = 0; i < 6; ++i) {
       const auto& op_params = params.operators[i];
-      op_envs_[i].init(op_params.rates, op_params.levels, note_,
+      op_envs_[i].init(op_params.rates, op_params.levels, op_params.total_level,
+                       note_, velocity_, op_params.velocity_sens,
                        op_params.kbd_rate_scaling, op_params.kbd_breakpoint,
                        op_params.left_depth, op_params.right_depth,
                        op_params.left_curve, op_params.right_curve, sample_rate_);
 
-      if (params.osc_key_sync) {
-        op_phases_[i] = 0.0f;
-      }
+      op_phases_[i] = 0.0f;
       op_fb_history_[i][0] = 0.0f;
       op_fb_history_[i][1] = 0.0f;
 
@@ -67,25 +67,12 @@ class FmVoice {
         op_base_freqs_[i] = coarse_base * fine_mult;
         op_is_fixed_[i] = true;
       } else {
-        float ratio = (op_params.freq_coarse == 0) ? 0.5f : static_cast<float>(op_params.freq_coarse);
-        ratio += static_cast<float>(op_params.freq_fine) * 0.01f;
-        // Detune: -7..+7 (approx +/- 15 cents)
-        float detune_ratio = std::pow(2.0f, (static_cast<float>(op_params.detune) * 2.14f) / 1200.0f);
-        op_base_freqs_[i] = base_freq_ * ratio * detune_ratio;
+        int eff_note = static_cast<int>(note_) + params.transpose;
+        int detune_raw = static_cast<int>(op_params.detune) + 7;
+        op_base_freqs_[i] = fm_osc_freq(eff_note, op_params.freq_coarse, op_params.freq_fine, detune_raw, sample_rate_);
         op_is_fixed_[i] = false;
       }
 
-      // Base operator level with velocity sensitivity
-      float vel_gain = fm_velocity_to_gain(velocity_, op_params.velocity_sens);
-      float level_gain = fm_level_to_gain(op_params.total_level);
-
-      // Knob 2 Brightness mapping: modulators (operators 2..6, i.e. i >= 1) scaled by brightness_offset
-      if (i >= 1 && params.brightness_offset != 64) {
-        float bright_factor = std::pow(2.0f, (static_cast<float>(params.brightness_offset) - 64.0f) / 32.0f);
-        level_gain = std::clamp(level_gain * bright_factor, 0.0f, 1.0f);
-      }
-
-      op_base_gains_[i] = level_gain * vel_gain;
       op_amp_sens_[i] = op_params.amp_mod_sens;
     }
   }
@@ -126,6 +113,11 @@ class FmVoice {
   void render(float* output_buffer, uint32_t frames) noexcept {
     if (!active_) return;
 
+    // Begin block for all operator envelopes
+    for (int i = 0; i < 6; ++i) {
+      op_envs_[i].begin_block();
+    }
+
     float pb_ratio = std::pow(2.0f, pitch_bend_semitones_ / 12.0f);
 
     for (uint32_t f = 0; f < frames; ++f) {
@@ -142,8 +134,11 @@ class FmVoice {
       std::array<float, 6> op_gains{};
 
       for (int i = 0; i < 6; ++i) {
-        float env_val = op_envs_[i].step();
-        float g = op_base_gains_[i] * env_val;
+        float g = op_envs_[i].step();
+        if (i >= 1 && brightness_offset_ != 64) {
+          float bright_factor = std::pow(2.0f, (static_cast<float>(brightness_offset_) - 64.0f) / 32.0f);
+          g = std::clamp(g * bright_factor, 0.0f, 2.0f);
+        }
 
         // Apply LFO AM
         if (op_amp_sens_[i] > 0 && lfo_amp_depth_ > 0.0f) {
@@ -151,20 +146,15 @@ class FmVoice {
           g *= std::clamp(am_factor, 0.0f, 1.0f);
         }
         op_gains[i] = g;
-
-        // Advance phase
-        float f_op = op_is_fixed_[i] ? op_base_freqs_[i] : (op_base_freqs_[i] * global_pitch_mod);
-        op_phases_[i] += f_op / sample_rate_;
-        if (op_phases_[i] >= 1.0f) op_phases_[i] -= std::floor(op_phases_[i]);
       }
 
       // 3. Process operators in topological order (OP6 down to OP1)
       for (int op = 5; op >= 0; --op) {
-        // Collect phase modulation from operators that modulate 'op'
+        // Collect phase modulation from operators that modulate 'op' (scaled by 2.0 to match DX7 Q24 modulation depth)
         float mod_in = 0.0f;
         for (int src = 0; src < 6; ++src) {
           if (alg_def_.mod_matrix[op][src]) {
-            mod_in += op_outputs[src];
+            mod_in += op_outputs[src] * 2.0f;
           }
         }
 
@@ -184,6 +174,13 @@ class FmVoice {
           op_fb_history_[op][1] = op_fb_history_[op][0];
           op_fb_history_[op][0] = y;
         }
+      }
+
+      // Advance operator phases after evaluating this sample
+      for (int i = 0; i < 6; ++i) {
+        float f_op = op_is_fixed_[i] ? op_base_freqs_[i] : (op_base_freqs_[i] * global_pitch_mod);
+        op_phases_[i] += f_op / sample_rate_;
+        if (op_phases_[i] >= 1.0f) op_phases_[i] -= std::floor(op_phases_[i]);
       }
 
       // 4. Sum carrier operators to voice output
@@ -250,6 +247,7 @@ class FmVoice {
   bool is_steal_fading_{false};
   float steal_fade_gain_{1.0f};
   float steal_fade_step_{0.0f};
+  uint8_t brightness_offset_{64};
 
   uint32_t channel_{0};
   uint8_t note_{60};

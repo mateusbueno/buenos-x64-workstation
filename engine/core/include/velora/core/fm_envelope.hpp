@@ -18,11 +18,68 @@ enum class FmEnvelopeStage : uint8_t {
   Finished = 5
 };
 
+inline int scaleoutlevel(int outlevel) noexcept {
+  static const int levellut[20] = {
+    0, 5, 9, 13, 17, 20, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 42, 43, 45, 46
+  };
+  return outlevel >= 20 ? 28 + outlevel : levellut[outlevel];
+}
+
+inline int scale_velocity(int velocity, int sensitivity) noexcept {
+  static const uint8_t velocity_data[64] = {
+    0, 70, 86, 97, 106, 114, 121, 126, 132, 138, 142, 148, 152, 156, 160, 163,
+    166, 170, 173, 174, 178, 181, 184, 186, 189, 190, 194, 196, 198, 200, 202,
+    205, 206, 209, 211, 214, 216, 218, 220, 222, 224, 225, 227, 229, 230, 232,
+    233, 235, 237, 238, 240, 241, 242, 243, 244, 246, 246, 248, 249, 250, 251,
+    252, 253, 254
+  };
+  int clamped_vel = std::clamp(velocity, 0, 127);
+  int vel_value = static_cast<int>(velocity_data[clamped_vel >> 1]) - 239;
+  int scaled_vel = ((sensitivity * vel_value + 7) >> 3) << 4;
+  return scaled_vel;
+}
+
+inline int scale_rate(int midinote, int sensitivity) noexcept {
+  int x = std::clamp(midinote / 3 - 7, 0, 31);
+  return (sensitivity * x) >> 3;
+}
+
+inline int scale_curve(int group, int depth, int curve) noexcept {
+  static const uint8_t exp_scale_data[33] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 14, 16, 19, 23, 27, 33, 39, 47, 56, 66,
+    80, 94, 110, 126, 142, 158, 174, 190, 206, 222, 238, 250
+  };
+  int scale = 0;
+  if (curve == 0 || curve == 3) {
+    scale = (group * depth * 329) >> 12;
+  } else {
+    int raw_exp = exp_scale_data[std::min(group, 32)];
+    scale = (raw_exp * depth * 329) >> 15;
+  }
+  if (curve < 2) {
+    scale = -scale;
+  }
+  return scale;
+}
+
+inline int scale_level(int midinote, int break_pt, int left_depth, int right_depth,
+                       int left_curve, int right_curve) noexcept {
+  int offset = midinote - break_pt - 17;
+  if (offset >= 0) {
+    return scale_curve(offset / 3, right_depth, right_curve);
+  } else {
+    return scale_curve((-offset) / 3, left_depth, left_curve);
+  }
+}
+
 class FmEnvelope {
  public:
   void init(const std::array<uint8_t, 4>& rates,
             const std::array<uint8_t, 4>& levels,
+            uint8_t total_level,
             uint8_t note,
+            uint8_t velocity,
+            uint8_t velocity_sens,
             uint8_t rate_scaling,
             uint8_t breakpoint,
             uint8_t left_depth,
@@ -30,173 +87,120 @@ class FmEnvelope {
             uint8_t left_curve,
             uint8_t right_curve,
             float sample_rate = 48000.0f) noexcept {
-    sample_rate_ = sample_rate;
-    rates_ = rates;
-    levels_ = levels;
-
-    // Apply keyboard rate scaling: higher notes increase rates
-    int rate_boost = 0;
-    if (rate_scaling > 0 && note > 21) {
-      rate_boost = ((note - 21) * rate_scaling) / 16;
-    }
-
+    (void)sample_rate;
     for (int i = 0; i < 4; ++i) {
-      effective_rates_[i] = static_cast<uint8_t>(std::clamp(static_cast<int>(rates_[i]) + rate_boost, 0, 99));
-      target_levels_[i] = fm_level_to_gain(levels_[i]);
+      rates_[i] = rates[i];
+      levels_[i] = levels[i];
     }
+    int outlevel = scaleoutlevel(total_level);
+    outlevel += scale_level(note, breakpoint, left_depth, right_depth, left_curve, right_curve);
+    outlevel = std::min(127, outlevel);
+    outlevel = outlevel << 5;
+    outlevel += scale_velocity(velocity, velocity_sens);
+    outlevel = std::max(0, outlevel);
+    outlevel_ = outlevel;
+    rate_scaling_ = scale_rate(note, rate_scaling);
 
-    // Apply keyboard level scaling
-    float kbd_scale = compute_kbd_scaling(note, breakpoint, left_depth, right_depth, left_curve, right_curve);
-    for (int i = 0; i < 3; ++i) {
-      target_levels_[i] = std::clamp(target_levels_[i] * kbd_scale, 0.0f, 1.0f);
-    }
-
-    stage_ = FmEnvelopeStage::Attack;
-    current_level_ = 0.0f;
-    compute_stage_step();
+    level_ = 0;
+    down_ = true;
+    current_gain_ = 0.0f;
+    target_gain_ = 0.0f;
+    dgain_ = 0.0f;
+    advance(0);
   }
 
-  void note_off() noexcept {
-    if (stage_ != FmEnvelopeStage::Finished) {
-      stage_ = FmEnvelopeStage::Release;
-      compute_stage_step();
-    }
+  void begin_block() noexcept {
+    current_gain_ = target_gain_;
+    int32_t lvl = getsample();
+    float octaves = (static_cast<float>(lvl) / 16777216.0f) - 15.0f;
+    target_gain_ = std::pow(2.0f, octaves);
+    dgain_ = (target_gain_ - current_gain_) / 64.0f;
   }
 
   inline float step() noexcept {
-    if (stage_ == FmEnvelopeStage::Finished) {
-      return 0.0f;
-    }
-    if (stage_ == FmEnvelopeStage::Sustain) {
-      return current_level_;
-    }
-
-    current_level_ += stage_step_;
-
-    // Check stage boundary
-    if (stage_ascending_) {
-      if (current_level_ >= stage_target_) {
-        current_level_ = stage_target_;
-        advance_stage();
-      }
-    } else {
-      if (current_level_ <= stage_target_) {
-        current_level_ = stage_target_;
-        advance_stage();
-      }
-    }
-
-    return current_level_;
+    float g = current_gain_;
+    current_gain_ += dgain_;
+    return g;
   }
 
-  bool is_finished() const noexcept { return stage_ == FmEnvelopeStage::Finished; }
-  FmEnvelopeStage stage() const noexcept { return stage_; }
-  float current_level() const noexcept { return current_level_; }
+  void note_off() noexcept {
+    if (down_) {
+      down_ = false;
+      advance(3);
+    }
+  }
+
+  bool is_finished() const noexcept {
+    return (!down_ && ix_ >= 4 && current_gain_ <= 5e-5f);
+  }
+
+  FmEnvelopeStage stage() const noexcept {
+    if (is_finished()) return FmEnvelopeStage::Finished;
+    if (!down_) return FmEnvelopeStage::Release;
+    if (ix_ == 0) return FmEnvelopeStage::Attack;
+    if (ix_ == 1) return FmEnvelopeStage::Decay1;
+    if (ix_ == 2) return FmEnvelopeStage::Decay2;
+    return FmEnvelopeStage::Sustain;
+  }
+
+  float current_level() const noexcept { return current_gain_; }
 
  private:
-  void advance_stage() noexcept {
-    switch (stage_) {
-      case FmEnvelopeStage::Attack:
-        stage_ = FmEnvelopeStage::Decay1;
-        compute_stage_step();
-        break;
-      case FmEnvelopeStage::Decay1:
-        stage_ = FmEnvelopeStage::Decay2;
-        compute_stage_step();
-        break;
-      case FmEnvelopeStage::Decay2:
-        stage_ = FmEnvelopeStage::Sustain;
-        stage_step_ = 0.0f;
-        break;
-      case FmEnvelopeStage::Release:
-        stage_ = FmEnvelopeStage::Finished;
-        current_level_ = 0.0f;
-        stage_step_ = 0.0f;
-        break;
-      default:
-        break;
+  void advance(int newix) noexcept {
+    ix_ = newix;
+    if (ix_ < 4) {
+      int newlevel = levels_[ix_];
+      int actuallevel = scaleoutlevel(newlevel) >> 1;
+      actuallevel = (actuallevel << 6) + outlevel_ - 4256;
+      actuallevel = actuallevel < 16 ? 16 : actuallevel;
+      targetlevel_ = actuallevel << 16;
+      rising_ = (targetlevel_ > level_);
+
+      int qrate = (rates_[ix_] * 41) >> 6;
+      qrate += rate_scaling_;
+      qrate = std::min(qrate, 63);
+      inc_ = (4 + (qrate & 3)) << (8 + (qrate >> 2));
     }
   }
 
-  void compute_stage_step() noexcept {
-    int idx = 0;
-    if (stage_ == FmEnvelopeStage::Attack) idx = 0;
-    else if (stage_ == FmEnvelopeStage::Decay1) idx = 1;
-    else if (stage_ == FmEnvelopeStage::Decay2) idx = 2;
-    else if (stage_ == FmEnvelopeStage::Release) idx = 3;
-    else {
-      stage_step_ = 0.0f;
-      return;
+  int32_t getsample() noexcept {
+    if (ix_ < 3 || (ix_ < 4 && !down_)) {
+      if (rising_) {
+        const int jumptarget = 1716;
+        if (level_ < (jumptarget << 16)) {
+          level_ = jumptarget << 16;
+        }
+        level_ += (((17 << 24) - level_) >> 24) * inc_;
+        if (level_ >= targetlevel_) {
+          level_ = targetlevel_;
+          advance(ix_ + 1);
+        }
+      } else {
+        level_ -= inc_;
+        if (level_ <= targetlevel_) {
+          level_ = targetlevel_;
+          advance(ix_ + 1);
+        }
+      }
     }
-
-    stage_target_ = target_levels_[idx];
-    uint8_t r = effective_rates_[idx];
-
-    // Compute duration in seconds based on rate 0..99
-    // Rate 99: ~2 ms, Rate 50: ~1 s, Rate 1: ~40 s
-    float duration_s = 0.002f;
-    if (r < 99) {
-      duration_s = 0.002f * std::pow(2.0f, static_cast<float>(99 - r) * 0.145f);
-    }
-    float frames = std::max(1.0f, duration_s * sample_rate_);
-
-    float diff = stage_target_ - current_level_;
-    stage_ascending_ = (diff >= 0.0f);
-    stage_step_ = diff / frames;
+    if (level_ < 0) level_ = 0;
+    return level_;
   }
 
-  static float compute_kbd_scaling(uint8_t note, uint8_t bp, uint8_t l_depth, uint8_t r_depth,
-                                   uint8_t l_curve, uint8_t r_curve) noexcept {
-    if (l_depth == 0 && r_depth == 0) return 1.0f;
+  int rates_[4]{99, 99, 99, 99};
+  int levels_[4]{99, 99, 99, 0};
+  int outlevel_{0};
+  int rate_scaling_{0};
+  int32_t level_{0};
+  int32_t targetlevel_{0};
+  bool rising_{false};
+  int ix_{0};
+  int inc_{0};
+  bool down_{false};
 
-    int delta = static_cast<int>(note) - static_cast<int>(bp);
-    float depth = 0.0f;
-    uint8_t curve = 0;
-
-    if (delta < 0) {
-      depth = static_cast<float>(l_depth) / 99.0f;
-      curve = l_curve;
-      delta = -delta;
-    } else {
-      depth = static_cast<float>(r_depth) / 99.0f;
-      curve = r_curve;
-    }
-
-    if (depth <= 0.001f || delta == 0) return 1.0f;
-
-    float norm_dist = std::clamp(static_cast<float>(delta) / 48.0f, 0.0f, 1.0f);
-    float factor = 1.0f;
-
-    switch (curve) {
-      case 0: // -LIN
-        factor = 1.0f - (norm_dist * depth);
-        break;
-      case 1: // -EXP
-        factor = 1.0f - (std::pow(norm_dist, 2.0f) * depth);
-        break;
-      case 2: // +EXP
-        factor = 1.0f + (std::pow(norm_dist, 2.0f) * depth * 0.5f);
-        break;
-      case 3: // +LIN
-        factor = 1.0f + (norm_dist * depth * 0.5f);
-        break;
-      default:
-        break;
-    }
-    return std::clamp(factor, 0.0f, 2.0f);
-  }
-
-  float sample_rate_{48000.0f};
-  std::array<uint8_t, 4> rates_{99, 99, 99, 99};
-  std::array<uint8_t, 4> levels_{99, 99, 99, 0};
-  std::array<uint8_t, 4> effective_rates_{99, 99, 99, 99};
-  std::array<float, 4> target_levels_{1.0f, 1.0f, 1.0f, 0.0f};
-
-  FmEnvelopeStage stage_{FmEnvelopeStage::Finished};
-  float current_level_{0.0f};
-  float stage_target_{0.0f};
-  float stage_step_{0.0f};
-  bool stage_ascending_{true};
+  float current_gain_{0.0f};
+  float target_gain_{0.0f};
+  float dgain_{0.0f};
 };
 
 // 4-stage Pitch Envelope generator

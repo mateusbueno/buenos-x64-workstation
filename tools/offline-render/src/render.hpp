@@ -8,6 +8,7 @@
 #include "smf.hpp"
 #include "velora/core/arpeggiator.hpp"
 #include "velora/core/block_renderer.hpp"
+#include "velora/core/fm_parameters.hpp"
 #include "velora/core/sample_engine.hpp"
 #include "velora/ports/sample_source.hpp"
 #include "wav.hpp"
@@ -62,10 +63,12 @@ struct RoutingOptions {
   const WavData* line_in = nullptr;                   // stereo or mono, 48 kHz (borrowed); read once, silent after its end
 };
 
-enum class EngineKind : std::uint8_t { kTestTone, kSample, kOrgan };
+enum class EngineKind : std::uint8_t { kTestTone, kSample, kOrgan, kFm };
 
 struct RenderOptions {
   EngineKind engine = EngineKind::kTestTone;
+  // FM engine only (Story 12.2): voice parameters for 6-operator FM synthesis
+  velora::core::FmVoiceParameters fm_params{};
   // Sample engine only: the instrument to play (borrowed, must outlive the call), the RNG seed for
   // lorand/hirand and the interpolation quality. `voices` is the engine's voice capacity.
   const velora::ports::SampleSource* instrument = nullptr;

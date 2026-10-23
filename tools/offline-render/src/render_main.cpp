@@ -35,19 +35,59 @@
 #include "parse_util.hpp"
 #include "render.hpp"
 #include "render_live_set.hpp"
+#include "velora/core/fm_parameters.hpp"
 #include "velora/format/bundle.hpp"
+#include "velora/format/sysex_6op.hpp"
 #include "velora/host/sample_bundle_loader.hpp"
 
 using namespace velora::offline;
 
+static velora::core::FmVoiceParameters to_core(const velora::format::FmVoiceParameters& f) {
+  velora::core::FmVoiceParameters c;
+  for (std::size_t i = 0; i < 6; ++i) {
+    c.operators[i].rates = f.operators[i].rates;
+    c.operators[i].levels = f.operators[i].levels;
+    c.operators[i].kbd_breakpoint = f.operators[i].kbd_breakpoint;
+    c.operators[i].left_depth = f.operators[i].left_depth;
+    c.operators[i].right_depth = f.operators[i].right_depth;
+    c.operators[i].left_curve = f.operators[i].left_curve;
+    c.operators[i].right_curve = f.operators[i].right_curve;
+    c.operators[i].kbd_rate_scaling = f.operators[i].kbd_rate_scaling;
+    c.operators[i].amp_mod_sens = f.operators[i].amp_mod_sens;
+    c.operators[i].velocity_sens = f.operators[i].velocity_sens;
+    c.operators[i].total_level = f.operators[i].total_level;
+    c.operators[i].fixed_freq_mode = f.operators[i].fixed_freq_mode;
+    c.operators[i].freq_coarse = f.operators[i].freq_coarse;
+    c.operators[i].freq_fine = f.operators[i].freq_fine;
+    c.operators[i].detune = f.operators[i].detune;
+  }
+  c.pitch_env_rates = f.pitch_env_rates;
+  c.pitch_env_levels = f.pitch_env_levels;
+  c.algorithm = f.algorithm;
+  c.feedback = f.feedback;
+  c.osc_key_sync = f.osc_key_sync;
+  c.lfo_speed = f.lfo_speed;
+  c.lfo_delay = f.lfo_delay;
+  c.lfo_pitch_mod_depth = f.lfo_pitch_mod_depth;
+  c.lfo_amp_mod_depth = f.lfo_amp_mod_depth;
+  c.lfo_key_sync = f.lfo_key_sync;
+  c.lfo_wave = f.lfo_wave;
+  c.lfo_pitch_mod_sens = f.lfo_pitch_mod_sens;
+  c.transpose = f.transpose;
+  std::memcpy(c.name, f.name, sizeof(c.name));
+  c.brightness_offset = f.brightness_offset;
+  return c;
+}
+
 static int usage() {
   std::fprintf(stderr,
                "usage: velora-offline-render [--midi in.mid] [--events in.contacts (test only, organ engine)] --out out.wav\n"
-               "       [--engine test-tone|sample|organ]   (at least one of --midi / --events)\n"
+               "       [--engine test-tone|sample|organ|fm]   (at least one of --midi / --events)\n"
                "       [--voices N] [--tail-seconds S] [--detune-cents C (test only)]\n"
                "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
                "                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]\n"
+               "       FM engine:    --syx <file.syx> [--voice-slot 1..32] [--negative feedback|algo|gain]\n"
                "       routing (parts = channels 0..7): [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[!],...]\n"
                "                     (type: rotary chorus_phaser ep_amp eq compressor, '@p1/p2/..' = normalised params, '!' = bypassed)\n"
                "                     [--master-level DB] [--master-eq LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]]\n"
@@ -68,6 +108,9 @@ static int usage() {
 
 int main(int argc, char** argv) {
   std::string midi, events_path, out, engine = "test-tone", bundle_path, instrument_key, interp = "hermite";
+  std::string syx_path, negative_opt;
+  std::uint64_t voice_slot = 1;
+  bool voice_slot_given = false;
   bool voices_given = false, sample_opts = false, drawbars_given = false;
   std::string drawbars, percussion;
   bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false, rotary_given = false;
@@ -504,6 +547,16 @@ int main(int argc, char** argv) {
       double c = 0;
       if (!parse_double(v, -4800.0, 4800.0, c)) { std::fprintf(stderr, "error: invalid --detune-cents\n"); return 2; }
       opt.detune_cents = static_cast<float>(c);
+    } else if (a == "--syx" && val(v)) {
+      syx_path = v;
+    } else if (a == "--voice-slot" && val(v)) {
+      if (!parse_uint(v, 32, voice_slot) || voice_slot < 1) {
+        std::fprintf(stderr, "error: invalid --voice-slot (1..32)\n");
+        return 2;
+      }
+      voice_slot_given = true;
+    } else if (a == "--negative" && val(v)) {
+      negative_opt = v;
     } else return usage();
   }
   if (!scene_recalls.empty() && live_set_path.empty()) {
@@ -630,8 +683,8 @@ int main(int argc, char** argv) {
     return 0;
   }
   if ((midi.empty() && events_path.empty()) || out.empty()) return usage();
-  if (engine != "test-tone" && engine != "sample" && engine != "organ") {
-    std::fprintf(stderr, "error: unknown engine '%s' (test-tone, sample or organ)\n", engine.c_str());
+  if (engine != "test-tone" && engine != "sample" && engine != "organ" && engine != "fm") {
+    std::fprintf(stderr, "error: unknown engine '%s' (test-tone, sample, organ or fm)\n", engine.c_str());
     return 2;
   }
   if (!events_path.empty() && engine != "organ") {
@@ -645,6 +698,53 @@ int main(int argc, char** argv) {
   if ((percussion_given || key_click_given || vibrato_given || leakage_given || rotary_given) && engine != "organ") {
     std::fprintf(stderr, "error: --percussion, --key-click, --vibrato, --leakage and --rotary need --engine organ\n");
     return 2;
+  }
+  if (engine == "fm") {
+    if (syx_path.empty()) {
+      std::fprintf(stderr, "error: --engine fm needs --syx\n");
+      return 2;
+    }
+    if (drawbars_given || percussion_given || key_click_given || vibrato_given || leakage_given || rotary_given) {
+      std::fprintf(stderr, "error: organ options cannot be used with --engine fm\n");
+      return 2;
+    }
+    if (sample_opts || !bundle_path.empty() || !instrument_key.empty()) {
+      std::fprintf(stderr, "error: sample options cannot be used with --engine fm\n");
+      return 2;
+    }
+    auto syx_res = velora::format::parse_sysex_file(syx_path);
+    if (!syx_res.ok()) {
+      std::fprintf(stderr, "error: %s\n", syx_res.error_message.c_str());
+      return 1;
+    }
+    if (syx_res.voices.empty()) {
+      std::fprintf(stderr, "error: no voices found in SysEx file\n");
+      return 1;
+    }
+    if (voice_slot > syx_res.voices.size()) {
+      std::fprintf(stderr, "error: voice slot %llu out of range (1..%zu)\n", (unsigned long long)voice_slot, syx_res.voices.size());
+      return 2;
+    }
+    const auto& vdump = syx_res.voices[voice_slot - 1];
+    opt.fm_params = to_core(vdump.parameters);
+    if (!negative_opt.empty()) {
+      if (negative_opt == "feedback") {
+        opt.fm_params.feedback = (opt.fm_params.feedback == 0) ? 7 : 0;
+      } else if (negative_opt == "algo") {
+        opt.fm_params.algorithm = (opt.fm_params.algorithm == 1) ? 32 : 1;
+      } else if (negative_opt == "gain") {
+        opt.fm_params.operators[0].total_level = (opt.fm_params.operators[0].total_level >= 20) ? opt.fm_params.operators[0].total_level - 20 : 99;
+      } else {
+        std::fprintf(stderr, "error: unknown --negative option '%s' (feedback, algo or gain)\n", negative_opt.c_str());
+        return 2;
+      }
+    }
+    opt.engine = EngineKind::kFm;
+  } else {
+    if (!syx_path.empty() || voice_slot_given || !negative_opt.empty()) {
+      std::fprintf(stderr, "error: --syx, --voice-slot and --negative need --engine fm\n");
+      return 2;
+    }
   }
   if (engine == "organ") {
     if (percussion_given && percussion != "off") {
@@ -754,7 +854,7 @@ int main(int argc, char** argv) {
     }
     opt.engine = EngineKind::kSample;
     opt.instrument = inst;
-  } else if (engine == "organ") {
+  } else if (engine == "organ" || engine == "fm") {
     // handled above
   } else if (!bundle_path.empty() || !instrument_key.empty() || sample_opts) {
     std::fprintf(stderr, "error: --bundle, --instrument, --seed, --gain-db, --interpolation and --oracle-block-frames need --engine sample\n");

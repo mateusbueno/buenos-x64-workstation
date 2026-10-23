@@ -1,0 +1,5 @@
+# Golden null test for FM Algorithm 16 parallel carriers (Story 12.2)
+reference=fm_algo16_parallel.wav
+tolerance_db=-50.0
+max_offset_frames=64
+check_excess=0
