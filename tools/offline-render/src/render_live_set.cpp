@@ -1,5 +1,8 @@
 #include "render_live_set.hpp"
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -13,8 +16,11 @@
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/live_set_loader.hpp"
+#include "velora/host/live_set_store.hpp"
 #include "velora/host/live_set_switcher.hpp"
 #include "velora/host/scene_controller.hpp"
+#include "velora/host/setlist_controller.hpp"
+#include "velora/host/setlist_store.hpp"
 
 namespace velora::offline {
 
@@ -61,13 +67,34 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
     for (const host::PartLoadReport& p : loaded.parts) report->part_states.push_back(p.state);
   }
 
-  // Seamless switches (Story 4.5): the switcher runs without its worker thread (the stage runs inside jump_to) and holds the commit for the
+  // Seamless switches (Story 4.5, Story 4.8): the switcher runs without its worker thread (the stage runs inside jump_to) and holds the commit for the
   // simulated load time, so the render stays deterministic. Every target file is read up front: an unreadable one is an error before any rendering.
   std::vector<SwitchAt> switches = opt.switches;
   std::stable_sort(switches.begin(), switches.end(), [](const SwitchAt& a, const SwitchAt& b) { return a.frame < b.frame; });
   std::unique_ptr<host::LiveSetSwitcher> switcher;
   std::vector<std::string> switch_ids(switches.size());
-  if (!switches.empty()) {
+
+  struct TempDirGuard {
+    std::string path;
+    std::unique_ptr<host::setlist::SetlistStore>* setlist_store = nullptr;
+    std::unique_ptr<host::liveset::LiveSetStore>* live_store = nullptr;
+    std::unique_ptr<host::SetlistController>* ctl = nullptr;
+    ~TempDirGuard() {
+      if (ctl && *ctl) ctl->reset();
+      if (setlist_store && *setlist_store) setlist_store->reset();
+      if (live_store && *live_store) live_store->reset();
+      if (!path.empty()) {
+        ::unlink((path + "/setlists/.writer.lock").c_str());
+        ::rmdir((path + "/setlists").c_str());
+        ::unlink((path + "/livesets/.writer.lock").c_str());
+        ::rmdir((path + "/livesets").c_str());
+        ::rmdir(path.c_str());
+      }
+    }
+  } temp_guard;
+
+  const bool needs_setlist = !opt.setlist_loads.empty() || !opt.setlist_steps.empty() || !opt.setlist_dir.empty();
+  if (!switches.empty() || needs_setlist) {
     host::SwitcherOptions so;
     so.background_thread = false;
     so.hold_ticks = opt.switch_load_blocks;
@@ -81,6 +108,44 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
       }
       switch_ids[i] = e.id;
       switcher->add_to_catalog(std::move(e));
+    }
+  }
+
+  std::unique_ptr<host::setlist::SetlistStore> setlist_store;
+  std::unique_ptr<host::liveset::LiveSetStore> live_set_store;
+  std::unique_ptr<host::LiveSetSwitcherPort> switch_port;
+  std::unique_ptr<host::SetlistController> setlist_controller;
+  temp_guard.setlist_store = &setlist_store;
+  temp_guard.live_store = &live_set_store;
+  temp_guard.ctl = &setlist_controller;
+  if (needs_setlist) {
+    std::string sldir = opt.setlist_dir;
+    if (sldir.empty()) {
+      char t[] = "/tmp/velora_offline_sl_XXXXXX";
+      if (::mkdtemp(t) == nullptr) {
+        error = "failed to create temporary setlist store directory";
+        return false;
+      }
+      temp_guard.path = t;
+      sldir = temp_guard.path;
+      ::mkdir((sldir + "/setlists").c_str(), 0755);
+      ::mkdir((sldir + "/livesets").c_str(), 0755);
+    }
+    host::setlist::StoreOptions sso;
+    sso.dir = sldir + "/setlists";
+    if (host::setlist::SetlistStore::open(sso, setlist_store) != host::setlist::Status::kOk) {
+      error = "failed to open setlist store: " + sso.dir;
+      return false;
+    }
+    host::liveset::StoreOptions lso;
+    lso.dir = sldir + "/livesets";
+    if (host::liveset::LiveSetStore::open(lso, live_set_store) != host::liveset::Status::kOk) {
+      error = "failed to open liveset store: " + lso.dir;
+      return false;
+    }
+    if (switcher) {
+      switch_port = std::make_unique<host::LiveSetSwitcherPort>(*switcher);
+      setlist_controller = std::make_unique<host::SetlistController>(plane, *setlist_store, *live_set_store, *switch_port);
     }
   }
 
@@ -131,11 +196,36 @@ bool render_live_set(const std::vector<NoteEvent>& events, const LiveSetRenderOp
               (scenes.scene_count() == 1 ? "" : "s") + ")";
       return false;
     }
+  std::vector<SetlistLoadAt> setlist_loads = opt.setlist_loads;
+  std::stable_sort(setlist_loads.begin(), setlist_loads.end(), [](const SetlistLoadAt& a, const SetlistLoadAt& b) { return a.frame < b.frame; });
+  std::vector<SetlistStepAt> setlist_steps = opt.setlist_steps;
+  std::stable_sort(setlist_steps.begin(), setlist_steps.end(), [](const SetlistStepAt& a, const SetlistStepAt& b) { return a.frame < b.frame; });
+
   std::size_t next_recall = 0, next_switch = 0, next_encoder = 0;
+  std::size_t next_setlist_load = 0, next_setlist_step = 0;
   std::uint64_t recalled = 0;
   float l[kBlockFrames], r[kBlockFrames];
   std::size_t next = 0;
   for (std::uint64_t b = 0; b < blocks; ++b) {
+    // Setlist actions land between blocks at the block that holds their time.
+    while (next_setlist_load < setlist_loads.size() && setlist_loads[next_setlist_load].frame < (b + 1) * kBlockFrames) {
+      if (setlist_controller) {
+        setlist_controller->load_setlist(setlist_loads[next_setlist_load].setlist_id);
+        if (report) ++report->setlists_loaded;
+      }
+      ++next_setlist_load;
+    }
+    while (next_setlist_step < setlist_steps.size() && setlist_steps[next_setlist_step].frame < (b + 1) * kBlockFrames) {
+      if (setlist_controller) {
+        setlist_controller->step(setlist_steps[next_setlist_step].next);
+        if (report) ++report->setlist_steps_taken;
+      }
+      ++next_setlist_step;
+    }
+    if (setlist_controller) {
+      setlist_controller->tick();
+    }
+
     // Scene recalls land at the start of the block that holds their time (the last block included), before that block's events
     // (control thread, between blocks): the resolution is one block, 1.3 ms.
     while (next_recall < recalls.size() && recalls[next_recall].frame < (b + 1) * kBlockFrames) {

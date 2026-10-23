@@ -4,11 +4,15 @@ add_library(velora_offline STATIC
   src/wav.cpp
   src/render.cpp
   src/render_live_set.cpp
-  src/nulltest.cpp)
+  src/nulltest.cpp
+  src/gap_detector.cpp)
 target_include_directories(velora_offline PUBLIC src)
 # The sample engine renders from a bundle: the loader lives in engine/host (it links formatlib).
 # Live Set rendering loads the Live Set through the control side (protobuf), the same loader as engine-host.
 target_link_libraries(velora_offline PUBLIC velora_core velora_host velora_control velora_format)
+
+add_executable(velora-gap-detector src/gap_detector_main.cpp)
+target_link_libraries(velora-gap-detector PRIVATE velora_offline)
 
 add_executable(velora-offline-render src/render_main.cpp)
 target_link_libraries(velora-offline-render PRIVATE velora_offline)
@@ -65,6 +69,13 @@ add_executable(live_set_cc_test tests/live_set_cc_test.cpp)
 target_link_libraries(live_set_cc_test PRIVATE velora_offline)
 target_compile_definitions(live_set_cc_test PRIVATE OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME live_set_cc_test COMMAND live_set_cc_test)
+
+# --- Seamless switching render suite (Story 4.8, NFR14, FR79..FR82, AR2) ---
+add_executable(seamless_switching_suite tests/seamless_switching_suite_test.cpp)
+target_link_libraries(seamless_switching_suite PRIVATE velora_offline)
+target_compile_definitions(seamless_switching_suite PRIVATE
+  SEAMLESS_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/live_set")
+add_test(NAME seamless_switching_suite COMMAND seamless_switching_suite)
 
 # --- routing (Story 2.7): Main/Aux, sends, line-in and master verified by null tests against analytically mixed references ---
 add_executable(offline_routing_tests tests/routing_test.cpp)

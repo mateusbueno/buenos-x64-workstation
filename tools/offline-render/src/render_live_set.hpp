@@ -44,6 +44,18 @@ struct EncoderAt {
   std::int32_t delta = 0;
 };
 
+// Story 4.8: Setlist load action at a specific frame.
+struct SetlistLoadAt {
+  std::uint64_t frame = 0;
+  std::string setlist_id;
+};
+
+// Story 4.8: In-setlist step action at a specific frame.
+struct SetlistStepAt {
+  std::uint64_t frame = 0;
+  bool next = true;
+};
+
 struct LiveSetRenderOptions {
   std::string live_set_path;
   std::string library_root;
@@ -56,6 +68,9 @@ struct LiveSetRenderOptions {
   std::uint32_t switch_load_blocks = 0;      // simulated load time of every switch, in 64-frame blocks
   std::vector<EncoderAt> encoders;           // sorted by frame (stable) by render_live_set()
   bool assign_mode = false;                  // the encoder mode flag is ASSIGN from the first frame (else PART, the default: encoder turns do nothing)
+  std::string setlist_dir;                   // optional: path to setlist store directory
+  std::vector<SetlistLoadAt> setlist_loads;  // Story 4.8: setlist load events
+  std::vector<SetlistStepAt> setlist_steps;  // Story 4.8: in-setlist step events
   // Story 6.5: protected (factory) libraries. `heads` (optional, borrowed) replaces the RAM head provider -- a ProtectedHeadProvider over the dev key provider --
   // and `protected_trust` is the set of content-manifest keys the resolver trusts for bundle.vlrp. Both unset: protected libraries stay unresolved.
   velora::host::HeadProvider* heads = nullptr;
@@ -70,6 +85,8 @@ struct LiveSetRenderReport {
   std::uint64_t scenes_recalled = 0;
   std::uint64_t generations_published = 0;  // by the recalls and the switches
   std::uint64_t switches_published = 0;     // Live Set switches that completed
+  std::uint64_t setlists_loaded = 0;        // Story 4.8: setlist load events applied
+  std::uint64_t setlist_steps_taken = 0;    // Story 4.8: in-setlist step events taken
   std::uint64_t encoder_steps_applied = 0;  // Story 4.10: encoder turns that changed a live value
   std::uint64_t encoder_steps_empty = 0;    // ... that hit an empty ASSIGN slot
   std::uint64_t encoder_steps_unrouted = 0; // ... seen outside ASSIGN mode

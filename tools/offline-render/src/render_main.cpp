@@ -127,6 +127,9 @@ int main(int argc, char** argv) {
   bool assign_mode = false;
   std::uint64_t switch_load_blocks = 0;
   bool switch_load_blocks_given = false;
+  std::vector<SetlistLoadAt> setlist_loads;
+  std::vector<SetlistStepAt> setlist_steps;
+  std::string setlist_dir;
   WavData line_in_wav, aux_wav;
   // "P:rest" -> part index 0..7 and the text after the colon.
   auto split_part = [](const std::string& arg, std::uint32_t& part, std::string& rest) {
@@ -509,6 +512,46 @@ int main(int argc, char** argv) {
       encoder_turns.push_back(ea);
     } else if (a == "--assign-mode") {
       assign_mode = true;
+    } else if (a == "--load-setlist-at" && val(v)) {
+      const std::string sv = v;
+      const std::size_t colon = sv.find(':');
+      double secs = 0;
+      if (colon == std::string::npos || colon + 1 >= sv.size() || !parse_double(sv.substr(0, colon), 0.0, 3600.0, secs)) {
+        std::fprintf(stderr, "error: invalid --load-setlist-at '%s' (SECONDS:SETLIST_ID with SECONDS 0..3600)\n", sv.c_str());
+        return 2;
+      }
+      SetlistLoadAt sl;
+      sl.frame = static_cast<std::uint64_t>(std::llround(secs * 48000.0));
+      sl.setlist_id = sv.substr(colon + 1);
+      setlist_loads.push_back(std::move(sl));
+    } else if (a == "--step-at" && val(v)) {
+      const std::string sv = v;
+      const std::size_t colon = sv.find(':');
+      double secs = 0;
+      bool next = true;
+      if (colon == std::string::npos) {
+        if (!parse_double(sv, 0.0, 3600.0, secs)) {
+          std::fprintf(stderr, "error: invalid --step-at '%s' (SECONDS[:next|prev])\n", sv.c_str());
+          return 2;
+        }
+      } else {
+        if (!parse_double(sv.substr(0, colon), 0.0, 3600.0, secs)) {
+          std::fprintf(stderr, "error: invalid --step-at '%s' (SECONDS[:next|prev])\n", sv.c_str());
+          return 2;
+        }
+        const std::string dir = sv.substr(colon + 1);
+        if (dir == "prev" || dir == "previous") next = false;
+        else if (dir != "next") {
+          std::fprintf(stderr, "error: invalid --step-at direction '%s' (next or prev)\n", dir.c_str());
+          return 2;
+        }
+      }
+      SetlistStepAt st;
+      st.frame = static_cast<std::uint64_t>(std::llround(secs * 48000.0));
+      st.next = next;
+      setlist_steps.push_back(st);
+    } else if (a == "--setlist-dir" && val(v)) {
+      setlist_dir = v;
     } else if (a == "--switch-load-blocks" && val(v)) {
       if (!parse_uint(v, 1000000, switch_load_blocks)) {
         std::fprintf(stderr, "error: invalid --switch-load-blocks '%s' (a whole number of 64-frame blocks, 0..1000000)\n", v);
@@ -569,6 +612,10 @@ int main(int argc, char** argv) {
   }
   if ((!encoder_turns.empty() || assign_mode) && live_set_path.empty()) {
     std::fprintf(stderr, "error: --encoder-at and --assign-mode need --live-set\n");
+    return 2;
+  }
+  if ((!setlist_loads.empty() || !setlist_steps.empty()) && live_set_path.empty()) {
+    std::fprintf(stderr, "error: --load-setlist-at and --step-at need --live-set\n");
     return 2;
   }
   if (switch_load_blocks_given && switches.empty()) {
@@ -649,6 +696,9 @@ int main(int argc, char** argv) {
     lo.switch_load_blocks = static_cast<std::uint32_t>(switch_load_blocks);
     lo.encoders = encoder_turns;
     lo.assign_mode = assign_mode;
+    lo.setlist_dir = setlist_dir;
+    lo.setlist_loads = setlist_loads;
+    lo.setlist_steps = setlist_steps;
 #ifdef VELORA_OFFLINE_DEV_KEYS
     if (protected_flags) {
       lo.heads = protected_heads.get();
