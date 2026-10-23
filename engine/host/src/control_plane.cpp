@@ -314,6 +314,7 @@ bool ControlPlane::commit(const core::Snapshot& work, ControlFail& f) {
   fx_cost_.store(cost, std::memory_order_release);
   revision_.store(s->revision, std::memory_order_release);
   reclaim();
+  if (fader_handler_) fader_handler_->on_snapshot_published(*s);
   return true;
 }
 
@@ -432,6 +433,7 @@ void ControlPlane::fill_state(ws::v1::State* out) const {
   if (switch_handler_) switch_handler_->fill_status(out);
   if (setlist_handler_) setlist_handler_->fill_status(out);
   if (edit_handler_) edit_handler_->fill_status(out);
+  if (fader_handler_) fader_handler_->fill_status(out);
 }
 
 void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
@@ -480,6 +482,7 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   const bool setlist_cmd = msg.body_case() >= B::kCreateSetlist && msg.body_case() <= B::kGetSetlists;
   const bool edit_cmd = msg.body_case() == B::kSetPartTimbre || msg.body_case() == B::kWriteLiveSet || msg.body_case() == B::kSetAssignSlot ||
                         msg.body_case() == B::kClearAssignSlot;
+  const bool fader_cmd = msg.body_case() == B::kSetFaderMode || msg.body_case() == B::kSelectOrganPart || msg.body_case() == B::kMoveFader;
   if (edit_cmd) {
     // Edits and Write (Story 4.9): the EditSession owns the work and answers with typed errors.
     if (!edit_handler_) {
@@ -577,6 +580,22 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
           break;
         default: f.code = ws::v1::ERROR_CODE_INTERNAL; break;
       }
+    }
+  } else if (fader_cmd) {
+    // Fader commands (Story 4.12): the FaderController owns the work and answers with typed errors.
+    if (!fader_handler_) {
+      fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "fader controller is not available");
+    } else {
+      HandlerFailure hf;
+      bool bump = false, push = false;
+      ok = fader_handler_->run(msg, reply, hf, bump, push);
+      if (!ok) {
+        f.code = hf.code;
+        f.message = hf.message;
+        f.details = hf.details;
+      }
+      if (bump) bump_revision();
+      changed = push || bump;
     }
   } else if (!current_) {
     fail(f, ws::v1::ERROR_CODE_INTERNAL, "no snapshot generation loaded");
@@ -697,6 +716,9 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kWriteLiveSet:
       case B::kSetAssignSlot:
       case B::kClearAssignSlot:
+      case B::kSetFaderMode:
+      case B::kSelectOrganPart:
+      case B::kMoveFader:
         break;  // handled before the snapshot is copied
       case B::kSetEncoderMode: {  // Story 4.10: a UMP on the control lane, in order with the encoder steps; the plane remembers what it commanded
         const ws::v1::EncoderMode m = msg.set_encoder_mode().mode();

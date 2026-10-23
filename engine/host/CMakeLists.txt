@@ -54,7 +54,8 @@ add_library(velora_control STATIC
   src/live_set_switcher.cpp
   src/setlist_store.cpp
   src/setlist_controller.cpp
-  src/edit_session.cpp)
+  src/edit_session.cpp
+  src/fader_bindings.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -253,6 +254,11 @@ add_executable(assign_map_tests tests/assign_map_test.cpp)
 target_link_libraries(assign_map_tests PRIVATE velora_control)
 add_test(NAME assign_map_tests COMMAND assign_map_tests)
 set_tests_properties(assign_map_tests PROPERTIES TIMEOUT 300)
+
+# Fader bindings with pickup (Story 4.12): Faders 1-8 vol + 9th REV send in MIXER; 9 drawbars in DRAWBARS; pickup crossing rule; no organ refusal.
+add_executable(fader_bindings_test tests/fader_bindings_test.cpp)
+target_link_libraries(fader_bindings_test PRIVATE velora_control)
+add_test(NAME fader_bindings_test COMMAND fader_bindings_test)
 
 # Regenerates the compatibility corpus and the golden file from the current code (review the diff, then commit):
 #   cmake --build build --target live_set_corpus_regen

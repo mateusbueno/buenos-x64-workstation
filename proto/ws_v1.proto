@@ -61,6 +61,9 @@ enum ErrorCode {
   ERROR_CODE_STORAGE_FULL = 36;        // WriteLiveSet: the storage is full (ENOSPC); nothing partial is written and the edits stay in memory, still flagged unsaved
   // Story 4.10: ASSIGN maps and encoders. A refused command changes nothing.
   ERROR_CODE_NOT_ASSIGNABLE = 37;      // SetAssignSlot: the parameter exists but cannot be driven by an encoder (structural, or marked non-assignable in the registry; details: param_id)
+  // Story 4.12: Fader bindings with pickup. A refused command changes nothing.
+  ERROR_CODE_NO_ORGAN = 38;            // SetFaderMode DRAWBARS requested with no organ part in the Live Set
+  ERROR_CODE_NOT_ORGAN_PART = 39;      // SelectOrganPart for a part that is not an organ
 }
 
 message Error {
@@ -123,6 +126,7 @@ message State {
   EditStatus edits = 12;                 // Story 4.9: unsaved edits (dirty flag per Live Set, change summary of the current one); additive
   EncoderStatus encoders = 13;           // Story 4.10: the encoder mode, the selected part, the ASSIGN maps; additive
   ContentStatus content = 14;            // Story 6.5: protected-library integrity (counter and damaged libraries); additive
+  FaderStatus faders = 15;               // Story 4.12: fader bindings, modes and pickup state; additive
 }
 
 // Story 6.5: the integrity of protected (factory) libraries. `content_integrity` counts, since the engine started, the voices that faded to silence because
@@ -160,6 +164,38 @@ message EncoderStatus {
   uint64 steps_rejected = 11;
   uint64 events_rejected = 12;           // mode / select-part events with a bad value
   uint64 steps_no_part = 13;             // part-scope steps whose target part has no engine: the live value moved, not counted as applied
+}
+
+// Story 4.12: Fader bindings with pickup. Faders 1-8 control part volume and fader 9 controls REV master send
+// in MIXER; in DRAWBARS they control drawbars 16'..1' of the selected organ part.
+enum FaderMode {
+  FADER_MODE_UNSPECIFIED = 0;
+  FADER_MODE_MIXER = 1;
+  FADER_MODE_DRAWBARS = 2;
+}
+
+enum FaderTargetType {
+  FADER_TARGET_UNSPECIFIED = 0;
+  FADER_TARGET_PART_VOLUME = 1;
+  FADER_TARGET_REV_SEND = 2;
+  FADER_TARGET_DRAWBAR = 3;
+}
+
+message FaderBindingState {
+  uint32 fader_index = 1;          // 0..8 (Faders 1..9)
+  FaderTargetType target_type = 2;
+  string target_name = 3;          // human-readable target name
+  uint32 target_part = 4;          // part index 0..7
+  uint32 target_param_id = 5;      // registry param id (100..108, 801, or 0)
+  float stored_value = 6;          // 0..1 normalized stored target value
+  float physical_pos = 7;          // 0..1 normalized physical position
+  bool is_pending = 8;             // true if pending pickup, false if taken over
+}
+
+message FaderStatus {
+  FaderMode mode = 1;
+  int32 selected_organ_part = 2;   // -1 if no organ part exists, else 0..7
+  repeated FaderBindingState bindings = 3;
 }
 
 // Story 4.9: edits live in memory until a Write command. `dirty_live_set_ids` lists the Live Sets with unsaved edits (the current one included;
@@ -470,6 +506,18 @@ message SelectPart {
   uint32 part = 1;
 }
 
+// Story 4.12: Fader bindings with pickup.
+message SetFaderMode {
+  FaderMode mode = 1;
+}
+message SelectOrganPart {
+  uint32 part = 1;
+}
+message MoveFader {
+  uint32 fader_index = 1;                // 0..8 (Fader 1..9)
+  float position = 2;                    // 0..1 normalized physical fader position
+}
+
 message GetState {}
 message GetPerformanceValues {}
 message Subscribe {                      // after this, every new revision is pushed as a State message
@@ -519,6 +567,9 @@ message ClientMessage {
     ClearAssignSlot clear_assign_slot = 47;
     SetEncoderMode set_encoder_mode = 48;
     SelectPart select_part = 49;
+    SetFaderMode set_fader_mode = 50;     // Story 4.12
+    SelectOrganPart select_organ_part = 51;
+    MoveFader move_fader = 52;
   }
 }
 

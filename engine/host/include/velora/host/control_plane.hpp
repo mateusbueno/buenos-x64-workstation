@@ -111,6 +111,16 @@ class EditHandler {
   virtual void fill_status(ws::v1::State* out) const = 0;
 };
 
+// Fader commands and pickup (Story 4.12): the plane routes SetFaderMode, SelectOrganPart and MoveFader to this seam (the FaderController
+// implements it) and asks it to add the fader status to every State. Control thread only.
+class FaderHandler {
+ public:
+  virtual ~FaderHandler() = default;
+  virtual bool run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& reply, HandlerFailure& err, bool& bump_revision, bool& push_state) = 0;
+  virtual void fill_status(ws::v1::State* out) const = 0;
+  virtual void on_snapshot_published(const core::Snapshot& snap) = 0;
+};
+
 class ControlPlane {
  public:
   using Clock = std::function<std::uint64_t()>;  // host time in ns, the same clock the MIDI adapter stamps with
@@ -150,6 +160,9 @@ class ControlPlane {
   void set_setlist_handler(SetlistHandler* h) noexcept { setlist_handler_ = h; }
   // Edits and Write (Story 4.9): the EditSession registers itself here (and unregisters in its destructor). Control thread only.
   void set_edit_handler(EditHandler* h) noexcept { edit_handler_ = h; }
+  // Fader commands (Story 4.12): the FaderController registers itself here (and unregisters in its destructor). Control thread only.
+  void set_fader_handler(FaderHandler* h) noexcept { fader_handler_ = h; }
+  FaderHandler* fader_handler() const noexcept { return fader_handler_; }
 
   // Story 6.5: the registry the I/O edge threads report damaged protected-library blocks to. State.content shows its libraries and the RT content_integrity
   // counter; every report bumps the revision so subscribers get a State push. Control thread only to set (null detaches); the registry outlives the plane's use.
@@ -233,6 +246,7 @@ class ControlPlane {
   SwitchHandler* switch_handler_ = nullptr;
   SetlistHandler* setlist_handler_ = nullptr;
   EditHandler* edit_handler_ = nullptr;
+  FaderHandler* fader_handler_ = nullptr;
   std::uint32_t fence_seq_ = 0;
   std::uint64_t program_generation_ = 0;
   std::uint64_t reservation_epoch_ = 0;
