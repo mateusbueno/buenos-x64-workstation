@@ -1,0 +1,688 @@
+<svg xmlns="http://www.w3.org/2000/svg" id="folha3" class="sheet" viewBox="0 0 420 297" width="420mm" height="297mm" font-family="&apos;DejaVu Sans&apos;, &apos;Liberation Sans&apos;, Arial, Helvetica, sans-serif" stroke-linecap="butt">
+<rect x="0" y="0" width="420" height="297" fill="#ffffff"/>
+<g class="view" data-view="papel3" transform="translate(0.000 0.000) scale(1.00000)">
+<polygon points="20.000,10.000 410.000,10.000 410.000,287.000 20.000,287.000" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="210.000,0.000 210.000,10.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="210.000,287.000 210.000,297.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="10.000,148.500 20.000,148.500" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="410.000,148.500 420.000,148.500" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="24.000" y="20.000" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">LEGENDA DOS BALÕES</text>
+<polygon points="24.000,22.000 202.000,22.000 202.000,173.800 24.000,173.800" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="24.000,26.600 202.000,26.600" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="25.200" y="25.500" font-size="2.000" text-anchor="start" fill="#000000" font-weight="bold">Nº</text>
+<polyline points="33.000,22.000 33.000,173.800" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="34.200" y="25.500" font-size="2.000" text-anchor="start" fill="#000000" font-weight="bold">COMPONENTE</text>
+<polyline points="113.000,22.000 113.000,173.800" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="114.200" y="25.500" font-size="2.000" text-anchor="start" fill="#000000" font-weight="bold">MATERIAL / ACABAMENTO</text>
+<polyline points="187.000,22.000 187.000,173.800" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="188.200" y="25.500" font-size="2.000" text-anchor="start" fill="#000000" font-weight="bold">QTD</text>
+<polyline points="24.000,31.200 202.000,31.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="30.200" font-size="1.900" text-anchor="start" fill="#000000">1</text>
+<text x="34.200" y="30.200" font-size="1.900" text-anchor="start" fill="#000000">Tampo (painel superior)</text>
+<text x="114.200" y="30.200" font-size="1.900" text-anchor="start" fill="#000000">Alumínio 2,0 escovado (não mostra desgaste)</text>
+<text x="200.800" y="30.200" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,35.800 202.000,35.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="34.800" font-size="1.900" text-anchor="start" fill="#000000">2</text>
+<text x="34.200" y="34.800" font-size="1.900" text-anchor="start" fill="#000000">Fundo</text>
+<text x="114.200" y="34.800" font-size="1.900" text-anchor="start" fill="#000000">Aço 1,2 pintado</text>
+<text x="200.800" y="34.800" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,40.400 202.000,40.400" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="39.400" font-size="1.900" text-anchor="start" fill="#000000">3</text>
+<text x="34.200" y="39.400" font-size="1.900" text-anchor="start" fill="#000000">Lateral (end cheek)</text>
+<text x="114.200" y="39.400" font-size="1.900" text-anchor="start" fill="#d40000">Plástico resistente (resina A DEFINIR)</text>
+<text x="200.800" y="39.400" font-size="1.900" text-anchor="end" fill="#000000">2</text>
+<polyline points="24.000,45.000 202.000,45.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="44.000" font-size="1.900" text-anchor="start" fill="#000000">4</text>
+<text x="34.200" y="44.000" font-size="1.900" text-anchor="start" fill="#000000">Lábio frontal</text>
+<text x="114.200" y="44.000" font-size="1.900" text-anchor="start" fill="#d40000">A DEFINIR</text>
+<text x="200.800" y="44.000" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,49.600 202.000,49.600" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="48.600" font-size="1.900" text-anchor="start" fill="#000000">5</text>
+<text x="34.200" y="48.600" font-size="1.900" text-anchor="start" fill="#000000">Painel traseiro</text>
+<text x="114.200" y="48.600" font-size="1.900" text-anchor="start" fill="#d40000">A DEFINIR</text>
+<text x="200.800" y="48.600" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,54.200 202.000,54.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="53.200" font-size="1.900" text-anchor="start" fill="#000000">6</text>
+<text x="34.200" y="53.200" font-size="1.900" text-anchor="start" fill="#000000">Teclado Fatar 73SW (E1–E7, waterfall*)</text>
+<text x="114.200" y="53.200" font-size="1.900" text-anchor="start" fill="#000000">Conjunto Fatar (comprado)</text>
+<text x="200.800" y="53.200" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,58.800 202.000,58.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="57.800" font-size="1.900" text-anchor="start" fill="#000000">7</text>
+<text x="34.200" y="57.800" font-size="1.900" text-anchor="start" fill="#000000">Tecla branca</text>
+<text x="114.200" y="57.800" font-size="1.900" text-anchor="start" fill="#000000">Fatar</text>
+<text x="200.800" y="57.800" font-size="1.900" text-anchor="end" fill="#000000">43</text>
+<polyline points="24.000,63.400 202.000,63.400" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="62.400" font-size="1.900" text-anchor="start" fill="#000000">8</text>
+<text x="34.200" y="62.400" font-size="1.900" text-anchor="start" fill="#000000">Tecla preta</text>
+<text x="114.200" y="62.400" font-size="1.900" text-anchor="start" fill="#000000">Fatar</text>
+<text x="200.800" y="62.400" font-size="1.900" text-anchor="end" fill="#000000">30</text>
+<polyline points="24.000,68.000 202.000,68.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="67.000" font-size="1.900" text-anchor="start" fill="#000000">9</text>
+<text x="34.200" y="67.000" font-size="1.900" text-anchor="start" fill="#000000">Roda PITCH / MOD</text>
+<text x="114.200" y="67.000" font-size="1.900" text-anchor="start" fill="#d40000">A DEFINIR</text>
+<text x="200.800" y="67.000" font-size="1.900" text-anchor="end" fill="#000000">2</text>
+<polyline points="24.000,72.600 202.000,72.600" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="71.600" font-size="1.900" text-anchor="start" fill="#000000">10</text>
+<text x="34.200" y="71.600" font-size="1.900" text-anchor="start" fill="#000000">Fader 45 mm, cap (REV diferenciado)</text>
+<text x="114.200" y="71.600" font-size="1.900" text-anchor="start" fill="#000000">Cap: alumínio usinado anodizado</text>
+<text x="200.800" y="71.600" font-size="1.900" text-anchor="end" fill="#000000">9</text>
+<polyline points="24.000,77.200 202.000,77.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="76.200" font-size="1.900" text-anchor="start" fill="#000000">11</text>
+<text x="34.200" y="76.200" font-size="1.900" text-anchor="start" fill="#000000">Encoder c/ anel de LED, knob Ø20</text>
+<text x="114.200" y="76.200" font-size="1.900" text-anchor="start" fill="#000000">Knob: alumínio usinado anodizado</text>
+<text x="200.800" y="76.200" font-size="1.900" text-anchor="end" fill="#000000">8</text>
+<polyline points="24.000,81.800 202.000,81.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="80.800" font-size="1.900" text-anchor="start" fill="#000000">12</text>
+<text x="34.200" y="80.800" font-size="1.900" text-anchor="start" fill="#000000">Encoder VALUE Ø35 recartilhado, push</text>
+<text x="114.200" y="80.800" font-size="1.900" text-anchor="start" fill="#000000">Knob: alumínio usinado anodizado</text>
+<text x="200.800" y="80.800" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,86.400 202.000,86.400" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="85.400" font-size="1.900" text-anchor="start" fill="#000000">13</text>
+<text x="34.200" y="85.400" font-size="1.900" text-anchor="start" fill="#000000">Potenciômetro MASTER, knob Ø20</text>
+<text x="114.200" y="85.400" font-size="1.900" text-anchor="start" fill="#000000">Knob: alumínio usinado anodizado</text>
+<text x="200.800" y="85.400" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,91.000 202.000,91.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="90.000" font-size="1.900" text-anchor="start" fill="#000000">14</text>
+<text x="34.200" y="90.000" font-size="1.900" text-anchor="start" fill="#000000">Botão 14×9 (WRITE côncavo, MENU c/ ponto)</text>
+<text x="114.200" y="90.000" font-size="1.900" text-anchor="start" fill="#d40000">A DEFINIR</text>
+<text x="200.800" y="90.000" font-size="1.900" text-anchor="end" fill="#000000">17</text>
+<polyline points="24.000,95.600 202.000,95.600" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="94.600" font-size="1.900" text-anchor="start" fill="#000000">15</text>
+<text x="34.200" y="94.600" font-size="1.900" text-anchor="start" fill="#000000">Botão toggle c/ LED por estado</text>
+<text x="114.200" y="94.600" font-size="1.900" text-anchor="start" fill="#d40000">A DEFINIR</text>
+<text x="200.800" y="94.600" font-size="1.900" text-anchor="end" fill="#000000">3</text>
+<polyline points="24.000,100.200 202.000,100.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="99.200" font-size="1.900" text-anchor="start" fill="#000000">16</text>
+<text x="34.200" y="99.200" font-size="1.900" text-anchor="start" fill="#000000">LED difuso Ø3 (≥ 10:1 a 50 klx)</text>
+<text x="114.200" y="99.200" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="99.200" font-size="1.900" text-anchor="end" fill="#000000">15</text>
+<polyline points="24.000,104.800 202.000,104.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="103.800" font-size="1.900" text-anchor="start" fill="#000000">17</text>
+<text x="34.200" y="103.800" font-size="1.900" text-anchor="start" fill="#000000">Display 7" 1024×600 + vidro AG/AR colado</text>
+<text x="114.200" y="103.800" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="103.800" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,109.400 202.000,109.400" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="108.400" font-size="1.900" text-anchor="start" fill="#000000">18</text>
+<text x="34.200" y="108.400" font-size="1.900" text-anchor="start" fill="#000000">Jack ¼" TRS saída balanceada (MAIN/AUX)</text>
+<text x="114.200" y="108.400" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="108.400" font-size="1.900" text-anchor="end" fill="#000000">4</text>
+<polyline points="24.000,114.000 202.000,114.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="113.000" font-size="1.900" text-anchor="start" fill="#000000">19</text>
+<text x="34.200" y="113.000" font-size="1.900" text-anchor="start" fill="#000000">Jack ¼" TRS fone (frontal)</text>
+<text x="114.200" y="113.000" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="113.000" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,118.600 202.000,118.600" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="117.600" font-size="1.900" text-anchor="start" fill="#000000">20</text>
+<text x="34.200" y="117.600" font-size="1.900" text-anchor="start" fill="#000000">Entrada de linha: ¼" L/R + 3,5 mm</text>
+<text x="114.200" y="117.600" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="117.600" font-size="1.900" text-anchor="end" fill="#000000">3</text>
+<polyline points="24.000,123.200 202.000,123.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="122.200" font-size="1.900" text-anchor="start" fill="#000000">21</text>
+<text x="34.200" y="122.200" font-size="1.900" text-anchor="start" fill="#000000">Jack ¼" TRS pedal (sust./expr./switch)</text>
+<text x="114.200" y="122.200" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="122.200" font-size="1.900" text-anchor="end" fill="#000000">3</text>
+<polyline points="24.000,127.800 202.000,127.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="126.800" font-size="1.900" text-anchor="start" fill="#000000">22</text>
+<text x="34.200" y="126.800" font-size="1.900" text-anchor="start" fill="#000000">MIDI DIN 5 pinos (IN/OUT)</text>
+<text x="114.200" y="126.800" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="126.800" font-size="1.900" text-anchor="end" fill="#000000">2</text>
+<polyline points="24.000,132.400 202.000,132.400" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="131.400" font-size="1.900" text-anchor="start" fill="#000000">23</text>
+<text x="34.200" y="131.400" font-size="1.900" text-anchor="start" fill="#000000">USB-C (device)</text>
+<text x="114.200" y="131.400" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="131.400" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,137.000 202.000,137.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="136.000" font-size="1.900" text-anchor="start" fill="#000000">24</text>
+<text x="34.200" y="136.000" font-size="1.900" text-anchor="start" fill="#000000">USB-A (host)</text>
+<text x="114.200" y="136.000" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="136.000" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,141.600 202.000,141.600" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="140.600" font-size="1.900" text-anchor="start" fill="#000000">25</text>
+<text x="34.200" y="140.600" font-size="1.900" text-anchor="start" fill="#000000">Conector DC P4 com trava (fonte externa)</text>
+<text x="114.200" y="140.600" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="140.600" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,146.200 202.000,146.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="145.200" font-size="1.900" text-anchor="start" fill="#000000">26</text>
+<text x="34.200" y="145.200" font-size="1.900" text-anchor="start" fill="#000000">Botão power (soft)</text>
+<text x="114.200" y="145.200" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="145.200" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,150.800 202.000,150.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="149.800" font-size="1.900" text-anchor="start" fill="#000000">27</text>
+<text x="34.200" y="149.800" font-size="1.900" text-anchor="start" fill="#000000">Placa principal (SoM RK3588 + codec PCM3168A)</text>
+<text x="114.200" y="149.800" font-size="1.900" text-anchor="start" fill="#000000">PCB (parceiro)</text>
+<text x="200.800" y="149.800" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,155.400 202.000,155.400" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="154.400" font-size="1.900" text-anchor="start" fill="#000000">28</text>
+<text x="34.200" y="154.400" font-size="1.900" text-anchor="start" fill="#000000">SSD NVMe M.2 2280 (22×80)</text>
+<text x="114.200" y="154.400" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="154.400" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,160.000 202.000,160.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="159.000" font-size="1.900" text-anchor="start" fill="#000000">29</text>
+<text x="34.200" y="159.000" font-size="1.900" text-anchor="start" fill="#000000">Placa(s) do painel com MCU</text>
+<text x="114.200" y="159.000" font-size="1.900" text-anchor="start" fill="#000000">PCB (parceiro)</text>
+<text x="200.800" y="159.000" font-size="1.900" text-anchor="end" fill="#d40000">A DEF.</text>
+<polyline points="24.000,164.600 202.000,164.600" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="163.600" font-size="1.900" text-anchor="start" fill="#000000">30</text>
+<text x="34.200" y="163.600" font-size="1.900" text-anchor="start" fill="#000000">Placa MCU do teclado</text>
+<text x="114.200" y="163.600" font-size="1.900" text-anchor="start" fill="#000000">PCB (parceiro)</text>
+<text x="200.800" y="163.600" font-size="1.900" text-anchor="end" fill="#000000">1</text>
+<polyline points="24.000,169.200 202.000,169.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="168.200" font-size="1.900" text-anchor="start" fill="#000000">31</text>
+<text x="34.200" y="168.200" font-size="1.900" text-anchor="start" fill="#000000">Supercapacitores (hold-up ≥ 150 ms)</text>
+<text x="114.200" y="168.200" font-size="1.900" text-anchor="start" fill="#000000">Comprado</text>
+<text x="200.800" y="168.200" font-size="1.900" text-anchor="end" fill="#d40000">A DEF.</text>
+<polyline points="24.000,173.800 202.000,173.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="172.800" font-size="1.900" text-anchor="start" fill="#000000">32</text>
+<text x="34.200" y="172.800" font-size="1.900" text-anchor="start" fill="#000000">Pé Ø30×10 + parafuso M4</text>
+<text x="114.200" y="172.800" font-size="1.900" text-anchor="start" fill="#000000">Borracha / aço zincado</text>
+<text x="200.800" y="172.800" font-size="1.900" text-anchor="end" fill="#000000">4</text>
+<text x="24.000" y="182.800" font-size="2.400" text-anchor="start" fill="#000000" font-weight="bold">NOTAS GERAIS</text>
+<text x="24.000" y="186.950" font-size="1.950" text-anchor="start" fill="#000000">1. Dimensões em mm. Tolerâncias gerais ISO 2768-mK, salvo indicação.</text>
+<text x="24.000" y="191.100" font-size="1.950" text-anchor="start" fill="#000000">2. Desenho em 1º diedro (ABNT). Origem O: canto frontal esquerdo; X para a direita,</text>
+<text x="24.000" y="195.250" font-size="1.950" text-anchor="start" fill="#000000">    Y para trás, Z para cima a partir da face inferior do fundo (sem pés).</text>
+<text x="24.000" y="199.400" font-size="1.950" text-anchor="start" fill="#000000">3. Geometria das teclas medida no desenho Fatar 61 TP/9 C+ (cód. 94163200, esc. 1:1).</text>
+<text x="24.000" y="203.550" font-size="1.950" text-anchor="start" fill="#000000">    Aplicação ao 73SW e perfil waterfall E–E: A CONFIRMAR (Story 11.6).</text>
+<text x="24.000" y="207.700" font-size="1.950" text-anchor="start" fill="#000000">4. Nomenclatura: C4 = MIDI 60 (Dó central). Extensão E1–E7, 43 brancas + 30 pretas.</text>
+<text x="24.000" y="211.850" font-size="1.950" text-anchor="start" fill="#000000">5. Tampo em alumínio 2,0 escovado, acabamento que não mostra desgaste; fundo em aço</text>
+<text x="24.000" y="216.000" font-size="1.950" text-anchor="start" fill="#000000">    1,2 pintado; laterais em plástico resistente. Painel plano; cantos R3.</text>
+<text x="24.000" y="220.150" font-size="1.950" text-anchor="start" fill="#000000">6. Legendas em inglês, altura de maiúscula ≥ 2,5 mm, sobre faixa fosca ou jateada.</text>
+<text x="24.000" y="224.300" font-size="1.950" text-anchor="start" fill="#000000">    LEDs difusos Ø3, contraste ligado/desligado ≥ 10:1 a 50 klx.</text>
+<text x="24.000" y="228.450" font-size="1.950" text-anchor="start" fill="#000000">7. Knobs e caps em alumínio usinado anodizado; cap do REV diferenciado; VALUE</text>
+<text x="24.000" y="232.600" font-size="1.950" text-anchor="start" fill="#000000">    recartilhado com push; WRITE côncavo ou com anel; MENU com ponto central.</text>
+<text x="24.000" y="236.750" font-size="1.950" text-anchor="start" fill="#000000">8. Posições de controles, conectores e componentes internos são PROPOSTAS:</text>
+<text x="24.000" y="240.900" font-size="1.950" text-anchor="start" fill="#000000">    validar com o parceiro de hardware. Recortes dependem dos part numbers.</text>
+<text x="24.000" y="245.050" font-size="1.950" text-anchor="start" fill="#000000">9. Em vermelho: valor A DEFINIR ou A CONFIRMAR. Geometria em vermelho é provisória.</text>
+<text x="24.000" y="249.200" font-size="1.950" text-anchor="start" fill="#000000">10. Fonte externa homologada Inmetro (P4 com trava). Peso de referência: ~20 kg.</text>
+<text x="210.000" y="20.000" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">COORDENADAS (PROPOSTA) — ORIGEM O, mm</text>
+<polygon points="210.000,22.000 408.000,22.000 408.000,244.080 210.000,244.080" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="210.000,25.470 408.000,25.470" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="211.200" y="24.370" font-size="1.900" text-anchor="start" fill="#000000" font-weight="bold">ID</text>
+<polyline points="222.000,22.000 222.000,244.080" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="223.200" y="24.370" font-size="1.900" text-anchor="start" fill="#000000" font-weight="bold">ELEMENTO</text>
+<polyline points="274.000,22.000 274.000,244.080" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="275.200" y="24.370" font-size="1.900" text-anchor="start" fill="#000000" font-weight="bold">X</text>
+<polyline points="291.000,22.000 291.000,244.080" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="292.200" y="24.370" font-size="1.900" text-anchor="start" fill="#000000" font-weight="bold">Y</text>
+<polyline points="308.000,22.000 308.000,244.080" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="309.200" y="24.370" font-size="1.900" text-anchor="start" fill="#000000" font-weight="bold">Z</text>
+<polyline points="321.000,22.000 321.000,244.080" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="322.200" y="24.370" font-size="1.900" text-anchor="start" fill="#000000" font-weight="bold">OBS.</text>
+<polyline points="210.000,28.940 408.000,28.940" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="27.940" font-size="1.750" text-anchor="start" fill="#000000">9.1</text>
+<text x="223.200" y="27.940" font-size="1.750" text-anchor="start" fill="#000000">Roda PITCH</text>
+<text x="289.800" y="27.940" font-size="1.750" text-anchor="end" fill="#000000">50</text>
+<text x="306.800" y="27.940" font-size="1.750" text-anchor="end" fill="#000000">85</text>
+<text x="319.800" y="27.940" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="27.940" font-size="1.750" text-anchor="start" fill="#d40000">tamanho A DEFINIR</text>
+<polyline points="210.000,32.410 408.000,32.410" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="31.410" font-size="1.750" text-anchor="start" fill="#000000">9.2</text>
+<text x="223.200" y="31.410" font-size="1.750" text-anchor="start" fill="#000000">Roda MOD</text>
+<text x="289.800" y="31.410" font-size="1.750" text-anchor="end" fill="#000000">80</text>
+<text x="306.800" y="31.410" font-size="1.750" text-anchor="end" fill="#000000">85</text>
+<text x="319.800" y="31.410" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="31.410" font-size="1.750" text-anchor="start" fill="#d40000">tamanho A DEFINIR</text>
+<polyline points="210.000,35.880 408.000,35.880" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="34.880" font-size="1.750" text-anchor="start" fill="#000000">13</text>
+<text x="223.200" y="34.880" font-size="1.750" text-anchor="start" fill="#000000">MASTER</text>
+<text x="289.800" y="34.880" font-size="1.750" text-anchor="end" fill="#000000">55</text>
+<text x="306.800" y="34.880" font-size="1.750" text-anchor="end" fill="#000000">215</text>
+<text x="319.800" y="34.880" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="34.880" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20</text>
+<polyline points="210.000,39.350 408.000,39.350" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="38.350" font-size="1.750" text-anchor="start" fill="#000000">14.16</text>
+<text x="223.200" y="38.350" font-size="1.750" text-anchor="start" fill="#000000">ROTARY STOP</text>
+<text x="289.800" y="38.350" font-size="1.750" text-anchor="end" fill="#000000">110</text>
+<text x="306.800" y="38.350" font-size="1.750" text-anchor="end" fill="#000000">215</text>
+<text x="319.800" y="38.350" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="38.350" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,42.820 408.000,42.820" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="41.820" font-size="1.750" text-anchor="start" fill="#000000">14.17</text>
+<text x="223.200" y="41.820" font-size="1.750" text-anchor="start" fill="#000000">ROTARY S/F</text>
+<text x="289.800" y="41.820" font-size="1.750" text-anchor="end" fill="#000000">135</text>
+<text x="306.800" y="41.820" font-size="1.750" text-anchor="end" fill="#000000">215</text>
+<text x="319.800" y="41.820" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="41.820" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,46.290 408.000,46.290" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="45.290" font-size="1.750" text-anchor="start" fill="#000000">15.1</text>
+<text x="223.200" y="45.290" font-size="1.750" text-anchor="start" fill="#000000">DRAWBARS / MIXER</text>
+<text x="289.800" y="45.290" font-size="1.750" text-anchor="end" fill="#000000">215</text>
+<text x="306.800" y="45.290" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="45.290" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="45.290" font-size="1.750" text-anchor="start" fill="#000000">2 LEDs</text>
+<polyline points="210.000,49.760 408.000,49.760" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="48.760" font-size="1.750" text-anchor="start" fill="#000000">10.1</text>
+<text x="223.200" y="48.760" font-size="1.750" text-anchor="start" fill="#000000">Fader 1</text>
+<text x="289.800" y="48.760" font-size="1.750" text-anchor="end" fill="#000000">255</text>
+<text x="306.800" y="48.760" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="48.760" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="48.760" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,53.230 408.000,53.230" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="52.230" font-size="1.750" text-anchor="start" fill="#000000">10.2</text>
+<text x="223.200" y="52.230" font-size="1.750" text-anchor="start" fill="#000000">Fader 2</text>
+<text x="289.800" y="52.230" font-size="1.750" text-anchor="end" fill="#000000">275</text>
+<text x="306.800" y="52.230" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="52.230" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="52.230" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,56.700 408.000,56.700" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="55.700" font-size="1.750" text-anchor="start" fill="#000000">10.3</text>
+<text x="223.200" y="55.700" font-size="1.750" text-anchor="start" fill="#000000">Fader 3</text>
+<text x="289.800" y="55.700" font-size="1.750" text-anchor="end" fill="#000000">295</text>
+<text x="306.800" y="55.700" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="55.700" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="55.700" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,60.170 408.000,60.170" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="59.170" font-size="1.750" text-anchor="start" fill="#000000">10.4</text>
+<text x="223.200" y="59.170" font-size="1.750" text-anchor="start" fill="#000000">Fader 4</text>
+<text x="289.800" y="59.170" font-size="1.750" text-anchor="end" fill="#000000">315</text>
+<text x="306.800" y="59.170" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="59.170" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="59.170" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,63.640 408.000,63.640" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="62.640" font-size="1.750" text-anchor="start" fill="#000000">10.5</text>
+<text x="223.200" y="62.640" font-size="1.750" text-anchor="start" fill="#000000">Fader 5</text>
+<text x="289.800" y="62.640" font-size="1.750" text-anchor="end" fill="#000000">335</text>
+<text x="306.800" y="62.640" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="62.640" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="62.640" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,67.110 408.000,67.110" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="66.110" font-size="1.750" text-anchor="start" fill="#000000">10.6</text>
+<text x="223.200" y="66.110" font-size="1.750" text-anchor="start" fill="#000000">Fader 6</text>
+<text x="289.800" y="66.110" font-size="1.750" text-anchor="end" fill="#000000">355</text>
+<text x="306.800" y="66.110" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="66.110" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="66.110" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,70.580 408.000,70.580" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="69.580" font-size="1.750" text-anchor="start" fill="#000000">10.7</text>
+<text x="223.200" y="69.580" font-size="1.750" text-anchor="start" fill="#000000">Fader 7</text>
+<text x="289.800" y="69.580" font-size="1.750" text-anchor="end" fill="#000000">375</text>
+<text x="306.800" y="69.580" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="69.580" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="69.580" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,74.050 408.000,74.050" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="73.050" font-size="1.750" text-anchor="start" fill="#000000">10.8</text>
+<text x="223.200" y="73.050" font-size="1.750" text-anchor="start" fill="#000000">Fader 8</text>
+<text x="289.800" y="73.050" font-size="1.750" text-anchor="end" fill="#000000">395</text>
+<text x="306.800" y="73.050" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="73.050" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="73.050" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,77.520 408.000,77.520" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="76.520" font-size="1.750" text-anchor="start" fill="#000000">10.9</text>
+<text x="223.200" y="76.520" font-size="1.750" text-anchor="start" fill="#000000">Fader REV</text>
+<text x="289.800" y="76.520" font-size="1.750" text-anchor="end" fill="#000000">415</text>
+<text x="306.800" y="76.520" font-size="1.750" text-anchor="end" fill="#000000">245</text>
+<text x="319.800" y="76.520" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="76.520" font-size="1.750" text-anchor="start" fill="#000000">centro do curso 45</text>
+<polyline points="210.000,80.990 408.000,80.990" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="79.990" font-size="1.750" text-anchor="start" fill="#000000">15.2</text>
+<text x="223.200" y="79.990" font-size="1.750" text-anchor="start" fill="#000000">PARTS / SCENES</text>
+<text x="289.800" y="79.990" font-size="1.750" text-anchor="end" fill="#000000">215</text>
+<text x="306.800" y="79.990" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="79.990" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="79.990" font-size="1.750" text-anchor="start" fill="#000000">2 LEDs</text>
+<polyline points="210.000,84.460 408.000,84.460" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="83.460" font-size="1.750" text-anchor="start" fill="#000000">14.1</text>
+<text x="223.200" y="83.460" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 1</text>
+<text x="289.800" y="83.460" font-size="1.750" text-anchor="end" fill="#000000">255</text>
+<text x="306.800" y="83.460" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="83.460" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="83.460" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,87.930 408.000,87.930" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="86.930" font-size="1.750" text-anchor="start" fill="#000000">14.2</text>
+<text x="223.200" y="86.930" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 2</text>
+<text x="289.800" y="86.930" font-size="1.750" text-anchor="end" fill="#000000">275</text>
+<text x="306.800" y="86.930" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="86.930" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="86.930" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,91.400 408.000,91.400" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="90.400" font-size="1.750" text-anchor="start" fill="#000000">14.3</text>
+<text x="223.200" y="90.400" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 3</text>
+<text x="289.800" y="90.400" font-size="1.750" text-anchor="end" fill="#000000">295</text>
+<text x="306.800" y="90.400" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="90.400" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="90.400" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,94.870 408.000,94.870" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="93.870" font-size="1.750" text-anchor="start" fill="#000000">14.4</text>
+<text x="223.200" y="93.870" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 4</text>
+<text x="289.800" y="93.870" font-size="1.750" text-anchor="end" fill="#000000">315</text>
+<text x="306.800" y="93.870" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="93.870" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="93.870" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,98.340 408.000,98.340" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="97.340" font-size="1.750" text-anchor="start" fill="#000000">14.5</text>
+<text x="223.200" y="97.340" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 5</text>
+<text x="289.800" y="97.340" font-size="1.750" text-anchor="end" fill="#000000">335</text>
+<text x="306.800" y="97.340" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="97.340" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="97.340" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,101.810 408.000,101.810" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="100.810" font-size="1.750" text-anchor="start" fill="#000000">14.6</text>
+<text x="223.200" y="100.810" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 6</text>
+<text x="289.800" y="100.810" font-size="1.750" text-anchor="end" fill="#000000">355</text>
+<text x="306.800" y="100.810" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="100.810" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="100.810" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,105.280 408.000,105.280" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="104.280" font-size="1.750" text-anchor="start" fill="#000000">14.7</text>
+<text x="223.200" y="104.280" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 7</text>
+<text x="289.800" y="104.280" font-size="1.750" text-anchor="end" fill="#000000">375</text>
+<text x="306.800" y="104.280" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="104.280" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="104.280" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,108.750 408.000,108.750" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="107.750" font-size="1.750" text-anchor="start" fill="#000000">14.8</text>
+<text x="223.200" y="107.750" font-size="1.750" text-anchor="start" fill="#000000">PARTE/CENA 8</text>
+<text x="289.800" y="107.750" font-size="1.750" text-anchor="end" fill="#000000">395</text>
+<text x="306.800" y="107.750" font-size="1.750" text-anchor="end" fill="#000000">180</text>
+<text x="319.800" y="107.750" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="107.750" font-size="1.750" text-anchor="start" fill="#000000">LED em Y=191,5</text>
+<polyline points="210.000,112.220 408.000,112.220" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="111.220" font-size="1.750" text-anchor="start" fill="#000000">17</text>
+<text x="223.200" y="111.220" font-size="1.750" text-anchor="start" fill="#000000">Display (centro da área ativa)</text>
+<text x="289.800" y="111.220" font-size="1.750" text-anchor="end" fill="#000000">582,1</text>
+<text x="306.800" y="111.220" font-size="1.750" text-anchor="end" fill="#000000">219,4</text>
+<text x="319.800" y="111.220" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="111.220" font-size="1.750" text-anchor="start" fill="#000000">área 153,6×90,0</text>
+<polyline points="210.000,115.690 408.000,115.690" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="114.690" font-size="1.750" text-anchor="start" fill="#000000">14.9</text>
+<text x="223.200" y="114.690" font-size="1.750" text-anchor="start" fill="#000000">LIVE SET ◀</text>
+<text x="289.800" y="114.690" font-size="1.750" text-anchor="end" fill="#000000">715</text>
+<text x="306.800" y="114.690" font-size="1.750" text-anchor="end" fill="#000000">262</text>
+<text x="319.800" y="114.690" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="114.690" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,119.160 408.000,119.160" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="118.160" font-size="1.750" text-anchor="start" fill="#000000">14.10</text>
+<text x="223.200" y="118.160" font-size="1.750" text-anchor="start" fill="#000000">LIVE SET ▶</text>
+<text x="289.800" y="118.160" font-size="1.750" text-anchor="end" fill="#000000">735</text>
+<text x="306.800" y="118.160" font-size="1.750" text-anchor="end" fill="#000000">262</text>
+<text x="319.800" y="118.160" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="118.160" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,122.630 408.000,122.630" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="121.630" font-size="1.750" text-anchor="start" fill="#000000">14.11</text>
+<text x="223.200" y="121.630" font-size="1.750" text-anchor="start" fill="#000000">SCENE ◀</text>
+<text x="289.800" y="121.630" font-size="1.750" text-anchor="end" fill="#000000">715</text>
+<text x="306.800" y="121.630" font-size="1.750" text-anchor="end" fill="#000000">240</text>
+<text x="319.800" y="121.630" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="121.630" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,126.100 408.000,126.100" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="125.100" font-size="1.750" text-anchor="start" fill="#000000">14.12</text>
+<text x="223.200" y="125.100" font-size="1.750" text-anchor="start" fill="#000000">SCENE ▶</text>
+<text x="289.800" y="125.100" font-size="1.750" text-anchor="end" fill="#000000">735</text>
+<text x="306.800" y="125.100" font-size="1.750" text-anchor="end" fill="#000000">240</text>
+<text x="319.800" y="125.100" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="125.100" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,129.570 408.000,129.570" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="128.570" font-size="1.750" text-anchor="start" fill="#000000">14.13</text>
+<text x="223.200" y="128.570" font-size="1.750" text-anchor="start" fill="#000000">EXIT</text>
+<text x="289.800" y="128.570" font-size="1.750" text-anchor="end" fill="#000000">705</text>
+<text x="306.800" y="128.570" font-size="1.750" text-anchor="end" fill="#000000">172</text>
+<text x="319.800" y="128.570" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="128.570" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,133.040 408.000,133.040" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="132.040" font-size="1.750" text-anchor="start" fill="#000000">14.14</text>
+<text x="223.200" y="132.040" font-size="1.750" text-anchor="start" fill="#000000">MENU</text>
+<text x="289.800" y="132.040" font-size="1.750" text-anchor="end" fill="#000000">725</text>
+<text x="306.800" y="132.040" font-size="1.750" text-anchor="end" fill="#000000">172</text>
+<text x="319.800" y="132.040" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="132.040" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,136.510 408.000,136.510" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="135.510" font-size="1.750" text-anchor="start" fill="#000000">14.15</text>
+<text x="223.200" y="135.510" font-size="1.750" text-anchor="start" fill="#000000">WRITE</text>
+<text x="289.800" y="135.510" font-size="1.750" text-anchor="end" fill="#000000">745</text>
+<text x="306.800" y="135.510" font-size="1.750" text-anchor="end" fill="#000000">172</text>
+<text x="319.800" y="135.510" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="135.510" font-size="1.750" text-anchor="start" fill="#000000">botão 14×9</text>
+<polyline points="210.000,139.980 408.000,139.980" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="138.980" font-size="1.750" text-anchor="start" fill="#000000">12</text>
+<text x="223.200" y="138.980" font-size="1.750" text-anchor="start" fill="#000000">VALUE (push)</text>
+<text x="289.800" y="138.980" font-size="1.750" text-anchor="end" fill="#000000">725</text>
+<text x="306.800" y="138.980" font-size="1.750" text-anchor="end" fill="#000000">205</text>
+<text x="319.800" y="138.980" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="138.980" font-size="1.750" text-anchor="start" fill="#000000">knob Ø35</text>
+<polyline points="210.000,143.450 408.000,143.450" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="142.450" font-size="1.750" text-anchor="start" fill="#000000">11.1</text>
+<text x="223.200" y="142.450" font-size="1.750" text-anchor="start" fill="#000000">Encoder DELAY</text>
+<text x="289.800" y="142.450" font-size="1.750" text-anchor="end" fill="#000000">840</text>
+<text x="306.800" y="142.450" font-size="1.750" text-anchor="end" fill="#000000">241</text>
+<text x="319.800" y="142.450" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="142.450" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,146.920 408.000,146.920" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="145.920" font-size="1.750" text-anchor="start" fill="#000000">11.2</text>
+<text x="223.200" y="145.920" font-size="1.750" text-anchor="start" fill="#000000">Encoder BRIGHTNESS</text>
+<text x="289.800" y="145.920" font-size="1.750" text-anchor="end" fill="#000000">872</text>
+<text x="306.800" y="145.920" font-size="1.750" text-anchor="end" fill="#000000">241</text>
+<text x="319.800" y="145.920" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="145.920" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,150.390 408.000,150.390" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="149.390" font-size="1.750" text-anchor="start" fill="#000000">11.3</text>
+<text x="223.200" y="149.390" font-size="1.750" text-anchor="start" fill="#000000">Encoder ATTACK</text>
+<text x="289.800" y="149.390" font-size="1.750" text-anchor="end" fill="#000000">904</text>
+<text x="306.800" y="149.390" font-size="1.750" text-anchor="end" fill="#000000">241</text>
+<text x="319.800" y="149.390" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="149.390" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,153.860 408.000,153.860" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="152.860" font-size="1.750" text-anchor="start" fill="#000000">11.4</text>
+<text x="223.200" y="152.860" font-size="1.750" text-anchor="start" fill="#000000">Encoder RELEASE</text>
+<text x="289.800" y="152.860" font-size="1.750" text-anchor="end" fill="#000000">936</text>
+<text x="306.800" y="152.860" font-size="1.750" text-anchor="end" fill="#000000">241</text>
+<text x="319.800" y="152.860" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="152.860" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,157.330 408.000,157.330" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="156.330" font-size="1.750" text-anchor="start" fill="#000000">11.5</text>
+<text x="223.200" y="156.330" font-size="1.750" text-anchor="start" fill="#000000">Encoder LOW</text>
+<text x="289.800" y="156.330" font-size="1.750" text-anchor="end" fill="#000000">840</text>
+<text x="306.800" y="156.330" font-size="1.750" text-anchor="end" fill="#000000">209</text>
+<text x="319.800" y="156.330" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="156.330" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,160.800 408.000,160.800" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="159.800" font-size="1.750" text-anchor="start" fill="#000000">11.6</text>
+<text x="223.200" y="159.800" font-size="1.750" text-anchor="start" fill="#000000">Encoder MID</text>
+<text x="289.800" y="159.800" font-size="1.750" text-anchor="end" fill="#000000">872</text>
+<text x="306.800" y="159.800" font-size="1.750" text-anchor="end" fill="#000000">209</text>
+<text x="319.800" y="159.800" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="159.800" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,164.270 408.000,164.270" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="163.270" font-size="1.750" text-anchor="start" fill="#000000">11.7</text>
+<text x="223.200" y="163.270" font-size="1.750" text-anchor="start" fill="#000000">Encoder MID FREQ</text>
+<text x="289.800" y="163.270" font-size="1.750" text-anchor="end" fill="#000000">904</text>
+<text x="306.800" y="163.270" font-size="1.750" text-anchor="end" fill="#000000">209</text>
+<text x="319.800" y="163.270" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="163.270" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,167.740 408.000,167.740" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="166.740" font-size="1.750" text-anchor="start" fill="#000000">11.8</text>
+<text x="223.200" y="166.740" font-size="1.750" text-anchor="start" fill="#000000">Encoder HIGH</text>
+<text x="289.800" y="166.740" font-size="1.750" text-anchor="end" fill="#000000">936</text>
+<text x="306.800" y="166.740" font-size="1.750" text-anchor="end" fill="#000000">209</text>
+<text x="319.800" y="166.740" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="166.740" font-size="1.750" text-anchor="start" fill="#000000">knob Ø20, anel Ø28</text>
+<polyline points="210.000,171.210 408.000,171.210" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="170.210" font-size="1.750" text-anchor="start" fill="#000000">15.3</text>
+<text x="223.200" y="170.210" font-size="1.750" text-anchor="start" fill="#000000">PART / ALL / ASSIGN</text>
+<text x="289.800" y="170.210" font-size="1.750" text-anchor="end" fill="#000000">990</text>
+<text x="306.800" y="170.210" font-size="1.750" text-anchor="end" fill="#000000">225</text>
+<text x="319.800" y="170.210" font-size="1.750" text-anchor="end" fill="#000000">—</text>
+<text x="322.200" y="170.210" font-size="1.750" text-anchor="start" fill="#000000">3 LEDs</text>
+<polyline points="210.000,174.680 408.000,174.680" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="173.680" font-size="1.750" text-anchor="start" fill="#000000">19</text>
+<text x="223.200" y="173.680" font-size="1.750" text-anchor="start" fill="#000000">PHONES ¼" TRS</text>
+<text x="289.800" y="173.680" font-size="1.750" text-anchor="end" fill="#000000">65</text>
+<text x="306.800" y="173.680" font-size="1.750" text-anchor="end" fill="#000000">0</text>
+<text x="319.800" y="173.680" font-size="1.750" text-anchor="end" fill="#000000">7,5</text>
+<text x="322.200" y="173.680" font-size="1.750" text-anchor="start" fill="#000000">face frontal</text>
+<polyline points="210.000,178.150 408.000,178.150" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="177.150" font-size="1.750" text-anchor="start" fill="#000000">25</text>
+<text x="223.200" y="177.150" font-size="1.750" text-anchor="start" fill="#000000">DC IN (P4 c/ trava)</text>
+<text x="289.800" y="177.150" font-size="1.750" text-anchor="end" fill="#000000">1084,2</text>
+<text x="306.800" y="177.150" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="177.150" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="177.150" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,181.620 408.000,181.620" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="180.620" font-size="1.750" text-anchor="start" fill="#000000">26</text>
+<text x="223.200" y="180.620" font-size="1.750" text-anchor="start" fill="#000000">POWER</text>
+<text x="289.800" y="180.620" font-size="1.750" text-anchor="end" fill="#000000">1059,2</text>
+<text x="306.800" y="180.620" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="180.620" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="180.620" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,185.090 408.000,185.090" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="184.090" font-size="1.750" text-anchor="start" fill="#000000">24</text>
+<text x="223.200" y="184.090" font-size="1.750" text-anchor="start" fill="#000000">USB-A (host)</text>
+<text x="289.800" y="184.090" font-size="1.750" text-anchor="end" fill="#000000">1004,2</text>
+<text x="306.800" y="184.090" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="184.090" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="184.090" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,188.560 408.000,188.560" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="187.560" font-size="1.750" text-anchor="start" fill="#000000">23</text>
+<text x="223.200" y="187.560" font-size="1.750" text-anchor="start" fill="#000000">USB-C (device)</text>
+<text x="289.800" y="187.560" font-size="1.750" text-anchor="end" fill="#000000">979,2</text>
+<text x="306.800" y="187.560" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="187.560" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="187.560" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,192.030 408.000,192.030" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="191.030" font-size="1.750" text-anchor="start" fill="#000000">22.1</text>
+<text x="223.200" y="191.030" font-size="1.750" text-anchor="start" fill="#000000">MIDI OUT</text>
+<text x="289.800" y="191.030" font-size="1.750" text-anchor="end" fill="#000000">924,2</text>
+<text x="306.800" y="191.030" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="191.030" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="191.030" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,195.500 408.000,195.500" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="194.500" font-size="1.750" text-anchor="start" fill="#000000">22.2</text>
+<text x="223.200" y="194.500" font-size="1.750" text-anchor="start" fill="#000000">MIDI IN</text>
+<text x="289.800" y="194.500" font-size="1.750" text-anchor="end" fill="#000000">894,2</text>
+<text x="306.800" y="194.500" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="194.500" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="194.500" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,198.970 408.000,198.970" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="197.970" font-size="1.750" text-anchor="start" fill="#000000">21.1</text>
+<text x="223.200" y="197.970" font-size="1.750" text-anchor="start" fill="#000000">PEDAL SUSTAIN</text>
+<text x="289.800" y="197.970" font-size="1.750" text-anchor="end" fill="#000000">834,2</text>
+<text x="306.800" y="197.970" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="197.970" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="197.970" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,202.440 408.000,202.440" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="201.440" font-size="1.750" text-anchor="start" fill="#000000">21.2</text>
+<text x="223.200" y="201.440" font-size="1.750" text-anchor="start" fill="#000000">PEDAL EXPRESSION</text>
+<text x="289.800" y="201.440" font-size="1.750" text-anchor="end" fill="#000000">809,2</text>
+<text x="306.800" y="201.440" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="201.440" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="201.440" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,205.910 408.000,205.910" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="204.910" font-size="1.750" text-anchor="start" fill="#000000">21.3</text>
+<text x="223.200" y="204.910" font-size="1.750" text-anchor="start" fill="#000000">PEDAL SWITCH</text>
+<text x="289.800" y="204.910" font-size="1.750" text-anchor="end" fill="#000000">784,2</text>
+<text x="306.800" y="204.910" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="204.910" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="204.910" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,209.380 408.000,209.380" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="208.380" font-size="1.750" text-anchor="start" fill="#000000">20.1</text>
+<text x="223.200" y="208.380" font-size="1.750" text-anchor="start" fill="#000000">LINE IN L ¼"</text>
+<text x="289.800" y="208.380" font-size="1.750" text-anchor="end" fill="#000000">724,2</text>
+<text x="306.800" y="208.380" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="208.380" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="208.380" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,212.850 408.000,212.850" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="211.850" font-size="1.750" text-anchor="start" fill="#000000">20.2</text>
+<text x="223.200" y="211.850" font-size="1.750" text-anchor="start" fill="#000000">LINE IN R ¼"</text>
+<text x="289.800" y="211.850" font-size="1.750" text-anchor="end" fill="#000000">699,2</text>
+<text x="306.800" y="211.850" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="211.850" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="211.850" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,216.320 408.000,216.320" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="215.320" font-size="1.750" text-anchor="start" fill="#000000">20.3</text>
+<text x="223.200" y="215.320" font-size="1.750" text-anchor="start" fill="#000000">LINE IN 3,5 mm</text>
+<text x="289.800" y="215.320" font-size="1.750" text-anchor="end" fill="#000000">674,2</text>
+<text x="306.800" y="215.320" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="215.320" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="215.320" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,219.790 408.000,219.790" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="218.790" font-size="1.750" text-anchor="start" fill="#000000">18.3</text>
+<text x="223.200" y="218.790" font-size="1.750" text-anchor="start" fill="#000000">AUX OUT R</text>
+<text x="289.800" y="218.790" font-size="1.750" text-anchor="end" fill="#000000">614,2</text>
+<text x="306.800" y="218.790" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="218.790" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="218.790" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,223.260 408.000,223.260" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="222.260" font-size="1.750" text-anchor="start" fill="#000000">18.4</text>
+<text x="223.200" y="222.260" font-size="1.750" text-anchor="start" fill="#000000">AUX OUT L</text>
+<text x="289.800" y="222.260" font-size="1.750" text-anchor="end" fill="#000000">589,2</text>
+<text x="306.800" y="222.260" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="222.260" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="222.260" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,226.730 408.000,226.730" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="225.730" font-size="1.750" text-anchor="start" fill="#000000">18.1</text>
+<text x="223.200" y="225.730" font-size="1.750" text-anchor="start" fill="#000000">MAIN OUT R</text>
+<text x="289.800" y="225.730" font-size="1.750" text-anchor="end" fill="#000000">529,2</text>
+<text x="306.800" y="225.730" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="225.730" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="225.730" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,230.200 408.000,230.200" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="229.200" font-size="1.750" text-anchor="start" fill="#000000">18.2</text>
+<text x="223.200" y="229.200" font-size="1.750" text-anchor="start" fill="#000000">MAIN OUT L</text>
+<text x="289.800" y="229.200" font-size="1.750" text-anchor="end" fill="#000000">504,2</text>
+<text x="306.800" y="229.200" font-size="1.750" text-anchor="end" fill="#000000">304,4</text>
+<text x="319.800" y="229.200" font-size="1.750" text-anchor="end" fill="#000000">35</text>
+<text x="322.200" y="229.200" font-size="1.750" text-anchor="start" fill="#000000">face traseira</text>
+<polyline points="210.000,233.670 408.000,233.670" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="232.670" font-size="1.750" text-anchor="start" fill="#000000">32.1</text>
+<text x="223.200" y="232.670" font-size="1.750" text-anchor="start" fill="#000000">Pé / furo M4</text>
+<text x="289.800" y="232.670" font-size="1.750" text-anchor="end" fill="#000000">50</text>
+<text x="306.800" y="232.670" font-size="1.750" text-anchor="end" fill="#000000">50</text>
+<text x="319.800" y="232.670" font-size="1.750" text-anchor="end" fill="#000000">0</text>
+<text x="322.200" y="232.670" font-size="1.750" text-anchor="start" fill="#000000">face inferior</text>
+<polyline points="210.000,237.140 408.000,237.140" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="236.140" font-size="1.750" text-anchor="start" fill="#000000">32.2</text>
+<text x="223.200" y="236.140" font-size="1.750" text-anchor="start" fill="#000000">Pé / furo M4</text>
+<text x="289.800" y="236.140" font-size="1.750" text-anchor="end" fill="#000000">1114,2</text>
+<text x="306.800" y="236.140" font-size="1.750" text-anchor="end" fill="#000000">50</text>
+<text x="319.800" y="236.140" font-size="1.750" text-anchor="end" fill="#000000">0</text>
+<text x="322.200" y="236.140" font-size="1.750" text-anchor="start" fill="#000000">face inferior</text>
+<polyline points="210.000,240.610 408.000,240.610" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="239.610" font-size="1.750" text-anchor="start" fill="#000000">32.3</text>
+<text x="223.200" y="239.610" font-size="1.750" text-anchor="start" fill="#000000">Pé / furo M4</text>
+<text x="289.800" y="239.610" font-size="1.750" text-anchor="end" fill="#000000">50</text>
+<text x="306.800" y="239.610" font-size="1.750" text-anchor="end" fill="#000000">254,4</text>
+<text x="319.800" y="239.610" font-size="1.750" text-anchor="end" fill="#000000">0</text>
+<text x="322.200" y="239.610" font-size="1.750" text-anchor="start" fill="#000000">face inferior</text>
+<polyline points="210.000,244.080 408.000,244.080" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="211.200" y="243.080" font-size="1.750" text-anchor="start" fill="#000000">32.4</text>
+<text x="223.200" y="243.080" font-size="1.750" text-anchor="start" fill="#000000">Pé / furo M4</text>
+<text x="289.800" y="243.080" font-size="1.750" text-anchor="end" fill="#000000">1114,2</text>
+<text x="306.800" y="243.080" font-size="1.750" text-anchor="end" fill="#000000">254,4</text>
+<text x="319.800" y="243.080" font-size="1.750" text-anchor="end" fill="#000000">0</text>
+<text x="322.200" y="243.080" font-size="1.750" text-anchor="start" fill="#000000">face inferior</text>
+<polygon points="240.000,251.000 410.000,251.000 410.000,287.000 240.000,287.000" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="240.000,260.000 410.000,260.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="240.000,269.000 410.000,269.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="240.000,278.000 410.000,278.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="350.000,251.000 350.000,260.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="241.200" y="253.600" font-size="1.600" text-anchor="start" fill="#000000">PROJETO</text>
+<text x="241.200" y="258.400" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">LADIANI VELORA 73 · buenos-x64-workstation</text>
+<text x="351.200" y="253.600" font-size="1.600" text-anchor="start" fill="#000000">FORMATO / DIEDRO</text>
+<text x="351.200" y="258.400" font-size="2.600" text-anchor="start" fill="#000000">A3 · 1º DIEDRO</text>
+<text x="241.200" y="262.600" font-size="1.600" text-anchor="start" fill="#000000">TÍTULO</text>
+<text x="241.200" y="267.400" font-size="2.800" text-anchor="start" fill="#000000" font-weight="bold">LEGENDA, COORDENADAS E NOTAS</text>
+<polyline points="280.000,269.000 280.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="315.000,269.000 315.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="350.000,269.000 350.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="380.000,269.000 380.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="241.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">ESCALA</text>
+<text x="241.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">SEM ESCALA</text>
+<text x="281.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">UNIDADE</text>
+<text x="281.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">mm</text>
+<text x="316.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">DATA</text>
+<text x="316.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">23/10/2026</text>
+<text x="351.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">REVISÃO</text>
+<text x="351.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">00</text>
+<text x="381.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">FOLHA</text>
+<text x="381.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">3/3</text>
+<text x="241.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">AUTOR</text>
+<text x="241.200" y="285.400" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">Mateus</text>
+<text x="281.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">TOLERÂNCIA GERAL</text>
+<text x="281.200" y="285.400" font-size="2.400" text-anchor="start" fill="#000000">ISO 2768-mK</text>
+<text x="316.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">TECLAS</text>
+<text x="316.200" y="285.400" font-size="2.200" text-anchor="start" fill="#000000">Fatar 61 TP/9 (ref.)</text>
+<text x="351.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">PENDENTE</text>
+<text x="351.200" y="285.400" font-size="2.400" text-anchor="start" fill="#d40000">em vermelho</text>
+<circle cx="403.000" cy="282.500" r="3.200" fill="none" stroke="#000000" stroke-width="0.2500"/>
+<circle cx="403.000" cy="282.500" r="1.600" fill="none" stroke="#000000" stroke-width="0.2500"/>
+<polygon points="390.000,280.900 397.000,279.300 397.000,285.700 390.000,284.100" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+</g>
+</svg>

@@ -8,6 +8,7 @@
 - **UAC2:** USB Audio Class 2, the class-compliant USB audio standard that needs no driver.
 - **Milestone 1:** the investor demo of the sample engine on an RK3588 dev board, proving the targets in `performance-targets.md`.
 - **73SW:** a 73-key semi-weighted keybed.
+- **Note names (C4 = MIDI 60):** middle C is C4, so the 73 keys span E1–E7. Drawings mark the Cs C2 to C7.
 - **Multi-contact onset:** organ notes fade in as successive key contacts close, emulating the 9 contacts per key of a B-3.
 - **Companion app (Velora Studio):** the desktop software that manages, converts, and activates libraries, and backs up and restores setlists and Live Sets, over a mediated USB protocol.
 - **Pro:** a later tier with a sequencer, 16 parts, and 32 GB of RAM, on the same SoC and software base.

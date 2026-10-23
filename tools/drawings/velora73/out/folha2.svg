@@ -1,0 +1,276 @@
+<svg xmlns="http://www.w3.org/2000/svg" id="folha2" class="sheet" viewBox="0 0 420 297" width="420mm" height="297mm" font-family="&apos;DejaVu Sans&apos;, &apos;Liberation Sans&apos;, Arial, Helvetica, sans-serif" stroke-linecap="butt">
+<rect x="0" y="0" width="420" height="297" fill="#ffffff"/>
+<g class="view" data-view="detalhe_B" transform="translate(30.000 64.000) scale(2.00000)">
+<polyline points="0.000,27.400 0.000,34.400 0.000,34.400 0.000,82.400 22.200,82.400 22.200,34.400 13.200,34.400 13.200,27.400" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="0.000,24.400 0.000,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="13.200,24.400 13.200,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="11.100" y="68.400" font-size="1.600" text-anchor="middle" fill="#000000" font-weight="bold">C4</text>
+<polyline points="28.100,27.400 28.100,34.400 23.600,34.400 23.600,82.400 45.800,82.400 45.800,34.400 41.300,34.400 41.300,27.400" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="28.100,24.400 28.100,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="41.300,24.400 41.300,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="34.700" y="68.400" font-size="1.600" text-anchor="middle" fill="#000000">D4</text>
+<polyline points="56.200,27.400 56.200,34.400 47.200,34.400 47.200,82.400 69.400,82.400 69.400,34.400 69.400,34.400 69.400,27.400" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="56.200,24.400 56.200,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="69.400,24.400 69.400,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="58.300" y="68.400" font-size="1.600" text-anchor="middle" fill="#000000">E4</text>
+<polyline points="70.800,27.400 70.800,34.400 70.800,34.400 70.800,82.400 93.000,82.400 93.000,34.400 82.920,34.400 82.920,27.400" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="70.800,24.400 70.800,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="82.920,24.400 82.920,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="81.900" y="68.400" font-size="1.600" text-anchor="middle" fill="#000000">F4</text>
+<polyline points="97.820,27.400 97.820,34.400 94.400,34.400 94.400,82.400 116.600,82.400 116.600,34.400 109.860,34.400 109.860,27.400" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="97.820,24.400 97.820,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="109.860,24.400 109.860,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="105.500" y="68.400" font-size="1.600" text-anchor="middle" fill="#000000">G4</text>
+<polyline points="124.760,27.400 124.760,34.400 118.000,34.400 118.000,82.400 140.200,82.400 140.200,34.400 136.800,34.400 136.800,27.400" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="124.760,24.400 124.760,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="136.800,24.400 136.800,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="129.100" y="68.400" font-size="1.600" text-anchor="middle" fill="#000000">A4</text>
+<polyline points="151.700,27.400 151.700,34.400 141.600,34.400 141.600,82.400 163.800,82.400 163.800,34.400 163.800,34.400 163.800,27.400" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="151.700,24.400 151.700,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="163.800,24.400 163.800,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="152.700" y="68.400" font-size="1.600" text-anchor="middle" fill="#000000">B4</text>
+<text x="11.100" y="76.400" font-size="0.900" text-anchor="middle" fill="#000000" font-weight="bold">DÓ CENTRAL</text>
+<polygon points="14.550,27.400 26.750,27.400 26.750,32.400 14.550,32.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polygon points="14.550,0.000 26.750,0.000 26.750,24.400 14.550,24.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="14.550,32.400 16.550,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="26.750,32.400 24.750,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="16.550,28.900 24.750,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="16.550,28.900 16.550,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="24.750,28.900 24.750,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="16.162,24.400 15.550,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="25.138,24.400 25.750,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="14.550,3.400 26.750,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<text x="20.650" y="17.400" font-size="1.100" text-anchor="middle" fill="#ffffff" font-weight="bold">C#4</text>
+<polygon points="42.650,27.400 54.850,27.400 54.850,32.400 42.650,32.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polygon points="42.650,0.000 54.850,0.000 54.850,24.400 42.650,24.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="42.650,32.400 44.650,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="54.850,32.400 52.850,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="44.650,28.900 52.850,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="44.650,28.900 44.650,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="52.850,28.900 52.850,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="44.262,24.400 43.650,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="53.238,24.400 53.850,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="42.650,3.400 54.850,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<text x="48.750" y="17.400" font-size="1.100" text-anchor="middle" fill="#ffffff" font-weight="bold">D#4</text>
+<polygon points="84.270,27.400 96.470,27.400 96.470,32.400 84.270,32.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polygon points="84.270,0.000 96.470,0.000 96.470,24.400 84.270,24.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="84.270,32.400 86.270,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="96.470,32.400 94.470,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="86.270,28.900 94.470,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="86.270,28.900 86.270,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="94.470,28.900 94.470,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="85.882,24.400 85.270,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="94.858,24.400 95.470,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="84.270,3.400 96.470,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<text x="90.370" y="17.400" font-size="1.100" text-anchor="middle" fill="#ffffff" font-weight="bold">F#4</text>
+<polygon points="111.210,27.400 123.410,27.400 123.410,32.400 111.210,32.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polygon points="111.210,0.000 123.410,0.000 123.410,24.400 111.210,24.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="111.210,32.400 113.210,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="123.410,32.400 121.410,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="113.210,28.900 121.410,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="113.210,28.900 113.210,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="121.410,28.900 121.410,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="112.822,24.400 112.210,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="121.798,24.400 122.410,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="111.210,3.400 123.410,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<text x="117.310" y="17.400" font-size="1.100" text-anchor="middle" fill="#ffffff" font-weight="bold">G#4</text>
+<polygon points="138.150,27.400 150.350,27.400 150.350,32.400 138.150,32.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polygon points="138.150,0.000 150.350,0.000 150.350,24.400 138.150,24.400" fill="#3a3a3a" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="138.150,32.400 140.150,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="150.350,32.400 148.350,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="140.150,28.900 148.350,28.900" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="140.150,28.900 140.150,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="148.350,28.900 148.350,27.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="139.762,24.400 139.150,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="148.738,24.400 149.350,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="138.150,3.400 150.350,3.400" fill="none" stroke="#c8c8c8" stroke-width="0.1250" stroke-linejoin="round"/>
+<text x="144.250" y="17.400" font-size="1.100" text-anchor="middle" fill="#ffffff" font-weight="bold">A#4</text>
+<polyline points="-6.000,27.400 80.600,27.400 81.100,26.400 82.100,28.400 82.600,27.400 169.200,27.400" fill="none" stroke="#000000" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="-6.000,24.400 80.600,24.400 81.100,23.400 82.100,25.400 82.600,24.400 169.200,24.400" fill="none" stroke="#000000" stroke-width="0.1250" stroke-linejoin="round"/>
+<polyline points="-4.000,0.000 171.200,0.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="151.200" y="-1.200" font-size="0.800" text-anchor="start" fill="#000000">BORDA DO TAMPO</text>
+<polyline points="165.200,27.400 165.200,82.400 171.200,82.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-dasharray="4.000 0.750 0.500 0.750 0.500 0.750" stroke-linejoin="round"/>
+<text x="166.200" y="68.400" font-size="1.100" text-anchor="middle" fill="#000000">C5</text>
+<polyline points="0.000,-0.500 0.000,-15.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="-0.300" y="-14.900" font-size="1.250" text-anchor="start" fill="#000000" transform="rotate(-90 -0.300 -14.900)">0</text>
+<polyline points="14.550,-0.500 14.550,-15.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="14.250" y="-14.900" font-size="1.250" text-anchor="start" fill="#000000" transform="rotate(-90 14.250 -14.900)">14,55</text>
+<polyline points="42.650,-0.500 42.650,-15.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="42.350" y="-14.900" font-size="1.250" text-anchor="start" fill="#000000" transform="rotate(-90 42.350 -14.900)">42,65</text>
+<polyline points="84.270,-0.500 84.270,-15.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="83.970" y="-14.900" font-size="1.250" text-anchor="start" fill="#000000" transform="rotate(-90 83.970 -14.900)">84,27</text>
+<polyline points="111.210,-0.500 111.210,-15.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="110.910" y="-14.900" font-size="1.250" text-anchor="start" fill="#000000" transform="rotate(-90 110.910 -14.900)">111,21</text>
+<polyline points="138.150,-0.500 138.150,-15.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="137.850" y="-14.900" font-size="1.250" text-anchor="start" fill="#000000" transform="rotate(-90 137.850 -14.900)">138,15</text>
+<circle cx="0.000" cy="-13.400" r="0.400" fill="none" stroke="#000000" stroke-width="0.0900"/>
+<polyline points="138.150,-0.500 138.150,-9.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="150.350,-0.500 150.350,-9.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="138.150,-8.000 150.350,-8.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="138.150,-8.000 139.400,-8.225 139.400,-7.775" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="150.350,-8.000 149.100,-7.775 149.100,-8.225" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="144.250" y="-8.450" font-size="1.250" text-anchor="middle" fill="#000000">12,2</text>
+<polyline points="82.920,-0.500 82.920,-9.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="97.820,-0.500 97.820,-9.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="82.920,-8.000 97.820,-8.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="82.920,-8.000 84.170,-8.225 84.170,-7.775" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="97.820,-8.000 96.570,-7.775 96.570,-8.225" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="80.420" y="-8.450" font-size="1.250" text-anchor="end" fill="#000000">14,9</text>
+<polyline points="0.000,82.900 0.000,87.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="22.200,82.900 22.200,87.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="0.000,86.400 22.200,86.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="0.000,86.400 1.250,86.175 1.250,86.625" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="22.200,86.400 20.950,86.625 20.950,86.175" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="11.100" y="85.950" font-size="1.250" text-anchor="middle" fill="#000000">22,2</text>
+<polyline points="22.200,82.900 22.200,87.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="23.600,82.900 23.600,87.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="19.950,86.400 25.850,86.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="22.200,86.400 20.950,86.625 20.950,86.175" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="23.600,86.400 24.850,86.175 24.850,86.625" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="26.100" y="85.950" font-size="1.250" text-anchor="start" fill="#000000">1,4</text>
+<polyline points="70.800,82.900 70.800,87.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="94.400,82.900 94.400,87.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="70.800,86.400 94.400,86.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="70.800,86.400 72.050,86.175 72.050,86.625" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="94.400,86.400 93.150,86.625 93.150,86.175" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="82.600" y="85.950" font-size="1.250" text-anchor="middle" fill="#000000">23,6</text>
+<text x="82.600" y="87.950" font-size="0.900" text-anchor="middle" fill="#000000">PASSO</text>
+<polyline points="0.000,82.900 0.000,93.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="165.200,82.900 165.200,93.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="0.000,92.400 165.200,92.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="0.000,92.400 1.250,92.175 1.250,92.625" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="165.200,92.400 163.950,92.625 163.950,92.175" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="82.600" y="91.950" font-size="1.250" text-anchor="middle" fill="#000000">165,2</text>
+<text x="82.600" y="93.950" font-size="0.900" text-anchor="middle" fill="#000000">OITAVA (7 × 23,6)</text>
+<polyline points="56.200,27.900 56.200,32.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="69.400,27.900 69.400,32.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="56.200,31.400 69.400,31.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="56.200,31.400 57.450,31.175 57.450,31.625" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="69.400,31.400 68.150,31.625 68.150,31.175" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="62.800" y="30.950" font-size="1.250" text-anchor="middle" fill="#000000">13,2</text>
+<polyline points="165.700,34.400 175.200,34.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="165.700,82.400 175.200,82.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="174.200,34.400 174.200,82.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="174.200,34.400 174.425,35.650 173.975,35.650" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="174.200,82.400 173.975,81.150 174.425,81.150" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="173.750" y="58.400" font-size="1.250" text-anchor="middle" fill="#000000" transform="rotate(-90 173.750 58.400)">48</text>
+<polyline points="165.700,32.400 179.200,32.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="165.700,82.400 179.200,82.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="178.200,32.400 178.200,82.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="178.200,32.400 178.425,33.650 177.975,33.650" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="178.200,82.400 177.975,81.150 178.425,81.150" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="177.750" y="57.400" font-size="1.250" text-anchor="middle" fill="#000000" transform="rotate(-90 177.750 57.400)">50</text>
+<polyline points="165.700,0.000 183.200,0.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="165.700,82.400 183.200,82.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="182.200,0.000 182.200,82.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="182.200,0.000 182.425,1.250 181.975,1.250" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="182.200,82.400 181.975,81.150 182.425,81.150" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="181.750" y="41.200" font-size="1.250" text-anchor="middle" fill="#000000" transform="rotate(-90 181.750 41.200)">139,4</text>
+<polyline points="165.700,0.000 187.200,0.000" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="165.700,32.400 187.200,32.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="186.200,0.000 186.200,32.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="186.200,0.000 186.425,1.250 185.975,1.250" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="186.200,32.400 185.975,31.150 186.425,31.150" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="185.750" y="16.200" font-size="1.250" text-anchor="middle" fill="#000000" transform="rotate(-90 185.750 16.200)">89,4</text>
+<text x="187.750" y="16.200" font-size="0.900" text-anchor="middle" fill="#000000" transform="rotate(-90 187.750 16.200)">PRETA VISÍVEL</text>
+<polyline points="16.050,28.900 10.550,28.900" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="16.050,32.400 10.550,32.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polyline points="11.550,28.900 11.550,32.400" fill="none" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="11.550,28.900 11.775,30.150 11.325,30.150" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<polygon points="11.550,32.400 11.325,31.150 11.775,31.150" fill="#000000" stroke="#000000" stroke-width="0.0900" stroke-linejoin="round"/>
+<text x="11.100" y="34.900" font-size="1.250" text-anchor="end" fill="#000000" transform="rotate(-90 11.100 34.900)">3,5</text>
+</g>
+<g class="view" data-view="papel2" transform="translate(0.000 0.000) scale(1.00000)">
+<polygon points="20.000,10.000 410.000,10.000 410.000,287.000 20.000,287.000" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="210.000,0.000 210.000,10.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="210.000,287.000 210.000,297.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="10.000,148.500 20.000,148.500" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="410.000,148.500 420.000,148.500" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="24.000" y="16.000" font-size="3.200" text-anchor="start" fill="#000000" font-weight="bold">DETALHE B — UMA OITAVA (C4–B4) — ESC. 2:1</text>
+<text x="24.000" y="19.600" font-size="1.800" text-anchor="start" fill="#000000">Vista de cima, interrompida entre 55 e 115 mm da frente da tecla. Cotas superiores: borda esquerda de cada preta a partir da borda esquerda do C4.</text>
+<text x="24.000" y="255.000" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">MEDIDAS DA TECLA (FATAR)</text>
+<polygon points="24.000,257.000 124.000,257.000 124.000,283.250 24.000,283.250" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="24.000,260.750 124.000,260.750" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="25.200" y="259.650" font-size="1.850" text-anchor="start" fill="#000000" font-weight="bold">MEDIDA</text>
+<polyline points="94.000,257.000 94.000,283.250" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="95.200" y="259.650" font-size="1.850" text-anchor="start" fill="#000000" font-weight="bold">mm</text>
+<polyline points="24.000,264.500 124.000,264.500" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="263.500" font-size="1.850" text-anchor="start" fill="#000000">Passo da branca</text>
+<text x="122.800" y="263.500" font-size="1.850" text-anchor="end" fill="#000000">23,6</text>
+<polyline points="24.000,268.250 124.000,268.250" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="267.250" font-size="1.850" text-anchor="start" fill="#000000">Largura da branca / vão</text>
+<text x="122.800" y="267.250" font-size="1.850" text-anchor="end" fill="#000000">22,2 / 1,4</text>
+<polyline points="24.000,272.000 124.000,272.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="271.000" font-size="1.850" text-anchor="start" fill="#000000">Oitava</text>
+<text x="122.800" y="271.000" font-size="1.850" text-anchor="end" fill="#000000">165,2</text>
+<polyline points="24.000,275.750 124.000,275.750" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="274.750" font-size="1.850" text-anchor="start" fill="#000000">Branca: total / até o tampo</text>
+<text x="122.800" y="274.750" font-size="1.850" text-anchor="end" fill="#000000">160,0 / 139,4</text>
+<polyline points="24.000,279.500 124.000,279.500" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="278.500" font-size="1.850" text-anchor="start" fill="#000000">Branca: cabeça (parte larga)</text>
+<text x="122.800" y="278.500" font-size="1.850" text-anchor="end" fill="#000000">48,0</text>
+<polyline points="24.000,283.250 124.000,283.250" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="25.200" y="282.250" font-size="1.850" text-anchor="start" fill="#000000">Preta: base / topo</text>
+<text x="122.800" y="282.250" font-size="1.850" text-anchor="end" fill="#000000">12,2 / 8,2</text>
+<polygon points="128.000,257.000 228.000,257.000 228.000,283.250 128.000,283.250" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="128.000,260.750 228.000,260.750" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="129.200" y="259.650" font-size="1.850" text-anchor="start" fill="#000000" font-weight="bold">MEDIDA</text>
+<polyline points="198.000,257.000 198.000,283.250" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="199.200" y="259.650" font-size="1.850" text-anchor="start" fill="#000000" font-weight="bold">mm</text>
+<polyline points="128.000,264.500 228.000,264.500" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="129.200" y="263.500" font-size="1.850" text-anchor="start" fill="#000000">Preta: total / visível</text>
+<text x="226.800" y="263.500" font-size="1.850" text-anchor="end" fill="#000000">110,0 / 89,4</text>
+<polyline points="128.000,268.250 228.000,268.250" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="129.200" y="267.250" font-size="1.850" text-anchor="start" fill="#000000">Preta: frente a partir da branca</text>
+<text x="226.800" y="267.250" font-size="1.850" text-anchor="end" fill="#000000">50,0</text>
+<polyline points="128.000,272.000 228.000,272.000" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="129.200" y="271.000" font-size="1.850" text-anchor="start" fill="#000000">Folga lateral preta/branca</text>
+<text x="226.800" y="271.000" font-size="1.850" text-anchor="end" fill="#000000">1,35</text>
+<polyline points="128.000,275.750 228.000,275.750" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="129.200" y="274.750" font-size="1.850" text-anchor="start" fill="#000000">Altura topo da branca (base keybed)</text>
+<text x="226.800" y="274.750" font-size="1.850" text-anchor="end" fill="#000000">47,5</text>
+<polyline points="128.000,279.500 228.000,279.500" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="129.200" y="278.500" font-size="1.850" text-anchor="start" fill="#000000">Preta acima da branca</text>
+<text x="226.800" y="278.500" font-size="1.850" text-anchor="end" fill="#000000">10,0</text>
+<polyline points="128.000,283.250 228.000,283.250" fill="none" stroke="#000000" stroke-width="0.1800" stroke-linejoin="round"/>
+<text x="129.200" y="282.250" font-size="1.850" text-anchor="start" fill="#000000">Curso (frente da branca)</text>
+<text x="226.800" y="282.250" font-size="1.850" text-anchor="end" fill="#000000">10,0</text>
+<text x="24.000" y="285.200" font-size="1.600" text-anchor="start" fill="#d40000">Fonte: Fatar "Insieme tastiera 61 TP/9 C+ after touch", cód. dis. 94163200, rev. 11/06/02, esc. 1:1. Aplicação ao 73SW: A CONFIRMAR (Story 11.6).</text>
+<polygon points="240.000,251.000 410.000,251.000 410.000,287.000 240.000,287.000" fill="none" stroke="#000000" stroke-width="0.5000" stroke-linejoin="round"/>
+<polyline points="240.000,260.000 410.000,260.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="240.000,269.000 410.000,269.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="240.000,278.000 410.000,278.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="350.000,251.000 350.000,260.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="241.200" y="253.600" font-size="1.600" text-anchor="start" fill="#000000">PROJETO</text>
+<text x="241.200" y="258.400" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">LADIANI VELORA 73 · buenos-x64-workstation</text>
+<text x="351.200" y="253.600" font-size="1.600" text-anchor="start" fill="#000000">FORMATO / DIEDRO</text>
+<text x="351.200" y="258.400" font-size="2.600" text-anchor="start" fill="#000000">A3 · 1º DIEDRO</text>
+<text x="241.200" y="262.600" font-size="1.600" text-anchor="start" fill="#000000">TÍTULO</text>
+<text x="241.200" y="267.400" font-size="2.800" text-anchor="start" fill="#000000" font-weight="bold">DETALHE B — OITAVA C4–B4</text>
+<polyline points="280.000,269.000 280.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="315.000,269.000 315.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="350.000,269.000 350.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<polyline points="380.000,269.000 380.000,287.000" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+<text x="241.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">ESCALA</text>
+<text x="241.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">2:1</text>
+<text x="281.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">UNIDADE</text>
+<text x="281.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">mm</text>
+<text x="316.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">DATA</text>
+<text x="316.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">23/10/2026</text>
+<text x="351.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">REVISÃO</text>
+<text x="351.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">00</text>
+<text x="381.200" y="271.600" font-size="1.600" text-anchor="start" fill="#000000">FOLHA</text>
+<text x="381.200" y="276.400" font-size="2.600" text-anchor="start" fill="#000000">2/3</text>
+<text x="241.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">AUTOR</text>
+<text x="241.200" y="285.400" font-size="2.600" text-anchor="start" fill="#000000" font-weight="bold">Mateus</text>
+<text x="281.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">TOLERÂNCIA GERAL</text>
+<text x="281.200" y="285.400" font-size="2.400" text-anchor="start" fill="#000000">ISO 2768-mK</text>
+<text x="316.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">TECLAS</text>
+<text x="316.200" y="285.400" font-size="2.200" text-anchor="start" fill="#000000">Fatar 61 TP/9 (ref.)</text>
+<text x="351.200" y="280.600" font-size="1.600" text-anchor="start" fill="#000000">PENDENTE</text>
+<text x="351.200" y="285.400" font-size="2.400" text-anchor="start" fill="#d40000">em vermelho</text>
+<circle cx="403.000" cy="282.500" r="3.200" fill="none" stroke="#000000" stroke-width="0.2500"/>
+<circle cx="403.000" cy="282.500" r="1.600" fill="none" stroke="#000000" stroke-width="0.2500"/>
+<polygon points="390.000,280.900 397.000,279.300 397.000,285.700 390.000,284.100" fill="none" stroke="#000000" stroke-width="0.2500" stroke-linejoin="round"/>
+</g>
+</svg>

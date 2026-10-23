@@ -18,7 +18,7 @@ flowchart LR
   SOM -- "USB3 OTG (device)" --> USBC["USB-C to computer"]
   SOM -- "USB3 host" --> USBA["USB-A"]
   SOM -- "UART" --> MIDI["MIDI DIN in/out"]
-  PSU["Inmetro-compliant PSU"] --> HOLD["Supercap hold-up"] --> SOM
+  PSU["External Inmetro-compliant PSU<br/>(locking 5.5 × 2.5 DC jack)"] --> HOLD["Supercap hold-up"] --> SOM
   HOLD -- "POWER_FAIL GPIO" --> SOM
 ```
 
@@ -55,7 +55,9 @@ flowchart LR
 | Pedals | Continuous sustain (half-pedal), expression, 1 switch. ≥10-bit ADC, polarity auto-detect at boot, TRS jacks |
 | Link | Same as the keybed MCU (its own UART or SPI) |
 
-Panel legends are English only, **cap height ≥2.5 mm**, in a dark ink on a matte band. Layout and legend text follow the UX `DESIGN.md` (panel layout A); rotary-speaker controls read ROTARY.
+Panel legends are English only, **cap height ≥2.5 mm**, in a dark ink on a matte band. Layout and legend text follow the UX `DESIGN.md` (panel layout A); rotary-speaker controls read ROTARY. Control sizes and proposed positions are in the spec's `mechanical.md`.
+
+The MASTER control is an **analog level potentiometer in the output path** (Ø20 mm knob), so the panel MCU does not read it and it has no control ID. The partner proposes which outputs it scales (main only, or main and headphones).
 
 ## 5. Frame protocol (both MCUs)
 
@@ -94,7 +96,8 @@ All multi-byte fields are little-endian. The software team owns the exact contro
 - **Codec:** TI PCM3168A on TDM, with I2C control.
 - **The codec is the clock master**, on its own **24.576 MHz** crystal. The SoC is the I2S/TDM slave. The SoC PLL must not generate the audio clocks (AD-17).
 - **Channel map:** DAC 1–2 main L/R, DAC 3–4 aux L/R, DAC 5–6 headphone feed. ADC 1–2 is the stereo line in.
-- **Outputs:** 4 balanced ¼" TRS. The headphone amplifier is its own stage.
+- **Outputs:** 4 balanced ¼" TRS on the rear panel. The headphone amplifier is its own stage, on a ¼" TRS jack on the front face.
+- **Line input:** 2 × ¼" (L/R) plus 1 × 3.5 mm stereo on the rear panel, both feeding ADC 1–2. The partner proposes whether the 3.5 mm jack switches or sums with the ¼" pair.
 - **Mute:** a hardware mute line controlled by the SoC, held muted from power-on until the SoC releases it, so there is no pop at power-on or power-off.
 - **Provide:** codec latency figures and the analogue noise floor of the reference design.
 
@@ -123,10 +126,10 @@ All multi-byte fields are little-endian. The software team owns the exact contro
 
 ## 12. Power and power loss
 
-- **PSU:** an off-the-shelf unit that complies with Inmetro. Electrical safety and EMC are designed to IEC 62368-1 to ease later CE/FCC.
+- **PSU:** an **external** off-the-shelf unit that complies with Inmetro, plugged into a **locking 5.5 × 2.5 mm DC jack** on the rear panel. Provide the voltage and current. Electrical safety and EMC are designed to IEC 62368-1 to ease later CE/FCC.
 - **Hold-up:** supercapacitors keep the full system running for **≥150 ms** after input loss, sized for the NVMe flush plus an audio fade.
 - **`POWER_FAIL` GPIO:** asserted to the SoC **≥100 ms** before the rails drop. Provide the measured timing.
-- **Soft power button** to the SoC. A long press forces off.
+- **Soft power button** to the SoC, on the rear panel next to DC IN. A long press forces off.
 
 ## 13. Security and factory
 

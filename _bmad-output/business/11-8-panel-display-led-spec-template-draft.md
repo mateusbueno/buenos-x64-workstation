@@ -23,7 +23,7 @@ Source key (paths relative to repo root):
 | 1.9 | Aluminium finish | Brushed; must hide wear (Motif XS is the anti-reference) | DESIGN:518, DESIGN:681 | Alloy / finish / anodising: ____ ; scratch test: ____ |
 | 1.10 | Aluminium render colours | alu-high #dadddf, alu-mid #c3c7ca, alu-low #b1b5b8 (render references, not production values) | DESIGN:49-51, DESIGN:543 | Production colour match tolerance (dE): ____ |
 | 1.11 | Panel ink / button cap / edge / lit edge / fader track | panel-ink #2b322e; button-cap #e9ecea; button-edge #9aa19c; button-edge-lit #4b6f58; fader-track #7b827e | DESIGN:52, 54-57 | Material and colour match: ____ |
-| 1.12 | MASTER control type | Open: knob vs fader (panel v2 draws an encoder); decision needs a recorded reason | DESIGN:699 ; EPICS:6327+ (AC1) | Type: ____ ; reason: ____ |
+| 1.12 | MASTER control type | Decided 2026-10-23: analog level potentiometer in the output path, Ø20 mm knob. Reason: it stays off the panel MCU, which matches HWI §4 | DESIGN:699 ; HWI §4 ; spec `mechanical.md` ; EPICS:6327+ (AC1) | Pot part no. and taper: ____ ; outputs it scales: ____ |
 | 1.13 | Dark-stage plan | Open, choose one: tactile cues only / backlit navigation column + toggles / USB-A lamp port | DESIGN:706 ; EPICS (Story 11.8 AC1) | Chosen option: ____ ; cost/impact: ____ |
 
 ## 2. Controls and tactile cues
@@ -32,7 +32,7 @@ Source key (paths relative to repo root):
 |---|---|---|---|---|
 | 2.1 | WRITE button | Concave cap or raised ring | DESIGN:707 | Which: ____ |
 | 2.2 | MENU button | Centre dot; sits between EXIT and WRITE; same cap and edge as navigation buttons, no LED | DESIGN:707, DESIGN:662 | Dot size/height: ____ |
-| 2.3 | VALUE encoder | >= 30 mm, knurled, with push switch (push-click) | DESIGN:707 ; HWP:41 ; HWI:50 | Diameter/knurl: ____ ; part no.: ____ |
+| 2.3 | VALUE encoder | Ø35 mm (decided 2026-10-23; floor >= 30 mm), knurled, with push switch (push-click) | DESIGN:707 ; HWP:41 ; HWI:50 | Diameter/knurl: ____ ; part no.: ____ |
 | 2.4 | VALUE push switch reporting | Reported in the panel MCU frame as a debounced `BUTTON` press/release with its own button ID | HWI:50, HWI:79 | Switch part no., debounce measured: ____ |
 | 2.5 | Parameter encoders | 8 endless encoders, each with an LED ring; pointer line on the knob | HWI:50 ; HWP:41 ; DESIGN:707 | Part no.: ____ ; detent/torque: ____ |
 | 2.6 | Faders | 9 dual-function faders, dark cap on grey track, non-motorized in v1; >= 10-bit, >= 500 Hz update rate | DESIGN:667, DESIGN:499-501 ; HWI:51 ; EPICS:305 (NFR43), EPICS:488 (UX-DR53) | Fader part no./travel/feel: ____ |
@@ -81,7 +81,7 @@ Floors come from the sources above. "Corrective action" must be named and dated 
 | M8 | Legend cap height (caliper/microscope) | >= 2.5 mm | ____ | | | |
 | M9 | Legend surface is matte / bead-blasted (gloss reading) | matte | ____ | | | |
 | M10 | Legend and finish wear after abrasion test | legends legible; finish hides wear | ____ | | | |
-| M11 | VALUE encoder diameter, knurl, push-click present | >= 30 mm; push switch | ____ | | | |
+| M11 | VALUE encoder diameter, knurl, push-click present | Ø35 mm; push switch | ____ | | | |
 | M12 | VALUE push reaches the panel MCU as a `BUTTON` frame | press/release events | ____ | | | |
 | M13 | Tactile cues present: WRITE concave/ring, MENU dot, pointer lines, REV cap distinct, nubs on part buttons 1 and 5, toggles taller | per DESIGN:707 | visual + blind-touch trial | | | |
 | M14 | Fader caps dark on grey track; non-motorized | per DESIGN:667 | ____ | | | |

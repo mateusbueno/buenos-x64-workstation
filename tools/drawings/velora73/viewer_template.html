@@ -1,0 +1,226 @@
+<title>Velora 73 Desenho Técnico</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: barra de prancheta no topo, mesa de luz com a folha A3 (zoom/pan), notas de pendências abaixo. */
+:root {
+  --bench: #dfe3e1;      /* mesa onde a folha fica */
+  --surface: #f6f7f6;    /* barras e painéis */
+  --ink: #1b2120;        /* texto */
+  --muted: #5d6765;      /* texto secundário */
+  --line: #c3c9c7;       /* divisórias */
+  --accent: #4e6b5f;     /* sálvia, a cor do projeto */
+  --pending: #c20000;    /* vermelho das cotas A DEFINIR */
+  --paper-shadow: rgba(20, 30, 28, .18);
+  --font-ui: 'IBM Plex Sans Condensed', 'Arial Narrow', 'Liberation Sans Narrow', Arial, sans-serif;
+  --font-num: 'IBM Plex Mono', 'DejaVu Sans Mono', Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bench: #151a19; --surface: #1e2423; --ink: #e7ecea; --muted: #9aa5a2; --line: #34403d;
+    --accent: #8fb3a3; --pending: #ff6b6b; --paper-shadow: rgba(0, 0, 0, .55); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bench: #151a19; --surface: #1e2423; --ink: #e7ecea; --muted: #9aa5a2; --line: #34403d;
+  --accent: #8fb3a3; --pending: #ff6b6b; --paper-shadow: rgba(0, 0, 0, .55); color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bench); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.45;
+}
+.wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 28px; display: grid; gap: 12px; max-width: 1600px; margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+h1 { font-size: 1.25rem; font-weight: 600; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+h1 small { font-weight: 400; color: var(--muted); font-size: .85rem; letter-spacing: .04em; margin-left: .4em; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px; }
+.tabs button, .zoom button {
+  font: inherit; font-size: .9rem; color: var(--ink); background: transparent; border: 0; border-radius: 4px; padding: 6px 12px; cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--accent); color: var(--surface); }
+.tabs button:hover:not([aria-selected="true"]), .zoom button:hover { background: var(--line); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.zoom { display: flex; align-items: center; gap: 2px; margin-left: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px; }
+.zoom output { font-family: var(--font-num); font-size: .82rem; min-width: 5.2em; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stage {
+  position: relative; height: clamp(340px, 74vh, 980px); overflow: hidden; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bench); touch-action: none; cursor: grab; user-select: none;
+}
+.stage.dragging { cursor: grabbing; }
+.sheet-wrap { position: absolute; inset: 0; }
+.sheet-wrap svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 2px 10px var(--paper-shadow)); }
+.hint { position: absolute; left: 10px; bottom: 8px; font-size: .78rem; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; pointer-events: none; }
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.notes section { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; min-width: 0; }
+.notes h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .09em; margin: 0 0 8px; color: var(--accent); font-weight: 600; }
+.notes ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
+.notes li { max-width: 65ch; }
+.pend { color: var(--pending); }
+.num { font-family: var(--font-num); font-size: .9em; font-variant-numeric: tabular-nums; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; font-family: var(--font-num); font-size: .88rem; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .zoom { margin-left: 0; } .hint { display: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Velora 73 <small>desenho técnico · rev. 00 · Mateus</small></h1>
+    <div class="tabs" role="tablist" aria-label="Folhas">
+      <button role="tab" id="tab1" aria-selected="true" data-go="1">1 · Vistas gerais e corte</button>
+      <button role="tab" id="tab2" aria-selected="false" data-go="2">2 · Detalhe da oitava</button>
+      <button role="tab" id="tab3" aria-selected="false" data-go="3">3 · Legenda e coordenadas</button>
+    </div>
+    <div class="zoom" aria-label="Zoom">
+      <button id="zout" title="Afastar (−)" aria-label="Afastar">−</button>
+      <output id="zlabel">100%</output>
+      <button id="zin" title="Aproximar (+)" aria-label="Aproximar">+</button>
+      <button id="zfit" title="Folha inteira (0)">Ajustar</button>
+    </div>
+  </header>
+
+  <div class="stage" id="stage" tabindex="0" aria-label="Folha do desenho, arraste para mover e use a roda para aproximar">
+    <!--SHEETS-->
+    <div class="hint">Arraste para mover · roda ou pinça para zoom · teclas + − 0</div>
+  </div>
+
+  <div class="notes">
+    <section>
+      <h2>Medidas principais</h2>
+      <dl>
+        <dt>Largura total</dt><dd>1164,2 mm = 25 + 80 + 1034,2 + 25</dd>
+        <dt>Teclas E1–E7</dt><dd>43 brancas + 30 pretas = 73</dd>
+        <dt>Passo / oitava</dt><dd>23,6 / 165,2 mm</dd>
+        <dt>Branca</dt><dd>22,2 × 160,0 (139,4 visível)</dd>
+        <dt>Preta</dt><dd>12,2 × 110,0 (89,4 visível)</dd>
+        <dt>Profundidade</dt><dd class="pend">304,4 mm (provisória)</dd>
+        <dt>Altura</dt><dd class="pend">68,7 mm + pés 10 (provisória)</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Pendente (em vermelho na folha)</h2>
+      <ul>
+        <li>Desenho Fatar do <b>73SW</b>. As teclas vêm do 61 TP/9, e a moldura de 10,4 por lado e o perfil waterfall ainda precisam de confirmação.</li>
+        <li>Vidro e recorte do display, que fecham a profundidade do painel (130).</li>
+        <li>Folga entre o topo da preta e o tampo (8), que fecha a altura total.</li>
+        <li>Altura do lábio frontal e da face waterfall.</li>
+        <li>Rodas pitch/mod: diâmetro e largura.</li>
+        <li>Altura de knobs, caps e botões acima do tampo.</li>
+        <li>Recortes dos conectores e dimensões e furação das placas internas.</li>
+        <li>Materiais do lábio, do painel traseiro, das rodas e dos botões.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Inconsistências do escopo</h2>
+      <ul>
+        <li>O MASTER está no layout A, mas falta na lista da MCU do painel (HWI §4).</li>
+        <li>O botão power (HWI §12) não aparece no layout A.</li>
+        <li>Waterfall E–E está marcado como "assumido" (HWP:31), e a Story 11.6 segue aberta.</li>
+        <li>O mockup panel-v2 tem 2 LEDs no toggle dos knobs, e o aprovado tem 3 estados.</li>
+        <li>O alvo de toque "≈ 8 mm" é, na conta, 56 px × 0,150 = 8,4 mm.</li>
+      </ul>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const label = document.getElementById('zlabel');
+  const W = 420, H = 297;
+  const wraps = [...stage.querySelectorAll('.sheet-wrap')];
+  const tabs = [...document.querySelectorAll('[data-go]')];
+  let cur = 1;
+  let view = null; // {x, y, w} em mm da folha; altura derivada da proporção do palco
+
+  const svg = () => wraps[cur - 1].querySelector('svg');
+  const aspect = () => stage.clientHeight / Math.max(1, stage.clientWidth);
+  const fitW = () => Math.max(W, H / aspect()) * 1.03;
+
+  function apply() {
+    const h = view.w * aspect();
+    svg().setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${h}`);
+    label.value = Math.round(fitW() / view.w * 100) + '%';
+  }
+  function fit() {
+    const w = fitW();
+    view = { x: (W - w) / 2, y: (H - w * aspect()) / 2, w };
+    apply();
+  }
+  function zoomAt(f, px, py) {
+    const r = stage.getBoundingClientRect();
+    const fx = (px - r.left) / r.width, fy = (py - r.top) / r.height;
+    const h = view.w * aspect();
+    const mx = view.x + fx * view.w, my = view.y + fy * h;
+    const nw = Math.min(fitW() * 1.5, Math.max(8, view.w / f));
+    view = { x: mx - fx * nw, y: my - fy * nw * aspect(), w: nw };
+    apply();
+  }
+  const zoomCenter = (f) => { const r = stage.getBoundingClientRect(); zoomAt(f, r.left + r.width / 2, r.top + r.height / 2); };
+
+  function show(n, keepHash) {
+    cur = n;
+    wraps.forEach((w, i) => { w.hidden = i !== n - 1; });
+    tabs.forEach((t) => t.setAttribute('aria-selected', String(+t.dataset.go === n)));
+    wraps.forEach((w) => w.querySelector('svg').setAttribute('preserveAspectRatio', 'xMidYMid meet'));
+    fit();
+    if (!keepHash) { try { history.replaceState(null, '', '#folha' + n); } catch (e) {} }
+  }
+
+  tabs.forEach((t) => t.addEventListener('click', () => show(+t.dataset.go)));
+  document.getElementById('zin').addEventListener('click', () => zoomCenter(1.4));
+  document.getElementById('zout').addEventListener('click', () => zoomCenter(1 / 1.4));
+  document.getElementById('zfit').addEventListener('click', fit);
+
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoomAt(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0018)), e.clientX, e.clientY);
+  }, { passive: false });
+
+  const pts = new Map();
+  let pinch = null;
+  stage.addEventListener('pointerdown', (e) => {
+    stage.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    stage.classList.add('dragging');
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) };
+    }
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId);
+    const now = { x: e.clientX, y: e.clientY };
+    pts.set(e.pointerId, now);
+    if (pts.size === 1) {
+      const k = view.w / stage.clientWidth;
+      view.x -= (now.x - prev.x) * k;
+      view.y -= (now.y - prev.y) * k;
+      apply();
+    } else if (pts.size === 2 && pinch) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      zoomAt(d / pinch.d, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      pinch.d = d;
+    }
+  });
+  const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; if (!pts.size) stage.classList.remove('dragging'); };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+  stage.addEventListener('dblclick', (e) => zoomAt(2, e.clientX, e.clientY));
+
+  stage.addEventListener('keydown', (e) => {
+    const step = view.w * 0.08;
+    const map = { '+': () => zoomCenter(1.4), '=': () => zoomCenter(1.4), '-': () => zoomCenter(1 / 1.4), '0': fit,
+      ArrowLeft: () => { view.x -= step; apply(); }, ArrowRight: () => { view.x += step; apply(); },
+      ArrowUp: () => { view.y -= step; apply(); }, ArrowDown: () => { view.y += step; apply(); } };
+    if (map[e.key]) { e.preventDefault(); map[e.key](); }
+  });
+  new ResizeObserver(() => { if (view) apply(); }).observe(stage);
+
+  const m = /^#folha([123])$/.exec(location.hash || '');
+  show(m ? +m[1] : 1, !m);
+})();
+</script>

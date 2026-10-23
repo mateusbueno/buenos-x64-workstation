@@ -515,7 +515,7 @@ Ladiani is "the Apple of keyboards": a late entrant that arrives with a better p
 
 → Logo directions and boot concept: [mockups/logo-drawbar-refine.html](mockups/logo-drawbar-refine.html) (chosen: S1, T3, V1, boot animation; other options shown are rejected).
 
-**Physical product.** A brushed aluminum top, sturdy yet light, that must **not show wear marks** (the Motif XS problem is the anti-reference). End cheeks in tough plastic, as on Studiologic and Roland. All panel legends in **English**. The rotary-speaker controls are labelled **ROTARY**, never "Leslie" (trademark); marketing likewise avoids third-party trademarks per the spec.
+**Physical product.** A brushed aluminum top, sturdy yet light, that must **not show wear marks** (the Motif XS problem is the anti-reference). End cheeks in tough plastic, as on Studiologic and Roland. Knobs and fader caps are machined anodized aluminum. Dimensions are in the spec's `mechanical.md`: a flat top, 25 mm end cheeks, and the wheels in an 80 mm block left of the keys. All panel legends in **English**. The rotary-speaker controls are labelled **ROTARY**, never "Leslie" (trademark); marketing likewise avoids third-party trademarks per the spec.
 
 ## Colors
 
@@ -596,7 +596,7 @@ Large mode drops Scene Tile sub-labels and Part Strip categories and keeps every
 
 ## Layout & Spacing
 
-**Device (7", 1024×600, landscape).** Gutter `{spacing.screen-gutter}`; gaps `{spacing.2}` between list items, `{spacing.3}` inner padding, `{spacing.5}` between columns, `{spacing.1}` inside compound labels (glyph + text). **Minimum touch target** `{spacing.touch-target-min}` (≈ 8 mm) for every tappable element; smaller visuals get a padded hit area that never overlaps an adjacent target. On Performance, targets are at least `{spacing.4}` (≈ 1.8 mm) apart. Two screen skeletons:
+**Device (7", 1024×600, landscape).** Gutter `{spacing.screen-gutter}`; gaps `{spacing.2}` between list items, `{spacing.3}` inner padding, `{spacing.5}` between columns, `{spacing.1}` inside compound labels (glyph + text). **Minimum touch target** `{spacing.touch-target-min}` (≈ 8.4 mm) for every tappable element; smaller visuals get a padded hit area that never overlaps an adjacent target. On Performance, targets are at least `{spacing.4}` (≈ 1.8 mm) apart. Two screen skeletons:
 
 - **Performance (600 px):** Top Bar `{spacing.device-topbar}` · Live Set Hero `{spacing.device-hero}` · Scene strip `{spacing.device-scene-strip}` (8 equal tiles) · Part area `{spacing.device-part-area}` (8 equal Part Strips, or Organ Card + 9 Drawbar Columns in DRAWBARS mode) · Status Bar `{spacing.device-status}`. Every tappable bar is ≥ 56 px tall.
 - **All other surfaces (600 px):** Top Bar `{spacing.device-topbar}` · content (488 px) · Hint Bar `{spacing.device-hint}`. Content uses a two-column list layout (Setlist, Settings, Part, Effects, Scenes: ~1 : 1.6–2), search + chips + 3-column result grid (Library, Setlist Browser), full-width rows (Import) or the Launcher Grid (tiles in two rows, 4 + 3; tile list in EXPERIENCE.md Information Architecture).
@@ -606,7 +606,7 @@ Large mode drops Scene Tile sub-labels and Part Strip categories and keeps every
 
 **Velora Studio (desktop).** Title bar · body (sidebar `{spacing.desktop-sidebar}` + main) · Studio Footer. Main stacks Live Set header, 8 Scene Tiles, 8 Studio Part Strips and a four-column Part Editor (Sound · Amp envelope + EQ · Effects inserts + sends · Zone & keyboard + Arpeggiator + Assign), gutter `{spacing.desktop-gutter}`. At ≥ 150% text size or zoom the Part Editor reflows to 2 columns, then 1; nothing scrolls horizontally at 200%. → [mockups/key-screen-studio.html](mockups/key-screen-studio.html).
 
-**Physical panel (layout A).** Left: lockup, MASTER, ROTARY STOP and S/F; pitch and mod wheels on the left below. Mixer zone: 9 faders (1–8 + REV) with the DRAWBARS/MIXER toggle, 8 part/scene buttons with the PARTS/SCENES toggle. Center: 7" display. Navigation column: LIVE SET ◀ ▶, SCENE ◀ ▶, VALUE encoder, then a row of three buttons EXIT · MENU · WRITE (MENU in the middle). Right: 8 encoders in two rows (DELAY, BRIGHTNESS, ATTACK, RELEASE / LOW, MID, MID FREQ, HIGH) with the PART/ALL/ASSIGN toggle. The VALUE encoder has a push switch. **Pro tier (16 parts):** two banks of 8 (A/B) toggled by a bank button; part buttons and faders act on the active bank; details deferred to Pro. → [mockups/panel-v2.html](mockups/panel-v2.html) (the mock shows two LEDs on the knob toggle; the approved version is 3-state PART/ALL/ASSIGN).
+**Physical panel (layout A).** Left: lockup, MASTER, ROTARY STOP and S/F; pitch and mod wheels on the left below. Mixer zone: 9 faders (1–8 + REV) with the DRAWBARS/MIXER toggle, 8 part/scene buttons with the PARTS/SCENES toggle. Center: 7" display. Navigation column: LIVE SET ◀ ▶, SCENE ◀ ▶, VALUE encoder, then a row of three buttons EXIT · MENU · WRITE (MENU in the middle). Right: 8 encoders in two rows (DELAY, BRIGHTNESS, ATTACK, RELEASE / LOW, MID, MID FREQ, HIGH) with the PART/ALL/ASSIGN toggle. The VALUE encoder has a push switch. MASTER is an analog level potentiometer with a Ø20 mm knob. The headphone jack sits on the front face under the wheels, and the power button sits on the rear panel. **Pro tier (16 parts):** two banks of 8 (A/B) toggled by a bank button; part buttons and faders act on the active bank; details deferred to Pro. → [mockups/panel-v2.html](mockups/panel-v2.html) (the mock shows two LEDs on the knob toggle; the approved version is 3-state PART/ALL/ASSIGN).
 
 ## Elevation & Depth
 
@@ -696,7 +696,7 @@ None open; earlier questions are resolved in .memlog.md (Studio-theme darker set
 Not open UX questions; owned by other parties and tracked here for handoff.
 
 - **Final typeface** (custom or licensed for LVGL embedding and desktop) and the final logo drawing — **type/logo designer**. Acceptance criteria: distinct I / l / 1 and 0 / O; x-height ≥ 0.5 em; open apertures; tabular numerals and fraction glyphs (⅓ ⅔ ⅗); weight ≥ 400 for all device UI text (300 only for the wordmark); full Latin-1 + Latin Extended-A with accented capitals that fit a 1.2 line box.
-- **Physical panel specs** — engraving vs silkscreen, LED colors, aluminum finish, MASTER control type (knob vs fader; panel v2 draws an encoder) — **hardware partners**, within the Hardware asks below.
+- **Physical panel specs** — engraving vs silkscreen, LED colors, aluminum finish — **hardware partners**, within the Hardware asks below. The MASTER control type was decided on 2026-10-23: an analog potentiometer with a Ø20 mm knob.
 - **Desktop app icon and social avatar** renderings of the symbol — **logo designer**.
 
 **Hardware asks** (for the hardware partners):
@@ -704,4 +704,4 @@ Not open UX questions; owned by other parties and tracked here for handoff.
 1. **Display:** 7" 1024×600 panel, ≥ 1000 cd/m², optically bonded cover glass with anti-glare + anti-reflection (≤ 2% reflectance), backlight dimmable to ≤ 5 cd/m² (UI range 5–100%).
 2. **LEDs:** diffused, ≥ 3 mm; luminous intensity giving ≥ 10:1 on:off at 50 klx ambient (e.g. ≥ 150 mcd at full drive); weak level fixed at ~15% PWM; user brightness (3 steps) driven by firmware.
 3. **Legends:** color `{colors.panel-legend}` (≥ 5:1 on the darkest aluminum), cap height ≥ 2.5 mm, printed on a matte or bead-blasted band. Dark-stage plan: tactile cues below at minimum; optional backlight for the navigation column and toggles, or a USB-A powered lamp port.
-4. **Tactile cues:** WRITE with a concave cap or raised ring and MENU with a centre dot (EXIT · MENU · WRITE are adjacent); VALUE encoder larger (≥ 30 mm), knurled and with a push switch (push-click), parameter encoders with a pointer line; REV fader cap distinct from faders 1–8; nubs on part/scene buttons 1 and 5; toggle buttons slightly taller than momentary buttons.
+4. **Tactile cues:** WRITE with a concave cap or raised ring and MENU with a centre dot (EXIT · MENU · WRITE are adjacent); VALUE encoder larger (Ø35 mm, decided 2026-10-23; floor ≥ 30 mm), knurled and with a push switch (push-click), parameter encoders with a pointer line; REV fader cap distinct from faders 1–8; nubs on part/scene buttons 1 and 5; toggle buttons slightly taller than momentary buttons.

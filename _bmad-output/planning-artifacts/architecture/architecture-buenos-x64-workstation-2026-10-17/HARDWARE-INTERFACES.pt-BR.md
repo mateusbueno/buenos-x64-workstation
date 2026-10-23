@@ -23,7 +23,7 @@ flowchart LR
   SOM -- "USB3 OTG (device)" --> USBC["USB-C para o computador"]
   SOM -- "USB3 host" --> USBA["USB-A"]
   SOM -- "UART" --> MIDI["MIDI DIN in/out"]
-  PSU["Fonte em conformidade com o Inmetro"] --> HOLD["Supercapacitores de sustentação"] --> SOM
+  PSU["Fonte externa em conformidade com o Inmetro<br/>(P4 5,5 × 2,5 com trava)"] --> HOLD["Supercapacitores de sustentação"] --> SOM
   HOLD -- "GPIO POWER_FAIL" --> SOM
 ```
 
@@ -62,7 +62,9 @@ flowchart LR
 | Pedais | Sustain contínuo (meio-pedal), expressão e 1 switch. ADC ≥10 bits, detecção automática de polaridade no boot, conectores TRS |
 | Ligação | A mesma do MCU do keybed, numa UART ou SPI própria |
 
-As legendas do painel são só em inglês, com **altura de maiúscula ≥2,5 mm**, em tinta escura sobre uma faixa fosca. Layout e textos das legendas seguem o `DESIGN.md` do UX (layout A do painel); os controles do alto-falante rotativo se chamam ROTARY.
+As legendas do painel são só em inglês, com **altura de maiúscula ≥2,5 mm**, em tinta escura sobre uma faixa fosca. Layout e textos das legendas seguem o `DESIGN.md` do UX (layout A do painel); os controles do alto-falante rotativo se chamam ROTARY. Tamanhos dos controles e posições propostas estão no `mechanical.md` da spec.
+
+O MASTER é um **potenciômetro analógico de nível no caminho de saída** (knob Ø20 mm). Por isso o MCU do painel não o lê e ele não tem ID de controle. O parceiro propõe quais saídas ele controla (só a principal, ou a principal e o fone).
 
 ## 5. Protocolo de frames (os dois MCUs)
 
@@ -106,7 +108,8 @@ As legendas do painel são só em inglês, com **altura de maiúscula ≥2,5 mm*
   - DAC 3–4: saída auxiliar L/R.
   - DAC 5–6: alimentação do fone.
   - ADC 1–2: entrada de linha estéreo.
-- **Saídas:** 4 balanceadas em P10 TRS. O amplificador de fone é um estágio próprio.
+- **Saídas:** 4 balanceadas em P10 TRS no painel traseiro. O amplificador de fone é um estágio próprio, num P10 TRS na face frontal.
+- **Entrada de linha:** 2 × P10 (L/R) mais 1 × P2 estéreo no painel traseiro, todos para o ADC 1–2. O parceiro propõe se o P2 comuta ou soma com o par P10.
 - **Mute:** uma linha de mute por hardware, controlada pelo SoC. Ela fica em mute desde o power-on até o SoC liberar, para não haver estalo ao ligar ou desligar.
 - **Pedido aos parceiros:** os números de latência do codec e o piso de ruído analógico do projeto de referência.
 
@@ -142,10 +145,10 @@ As legendas do painel são só em inglês, com **altura de maiúscula ≥2,5 mm*
 
 ## 12. Energia e queda de energia
 
-- **Fonte:** de prateleira, em conformidade com o Inmetro. Segurança elétrica e EMC projetadas segundo a IEC 62368-1, para facilitar CE e FCC no futuro.
+- **Fonte:** **externa**, de prateleira, em conformidade com o Inmetro, ligada num **P4 5,5 × 2,5 mm com trava** no painel traseiro. Pedido aos parceiros: tensão e corrente. Segurança elétrica e EMC projetadas segundo a IEC 62368-1, para facilitar CE e FCC no futuro.
 - **Sustentação:** os supercapacitores mantêm o sistema inteiro funcionando por **≥150 ms** depois da perda de entrada. Esse tempo cobre o flush do NVMe e o fade do áudio.
 - **GPIO `POWER_FAIL`:** sinalizado ao SoC **≥100 ms** antes de os rails caírem. Pedido aos parceiros: o tempo medido.
-- **Botão de liga/desliga:** soft, ligado ao SoC. Um toque longo força o desligamento.
+- **Botão de liga/desliga:** soft, ligado ao SoC, no painel traseiro ao lado do DC IN. Um toque longo força o desligamento.
 
 ## 13. Segurança e fábrica
 
