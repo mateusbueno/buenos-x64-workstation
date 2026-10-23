@@ -55,8 +55,8 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Setlist | Launcher | Choose, create and reorder setlists and their Live Sets; create a Live Set; edit setlist tags | [key-screens-device.html §1](mockups/key-screens-device.html) |
 | Setlist Browser | Launcher; Top Bar setlist context on Performance | Search across setlists and Live Sets; jump off-script; long press a Live Set → Action Sheet `★ Add to Favorites`. Chips: ★ Favorites, Recent, Setlists, All Live Sets, then user tags | [key-screens-device.html §1b](mockups/key-screens-device.html) |
 | Library | Launcher; Part › Change timbre | Find and assign a timbre by search, favorites, recent, category; long press a timbre → Action Sheet `★ Add to Favorites` | [key-screens-device.html §2](mockups/key-screens-device.html) |
-| Part | Part Strip card body on Performance; **VALUE push** on Performance (opens the knob-target part) | One part's timbre, sound, zone, level, effects and arpeggiator | FM and VA Sound sections and the not-available state: [part-surface-fm-va.html](mockups/part-surface-fm-va.html); other sections spine-only |
-| Effects | Launcher; `REV` in the Performance Status Bar | Part inserts, sends, master, outputs | spine-only |
+| Part | Part Strip card body on Performance; **VALUE push** on Performance (opens the knob-target part) | One part's timbre, sound, zone, level, effects and arpeggiator | FM and VA Sound: [part-surface-fm-va.html](mockups/part-surface-fm-va.html); Organ Sound: [part-surface-organ.html](mockups/part-surface-organ.html); other sections spine-only |
+| Effects | Launcher; `REV` in the Performance Status Bar | Part inserts, sends, master, outputs | [effects-surface.html](mockups/effects-surface.html) |
 | Scenes | Launcher; long press a Scene Tile | Create, name and order the up-to-8 scenes | spine-only |
 | Write | WRITE hold (Interaction Primitives) | Confirm scope and name of a save | [key-screens-device.html §4](mockups/key-screens-device.html) |
 | Import | Launcher; the "USB drive found · Import?" Notice Toast | Import SFZ/SF2 from a USB-A pen drive or SSD | [key-screens-device.html §3](mockups/key-screens-device.html) |
@@ -83,7 +83,7 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Section | Fields |
 |---|---|
 | Timbre | Name, category; **Change timbre** → Library ("CHOOSE TIMBRE FOR PART n"); ★ adds the current timbre to Favorites |
-| Sound | Engine parameters (organ: drawbars, percussion, key click, vibrato/chorus scanner, leakage, rotary; sample, FM, VA: their engine set); Brightness |
+| Sound | Engine parameters (organ: drawbars, percussion, key click, vibrato/chorus scanner, leakage, rotary — mockup in [part-surface-organ.html](mockups/part-surface-organ.html); sample, FM, VA: their engine set); Brightness |
 | Envelope & EQ | Attack, Release (plus the engine's other envelope stages); EQ Low, Mid, Mid freq, High |
 | Zone & keyboard | Low key, High key (splits and layers, CAP-7); Octave / transpose; Keyboard on/off for this part |
 | Level & output | Volume; Output Main / Aux (AD-28) |
@@ -105,7 +105,7 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 
 The Live Set holds the initial arpeggiator values; **each scene stores Arp on/off and all arpeggiator parameters** (Tempo stays the Live Set's), so a scene can start, stop or reshape the arpeggiator. On clock loss the arpeggiator keeps running at the last received tempo.
 
-**Effects** (topology fixed by AD-28; effect types per engines.md).
+**Effects** (topology fixed by AD-28; effect types per engines.md; mockup in [mockups/effects-surface.html](mockups/effects-surface.html)).
 
 | Section | Content |
 |---|---|

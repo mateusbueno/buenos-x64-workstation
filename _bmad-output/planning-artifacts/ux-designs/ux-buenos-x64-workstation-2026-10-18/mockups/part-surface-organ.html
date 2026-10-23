@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Part Surface: Organ Sound Section Mockup (Story 2.16)</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #ecebe8;
+  font: 14px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif;
+  color: #151515;
+}
+.wrap {
+  max-width: 1180px;
+  margin: auto;
+  padding: 28px 16px 60px;
+}
+h1 { font-size: 22px; font-weight: 500; margin: 0 0 6px; }
+h2 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: #4d4d4d; margin: 38px 0 6px; }
+h3 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #4d4d4d; margin: 14px 0 4px; font-weight: 600; }
+p { color: #4d4d4d; max-width: 920px; margin: 0 0 12px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+@media (max-width: 760px) { .pair { grid-template-columns: 1fr; } }
+figure { margin: 0; }
+figcaption { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #4d4d4d; margin: 0 0 4px 2px; }
+.frame {
+  background: linear-gradient(180deg, #d4d7da, #b4b8bc 60%, #a3a7ab);
+  padding: 10px;
+  border-radius: 12px;
+}
+.scr {
+  aspect-ratio: 1024 / 600;
+  width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+  container-type: inline-size;
+  font-family: "Gill Sans", "Gill Sans MT", Calibri, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.s {
+  --u: calc(100cqw / 1024);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: calc(56 * var(--u)) calc(488 * var(--u)) calc(56 * var(--u));
+}
+
+/* Sálvia theme tokens */
+.t-stage {
+  --bg: #0b0d0c;
+  --surface: #151917;
+  --raised: #202622;
+  --line: #2b322e;
+  --line-strong: #5a6860;
+  --text: #e7ebe8;
+  --muted: #88938c;
+  --accent: #9fbaa8;
+  --on-accent: #0b0d0c;
+  --warn: #cdb86c;
+  --ok: #9fbaa8;
+
+  /* Theme-specific edge rules */
+  --db-head-edge-bk: 2px solid #667069;
+  --db-head-edge-wh: none;
+}
+.t-studio {
+  --bg: #f2f4f2;
+  --surface: #e3e8e4;
+  --raised: #ffffff;
+  --line: #cbd4cd;
+  --line-strong: #728a77;
+  --text: #131714;
+  --muted: #5a635c;
+  --accent: #466853;
+  --on-accent: #f2f4f2;
+  --warn: #725f1e;
+  --ok: #466853;
+
+  /* Theme-specific edge rules */
+  --db-head-edge-bk: none;
+  --db-head-edge-wh: 2px solid #7d8680;
+}
+
+/* Drawbar theme-invariant colors */
+:root {
+  --db-brown: #7f5e47;
+  --db-brown-ink: #f1e9df;
+  --db-white: #e7e4dc;
+  --db-white-ink: #1d201e;
+  --db-black: #1d201e;
+  --db-black-ink: #e7e4dc;
+}
+
+/* Top bar (56px) */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 calc(20 * var(--u));
+  background: var(--surface);
+  border-bottom: calc(1 * var(--u)) solid var(--line);
+  color: var(--muted);
+  font-size: calc(15 * var(--u));
+  letter-spacing: .25em;
+  text-transform: uppercase;
+}
+.top-bar .title {
+  color: var(--text);
+  font-size: calc(19 * var(--u));
+  letter-spacing: 0;
+  text-transform: none;
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+}
+.top-bar .title small {
+  font-size: calc(12 * var(--u));
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.top-bar .right-icons {
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--u));
+}
+.top-bar .mode-mirror {
+  font-size: calc(18 * var(--u));
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--accent);
+  border-bottom: calc(2 * var(--u)) solid var(--accent);
+  padding-bottom: calc(2 * var(--u));
+  margin-right: calc(6 * var(--u));
+}
+.top-bar .icon-btn {
+  width: calc(44 * var(--u));
+  height: calc(44 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(22 * var(--u));
+  color: var(--text);
+  border-radius: calc(6 * var(--u));
+  user-select: none;
+}
+
+/* Content Area: List-Left / Fields-Right */
+.body-layout {
+  display: grid;
+  grid-template-columns: calc(230 * var(--u)) 1fr;
+  gap: calc(12 * var(--u));
+  padding: calc(10 * var(--u)) calc(16 * var(--u));
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left Section List */
+.section-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--u));
+}
+.sec-item {
+  min-height: calc(56 * var(--u));
+  height: calc(56 * var(--u));
+  display: flex;
+  align-items: center;
+  padding: 0 calc(16 * var(--u));
+  border-radius: calc(8 * var(--u));
+  font-size: calc(18 * var(--u));
+  background: var(--surface);
+  border: calc(1 * var(--u)) solid var(--line);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.sec-item.active {
+  background: var(--raised);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Right Sound Pane */
+.sound-pane {
+  display: flex;
+  flex-direction: column;
+  gap: calc(10 * var(--u));
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Drawbar Section Card */
+.drawbars-card {
+  background: var(--surface);
+  border: calc(1 * var(--u)) solid var(--line);
+  border-radius: calc(8 * var(--u));
+  padding: calc(10 * var(--u)) calc(14 * var(--u));
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+  flex-shrink: 0;
+}
+.drawbars-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.drawbars-title {
+  font-size: calc(13 * var(--u));
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.registration-val {
+  font-size: calc(20 * var(--u));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .14em;
+  color: var(--accent);
+}
+
+/* 9 Drawbars Grid */
+.dbs-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: calc(8 * var(--u));
+  height: calc(150 * var(--u));
+}
+.db-col {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: calc(4 * var(--u));
+  text-align: center;
+  min-height: 0;
+}
+.db-ft {
+  font-size: calc(12 * var(--u));
+  color: var(--muted);
+  font-weight: 600;
+}
+.db-slot {
+  position: relative;
+  background: var(--raised);
+  border: calc(1 * var(--u)) solid var(--line);
+  border-radius: calc(5 * var(--u));
+  overflow: hidden;
+}
+.db-rod {
+  position: absolute;
+  left: 40%;
+  right: 40%;
+  top: 0;
+  background: var(--muted);
+  opacity: .4;
+}
+.db-head {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: calc(28 * var(--u));
+  border-radius: calc(4 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(15 * var(--u));
+  font-weight: 700;
+}
+.head-br {
+  background: var(--db-brown);
+  color: var(--db-brown-ink);
+}
+.head-wh {
+  background: var(--db-white);
+  color: var(--db-white-ink);
+  border: var(--db-head-edge-wh);
+}
+.head-bk {
+  background: var(--db-black);
+  color: var(--db-black-ink);
+  border: var(--db-head-edge-bk);
+}
+.db-val {
+  font-size: calc(17 * var(--u));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* Controls Grid below Drawbars */
+.controls-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: calc(10 * var(--u));
+  flex: 1;
+}
+.card {
+  background: var(--surface);
+  border: calc(1 * var(--u)) solid var(--line);
+  border-radius: calc(8 * var(--u));
+  padding: calc(10 * var(--u)) calc(12 * var(--u));
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+}
+.card-header {
+  font-size: calc(12 * var(--u));
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.ctrl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: calc(44 * var(--u));
+  gap: calc(8 * var(--u));
+}
+.ctrl-label {
+  font-size: calc(14 * var(--u));
+  color: var(--text);
+  min-width: calc(110 * var(--u));
+}
+
+/* Segmented Control (≥56px touch target when primary) */
+.seg {
+  display: flex;
+  border: calc(1 * var(--u)) solid var(--line-strong);
+  border-radius: calc(6 * var(--u));
+  overflow: hidden;
+  background: var(--surface);
+  flex: 1;
+  min-height: calc(44 * var(--u));
+}
+.seg span {
+  flex: 1;
+  min-height: calc(44 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(13 * var(--u));
+  padding: 0 calc(6 * var(--u));
+  text-align: center;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.seg span + span {
+  border-left: calc(1 * var(--u)) solid var(--line-strong);
+}
+.seg span.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+/* Value Field Cell */
+.cell-val {
+  background: var(--raised);
+  border: calc(1 * var(--u)) solid var(--line);
+  border-radius: calc(6 * var(--u));
+  padding: calc(4 * var(--u)) calc(10 * var(--u));
+  min-height: calc(44 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(16 * var(--u));
+  font-weight: 600;
+  color: var(--text);
+  min-width: calc(90 * var(--u));
+}
+
+/* Hint bar (56px) */
+.hint-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 calc(20 * var(--u));
+  background: var(--surface);
+  border-top: calc(1 * var(--u)) solid var(--line);
+  color: var(--muted);
+  font-size: calc(14 * var(--u));
+  letter-spacing: .06em;
+}
+.hint-bar .hints-left {
+  display: flex;
+  gap: calc(24 * var(--u));
+  align-items: center;
+}
+.hint-bar b {
+  color: var(--text);
+  font-weight: 400;
+  border: calc(1 * var(--u)) solid var(--line-strong);
+  border-radius: calc(5 * var(--u));
+  padding: calc(2 * var(--u)) calc(7 * var(--u));
+  margin-right: calc(6 * var(--u));
+}
+
+/* Notes & tables */
+.notes {
+  background: #fff;
+  border: 1px solid #d6d4cf;
+  border-radius: 8px;
+  padding: 12px 18px 12px 34px;
+  font-size: 13px;
+  color: #3d3d3d;
+  margin: 14px 0;
+}
+.notes li { margin: 6px 0; }
+table {
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+  color: #3d3d3d;
+  margin: 12px 0;
+  width: 100%;
+}
+td, th {
+  border: 1px solid #d6d4cf;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: #f4f3f0;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Velora 73 — Part Surface: Organ Sound Section Mockup (Story 2.16)</h1>
+<p>Drawn at 1024 × 600 in the Stage and Studio themes per <b>DESIGN.md</b> and <b>EXPERIENCE.md › Part (list-left / fields-right)</b>. Illustrates the Sound section for a tonewheel organ part (e.g. Gospel B3), featuring all 9 drawbars, percussion, key click, vibrato/chorus scanner, leakage, and rotary speaker (using <b>ROTARY</b> wording only).</p>
+
+<h2>1 · Stage & Studio Themes: Organ Sound Section</h2>
+<p>Top Bar reads <code>PART 4 · Gospel B3 · ORGAN</code> with ⏻ (on/off) and ★ (favorite). Left column lists Part sections with Sound active. The right pane displays the 9 Drawbar Columns (16' … 1') with traditional theme-invariant head colours (brown, white, black), per-theme edge rule, tabular numerals, and registration <code>88 8600 000</code>. Below the drawbars are Segmented Controls and value fields for Percussion, Key Click, Vibrato/Chorus, Leakage, and Rotary.</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (High Contrast Performance)</figcaption>
+<div class="frame">
+<div class="scr t-stage" role="group" aria-label="Part Surface: Organ Sound, Stage Theme">
+  <div class="s">
+    <!-- Top Bar (56px) -->
+    <div class="top-bar">
+      <div class="title"><small>PART 4</small>Gospel B3 · <small>ORGAN</small></div>
+      <div class="right-icons">
+        <div class="mode-mirror">KNOBS PART 4</div>
+        <div class="icon-btn" aria-label="Part Power">⏻</div>
+        <div class="icon-btn" aria-label="Add to Favorites">★</div>
+      </div>
+    </div>
+
+    <!-- Content Area (488px) -->
+    <div class="body-layout">
+      <!-- List Left -->
+      <div class="section-list">
+        <div class="sec-item">Timbre</div>
+        <div class="sec-item active">Sound</div>
+        <div class="sec-item">Envelope & EQ</div>
+        <div class="sec-item">Zone & keyboard</div>
+        <div class="sec-item">Level & output</div>
+        <div class="sec-item">Effects</div>
+        <div class="sec-item">Arpeggiator</div>
+      </div>
+
+      <!-- Fields Right -->
+      <div class="sound-pane">
+        <!-- Drawbars Card -->
+        <div class="drawbars-card">
+          <div class="drawbars-header">
+            <span class="drawbars-title">Tonewheel Drawbars (9 Columns)</span>
+            <span class="registration-val">88 8600 000</span>
+          </div>
+          <div class="dbs-grid">
+            <div class="db-col">
+              <div class="db-ft">16'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 93%;"></div>
+                <div class="db-head head-br" style="top: 86%;">8</div>
+              </div>
+              <div class="db-val">8</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">5⅓'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 93%;"></div>
+                <div class="db-head head-br" style="top: 86%;">8</div>
+              </div>
+              <div class="db-val">8</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">8'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 93%;"></div>
+                <div class="db-head head-wh" style="top: 86%;">8</div>
+              </div>
+              <div class="db-val">8</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">4'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 72%;"></div>
+                <div class="db-head head-wh" style="top: 65%;">6</div>
+              </div>
+              <div class="db-val">6</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">2⅔'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-bk" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">2'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-wh" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">1⅗'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-bk" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">1⅓'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-bk" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">1'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-wh" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls Grid -->
+        <div class="controls-grid">
+          <!-- Percussion Card -->
+          <div class="card">
+            <div class="card-header">Percussion</div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Percussion</span>
+              <div class="seg"><span class="on">ON</span><span>OFF</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Harmonic</span>
+              <div class="seg"><span class="on">2ND</span><span>3RD</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Decay</span>
+              <div class="seg"><span class="on">FAST</span><span>SLOW</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Volume</span>
+              <div class="seg"><span class="on">NORMAL</span><span>SOFT</span></div>
+            </div>
+          </div>
+
+          <!-- Scanner & Rotary Card -->
+          <div class="card">
+            <div class="card-header">Vibrato / Chorus & Rotary</div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Vibrato / Chorus</span>
+              <div class="seg" style="font-size: calc(11 * var(--u));">
+                <span>OFF</span><span>V1</span><span>V2</span><span>V3</span><span>C1</span><span>C2</span><span class="on">C3</span>
+              </div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Rotary Speaker</span>
+              <div class="seg"><span class="on">SLOW</span><span>FAST</span><span>STOP</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Key Click Level</span>
+              <div class="cell-val">Normal (4)</div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Leakage Level</span>
+              <div class="cell-val">Low (2)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hint Bar (56px) -->
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>change</span>
+        <span><b>WRITE</b>edit</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>Drawbars follow physical faders in DRAWBARS mode</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (Daylight Studio)</figcaption>
+<div class="frame">
+<div class="scr t-studio" role="group" aria-label="Part Surface: Organ Sound, Studio Theme">
+  <div class="s">
+    <!-- Top Bar (56px) -->
+    <div class="top-bar">
+      <div class="title"><small>PART 4</small>Gospel B3 · <small>ORGAN</small></div>
+      <div class="right-icons">
+        <div class="mode-mirror">KNOBS PART 4</div>
+        <div class="icon-btn" aria-label="Part Power">⏻</div>
+        <div class="icon-btn" aria-label="Add to Favorites">★</div>
+      </div>
+    </div>
+
+    <!-- Content Area (488px) -->
+    <div class="body-layout">
+      <!-- List Left -->
+      <div class="section-list">
+        <div class="sec-item">Timbre</div>
+        <div class="sec-item active">Sound</div>
+        <div class="sec-item">Envelope & EQ</div>
+        <div class="sec-item">Zone & keyboard</div>
+        <div class="sec-item">Level & output</div>
+        <div class="sec-item">Effects</div>
+        <div class="sec-item">Arpeggiator</div>
+      </div>
+
+      <!-- Fields Right -->
+      <div class="sound-pane">
+        <!-- Drawbars Card -->
+        <div class="drawbars-card">
+          <div class="drawbars-header">
+            <span class="drawbars-title">Tonewheel Drawbars (9 Columns)</span>
+            <span class="registration-val">88 8600 000</span>
+          </div>
+          <div class="dbs-grid">
+            <div class="db-col">
+              <div class="db-ft">16'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 93%;"></div>
+                <div class="db-head head-br" style="top: 86%;">8</div>
+              </div>
+              <div class="db-val">8</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">5⅓'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 93%;"></div>
+                <div class="db-head head-br" style="top: 86%;">8</div>
+              </div>
+              <div class="db-val">8</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">8'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 93%;"></div>
+                <div class="db-head head-wh" style="top: 86%;">8</div>
+              </div>
+              <div class="db-val">8</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">4'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 72%;"></div>
+                <div class="db-head head-wh" style="top: 65%;">6</div>
+              </div>
+              <div class="db-val">6</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">2⅔'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-bk" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">2'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-wh" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">1⅗'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-bk" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">1⅓'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-bk" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+            <div class="db-col">
+              <div class="db-ft">1'</div>
+              <div class="db-slot">
+                <div class="db-rod" style="height: 6%;"></div>
+                <div class="db-head head-wh" style="top: 0%;">0</div>
+              </div>
+              <div class="db-val">0</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls Grid -->
+        <div class="controls-grid">
+          <!-- Percussion Card -->
+          <div class="card">
+            <div class="card-header">Percussion</div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Percussion</span>
+              <div class="seg"><span class="on">ON</span><span>OFF</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Harmonic</span>
+              <div class="seg"><span class="on">2ND</span><span>3RD</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Decay</span>
+              <div class="seg"><span class="on">FAST</span><span>SLOW</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Volume</span>
+              <div class="seg"><span class="on">NORMAL</span><span>SOFT</span></div>
+            </div>
+          </div>
+
+          <!-- Scanner & Rotary Card -->
+          <div class="card">
+            <div class="card-header">Vibrato / Chorus & Rotary</div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Vibrato / Chorus</span>
+              <div class="seg" style="font-size: calc(11 * var(--u));">
+                <span>OFF</span><span>V1</span><span>V2</span><span>V3</span><span>C1</span><span>C2</span><span class="on">C3</span>
+              </div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Rotary Speaker</span>
+              <div class="seg"><span class="on">SLOW</span><span>FAST</span><span>STOP</span></div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Key Click Level</span>
+              <div class="cell-val">Normal (4)</div>
+            </div>
+            <div class="ctrl-row">
+              <span class="ctrl-label">Leakage Level</span>
+              <div class="cell-val">Low (2)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hint Bar (56px) -->
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>change</span>
+        <span><b>WRITE</b>edit</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>Drawbars follow physical faders in DRAWBARS mode</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+</div>
+
+<h2>2 · Pseudo-localization (+40% expansion with ÁÇÊÕÑ Ação)</h2>
+<p>Verifies string length expansion tolerance (+40%), diacritical marks, and narrow cell clipping rules on organ controls.</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (+40% Pseudo-localization)</figcaption>
+<div class="frame">
+<div class="scr t-stage" role="group" aria-label="Part Surface: Organ Sound Pseudo-localization Stage">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>PÁRT 4 ÁÇÊ</small>Gõspêl B3 ÁÇÊÕÑ · <small>ÓRGÃÕ ÁÇ</small></div>
+      <div class="right-icons">
+        <div class="mode-mirror">KÑÕBS PÁRT ÁÇÊ 4</div>
+        <div class="icon-btn">⏻</div>
+        <div class="icon-btn">★</div>
+      </div>
+    </div>
+    <div class="body-layout">
+      <div class="section-list">
+        <div class="sec-item">Tímbrê ÁÇ</div>
+        <div class="sec-item active">Sõúñd ÁÇ</div>
+        <div class="sec-item">Êñvêlõpê & ÊQ ÁÇÊÕ</div>
+        <div class="sec-item">Zõñê & kêybõárd ÁÇÊÕÑ</div>
+        <div class="sec-item">Lêvêl & õútpút ÁÇÊÕÑ</div>
+        <div class="sec-item">Êffêçts ÁÇ</div>
+        <div class="sec-item">Árpêggíátõr ÁÇÊ</div>
+      </div>
+      <div class="sound-pane">
+        <div class="drawbars-card">
+          <div class="drawbars-header">
+            <span class="drawbars-title">Dráwbárs dõ Órgãõ ÁÇÊÕÑ (9 Çõlúñás)</span>
+            <span class="registration-val">88 8600 000</span>
+          </div>
+          <div class="dbs-grid">
+            <div class="db-col"><div class="db-ft">16'</div><div class="db-slot"><div class="db-rod" style="height:93%;"></div><div class="db-head head-br" style="top:86%;">8</div></div><div class="db-val">8</div></div>
+            <div class="db-col"><div class="db-ft">5⅓'</div><div class="db-slot"><div class="db-rod" style="height:93%;"></div><div class="db-head head-br" style="top:86%;">8</div></div><div class="db-val">8</div></div>
+            <div class="db-col"><div class="db-ft">8'</div><div class="db-slot"><div class="db-rod" style="height:93%;"></div><div class="db-head head-wh" style="top:86%;">8</div></div><div class="db-val">8</div></div>
+            <div class="db-col"><div class="db-ft">4'</div><div class="db-slot"><div class="db-rod" style="height:72%;"></div><div class="db-head head-wh" style="top:65%;">6</div></div><div class="db-val">6</div></div>
+            <div class="db-col"><div class="db-ft">2⅔'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-bk" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">2'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-wh" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">1⅗'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-bk" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">1⅓'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-bk" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">1'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-wh" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+          </div>
+        </div>
+        <div class="controls-grid">
+          <div class="card">
+            <div class="card-header">Pêrçússãõ ÁÇÊÕÑ Ação</div>
+            <div class="ctrl-row"><span class="ctrl-label">Pêrçússãõ ÁÇ</span><div class="seg"><span class="on">LÍG ÁÇ</span><span>DÊSL ÁÇ</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Hármôñíçõ ÁÇ</span><div class="seg"><span class="on">2ª ÁÇ</span><span>3ª ÁÇ</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Dêçáímêñtõ ÁÇ</span><div class="seg"><span class="on">RÁP ÁÇ</span><span>LÊÑ ÁÇ</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Võlúmê ÁÇ</span><div class="seg"><span class="on">ÑÕRM ÁÇ</span><span>SÚÁV ÁÇ</span></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header">Víbrátõ / Çhõrús & Rõtáry ÁÇÊÕ</div>
+            <div class="ctrl-row"><span class="ctrl-label">Víbrátõ / Çhõrús ÁÇ</span><div class="seg" style="font-size:calc(11*var(--u));"><span>DÊSL</span><span>V1</span><span>V2</span><span>V3</span><span>C1</span><span>C2</span><span class="on">C3</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Rõtáry Spêákêr ÁÇ</span><div class="seg"><span class="on">LÊÑTÕ</span><span>RÁPÍD</span><span>PÁRÁD</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Kêy Çlíçk ÁÇ</span><div class="cell-val">Ñõrmál (4)</div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Vázámêñtõ ÁÇ</span><div class="cell-val">Báíxõ (2)</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>múdár ÁÇ</span>
+        <span><b>WRITE</b>êdítár ÁÇ</span>
+        <span><b>EXIT</b>võltár ÁÇ</span>
+      </div>
+      <span>Dráwbárs áçõmpáñhám fádêrs físíçõs ÁÇÊÕÑ</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (+40% Pseudo-localization)</figcaption>
+<div class="frame">
+<div class="scr t-studio" role="group" aria-label="Part Surface: Organ Sound Pseudo-localization Studio">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>PÁRT 4 ÁÇÊ</small>Gõspêl B3 ÁÇÊÕÑ · <small>ÓRGÃÕ ÁÇ</small></div>
+      <div class="right-icons">
+        <div class="mode-mirror">KÑÕBS PÁRT ÁÇÊ 4</div>
+        <div class="icon-btn">⏻</div>
+        <div class="icon-btn">★</div>
+      </div>
+    </div>
+    <div class="body-layout">
+      <div class="section-list">
+        <div class="sec-item">Tímbrê ÁÇ</div>
+        <div class="sec-item active">Sõúñd ÁÇ</div>
+        <div class="sec-item">Êñvêlõpê & ÊQ ÁÇÊÕ</div>
+        <div class="sec-item">Zõñê & kêybõárd ÁÇÊÕÑ</div>
+        <div class="sec-item">Lêvêl & õútpút ÁÇÊÕÑ</div>
+        <div class="sec-item">Êffêçts ÁÇ</div>
+        <div class="sec-item">Árpêggíátõr ÁÇÊ</div>
+      </div>
+      <div class="sound-pane">
+        <div class="drawbars-card">
+          <div class="drawbars-header">
+            <span class="drawbars-title">Dráwbárs dõ Órgãõ ÁÇÊÕÑ (9 Çõlúñás)</span>
+            <span class="registration-val">88 8600 000</span>
+          </div>
+          <div class="dbs-grid">
+            <div class="db-col"><div class="db-ft">16'</div><div class="db-slot"><div class="db-rod" style="height:93%;"></div><div class="db-head head-br" style="top:86%;">8</div></div><div class="db-val">8</div></div>
+            <div class="db-col"><div class="db-ft">5⅓'</div><div class="db-slot"><div class="db-rod" style="height:93%;"></div><div class="db-head head-br" style="top:86%;">8</div></div><div class="db-val">8</div></div>
+            <div class="db-col"><div class="db-ft">8'</div><div class="db-slot"><div class="db-rod" style="height:93%;"></div><div class="db-head head-wh" style="top:86%;">8</div></div><div class="db-val">8</div></div>
+            <div class="db-col"><div class="db-ft">4'</div><div class="db-slot"><div class="db-rod" style="height:72%;"></div><div class="db-head head-wh" style="top:65%;">6</div></div><div class="db-val">6</div></div>
+            <div class="db-col"><div class="db-ft">2⅔'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-bk" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">2'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-wh" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">1⅗'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-bk" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">1⅓'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-bk" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+            <div class="db-col"><div class="db-ft">1'</div><div class="db-slot"><div class="db-rod" style="height:6%;"></div><div class="db-head head-wh" style="top:0%;">0</div></div><div class="db-val">0</div></div>
+          </div>
+        </div>
+        <div class="controls-grid">
+          <div class="card">
+            <div class="card-header">Pêrçússãõ ÁÇÊÕÑ Ação</div>
+            <div class="ctrl-row"><span class="ctrl-label">Pêrçússãõ ÁÇ</span><div class="seg"><span class="on">LÍG ÁÇ</span><span>DÊSL ÁÇ</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Hármôñíçõ ÁÇ</span><div class="seg"><span class="on">2ª ÁÇ</span><span>3ª ÁÇ</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Dêçáímêñtõ ÁÇ</span><div class="seg"><span class="on">RÁP ÁÇ</span><span>LÊÑ ÁÇ</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Võlúmê ÁÇ</span><div class="seg"><span class="on">ÑÕRM ÁÇ</span><span>SÚÁV ÁÇ</span></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header">Víbrátõ / Çhõrús & Rõtáry ÁÇÊÕ</div>
+            <div class="ctrl-row"><span class="ctrl-label">Víbrátõ / Çhõrús ÁÇ</span><div class="seg" style="font-size:calc(11*var(--u));"><span>DÊSL</span><span>V1</span><span>V2</span><span>V3</span><span>C1</span><span>C2</span><span class="on">C3</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Rõtáry Spêákêr ÁÇ</span><div class="seg"><span class="on">LÊÑTÕ</span><span>RÁPÍD</span><span>PÁRÁD</span></div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Kêy Çlíçk ÁÇ</span><div class="cell-val">Ñõrmál (4)</div></div>
+            <div class="ctrl-row"><span class="ctrl-label">Vázámêñtõ ÁÇ</span><div class="cell-val">Báíxõ (2)</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>múdár ÁÇ</span>
+        <span><b>WRITE</b>êdítár ÁÇ</span>
+        <span><b>EXIT</b>võltár ÁÇ</span>
+      </div>
+      <span>Dráwbárs áçõmpáñhám fádêrs físíçõs ÁÇÊÕÑ</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+</div>
+
+<h2>3 · Accessibility & Contrast Audit</h2>
+<table>
+  <tr><th>Element Pair</th><th>Stage Theme</th><th>Ratio</th><th>Studio Theme</th><th>Ratio</th><th>Standard</th></tr>
+  <tr><td>Text on Surface</td><td>#e7ebe8 on #151917</td><td>14.2 : 1</td><td>#131714 on #e3e8e4</td><td>13.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Muted Text on Surface</td><td>#88938c on #151917</td><td>5.1 : 1</td><td>#5a635c on #e3e8e4</td><td>5.2 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Accent on Raised</td><td>#9fbaa8 on #202622</td><td>4.8 : 1</td><td>#466853 on #ffffff</td><td>5.4 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>On-Accent on Accent</td><td>#0b0d0c on #9fbaa8</td><td>9.6 : 1</td><td>#f2f4f2 on #466853</td><td>5.5 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Drawbar Brown Head Ink</td><td>#f1e9df on #7f5e47</td><td>5.2 : 1</td><td>#f1e9df on #7f5e47</td><td>5.2 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Drawbar White Head Ink</td><td>#1d201e on #e7e4dc</td><td>12.8 : 1</td><td>#1d201e on #e7e4dc</td><td>12.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Drawbar Black Head Ink</td><td>#e7e4dc on #1d201e</td><td>12.8 : 1</td><td>#e7e4dc on #1d201e</td><td>12.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Control Boundary on Surface</td><td>#5a6860 on #151917</td><td>3.6 : 1</td><td>#728a77 on #e3e8e4</td><td>3.4 : 1</td><td>≥ 3.0 : 1 (Pass)</td></tr>
+  <tr><td>Touch Target Minimum</td><td>Section row 56 px, icon 56 px</td><td>Pass</td><td>Section row 56 px, icon 56 px</td><td>Pass</td><td>≥ 56 px (Pass)</td></tr>
+</table>
+
+<h2>4 · Rules & Edge Cases</h2>
+<ul class="notes">
+  <li><b>Per-theme drawbar edge rule.</b> Black drawbar heads carry a 2 px edge rule (<code>#667069</code>) in the Stage theme to ensure clear separation against dark slots; white drawbar heads carry a 2 px edge rule (<code>#7d8680</code>) in the Studio theme against light slots.</li>
+  <li><b>Rotary terminology only.</b> The rotary cabinet simulation is strictly titled <b>ROTARY</b> (or "Rotary Speaker") across all labels and status readouts. Never "Leslie". Speed states are SLOW, FAST, and STOP.</li>
+  <li><b>Never colour only.</b> Selected segments and active states are marked by accent fill, bold weight, and enclosing borders. Non-selected items remain fully legible with high-contrast text.</li>
+  <li><b>Numeric registration.</b> Grouped in the standard 9-digit notation <code>88 8600 000</code> with tabular numerals so values remain stable without horizontal jitter.</li>
+</ul>
+
+</div>
+</body>
+</html>

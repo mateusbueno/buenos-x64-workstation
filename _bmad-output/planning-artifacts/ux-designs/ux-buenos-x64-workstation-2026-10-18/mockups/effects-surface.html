@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Effects Surface Mockup (Story 2.15)</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #ecebe8;
+  font: 14px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif;
+  color: #151515;
+}
+.wrap {
+  max-width: 1180px;
+  margin: auto;
+  padding: 28px 16px 60px;
+}
+h1 { font-size: 22px; font-weight: 500; margin: 0 0 6px; }
+h2 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: #4d4d4d; margin: 38px 0 6px; }
+h3 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #4d4d4d; margin: 14px 0 4px; font-weight: 600; }
+p { color: #4d4d4d; max-width: 920px; margin: 0 0 12px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+@media (max-width: 760px) { .pair { grid-template-columns: 1fr; } }
+figure { margin: 0; }
+figcaption { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #4d4d4d; margin: 0 0 4px 2px; }
+.frame {
+  background: linear-gradient(180deg, #d4d7da, #b4b8bc 60%, #a3a7ab);
+  padding: 10px;
+  border-radius: 12px;
+}
+.scr {
+  aspect-ratio: 1024 / 600;
+  width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+  container-type: inline-size;
+  font-family: "Gill Sans", "Gill Sans MT", Calibri, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.s {
+  --u: calc(100cqw / 1024);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: calc(56 * var(--u)) calc(488 * var(--u)) calc(56 * var(--u));
+}
+
+/* Sálvia theme tokens */
+.t-stage {
+  --bg: #0b0d0c;
+  --surface: #151917;
+  --raised: #202622;
+  --line: #2b322e;
+  --line-strong: #5a6860;
+  --text: #e7ebe8;
+  --muted: #88938c;
+  --accent: #9fbaa8;
+  --on-accent: #0b0d0c;
+  --warn: #cdb86c;
+  --ok: #9fbaa8;
+}
+.t-studio {
+  --bg: #f2f4f2;
+  --surface: #e3e8e4;
+  --raised: #ffffff;
+  --line: #cbd4cd;
+  --line-strong: #728a77;
+  --text: #131714;
+  --muted: #5a635c;
+  --accent: #466853;
+  --on-accent: #f2f4f2;
+  --warn: #725f1e;
+  --ok: #466853;
+}
+
+/* Top bar (56px) */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 calc(20 * var(--u));
+  background: var(--surface);
+  border-bottom: calc(1 * var(--u)) solid var(--line);
+  color: var(--muted);
+  font-size: calc(15 * var(--u));
+  letter-spacing: .25em;
+  text-transform: uppercase;
+}
+.top-bar .title {
+  color: var(--text);
+  font-size: calc(19 * var(--u));
+  letter-spacing: 0;
+  text-transform: none;
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+}
+.top-bar .title small {
+  font-size: calc(12 * var(--u));
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.top-bar .mode-mirror {
+  font-size: calc(18 * var(--u));
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--accent);
+  border-bottom: calc(2 * var(--u)) solid var(--accent);
+  padding-bottom: calc(2 * var(--u));
+}
+
+/* Content Area (488px) */
+.content-area {
+  padding: calc(12 * var(--u)) calc(16 * var(--u));
+  display: flex;
+  flex-direction: column;
+  gap: calc(10 * var(--u));
+  overflow-y: hidden;
+}
+
+/* Segmented Control */
+.seg {
+  display: flex;
+  border: calc(1 * var(--u)) solid var(--line-strong);
+  border-radius: calc(6 * var(--u));
+  overflow: hidden;
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.seg span {
+  flex: 1;
+  min-height: calc(56 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(16 * var(--u));
+  padding: 0 calc(8 * var(--u));
+  text-align: center;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.seg span + span {
+  border-left: calc(1 * var(--u)) solid var(--line-strong);
+}
+.seg span.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+/* List Rows */
+.list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+  flex: 1;
+  overflow-y: auto;
+}
+.row {
+  min-height: calc(56 * var(--u));
+  background: var(--surface);
+  border: calc(1 * var(--u)) solid var(--line);
+  border-radius: calc(8 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 calc(14 * var(--u));
+  gap: calc(12 * var(--u));
+}
+.row.selected {
+  background: var(--raised);
+  border-color: var(--accent);
+}
+.row .left {
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--u));
+  min-width: 0;
+}
+.row .drag-handle {
+  font-size: calc(16 * var(--u));
+  color: var(--muted);
+  cursor: grab;
+  padding: calc(8 * var(--u));
+  min-width: calc(40 * var(--u));
+  text-align: center;
+}
+.row .name {
+  font-size: calc(18 * var(--u));
+  color: var(--text);
+  font-weight: 500;
+}
+.row .meta {
+  font-size: calc(14 * var(--u));
+  color: var(--muted);
+  letter-spacing: .06em;
+}
+.row .right {
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  flex-shrink: 0;
+}
+
+/* Bypass Control (Text + Shape, never colour only) */
+.bypass-ctrl {
+  display: flex;
+  border-radius: calc(6 * var(--u));
+  border: calc(1 * var(--u)) solid var(--line-strong);
+  overflow: hidden;
+  height: calc(44 * var(--u));
+}
+.bypass-ctrl button {
+  background: var(--surface);
+  color: var(--text);
+  border: none;
+  font: 600 calc(13 * var(--u)) "Gill Sans", Calibri, sans-serif;
+  letter-spacing: .08em;
+  padding: 0 calc(12 * var(--u));
+  min-height: calc(44 * var(--u));
+  cursor: pointer;
+}
+.bypass-ctrl button + button {
+  border-left: calc(1 * var(--u)) solid var(--line-strong);
+}
+.bypass-ctrl button.active-on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.bypass-ctrl button.bypass-on {
+  background: var(--line-strong);
+  color: var(--text);
+  text-decoration: line-through;
+  border: calc(1 * var(--u)) dashed var(--warn);
+}
+
+/* Action button (≥56px touch target) */
+.btn-icon {
+  width: calc(56 * var(--u));
+  height: calc(56 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: calc(18 * var(--u));
+  border-radius: calc(6 * var(--u));
+  cursor: pointer;
+}
+
+/* Add Row */
+.row.add-row {
+  border-style: dashed;
+  border-color: var(--line-strong);
+  justify-content: center;
+  color: var(--accent);
+  font-size: calc(16 * var(--u));
+  font-weight: 600;
+  letter-spacing: .08em;
+  cursor: pointer;
+}
+
+/* Hint bar (56px) */
+.hint-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 calc(20 * var(--u));
+  background: var(--surface);
+  border-top: calc(1 * var(--u)) solid var(--line);
+  color: var(--muted);
+  font-size: calc(14 * var(--u));
+  letter-spacing: .06em;
+}
+.hint-bar .hints-left {
+  display: flex;
+  gap: calc(24 * var(--u));
+  align-items: center;
+}
+.hint-bar b {
+  color: var(--text);
+  font-weight: 400;
+  border: calc(1 * var(--u)) solid var(--line-strong);
+  border-radius: calc(5 * var(--u));
+  padding: calc(2 * var(--u)) calc(7 * var(--u));
+  margin-right: calc(6 * var(--u));
+}
+
+/* Grid layout for Sends & Master */
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: calc(12 * var(--u));
+  flex: 1;
+}
+.card {
+  background: var(--surface);
+  border: calc(1 * var(--u)) solid var(--line);
+  border-radius: calc(8 * var(--u));
+  padding: calc(14 * var(--u));
+  display: flex;
+  flex-direction: column;
+  gap: calc(10 * var(--u));
+}
+.card-title {
+  font-size: calc(13 * var(--u));
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: calc(44 * var(--u));
+}
+.card-row label {
+  font-size: calc(15 * var(--u));
+  color: var(--text);
+}
+.card-row .val {
+  font-size: calc(16 * var(--u));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.slider-bar {
+  flex: 1;
+  height: calc(8 * var(--u));
+  background: var(--line-strong);
+  border-radius: calc(4 * var(--u));
+  margin: 0 calc(12 * var(--u));
+  position: relative;
+}
+.slider-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: calc(4 * var(--u));
+}
+
+/* Notes & tables */
+.notes {
+  background: #fff;
+  border: 1px solid #d6d4cf;
+  border-radius: 8px;
+  padding: 12px 18px 12px 34px;
+  font-size: 13px;
+  color: #3d3d3d;
+  margin: 14px 0;
+}
+.notes li { margin: 6px 0; }
+table {
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+  color: #3d3d3d;
+  margin: 12px 0;
+  width: 100%;
+}
+td, th {
+  border: 1px solid #d6d4cf;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: #f4f3f0;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Velora 73 — Effects Surface Mockup (Story 2.15)</h1>
+<p>Drawn at 1024 × 600 in the Stage and Studio themes per <b>DESIGN.md</b> and <b>EXPERIENCE.md › Effects</b>. Topology conforms to AD-28: Part Inserts (1–8), Sends, Master, Outputs. Uses canonical Surface Skeleton: Top Bar (56 px), Content Area (488 px), Hint Bar (56 px). All touch targets ≥ 56 px; contrast meets ≥ 4.5:1 text and ≥ 3:1 control boundaries; bypass is shown by both text and shape (never colour alone).</p>
+
+<h2>1 · Section 1: Part Inserts</h2>
+<p>Part selector (P1–P8) as a Segmented Control. Each slot shows effect name, localized parameters/meta, bypass control with distinct text and shape, reorder drag handles (▲▼), and remove (✕). Add Effect row offers only the 5 valid insert types (Rotary, Chorus/Phaser, EP Amp, EQ, Compressor). Uses ROTARY wording only.</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (Part 1 Inserts)</figcaption>
+<div class="frame">
+<div class="scr t-stage" role="group" aria-label="Effects Surface: Part Inserts, Stage Theme">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>EFFECTS</small>Part Inserts · <small>PART 1</small></div>
+      <div class="mode-mirror">KNOBS PART 1</div>
+    </div>
+    <div class="content-area">
+      <!-- Section Selector -->
+      <div class="seg" role="tablist">
+        <span class="on">INSERTS</span>
+        <span>SENDS</span>
+        <span>MASTER</span>
+        <span>OUTPUTS</span>
+      </div>
+      <!-- Part Selector -->
+      <div class="seg" style="min-height: calc(56 * var(--u));">
+        <span class="on">P1</span>
+        <span>P2</span>
+        <span>P3</span>
+        <span>P4</span>
+        <span>P5</span>
+        <span>P6</span>
+        <span>P7</span>
+        <span>P8</span>
+      </div>
+      <!-- Chain List Rows -->
+      <div class="list-rows">
+        <div class="row selected">
+          <div class="left">
+            <span class="drag-handle" title="Hold to reorder">▲<br>▼</span>
+            <div>
+              <div class="name">1 · Rotary Speaker</div>
+              <div class="meta">SLOW · Balance 65% · Drive 20%</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button class="active-on">ACTIVE</button>
+              <button>BYPASS</button>
+            </div>
+            <button class="btn-icon" aria-label="Remove insert">✕</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="left">
+            <span class="drag-handle" title="Hold to reorder">▲<br>▼</span>
+            <div>
+              <div class="name">2 · Parametric EQ</div>
+              <div class="meta">Low +2.0dB · Mid -1.5dB (1.8 kHz) · High +3.0dB</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button>ACTIVE</button>
+              <button class="bypass-on">BYPASS</button>
+            </div>
+            <button class="btn-icon" aria-label="Remove insert">✕</button>
+          </div>
+        </div>
+        <div class="row add-row">
+          + ADD INSERT EFFECT (3 / 5 SLOTS)
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>scroll</span>
+        <span><b>WRITE</b>select</span>
+        <span><b>HOLD ▲▼</b>reorder</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>All edits sound immediately</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (Part 1 Inserts)</figcaption>
+<div class="frame">
+<div class="scr t-studio" role="group" aria-label="Effects Surface: Part Inserts, Studio Theme">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>EFFECTS</small>Part Inserts · <small>PART 1</small></div>
+      <div class="mode-mirror">KNOBS PART 1</div>
+    </div>
+    <div class="content-area">
+      <!-- Section Selector -->
+      <div class="seg" role="tablist">
+        <span class="on">INSERTS</span>
+        <span>SENDS</span>
+        <span>MASTER</span>
+        <span>OUTPUTS</span>
+      </div>
+      <!-- Part Selector -->
+      <div class="seg" style="min-height: calc(56 * var(--u));">
+        <span class="on">P1</span>
+        <span>P2</span>
+        <span>P3</span>
+        <span>P4</span>
+        <span>P5</span>
+        <span>P6</span>
+        <span>P7</span>
+        <span>P8</span>
+      </div>
+      <!-- Chain List Rows -->
+      <div class="list-rows">
+        <div class="row selected">
+          <div class="left">
+            <span class="drag-handle" title="Hold to reorder">▲<br>▼</span>
+            <div>
+              <div class="name">1 · Rotary Speaker</div>
+              <div class="meta">SLOW · Balance 65% · Drive 20%</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button class="active-on">ACTIVE</button>
+              <button>BYPASS</button>
+            </div>
+            <button class="btn-icon" aria-label="Remove insert">✕</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="left">
+            <span class="drag-handle" title="Hold to reorder">▲<br>▼</span>
+            <div>
+              <div class="name">2 · Parametric EQ</div>
+              <div class="meta">Low +2.0dB · Mid -1.5dB (1.8 kHz) · High +3.0dB</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button>ACTIVE</button>
+              <button class="bypass-on">BYPASS</button>
+            </div>
+            <button class="btn-icon" aria-label="Remove insert">✕</button>
+          </div>
+        </div>
+        <div class="row add-row">
+          + ADD INSERT EFFECT (3 / 5 SLOTS)
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>scroll</span>
+        <span><b>WRITE</b>select</span>
+        <span><b>HOLD ▲▼</b>reorder</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>All edits sound immediately</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+</div>
+
+<h2>2 · Section 2: Sends (Reverb & Delay)</h2>
+<p>Global Reverb and Delay processors with type, time, feedback and master return levels, plus per-part send levels 1–8.</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (Sends)</figcaption>
+<div class="frame">
+<div class="scr t-stage" role="group" aria-label="Effects Surface: Sends, Stage Theme">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>EFFECTS</small>Master Sends</div>
+      <div class="mode-mirror">MIXER</div>
+    </div>
+    <div class="content-area">
+      <div class="seg" role="tablist">
+        <span>INSERTS</span>
+        <span class="on">SENDS</span>
+        <span>MASTER</span>
+        <span>OUTPUTS</span>
+      </div>
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-title">Reverb Processor</div>
+          <div class="card-row">
+            <label>Type</label>
+            <div class="val">Hall</div>
+          </div>
+          <div class="card-row">
+            <label>Decay Time</label>
+            <div class="val">2.4 s</div>
+          </div>
+          <div class="card-row">
+            <label>Master Return</label>
+            <div class="val">85%</div>
+          </div>
+          <div class="card-row">
+            <label>Pre-delay</label>
+            <div class="val">25 ms</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Delay Processor</div>
+          <div class="card-row">
+            <label>Tempo Sync</label>
+            <div class="val">1/8 Dotted</div>
+          </div>
+          <div class="card-row">
+            <label>Feedback</label>
+            <div class="val">42%</div>
+          </div>
+          <div class="card-row">
+            <label>Master Return</label>
+            <div class="val">60%</div>
+          </div>
+          <div class="card-row">
+            <label>Damping</label>
+            <div class="val">3.5 kHz</div>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="left">
+          <div class="name">Part Send Levels (P1–P8)</div>
+          <div class="meta">P1: Rev 45% · Dly 20% | P2: Rev 30% · Dly 10% | P3: Rev 60% · Dly 40%</div>
+        </div>
+        <div class="right">
+          <button class="btn-touch" style="height: calc(44 * var(--u)); font-size: calc(14 * var(--u));">EDIT SENDS</button>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>adjust</span>
+        <span><b>WRITE</b>confirm</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>REV fader controls Reverb send</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (Sends)</figcaption>
+<div class="frame">
+<div class="scr t-studio" role="group" aria-label="Effects Surface: Sends, Studio Theme">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>EFFECTS</small>Master Sends</div>
+      <div class="mode-mirror">MIXER</div>
+    </div>
+    <div class="content-area">
+      <div class="seg" role="tablist">
+        <span>INSERTS</span>
+        <span class="on">SENDS</span>
+        <span>MASTER</span>
+        <span>OUTPUTS</span>
+      </div>
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-title">Reverb Processor</div>
+          <div class="card-row">
+            <label>Type</label>
+            <div class="val">Hall</div>
+          </div>
+          <div class="card-row">
+            <label>Decay Time</label>
+            <div class="val">2.4 s</div>
+          </div>
+          <div class="card-row">
+            <label>Master Return</label>
+            <div class="val">85%</div>
+          </div>
+          <div class="card-row">
+            <label>Pre-delay</label>
+            <div class="val">25 ms</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Delay Processor</div>
+          <div class="card-row">
+            <label>Tempo Sync</label>
+            <div class="val">1/8 Dotted</div>
+          </div>
+          <div class="card-row">
+            <label>Feedback</label>
+            <div class="val">42%</div>
+          </div>
+          <div class="card-row">
+            <label>Master Return</label>
+            <div class="val">60%</div>
+          </div>
+          <div class="card-row">
+            <label>Damping</label>
+            <div class="val">3.5 kHz</div>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="left">
+          <div class="name">Part Send Levels (P1–P8)</div>
+          <div class="meta">P1: Rev 45% · Dly 20% | P2: Rev 30% · Dly 10% | P3: Rev 60% · Dly 40%</div>
+        </div>
+        <div class="right">
+          <button class="btn-touch" style="height: calc(44 * var(--u)); font-size: calc(14 * var(--u));">EDIT SENDS</button>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>adjust</span>
+        <span><b>WRITE</b>confirm</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>REV fader controls Reverb send</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+</div>
+
+<h2>3 · Section 3: Master & Section 4: Outputs</h2>
+<p>Master EQ, Master Compressor, Line-in Level (mixed into master only), and per-part Output assignment (Main / Aux Segmented Controls).</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (Master & Line-In)</figcaption>
+<div class="frame">
+<div class="scr t-stage" role="group" aria-label="Effects Surface: Master Section, Stage Theme">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>EFFECTS</small>Master EQ & Compressor</div>
+      <div class="mode-mirror">MIXER</div>
+    </div>
+    <div class="content-area">
+      <div class="seg" role="tablist">
+        <span>INSERTS</span>
+        <span>SENDS</span>
+        <span class="on">MASTER</span>
+        <span>OUTPUTS</span>
+      </div>
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-title">Master 3-Band EQ</div>
+          <div class="card-row">
+            <label>Low Gain (80 Hz)</label>
+            <div class="val">+1.5 dB</div>
+          </div>
+          <div class="card-row">
+            <label>Mid Frequency</label>
+            <div class="val">1.2 kHz</div>
+          </div>
+          <div class="card-row">
+            <label>Mid Gain</label>
+            <div class="val">-1.0 dB</div>
+          </div>
+          <div class="card-row">
+            <label>High Gain (10 kHz)</label>
+            <div class="val">+2.0 dB</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Master Compressor</div>
+          <div class="card-row">
+            <label>Threshold</label>
+            <div class="val">-14 dB</div>
+          </div>
+          <div class="card-row">
+            <label>Ratio</label>
+            <div class="val">3.2 : 1</div>
+          </div>
+          <div class="card-row">
+            <label>Attack / Release</label>
+            <div class="val">15 ms / 120 ms</div>
+          </div>
+          <div class="card-row">
+            <label>Makeup Gain</label>
+            <div class="val">+2.5 dB</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-row">
+          <label>Stereo Line-In Level (Mixes directly to Master)</label>
+          <div class="slider-bar"><div class="slider-fill" style="width: 75%;"></div></div>
+          <div class="val">75%</div>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>select field</span>
+        <span><b>WRITE</b>edit value</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>Master bus protected from clipping</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Stage Theme (Outputs Main / Aux)</figcaption>
+<div class="frame">
+<div class="scr t-stage" role="group" aria-label="Effects Surface: Outputs Section, Stage Theme">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>EFFECTS</small>Part Output Routing</div>
+      <div class="mode-mirror">MIXER</div>
+    </div>
+    <div class="content-area">
+      <div class="seg" role="tablist">
+        <span>INSERTS</span>
+        <span>SENDS</span>
+        <span>MASTER</span>
+        <span class="on">OUTPUTS</span>
+      </div>
+      <div class="list-rows">
+        <div class="row">
+          <div class="left"><div class="name">Part 1 · Grand Piano</div><div class="meta">Acoustic Piano</div></div>
+          <div class="right"><div class="seg" style="width: calc(200 * var(--u));"><span class="on">MAIN</span><span>AUX</span></div></div>
+        </div>
+        <div class="row">
+          <div class="left"><div class="name">Part 2 · Gospel B3</div><div class="meta">Organ (Rotary to Aux)</div></div>
+          <div class="right"><div class="seg" style="width: calc(200 * var(--u));"><span>MAIN</span><span class="on">AUX</span></div></div>
+        </div>
+        <div class="row">
+          <div class="left"><div class="name">Part 3 · String Section</div><div class="meta">Strings</div></div>
+          <div class="right"><div class="seg" style="width: calc(200 * var(--u));"><span class="on">MAIN</span><span>AUX</span></div></div>
+        </div>
+        <div class="row">
+          <div class="left"><div class="name">Part 4 · Synth Pad</div><div class="meta">Synth Pad</div></div>
+          <div class="right"><div class="seg" style="width: calc(200 * var(--u));"><span class="on">MAIN</span><span>AUX</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>choose part</span>
+        <span><b>WRITE</b>toggle Main/Aux</span>
+        <span><b>EXIT</b>back</span>
+      </div>
+      <span>Aux output is line level balanced</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+</div>
+
+<h2>4 · Pseudo-localization (+40% expansion with ÁÇÊÕÑ Ação)</h2>
+<p>Verifies string length expansion tolerance (+40%), diacritical marks, and narrow cell clipping rules.</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (+40% Pseudo-localization)</figcaption>
+<div class="frame">
+<div class="scr t-stage" role="group" aria-label="Effects Surface: Pseudo-localization Stage">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>ÊFFÊÇTS ÁÇ</small>Íñsêrçõês dá Pártê · <small>PÁRT 1 ÁÇÊ</small></div>
+      <div class="mode-mirror">KÑÕBS PÁRT ÁÇÊ 1</div>
+    </div>
+    <div class="content-area">
+      <div class="seg" role="tablist">
+        <span class="on">ÍÑSÊRÇÕÊS ÁÇ</span>
+        <span>ÊÑVÍÕS ÁÇÊ</span>
+        <span>MÁSTÊR ÁÇÊ</span>
+        <span>SÁÍDÁS ÁÇÊ</span>
+      </div>
+      <div class="list-rows">
+        <div class="row selected">
+          <div class="left">
+            <span class="drag-handle">▲<br>▼</span>
+            <div>
+              <div class="name">1 · Rõtáry Spêákêr ÁÇÊÕÑ Ação</div>
+              <div class="meta">LÊÑTÕ · Báláñçõ 65% · Sátúráçãõ 20% ÁÇÊ</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button class="active-on">ÁTÍVÕ ÁÇ</button>
+              <button>BÁYPÁSS ÁÇ</button>
+            </div>
+            <button class="btn-icon">✕</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="left">
+            <span class="drag-handle">▲<br>▼</span>
+            <div>
+              <div class="name">2 · Êqúálízádõr Párâmêtríçõ ÁÇÊÕÑ Ação</div>
+              <div class="meta">Grávês +2.0dB · Médíõs -1.5dB (1.8 kHz) ÁÇÊ</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button>ÁTÍVÕ ÁÇ</button>
+              <button class="bypass-on">BÁYPÁSS ÁÇ</button>
+            </div>
+            <button class="btn-icon">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>dêsplázár ÁÇ</span>
+        <span><b>WRITE</b>sêlêçíõñár ÁÇ</span>
+        <span><b>HOLD ▲▼</b>rêõrdêñár ÁÇ</span>
+        <span><b>EXIT</b>võltár ÁÇ</span>
+      </div>
+      <span>Tõdás ás áltêráçõês sõám áõ vívõ ÁÇÊÕÑ</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (+40% Pseudo-localization)</figcaption>
+<div class="frame">
+<div class="scr t-studio" role="group" aria-label="Effects Surface: Pseudo-localization Studio">
+  <div class="s">
+    <div class="top-bar">
+      <div class="title"><small>ÊFFÊÇTS ÁÇ</small>Íñsêrçõês dá Pártê · <small>PÁRT 1 ÁÇÊ</small></div>
+      <div class="mode-mirror">KÑÕBS PÁRT ÁÇÊ 1</div>
+    </div>
+    <div class="content-area">
+      <div class="seg" role="tablist">
+        <span class="on">ÍÑSÊRÇÕÊS ÁÇ</span>
+        <span>ÊÑVÍÕS ÁÇÊ</span>
+        <span>MÁSTÊR ÁÇÊ</span>
+        <span>SÁÍDÁS ÁÇÊ</span>
+      </div>
+      <div class="list-rows">
+        <div class="row selected">
+          <div class="left">
+            <span class="drag-handle">▲<br>▼</span>
+            <div>
+              <div class="name">1 · Rõtáry Spêákêr ÁÇÊÕÑ Ação</div>
+              <div class="meta">LÊÑTÕ · Báláñçõ 65% · Sátúráçãõ 20% ÁÇÊ</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button class="active-on">ÁTÍVÕ ÁÇ</button>
+              <button>BÁYPÁSS ÁÇ</button>
+            </div>
+            <button class="btn-icon">✕</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="left">
+            <span class="drag-handle">▲<br>▼</span>
+            <div>
+              <div class="name">2 · Êqúálízádõr Párâmêtríçõ ÁÇÊÕÑ Ação</div>
+              <div class="meta">Grávês +2.0dB · Médíõs -1.5dB (1.8 kHz) ÁÇÊ</div>
+            </div>
+          </div>
+          <div class="right">
+            <div class="bypass-ctrl">
+              <button>ÁTÍVÕ ÁÇ</button>
+              <button class="bypass-on">BÁYPÁSS ÁÇ</button>
+            </div>
+            <button class="btn-icon">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint-bar">
+      <div class="hints-left">
+        <span><b>VALUE</b>dêsplázár ÁÇ</span>
+        <span><b>WRITE</b>sêlêçíõñár ÁÇ</span>
+        <span><b>HOLD ▲▼</b>rêõrdêñár ÁÇ</span>
+        <span><b>EXIT</b>võltár ÁÇ</span>
+      </div>
+      <span>Tõdás ás áltêráçõês sõám áõ vívõ ÁÇÊÕÑ</span>
+    </div>
+  </div>
+</div>
+</div>
+</figure>
+</div>
+
+<h2>5 · Accessibility & Contrast Audit</h2>
+<table>
+  <tr><th>Element Pair</th><th>Stage Theme</th><th>Ratio</th><th>Studio Theme</th><th>Ratio</th><th>Standard</th></tr>
+  <tr><td>Text on Surface</td><td>#e7ebe8 on #151917</td><td>14.2 : 1</td><td>#131714 on #e3e8e4</td><td>13.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Muted Text on Surface</td><td>#88938c on #151917</td><td>5.1 : 1</td><td>#5a635c on #e3e8e4</td><td>5.2 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Accent on Raised</td><td>#9fbaa8 on #202622</td><td>4.8 : 1</td><td>#466853 on #ffffff</td><td>5.4 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>On-Accent on Accent</td><td>#0b0d0c on #9fbaa8</td><td>9.6 : 1</td><td>#f2f4f2 on #466853</td><td>5.5 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Control Boundary on Surface</td><td>#5a6860 on #151917</td><td>3.6 : 1</td><td>#728a77 on #e3e8e4</td><td>3.4 : 1</td><td>≥ 3.0 : 1 (Pass)</td></tr>
+  <tr><td>Touch Target Minimum</td><td>Row height 56 px, button 56 px</td><td>Pass</td><td>Row height 56 px, button 56 px</td><td>Pass</td><td>≥ 56 px (Pass)</td></tr>
+</table>
+
+<h2>6 · Microcopy & State Rules</h2>
+<ul class="notes">
+  <li><b>Rotary wording.</b> The rotary speaker effect is always labeled <b>ROTARY</b> (or "Rotary Speaker"); never "Leslie". Speed states are SLOW, FAST, and STOP.</li>
+  <li><b>Never colour only.</b> Active vs Bypassed state is communicated via text (<code>ACTIVE</code> vs <code>BYPASS</code>), typography (normal vs struck-through), and border style (solid accent vs dashed border).</li>
+  <li><b>Hint Bar verbs.</b> The Hint Bar explicitly pairs physical panel controls with clear localized action verbs: <code>VALUE scroll</code>, <code>WRITE select</code>, <code>HOLD ▲▼ reorder</code>, <code>EXIT back</code>.</li>
+</ul>
+
+</div>
+</body>
+</html>

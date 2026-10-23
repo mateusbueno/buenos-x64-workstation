@@ -76,8 +76,8 @@ development_status:
   2-12-full-effects-load-within-the-latency-and-dropout-budget: backlog
   2-13-organ-objective-a-b-against-hammond-m-solo-renders: backlog
   2-14-organ-blind-abx-listening-test-with-professional-keyboardist: backlog
-  2-15-design-story-effects-surface-mockup: backlog
-  2-16-design-story-organ-section-of-the-part-surface: backlog
+  2-15-design-story-effects-surface-mockup: done
+  2-16-design-story-organ-section-of-the-part-surface: done
   2-17-device-ui-shell-on-the-lvgl-simulator-and-the-dev-board: done
   2-18-design-tokens-stage-and-studio-themes-and-the-contrast-gate: done
   2-19-hint-bar-list-row-segmented-control-and-the-mac-virtual-pane: done
