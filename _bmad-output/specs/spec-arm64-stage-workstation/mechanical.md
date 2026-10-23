@@ -2,6 +2,8 @@
 
 The v1 instrument's physical dimensions, as decided by the founder on 2026-10-23 for technical drawing rev. 00. All values are in mm. Values marked **TBD** have no source yet. Values marked **to confirm** come from a reference that may not match the final part.
 
+The drawing (PDF, one DXF per view, SVG sheets and a zoom/pan viewer) and its generator are in `tools/drawings/velora73/`. Change a value here and in its `model.py` together.
+
 ## Conventions
 
 - Origin O is the front-left corner of the enclosure seen from above. X runs right, Y runs back (depth), and Z runs up from the underside of the bottom plate, feet excluded.
