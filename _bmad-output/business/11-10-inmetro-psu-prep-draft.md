@@ -68,7 +68,7 @@ Fill from board measurements (Story 11.x power data) and supplier datasheets. Do
 | Hold-up / brown-out behaviour | Output dip tolerance vs board hold-up time | ___ | to measure |
 | Thermal | Ambient 40 C operation derating | ___ | datasheet |
 | Required certificates | Inmetro registration/certificate (if required, number ____); IEC 62368-1 certificate or CB report (number ____); EMC report; manufacturer declaration | ___ | Obtain copies and verify authenticity/validity with issuing body |
-| Internal vs external | Compare: external = simpler product safety scope, shared cord/size; internal = our report covers more, thermal and creepage inside chassis | ___ | decision pending OCP answer |
+| Internal vs external | Compare: external = simpler product safety scope, shared cord/size; internal = our report covers more, thermal and creepage inside chassis | External, locking 5.5 × 2.5 mm DC jack (founder, 2026-10-23) | Confirm with the OCP that this choice holds; voltage and current to define |
 | Chosen PSU | Model: ____ ; ratings: ____ ; certificates: ____ | ___ | to be stored (AC2) |
 | One alternative PSU | Model: ____ ; ratings: ____ ; certificates: ____ ; from a different manufacturer ideally | ___ | to be stored (AC2) |
 | Supply risk | Lead time, MOQ, last-time-buy, who notifies of changes | ___ | |

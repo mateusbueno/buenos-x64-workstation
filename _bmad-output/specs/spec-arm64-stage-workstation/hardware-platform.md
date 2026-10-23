@@ -28,7 +28,8 @@
 
 ## Keybed
 
-- Fatar 73SW (semi-weighted), from the partner's stock of ~100 units. Assumed waterfall profile, E to E.
+- Fatar 73SW (semi-weighted), from the partner's stock of ~100 units. Assumed waterfall profile, E to E: E1–E7 with C4 = MIDI 60, 43 white and 30 black keys.
+- Key geometry (23.6 mm white key pitch, 1013.4 mm for the 73 keys) comes from Fatar's 61 TP/9 drawing until the 73SW drawing arrives. Full dimensions are in `mechanical.md`.
 - A dedicated scan MCU (e.g. STM32 or RP2350) scans at ≥10 kHz. It derives attack and release velocity from contact timing, reads aftertouch if present, and sends timestamped events to the SoC over UART/SPI in <1 ms.
 - Candidate MCU dev kit for both MCUs (founder decision 2026-10-19, not final until the partners confirm by month 7, Story 11.7): ST Nucleo-G474RE (STM32G4; many ADC channels for the panel, native dual-bank flash, on-board ST-LINK, ST longevity programme). ESP32 is excluded because v1 has no radio (NFR41). RP2350 is the fallback for the keybed only, since its ADC count would force external multiplexers on the panel.
 - The keybed model is a calibration table, so a different Fatar model needs no code change.
@@ -36,14 +37,16 @@
 
 ## Control surface and display (UI option A, refined by UX)
 
-Layout and legends are in the adopted `DESIGN.md` and `EXPERIENCE.md`. Legends are English only.
+Layout and legends are in the adopted `DESIGN.md` and `EXPERIENCE.md`. Legends are English only. Control sizes and proposed positions are in `mechanical.md`.
 
-- **Faders:** 9 dual-function faders: drawbars in DRAWBARS mode, parts 1–8 plus REV in MIXER mode. Non-motorized in v1, with pickup. Motorized faders are Pro only.
-- **Encoders:** 8 endless encoders with LED rings. Fixed functions are DELAY, BRIGHTNESS, ATTACK, RELEASE, LOW, MID, MID FREQ, HIGH. In ASSIGN they follow the Live Set's map. A VALUE encoder scrolls lists and changes values; it has a push switch (push-click), which on Performance opens the Part surface of the knob-target part.
+- **Faders:** 9 dual-function faders: drawbars in DRAWBARS mode, parts 1–8 plus REV in MIXER mode. Non-motorized in v1, with pickup. Motorized faders are Pro only. 45 mm travel, 20 mm between centres.
+- **Encoders:** 8 endless encoders with LED rings, Ø20 mm knobs, 32 mm between centres. Fixed functions are DELAY, BRIGHTNESS, ATTACK, RELEASE, LOW, MID, MID FREQ, HIGH. In ASSIGN they follow the Live Set's map. A VALUE encoder scrolls lists and changes values; it has a push switch (push-click), which on Performance opens the Part surface of the knob-target part. The VALUE knob is Ø35 mm and knurled.
+- **MASTER:** an analog level potentiometer in the output path with a Ø20 mm knob. The panel MCU does not read it.
 - **Toggle buttons:** 3, each with one LED per state: DRAWBARS/MIXER, PARTS/SCENES, and PART/ALL/ASSIGN (3 states).
+- **Button and LED size:** buttons are 14 × 9 mm, and LEDs are Ø3 mm diffused. Knobs and fader caps are machined anodized aluminum.
 - **Buttons:** 8 part/scene buttons, LIVE SET ◀ ▶, SCENE ◀ ▶, EXIT · MENU · WRITE (MENU opens the Launcher), ROTARY STOP and S/F (slow/fast). An optional Panel guard setting (default Off) makes LIVE SET ◀ ▶ act only after a 300 ms hold; the long-press threshold is a user setting (400 / 500 / 800 ms, default 500 ms).
 - **Pro tier (16 parts):** two banks of 8 (A/B) toggled by a bank button; part buttons and faders act on the active bank. Details are deferred to Pro.
-- **Wheels and footswitch:** pitch and mod wheels. The footswitch advances the scene by default, and can be set to previous scene, next Live Set or rotary speed.
+- **Wheels and footswitch:** pitch and mod wheels in an 80 mm block left of the keybed. The footswitch advances the scene by default, and can be set to previous scene, next Live Set or rotary speed.
 - **Display:** 7-inch capacitive touchscreen, native 1024×600 landscape. Luminance, glass, LED and legend floors are in `HARDWARE-INTERFACES.md`.
 
 ## Audio path
@@ -56,8 +59,9 @@ Layout and legends are in the adopted `DESIGN.md` and `EXPERIENCE.md`. Legends a
 ## v1 I/O
 
 - 4 balanced ¼" TRS outputs: 2 main and 2 aux.
-- Headphone output with its own amplifier.
-- 1 stereo line input.
+- Headphone output with its own amplifier, on a ¼" TRS jack on the front face under the wheel block.
+- 1 stereo line input: 2 × ¼" (L/R) plus 1 × 3.5 mm on the rear panel.
+- Rear panel order, seen from behind, left to right: DC IN and POWER, USB-A, USB-C, MIDI OUT, MIDI IN, the 3 pedal jacks, LINE IN, AUX OUT, MAIN OUT. MAIN sits nearest the bass end.
 - USB-C (device) for audio, MIDI, and the companion-app protocol. It exposes no serial console or mass storage.
 - USB-A (host) for importing libraries from an external drive.
 - MIDI DIN in and out.
@@ -68,4 +72,5 @@ Layout and legends are in the adopted `DESIGN.md` and `EXPERIENCE.md`. Legends a
 
 - NVMe (up to 1 TB in v1), sealed inside the unit.
 - Read-only root filesystem, A/B firmware partitions with rollback, journaled data partition.
-- An off-the-shelf power supply that complies with Inmetro.
+- An external off-the-shelf power supply that complies with Inmetro, plugged into a locking 5.5 × 2.5 mm DC jack on the rear panel. Voltage and current are still open.
+- A soft power button on the rear panel, next to DC IN.

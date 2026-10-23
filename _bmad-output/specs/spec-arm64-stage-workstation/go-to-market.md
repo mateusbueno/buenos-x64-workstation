@@ -28,7 +28,7 @@ Hybrid: the first ~100 units sell direct to musicians, which keeps the dealer ma
 ## Certification
 
 - No radio in v1, so no Anatel homologation is needed.
-- An off-the-shelf power supply that complies with Inmetro (the exact requirement is still to be confirmed).
+- An external off-the-shelf power supply that complies with Inmetro, plugged into a locking 5.5 × 2.5 mm DC jack (the exact requirement is still to be confirmed).
 - Safety and EMC tested to IEC 62368-1 anyway, so CE and FCC are easier for later export.
 
 ## Timeline (from work start)

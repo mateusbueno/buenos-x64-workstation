@@ -4,6 +4,7 @@ companions:
   - performance-targets.md
   - engines.md
   - hardware-platform.md
+  - mechanical.md
   - library-format.md
   - acceptance-tests.md
   - go-to-market.md
@@ -105,7 +106,7 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - The UI runs in a process isolated from the audio engine, so a UI crash never interrupts sound.
 - English is the default and source UI language. PT-BR and ES are selectable, and more languages arrive by system update. User content (setlist, Live Set, scene, tag names) is never translated.
 - Physical panel legends are English only. Rotary-speaker controls read ROTARY, and "Leslie" is never a product label.
-- The v1 panel control set is fixed (detail in `hardware-platform.md`): 9 dual-function faders (drawbars / mixer), 8 endless encoders with LED rings, a VALUE encoder with a push switch, 3 toggle buttons with one LED per state (DRAWBARS/MIXER, PARTS/SCENES, PART/ALL/ASSIGN), a MENU button, ROTARY stop and slow/fast buttons, and a footswitch that advances the scene by default. v1 faders are non-motorized and use pickup.
+- The v1 panel control set is fixed (detail in `hardware-platform.md`): 9 dual-function faders (drawbars / mixer), 8 endless encoders with LED rings, a VALUE encoder with a push switch, 3 toggle buttons with one LED per state (DRAWBARS/MIXER, PARTS/SCENES, PART/ALL/ASSIGN), a MENU button, ROTARY stop and slow/fast buttons, a MASTER level potentiometer in the analog output path, and a footswitch that advances the scene by default. v1 faders are non-motorized and use pickup. The soft power button sits on the rear panel.
 - The touchscreen is 7-inch at a native 1024×600, landscape.
 - Engines are clean-room or licensed. GPL code (e.g. Dexed/MSFA, setBfree) must not ship. Permissively licensed code such as sfizz (BSD-2) and libFLAC (BSD) is allowed. Marketing uses no third-party trademarks (no "DX7", no "Hammond").
 - The architecture spine (`ARCHITECTURE-SPINE.md`, AD-1 to AD-31) and `HARDWARE-INTERFACES.md` are binding companions.
@@ -115,6 +116,8 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - Production firmware exposes no serial console and no mass storage over USB-C. The NVMe is sealed inside the unit.
 - v1 has no radio (no Bluetooth, no Wi-Fi), which avoids Anatel homologation.
 - The keybed is a Fatar 73SW (semi-weighted) from the partner's stock of ~100 units, and keybed scanning plus transport must fit inside the 5 ms latency budget.
+- The enclosure follows `mechanical.md`: 1164.2 mm wide, a flat brushed-aluminum top, a painted steel bottom, 25 mm plastic end cheeks, and the pitch and mod wheels in an 80 mm block left of the keybed. Note names follow C4 = MIDI 60, so the keys span E1–E7.
+- Power comes from an external off-the-shelf Inmetro-compliant supply through a locking 5.5 × 2.5 mm DC plug. The supercapacitor hold-up stays inside the unit.
 - Release is date-driven. v1 requires the sample engine, the organ, and the effects, while FM and VA may follow by firmware. Voice pool, patch format, UI, and the engine API support all four engines from day one.
 - v1 retail price sits between R$ 17,990 and R$ 19,990, so the BOM and the tax structure must leave margin at that price.
 - The founder supplies the factory library content, so no sample-production partner is assumed for v1.
@@ -145,6 +148,7 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - The engine runs internally at 48 kHz.
 - The stereo line input is for future sampling and play-along. There is no sampling feature in v1.
 - The 73SW keybed has a waterfall profile and spans E to E.
+- The 73SW shares the key geometry of Fatar's 61 TP/9 drawing (23.6 mm white key pitch, 10.4 mm keybed frame per side). `mechanical.md` uses those values until the 73SW drawing arrives.
 - The keybed's contact count (2 or 3) and whether it has aftertouch are still unknown, so the scan MCU handles both cases.
 - The low-volume BOM is about US$ 1,200–1,600 and the landed cost about R$ 11,000. These are forge estimates, not verified.
 
@@ -153,7 +157,9 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - Do the tax costs (II, IPI, ICMS, PIS/COFINS, ex-tarifário) on imported parts leave margin at the v1 price? This needs a tax advisor.
 - What minimum order and lead time does Fatar require for OEM resupply beyond the initial ~100 keybeds?
 - Does the 73SW stock have 2 or 3 contacts per key, and does it have aftertouch?
-- Which Inmetro requirement applies to the chosen power supply?
+- Which Inmetro requirement applies to the chosen external power supply, and what voltage and current does it deliver?
+- What are the 73SW's mechanical drawing, waterfall face height and fixing holes? They close the keybed values marked "to confirm" in `mechanical.md`.
+- What display glass and cut-out size does the chosen 7-inch panel need? It fixes the panel zone depth, and with it the total depth (provisionally 304.4 mm).
 - Does MIPI DSI work on mainline RK3588 for the 7-inch panel, or is an internal HDMI panel needed?
 - sfizz was archived upstream (final 1.2.3, BSD-2). The architecture vendors its SFZ parser (AD-15). Do the licenses of the vendored parts and their dependencies allow closed-product use?
 - Which MIDI CC numbers does the Hammond M-solo use for drawbars? The Drawbar Data List on pp. 64–65 of the manual is an image.
