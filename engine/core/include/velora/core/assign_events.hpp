@@ -123,12 +123,25 @@ inline float apply_relative_step(const params::ParamDef& d, float current, std::
 
 // RT-published encoder state: the mode flag, the selected part and the counters of what the encoders did. RT is the single writer (the BlockRenderer
 // applies the events); any thread reads without locks (relaxed atomics).
+// Story 4.13: Fixed parameter functions for encoders 1..8 (0..7) in PART and ALL modes:
+// Delay send, Brightness, Attack, Release, EQ Low, Mid, Mid Freq, High.
+inline constexpr std::array<std::uint32_t, kEncoderCount> kPartModeParams = {
+    params::kSendDelayLevel,
+    params::kPartBrightness,
+    params::kPartAttack,
+    params::kPartRelease,
+    params::kPartEqLow,
+    params::kPartEqMid,
+    params::kPartEqMidFreq,
+    params::kPartEqHigh,
+};
+
 class EncoderState {
  public:
   struct Counters {
-    std::uint64_t steps_applied = 0;     // ASSIGN steps that changed a live value (also when the value was already at the end of its range)
+    std::uint64_t steps_applied = 0;     // steps that changed a live value (also when the value was already at the end of its range)
     std::uint64_t steps_empty_slot = 0;  // ASSIGN steps on an empty slot: nothing happened
-    std::uint64_t steps_unrouted = 0;    // steps seen in PART or ALL mode: nothing happens until Story 4.13
+    std::uint64_t steps_unrouted = 0;    // unrouted steps
     std::uint64_t steps_rejected = 0;    // a step the map cannot honour (the slot names an unknown or non-assignable parameter) or a malformed event
     std::uint64_t events_rejected = 0;   // a mode / select-part event with a bad value
     std::uint64_t steps_no_part = 0;     // a part-scope step whose target part has no engine (silent, unloaded): the live value still moved, not counted as applied
@@ -140,6 +153,22 @@ class EncoderState {
     return Counters{applied_.load(std::memory_order_relaxed), empty_.load(std::memory_order_relaxed), unrouted_.load(std::memory_order_relaxed),
                     rejected_.load(std::memory_order_relaxed), bad_events_.load(std::memory_order_relaxed),
                     no_part_.load(std::memory_order_relaxed)};
+  }
+
+  // Story 4.13: ALL mode relative offset per encoder [-0.5f, 0.5f].
+  float all_offset(std::uint32_t enc) const noexcept {
+    if (enc >= kEncoderCount) return 0.0f;
+    return std::bit_cast<float>(all_offsets_[enc].load(std::memory_order_relaxed));
+  }
+  void set_all_offset(std::uint32_t enc, float val) noexcept VELORA_NONBLOCKING {
+    if (enc < kEncoderCount) {
+      all_offsets_[enc].store(std::bit_cast<std::uint32_t>(val), std::memory_order_relaxed);
+    }
+  }
+  void reset_all_offsets() noexcept VELORA_NONBLOCKING {
+    for (std::uint32_t i = 0; i < kEncoderCount; ++i) {
+      all_offsets_[i].store(std::bit_cast<std::uint32_t>(0.0f), std::memory_order_relaxed);
+    }
   }
 
   // RT only.
@@ -156,7 +185,38 @@ class EncoderState {
   std::atomic<std::uint8_t> mode_{static_cast<std::uint8_t>(EncoderMode::kPart)};
   std::atomic<std::uint32_t> part_{0};
   std::atomic<std::uint64_t> applied_{0}, empty_{0}, unrouted_{0}, rejected_{0}, bad_events_{0}, no_part_{0};
+  std::array<std::atomic<std::uint32_t>, kEncoderCount> all_offsets_{};
 };
+
+// Ring value (0.0f .. 1.0f) calculation for encoder 0..7 (Story 4.13, UX-DR52, UX-DR85).
+template <typename LoadFn>
+inline float compute_ring_value(std::uint32_t encoder,
+                                EncoderMode mode,
+                                std::uint32_t selected_part,
+                                float all_offset,
+                                const std::array<std::uint16_t, kAssignSlotCount>* assign_map,
+                                LoadFn&& load_val) noexcept {
+  if (encoder >= kEncoderCount) return 0.0f;
+  if (mode == EncoderMode::kAll) {
+    return std::clamp(0.5f + all_offset, 0.0f, 1.0f);
+  }
+  const params::ParamDef* d = nullptr;
+  std::uint32_t part = selected_part;
+  if (mode == EncoderMode::kPart) {
+    d = params::find(kPartModeParams[encoder]);
+  } else if (mode == EncoderMode::kAssign) {
+    if (!assign_map) return 0.0f;
+    const std::uint32_t id = (*assign_map)[encoder];
+    if (id == 0) return 0.0f;
+    d = find_assignable(id);
+    if (!d) return 0.0f;
+    part = (d->scope == params::Scope::kPart) ? selected_part : 0u;
+  }
+  if (!d || d->max <= d->min) return 0.0f;
+  const float val = load_val(*d, part);
+  const double norm = (static_cast<double>(val) - d->min) / (d->max - d->min);
+  return std::clamp(static_cast<float>(norm), 0.0f, 1.0f);
+}
 
 static_assert(kReservedEventChannel == kFenceChannel, "the fence lives on the reserved channel");
 static_assert(kFenceParamId >= kReservedEventFirstId && kEncoderStepFirstId >= kReservedEventFirstId, "reserved ids start at kReservedEventFirstId");

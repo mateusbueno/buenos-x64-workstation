@@ -164,6 +164,8 @@ message EncoderStatus {
   uint64 steps_rejected = 11;
   uint64 events_rejected = 12;           // mode / select-part events with a bad value
   uint64 steps_no_part = 13;             // part-scope steps whose target part has no engine: the live value moved, not counted as applied
+  repeated float ring_values = 14;       // Story 4.13: normalized value 0.0 .. 1.0 (0-100% of range or offset) for encoders 1..8
+  repeated uint32 ring_led_fills = 15;   // Story 4.13: 0..255 fill level for hardware LED rings
 }
 
 // Story 4.12: Fader bindings with pickup. Faders 1-8 control part volume and fader 9 controls REV master send

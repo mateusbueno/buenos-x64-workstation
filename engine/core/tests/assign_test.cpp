@@ -265,16 +265,16 @@ static void test_mode_gating() {
   turn(br, 0, -1);
   step_blocks(br);
   CHECK(br.encoder_state().mode() == EncoderMode::kAll);
-  CHECK(live(br, kDrawbar8) == 8.0f);  // PART and ALL do nothing yet
-  CHECK(br.encoder_state().counters().steps_unrouted == 2 && br.encoder_state().counters().steps_applied == 0);
+  CHECK(live(br, kDrawbar8) == 8.0f);  // PART and ALL do not route to ASSIGN map
+  CHECK(br.encoder_state().counters().steps_applied == 2);
   set_mode(br, EncoderMode::kAssign);
   turn(br, 0, -1);  // applied in the same block, in order after the mode event
   step_blocks(br);
-  CHECK(live(br, kDrawbar8) == 7.0f && br.encoder_state().counters().steps_applied == 1);
-  set_mode(br, EncoderMode::kPart);  // leaving ASSIGN stops the routing again
+  CHECK(live(br, kDrawbar8) == 7.0f && br.encoder_state().counters().steps_applied == 3);
+  set_mode(br, EncoderMode::kPart);  // leaving ASSIGN stops routing to ASSIGN map
   turn(br, 0, -1);
   step_blocks(br);
-  CHECK(live(br, kDrawbar8) == 7.0f && br.encoder_state().counters().steps_unrouted == 3);
+  CHECK(live(br, kDrawbar8) == 7.0f && br.encoder_state().counters().steps_applied == 4);
 }
 
 static void test_selected_part_and_scope() {
@@ -508,6 +508,108 @@ static void test_step_on_a_part_without_engine() {
   CHECK(c.steps_no_part == 1 && c.steps_applied == 1 && c.steps_empty_slot == 0);
 }
 
+// Story 4.13: PART mode controls 8 fixed functions on selected part.
+static void test_part_mode_fixed_functions() {
+  BlockRenderer br;
+  Gens g(br);
+  g.publish(test_map(), /*live_set=*/false);
+  set_mode(br, EncoderMode::kPart);
+  br.submit({make_select_part_event(2), 0});  // select part 2
+  step_blocks(br);
+  CHECK(br.encoder_state().mode() == EncoderMode::kPart);
+  CHECK(br.encoder_state().selected_part() == 2);
+
+  // Turn each encoder 0..7
+  turn(br, 0, 10);  // send_delay_level
+  turn(br, 1, 5);   // part_brightness
+  turn(br, 2, 4);   // part_attack
+  turn(br, 3, -2);  // part_release
+  turn(br, 4, 3);   // part_eq_low
+  turn(br, 5, -3);  // part_eq_mid
+  turn(br, 6, 8);   // part_eq_mid_freq
+  turn(br, 7, 2);   // part_eq_high
+  step_blocks(br);
+
+  // Verify part 2 changed
+  CHECK(live(br, kSendDelayLevel, 2) > 0.0f);
+  CHECK(live(br, kPartBrightness, 2) > 50.0f);
+  CHECK(live(br, kPartAttack, 2) > 10.0f);
+  CHECK(live(br, kPartRelease, 2) < 300.0f);
+  CHECK(live(br, kPartEqLow, 2) > 0.0f);
+  CHECK(live(br, kPartEqMid, 2) < 0.0f);
+  CHECK(live(br, kPartEqMidFreq, 2) > 1000.0f);
+  CHECK(live(br, kPartEqHigh, 2) > 0.0f);
+
+  // Verify other parts (e.g. part 0, 1, 3) were NOT affected
+  CHECK(live(br, kSendDelayLevel, 0) == 0.0f);
+  CHECK(live(br, kPartBrightness, 0) == 50.0f);
+  CHECK(live(br, kPartAttack, 0) == 10.0f);
+  CHECK(live(br, kSendDelayLevel, 1) == 0.0f);
+  CHECK(live(br, kPartBrightness, 1) == 50.0f);
+}
+
+// Story 4.13: ALL mode adjusts all parts by the same relative amount and tracks relative offset.
+static void test_all_mode_relative_offsets() {
+  BlockRenderer br;
+  Gens g(br);
+  g.publish(test_map(), /*live_set=*/false);
+  set_mode(br, EncoderMode::kAll);
+  step_blocks(br);
+  CHECK(br.encoder_state().mode() == EncoderMode::kAll);
+  CHECK(br.encoder_state().all_offset(1) == 0.0f);
+
+  // Turn encoder 1 (part_brightness) by 16 steps: +16/128 = +0.125
+  turn(br, 1, 16);
+  step_blocks(br);
+
+  CHECK(std::fabs(br.encoder_state().all_offset(1) - 0.125f) < 1e-5f);
+  // All parts should have increased brightness by 16 * 100/128 = 12.5% (from 50% to 62.5%)
+  for (std::uint32_t p = 0; p < kPartCount; ++p) {
+    CHECK(std::fabs(live(br, kPartBrightness, p) - 62.5f) < 1e-4f);
+  }
+
+  // Ring value in ALL mode is centered at 0.5f: 0.5f + 0.125f = 0.625f
+  const float ring1 = compute_ring_value(1, EncoderMode::kAll, 0, br.encoder_state().all_offset(1), nullptr,
+                                         [&](const ParamDef& def, std::uint32_t part) {
+                                           return live(br, def.id, part);
+                                         });
+  CHECK(std::fabs(ring1 - 0.625f) < 1e-5f);
+
+  // Leaving ALL mode and re-entering resets all_offsets
+  set_mode(br, EncoderMode::kPart);
+  step_blocks(br);
+  set_mode(br, EncoderMode::kAll);
+  step_blocks(br);
+  CHECK(br.encoder_state().all_offset(1) == 0.0f);
+}
+
+// Story 4.13: No pickup applies across all modes; values move immediately from stored values.
+static void test_no_pickup_across_all_modes() {
+  BlockRenderer br;
+  Gens g(br);
+  Snapshot* s1 = g.publish(test_map(), /*live_set=*/true, /*program_generation=*/1);
+  set_mode(br, EncoderMode::kPart);
+  step_blocks(br);
+
+  // Recall scene / new generation
+  Snapshot* s2 = g.publish(test_map(), /*live_set=*/true, /*program_generation=*/2);
+  (void)s1; (void)s2;
+
+  // Turn encoder 1 in PART mode: moves immediately
+  const float before_part = live(br, kPartBrightness, 0);
+  turn(br, 1, 4);
+  step_blocks(br);
+  CHECK(live(br, kPartBrightness, 0) != before_part);
+
+  // In ALL mode: moves immediately
+  set_mode(br, EncoderMode::kAll);
+  step_blocks(br);
+  const float before_all = live(br, kPartBrightness, 0);
+  turn(br, 1, -4);
+  step_blocks(br);
+  CHECK(live(br, kPartBrightness, 0) != before_all);
+}
+
 int main() {
   test_assignable_flag();
   test_relative_step_rules();
@@ -525,6 +627,9 @@ int main() {
   test_assignability_rule();
   test_low_ids_on_channel_15();
   test_step_on_a_part_without_engine();
+  test_part_mode_fixed_functions();
+  test_all_mode_relative_offsets();
+  test_no_pickup_across_all_modes();
   if (g_fail) std::printf("assign_tests: %d failure(s)\n", g_fail);
   else std::printf("assign_tests: ok\n");
   return g_fail ? 1 : 0;

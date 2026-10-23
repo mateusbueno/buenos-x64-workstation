@@ -406,6 +406,20 @@ void ControlPlane::fill_encoders(ws::v1::State* out) const {
   e->set_steps_no_part(c.steps_no_part);
   if (current_ && current_->live_set)
     for (std::size_t k = 0; k < core::kAssignSlotCount; ++k) e->add_assign(current_->assign[k]);
+
+  // Story 4.13: ring values (0.0..1.0) and LED fills (0..255) for encoders 1..8 (0..7).
+  const std::array<std::uint16_t, core::kAssignSlotCount>* assign_map =
+      (current_ && current_->live_set) ? &current_->assign : nullptr;
+  for (std::uint32_t enc = 0; enc < core::kEncoderCount; ++enc) {
+    const float ring_val = core::compute_ring_value(
+        enc, rt.mode(), rt.selected_part(), rt.all_offset(enc), assign_map,
+        [this](const core::params::ParamDef& def, std::uint32_t part) {
+          return live_.load(core::params::perf_slot(def, part));
+        });
+    e->add_ring_values(ring_val);
+    const std::uint32_t fill = static_cast<std::uint32_t>(std::clamp(std::round(ring_val * 255.0f), 0.0f, 255.0f));
+    e->add_ring_led_fills(fill);
+  }
 }
 
 // Story 6.5: the RT content_integrity counter and the libraries the edge threads reported damaged.

@@ -800,15 +800,15 @@ void test_routing_end_to_end_and_dirty_summary() {
   a.set_assign(2, p::kRotarySpeed);
   rig.start({a});
   CHECK(map_of(rig.state()) == (Map{p::kDrawbar8, p::kSendReverbLevel, p::kRotarySpeed}) && !rig.state().edits().current_dirty());
-  // Default PART mode: the steps are seen and do nothing (counted).
+  // Default PART mode: the steps route to fixed part params, not ASSIGN map.
   turn(rig, 1, -3);
   rig.step(2);
-  CHECK(rig.live_value(p::kDrawbar8, 0) == 8.0f && rig.state().encoders().steps_unrouted() == 1 && !rig.state().edits().current_dirty());
+  CHECK(rig.live_value(p::kDrawbar8, 0) == 8.0f && rig.state().encoders().steps_applied() == 1 && !rig.state().edits().current_dirty());
   CHECK(encoder_mode(rig, ws::v1::ENCODER_MODE_ALL).has_ack());
   rig.step(2);
   turn(rig, 1, -3);
   rig.step(2);
-  CHECK(rig.live_value(p::kDrawbar8, 0) == 8.0f && rig.state().encoders().steps_unrouted() == 2);
+  CHECK(rig.live_value(p::kDrawbar8, 0) == 8.0f && rig.state().encoders().steps_applied() == 2);
   // ASSIGN: commanded and applied are both published.
   bool changed = false;
   auto m = msg();
@@ -828,7 +828,7 @@ void test_routing_end_to_end_and_dirty_summary() {
   rig.step(3);
   CHECK(rig.live_value(p::kDrawbar8, 0) == 5.0f && rig.live_value(p::kSendReverbLevel, 0) == 0.25f && rig.live_value(p::kRotarySpeed, 0) == 2.0f);
   ws::v1::State st = rig.state();
-  CHECK(st.encoders().steps_applied() == 3 && st.encoders().steps_empty_slot() == 1 && st.encoders().steps_rejected() == 0);
+  CHECK(st.encoders().steps_applied() == 5 && st.encoders().steps_empty_slot() == 1 && st.encoders().steps_rejected() == 0);
   // The live difference is visible to the edit session: the Live Set is dirty with items for what the encoders moved.
   CHECK(st.edits().current_dirty());
   CHECK(find_item(st.edits(), "part.param", 0, p::kDrawbar8) && find_item(st.edits(), "part.send_reverb", 0) && find_item(st.edits(), "part.param", 0, p::kRotarySpeed));
@@ -848,6 +848,9 @@ void test_routing_end_to_end_and_dirty_summary() {
   turn(rig, 2, 1);
   rig.step(2);
   CHECK(std::fabs(rig.live_value(p::kSendReverbLevel, 0) - (0.4f + 1.0f / 128.0f)) < 1e-6f);
+  CHECK(rig.state().encoders().ring_values_size() == 8);
+  CHECK(rig.state().encoders().ring_led_fills_size() == 8);
+  CHECK(rig.state().encoders().ring_values(1) > 0.0f);
   // Writing persists the encoder moves with the map.
   const auto w = rig.write(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET);
   CHECK(w.has_write_reply() && !w.write_reply().current_dirty());

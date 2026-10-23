@@ -116,6 +116,9 @@ void BlockRenderer::adopt_generation() noexcept {
     if (remapped[p]) sync_part_params(p);
   applied_valid_ = true;
   applied_program_generation_ = next->program_generation;
+  if (program_change || live_set_switch) {
+    last_.encoder_rt().reset_all_offsets();
+  }
   held_ = next;
   last_.store_adopted_revision(next->revision);  // after every slot of this generation was applied (Story 4.9)
   mixer_.adopt(*next, &last_);  // part outputs, master level and the insert chains (the generation is held: safe to read)
@@ -212,8 +215,15 @@ void BlockRenderer::apply_reserved_event(std::uint32_t id, const Ump& ump) noexc
     return;
   }
   if (id == kEncoderModeEventId) {
-    if (ump.word1 >= kEncoderModeCount) enc.count_bad_event();
-    else enc.set_mode(static_cast<EncoderMode>(ump.word1));
+    if (ump.word1 >= kEncoderModeCount) {
+      enc.count_bad_event();
+    } else {
+      const EncoderMode new_mode = static_cast<EncoderMode>(ump.word1);
+      if (new_mode == EncoderMode::kAll && enc.mode() != EncoderMode::kAll) {
+        enc.reset_all_offsets();
+      }
+      enc.set_mode(new_mode);
+    }
     return;
   }
   if (id == kSelectPartEventId) {
@@ -224,33 +234,86 @@ void BlockRenderer::apply_reserved_event(std::uint32_t id, const Ump& ump) noexc
   param_rejected_.fetch_add(1, std::memory_order_relaxed);  // an unknown reserved id (the fence is handled before)
 }
 
-// ASSIGN routing: encoder `encoder` (0..7) turned by `delta` steps. Only in ASSIGN mode; slot n of the held generation's map names the parameter, the
-// step applies to its LIVE value (no pickup) and goes down the CC path (last-value table + the engine of the part), so smoothing and ramps apply.
+// Encoder routing (Story 4.10, Story 4.13): encoder `encoder` (0..7) turned by `delta` steps.
+// PART: controls 8 fixed functions on selected part (no pickup).
+// ALL: controls the same fixed functions across all 8 parts, tracking relative offset from mode entry.
+// ASSIGN: slot n of the held generation's map names the parameter, applying to live value on selected/master part (no pickup).
 void BlockRenderer::apply_encoder_step(std::uint32_t encoder, std::int32_t delta) noexcept {
   EncoderState& enc = last_.encoder_rt();
-  if (enc.mode() != EncoderMode::kAssign) {  // PART / ALL are Story 4.13
-    enc.count_unrouted();
-    return;
-  }
-  const std::uint32_t id = held_ && encoder < kAssignSlotCount ? held_->assign[encoder] : 0u;
-  if (id == 0) {
-    enc.count_empty();
-    return;
-  }
-  const params::ParamDef* d = params::find(id);
-  if (!d || !is_assignable(*d)) {  // a map from another registry: refuse, never guess (also guards perf_slot() below)
+  if (encoder >= kEncoderCount) {
     enc.count_rejected();
     return;
   }
-  ParamEvent ev;
-  ev.def = d;
-  ev.part = d->scope == params::Scope::kPart ? enc.selected_part() : 0u;
-  ev.value = apply_relative_step(*d, last_.load(params::perf_slot(*d, ev.part)), delta);
-  Engine* engine = nullptr;
-  const bool has_part = d->scope != params::Scope::kPart || registry_.resolve(channel_engine_[ev.part], engine) == EngineStatus::kOk;
-  apply_param(ev);
-  if (has_part) enc.count_applied();
-  else enc.count_no_part();
+  const EncoderMode mode = enc.mode();
+  if (mode == EncoderMode::kAssign) {
+    const std::uint32_t id = held_ && encoder < kAssignSlotCount ? held_->assign[encoder] : 0u;
+    if (id == 0) {
+      enc.count_empty();
+      return;
+    }
+    const params::ParamDef* d = find_assignable(id);
+    if (!d) {  // a map from another registry: refuse, never guess (also guards perf_slot() below)
+      enc.count_rejected();
+      return;
+    }
+    ParamEvent ev;
+    ev.def = d;
+    ev.part = d->scope == params::Scope::kPart ? enc.selected_part() : 0u;
+    ev.value = apply_relative_step(*d, last_.load(params::perf_slot(*d, ev.part)), delta);
+    Engine* engine = nullptr;
+    const bool has_part = d->scope != params::Scope::kPart || registry_.resolve(channel_engine_[ev.part], engine) == EngineStatus::kOk;
+    apply_param(ev);
+    if (has_part) enc.count_applied();
+    else enc.count_no_part();
+    return;
+  }
+
+  // PART and ALL modes (Story 4.13)
+  const std::uint32_t param_id = kPartModeParams[encoder];
+  const params::ParamDef* d = params::find(param_id);
+  if (!d || !is_assignable(*d)) {
+    enc.count_rejected();
+    return;
+  }
+
+  if (mode == EncoderMode::kPart) {
+    const std::uint32_t part = enc.selected_part();
+    ParamEvent ev;
+    ev.def = d;
+    ev.part = part;
+    ev.value = apply_relative_step(*d, last_.load(params::perf_slot(*d, part)), delta);
+    Engine* engine = nullptr;
+    const bool has_part = registry_.resolve(channel_engine_[part], engine) == EngineStatus::kOk;
+    apply_param(ev);
+    if (has_part) enc.count_applied();
+    else enc.count_no_part();
+    return;
+  }
+
+  if (mode == EncoderMode::kAll) {
+    const float step_fraction = static_cast<float>(delta) / 128.0f;
+    const float old_offset = enc.all_offset(encoder);
+    const float new_offset = std::clamp(old_offset + step_fraction, -0.5f, 0.5f);
+    enc.set_all_offset(encoder, new_offset);
+
+    bool any_has_part = false;
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+      ParamEvent ev;
+      ev.def = d;
+      ev.part = p;
+      ev.value = apply_relative_step(*d, last_.load(params::perf_slot(*d, p)), delta);
+      Engine* engine = nullptr;
+      if (registry_.resolve(channel_engine_[p], engine) == EngineStatus::kOk) {
+        any_has_part = true;
+      }
+      apply_param(ev);
+    }
+    if (any_has_part) enc.count_applied();
+    else enc.count_no_part();
+    return;
+  }
+
+  enc.count_unrouted();
 }
 
 void BlockRenderer::bind_generation(std::uint32_t channel, std::uint32_t note) noexcept {

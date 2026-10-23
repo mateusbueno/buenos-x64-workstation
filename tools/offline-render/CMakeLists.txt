@@ -955,10 +955,10 @@ add_test(NAME assign_render_unsorted
 set_tests_properties(assign_render_unsorted PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_unsorted)
 add_test(NAME assign_unsorted_is_identical COMMAND ${CMAKE_COMMAND} -E compare_files ${_out}/assign_a.wav ${_out}/assign_unsorted.wav)
 set_tests_properties(assign_unsorted_is_identical PROPERTIES FIXTURES_REQUIRED "assign_a;assign_unsorted")
-# Not in ASSIGN mode: PART is the default and the turns do nothing (counted); the render fails the golden.
+# In PART mode: turns apply to the fixed part parameters, not the ASSIGN map; the render fails the ASSIGN golden.
 add_test(NAME assign_part_mode COMMAND velora-offline-render ${_as_args} ${_as_turns} --out ${_out}/assign_part_mode.wav)
 set_tests_properties(assign_part_mode PROPERTIES FIXTURES_REQUIRED assign_clean FIXTURES_SETUP assign_part_mode
-                     PASS_REGULAR_EXPRESSION "0 encoder step\\(s\\) applied, 0 on empty slots, 8 outside ASSIGN mode")
+                     PASS_REGULAR_EXPRESSION "8 encoder step\\(s\\) applied, 0 on empty slots, 0 outside ASSIGN mode")
 add_test(NAME assign_part_mode_fails COMMAND velora-null-test --case ${_ls}/assign/assign.case --candidate ${_out}/assign_part_mode.wav)
 set_tests_properties(assign_part_mode_fails PROPERTIES FIXTURES_REQUIRED assign_part_mode PASS_REGULAR_EXPRESSION "result: FAIL \\(residual above tolerance\\)")
 add_test(NAME assign_no_turns COMMAND velora-offline-render ${_as_args} --assign-mode --out ${_out}/assign_none.wav)
