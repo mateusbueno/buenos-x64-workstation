@@ -1,0 +1,15 @@
+[package]
+name = "velora-studio"
+version = "0.1.0"
+description = "Velora Studio desktop application"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+prost-build = "0.14"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+prost = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

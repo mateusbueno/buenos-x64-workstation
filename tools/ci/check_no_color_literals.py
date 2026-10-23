@@ -16,8 +16,10 @@ import tempfile
 HEX_COLOR_RE = re.compile(r'\b0x[0-9a-fA-F]{6}\b')
 HEX_STR_RE = re.compile(r'["\']#[0-9a-fA-F]{3,8}["\']')
 LV_COLOR_FN_RE = re.compile(r'\blv_color_(hex|make|hex3)\s*\(')
+CSS_HEX_RE = re.compile(r'#[0-9a-fA-F]{3,8}\b')
+CSS_COLOR_FN_RE = re.compile(r'\b(rgb|rgba|hsl|hsla)\s*\(')
 
-EXEMPT_FILES = {"theme.cpp", "theme.hpp", "lv_conf.h"}
+EXEMPT_FILES = {"theme.cpp", "theme.hpp", "lv_conf.h", "tokens.css"}
 
 
 def check_file(path, rel_path):
@@ -25,6 +27,8 @@ def check_file(path, rel_path):
     base_name = os.path.basename(path)
     if base_name in EXEMPT_FILES:
         return violations
+
+    is_web = path.endswith((".css", ".html", ".js", ".ts"))
 
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         for idx, line in enumerate(f, 1):
@@ -44,6 +48,14 @@ def check_file(path, rel_path):
                 violations.append(
                     f"{rel_path}:{idx}: forbidden 24-bit hex color literal in UI source"
                 )
+            elif is_web and CSS_HEX_RE.search(code):
+                violations.append(
+                    f"{rel_path}:{idx}: forbidden raw hex color in desktop web source"
+                )
+            elif is_web and CSS_COLOR_FN_RE.search(code):
+                violations.append(
+                    f"{rel_path}:{idx}: forbidden raw rgb/hsl color function in desktop web source"
+                )
 
     return violations
 
@@ -59,6 +71,24 @@ def scan_ui(root):
             continue
         for fn in filenames:
             if fn.endswith((".cpp", ".hpp", ".c", ".h")):
+                p = os.path.join(dirpath, fn)
+                rel = os.path.relpath(p, root)
+                violations.extend(check_file(p, rel))
+
+    return violations
+
+
+def scan_desktop(root):
+    desktop_dir = os.path.join(root, "desktop")
+    if not os.path.isdir(desktop_dir):
+        return []
+
+    violations = []
+    for dirpath, _, filenames in os.walk(desktop_dir):
+        if any(skip in dirpath for skip in ["target", "node_modules", "dist", ".git", "gen", "icons"]):
+            continue
+        for fn in filenames:
+            if fn.endswith((".css", ".html", ".js", ".ts", ".rs")):
                 p = os.path.join(dirpath, fn)
                 rel = os.path.relpath(p, root)
                 violations.extend(check_file(p, rel))
@@ -95,6 +125,19 @@ def self_test():
         v_bad2 = check_file(bad2_path, "ui/src/bad2.cpp")
         assert len(v_bad2) > 0, "Expected violation for hex literal"
 
+        # Desktop test
+        desktop_src = os.path.join(tmp, "desktop", "src")
+        os.makedirs(desktop_src)
+        desktop_good = os.path.join(desktop_src, "style.css")
+        with open(desktop_good, "w") as f:
+            f.write('body { background: var(--bg); color: var(--text); }\n')
+        assert len(check_file(desktop_good, "desktop/src/style.css")) == 0
+
+        desktop_bad = os.path.join(desktop_src, "bad.css")
+        with open(desktop_bad, "w") as f:
+            f.write('body { background: #123456; }\n')
+        assert len(check_file(desktop_bad, "desktop/src/bad.css")) > 0
+
     print("self-test ok")
     return 0
 
@@ -109,6 +152,7 @@ def main():
         return self_test()
 
     violations = scan_ui(args.root)
+    violations.extend(scan_desktop(args.root))
     if violations:
         print("Color literals lint check FAILED:", file=sys.stderr)
         for v in violations:

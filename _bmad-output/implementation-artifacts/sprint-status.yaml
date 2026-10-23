@@ -222,12 +222,12 @@ development_status:
   8-14-kernel-lts-migration-plan: backlog
   epic-8-retrospective: optional
 
-  epic-9: backlog
+  epic-9: in-progress
   9-1-usb-c-gadget-composition-with-class-compliant-midi: backlog
   9-2-usb-audio-interface-that-follows-the-codec-clock: backlog
   9-3-sysd-ws-v1-bridge-on-usb-ncm-with-a-single-open-port: backlog
-  9-4-design-story-velora-studio-footer-dialog-banner-and-backup-r: backlog
-  9-5-velora-studio-app-shell-offline: backlog
+  9-4-design-story-velora-studio-footer-dialog-banner-and-backup-r: done
+  9-5-velora-studio-app-shell-offline: done
   9-6-pairing-velora-studio-with-the-unit: backlog
   9-7-connection-states-version-mismatch-disconnect-and-reconnect: backlog
   9-8-live-set-view-scenes-and-part-strips: backlog

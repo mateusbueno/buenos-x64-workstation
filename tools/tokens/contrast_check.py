@@ -166,6 +166,18 @@ def check_contrast(colors, yaml_text):
     return errors
 
 
+def check_desktop_tokens(root):
+    desktop_tokens = os.path.join(root, "desktop", "src", "tokens.css")
+    if not os.path.exists(desktop_tokens):
+        return []
+    errors = []
+    with open(desktop_tokens, "r", encoding="utf-8") as f:
+        content = f.read()
+    if re.search(r"opacity\s*:\s*(?!1(\.0+)?\b)[0-9.]+", content):
+        errors.append(f"Opacity rule found in {desktop_tokens}")
+    return errors
+
+
 def self_test():
     # 1. Pure black on pure white = 21:1
     assert abs(contrast_ratio("#000000", "#ffffff") - 21.0) < 0.1
@@ -206,6 +218,7 @@ def main():
 
     colors, yaml_text = parse_frontmatter(design_file)
     errors = check_contrast(colors, yaml_text)
+    errors.extend(check_desktop_tokens(root))
     if errors:
         print("Contrast check FAILED:", file=sys.stderr)
         for e in errors:

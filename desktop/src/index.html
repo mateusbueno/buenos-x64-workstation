@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Velora Studio</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Title Bar -->
+    <header class="title-bar" id="header-region">
+      <div class="brand-section">
+        <span class="brand-dots" aria-hidden="true">
+          <span class="brand-dot"></span>
+          <span class="brand-dot"></span>
+          <span class="brand-dot"></span>
+        </span>
+        <span class="brand-name" data-i18n="studio.title_bar.app_name">Velora Studio</span>
+      </div>
+
+      <div class="connection-status" id="connection-status" role="status">
+        <span class="conn-indicator" aria-hidden="true"></span>
+        <span class="conn-text" data-i18n="studio.conn.no_device">No Velora connected</span>
+      </div>
+
+      <div class="actions-section">
+        <button type="button" class="btn" id="btn-import" data-i18n="studio.title_bar.btn_import">Import</button>
+        <button type="button" class="btn" id="btn-backup" data-i18n="studio.title_bar.btn_backup">Backup</button>
+        <button type="button" class="btn btn-primary" id="btn-write" data-i18n="studio.title_bar.btn_write" disabled>Write to Velora</button>
+        <button type="button" class="btn" id="btn-open-settings" aria-label="Settings" data-i18n="studio.sidebar.settings">Settings</button>
+      </div>
+    </header>
+
+    <!-- App Body: Sidebar + Main -->
+    <div class="app-body">
+      <!-- Sidebar -->
+      <nav class="sidebar" id="sidebar-region" tabindex="0" aria-label="Sidebar Navigation">
+        <section class="sidebar-section">
+          <h2 class="sidebar-heading" data-i18n="studio.sidebar.setlists">SETLISTS</h2>
+          <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_setlists">No setlists offline</div>
+        </section>
+
+        <section class="sidebar-section">
+          <h2 class="sidebar-heading" data-i18n="studio.sidebar.library">LIBRARY</h2>
+          <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_library">Library unavailable offline</div>
+        </section>
+
+        <section class="sidebar-section">
+          <h2 class="sidebar-heading" data-i18n="studio.sidebar.device">DEVICE</h2>
+          <button type="button" class="sidebar-item" id="side-storage" data-i18n="studio.sidebar.storage">Storage</button>
+          <button type="button" class="sidebar-item" id="side-firmware" data-i18n="studio.sidebar.firmware">Firmware</button>
+          <button type="button" class="sidebar-item" id="side-backups" data-i18n="studio.sidebar.backups">Backups</button>
+          <button type="button" class="sidebar-item" id="side-settings" data-i18n="studio.sidebar.settings">Settings</button>
+        </section>
+      </nav>
+
+      <!-- Main Area -->
+      <main class="main-area" id="main-region" tabindex="0" aria-label="Main Content">
+        <div class="offline-card">
+          <div class="offline-icon" aria-hidden="true">&#x26A0;</div>
+          <h1 class="offline-title" data-i18n="studio.offline.title">Organize sounds and manage your Velora 73</h1>
+          <p class="offline-body" data-i18n="studio.offline.body">Connect your Velora via USB to sync setlists, live sets, and library, or manage backups and local settings.</p>
+          <div class="offline-hint" data-i18n="studio.offline.hint">No device detected on USB ports.</div>
+          <div class="offline-actions">
+            <button type="button" class="btn" id="btn-offline-import" data-i18n="studio.title_bar.btn_import">Import</button>
+            <button type="button" class="btn" id="btn-offline-settings" data-i18n="studio.sidebar.settings">Settings</button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer" id="footer-region" tabindex="0" aria-label="Status Bar">
+      <div class="footer-left">
+        <span class="status-device" data-i18n="studio.conn.no_device">No Velora connected</span>
+      </div>
+      <div class="footer-right">
+        <span class="status-backup" id="footer-backup-status" data-i18n="studio.footer.no_backup_yet">No backup yet</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Settings Modal Backdrop & Dialog -->
+  <div class="modal-backdrop" id="modal-backdrop"></div>
+  <dialog class="modal" id="settings-modal" aria-labelledby="settings-title">
+    <div class="modal-header">
+      <h2 class="modal-title" id="settings-title" data-i18n="studio.settings.title">Studio Settings</h2>
+      <button type="button" class="btn" id="btn-close-settings-x" aria-label="Close" data-i18n="studio.settings.close">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="setting-group">
+        <label class="setting-label" for="theme-select" data-i18n="studio.settings.theme">Theme</label>
+        <select class="setting-select" id="theme-select">
+          <option value="system" data-i18n="studio.settings.theme_system">System (auto)</option>
+          <option value="stage" data-i18n="studio.settings.theme_stage">Stage (dark)</option>
+          <option value="studio" data-i18n="studio.settings.theme_studio">Studio (light)</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label class="setting-label" for="lang-select" data-i18n="studio.settings.language">Language</label>
+        <select class="setting-select" id="lang-select">
+          <option value="system" data-i18n="studio.settings.lang_system">System language</option>
+          <option value="en" data-i18n="studio.settings.lang_en">English</option>
+          <option value="es" data-i18n="studio.settings.lang_es">Español</option>
+          <option value="pt-BR" data-i18n="studio.settings.lang_pt_br">Português (Brasil)</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-primary" id="btn-close-settings" data-i18n="studio.settings.close">Close</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

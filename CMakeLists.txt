@@ -73,6 +73,12 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME color_literals_lint_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_color_literals.py
                    --self-test)
+  # Story 9.5: Velora Studio desktop app shell and Rust ws.v1 type link
+  find_program(CARGO_EXECUTABLE cargo HINTS "$ENV{HOME}/.cargo/bin")
+  if(CARGO_EXECUTABLE)
+    add_test(NAME desktop_rust_test
+             COMMAND ${CARGO_EXECUTABLE} test --manifest-path ${CMAKE_SOURCE_DIR}/desktop/src-tauri/Cargo.toml)
+  endif()
   # Story 6.1 (AR34/NFR23): no private key material in the git index / working tree.
   add_test(NAME no_private_keys
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_private_keys.py

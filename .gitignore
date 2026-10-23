@@ -7,3 +7,9 @@ __pycache__/
 # Story 6.3: the content-pack tool locks the vendor ID register while it appends (and writes a temp file next to it)
 /tools/content-pack/vendor-ids.lock
 /tools/content-pack/vendor-ids.tmp
+
+# Desktop build artifacts
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+node_modules/
+
