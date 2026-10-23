@@ -1258,7 +1258,7 @@ void SettingsView::build_keyboard_pedals_detail() {
   });
   lv_obj_set_hidden(card_aftertouch_, !cfg.aftertouch_available);
 
-  // 3. Footswitch function (Scene Advance / Rotary S/F / Live Set Advance)
+  // 3. Footswitch function (Next scene / Previous scene / Next Live Set / Rotary speed)
   lv_obj_t* card_foot = create_setting_card_helper(keyboard_pedals_container_, 160, 72);
   lv_obj_t* lbl_foot = lv_label_create(card_foot);
   lv_label_set_text(lbl_foot, tr("settings.key.footswitch").c_str());
@@ -1266,10 +1266,11 @@ void SettingsView::build_keyboard_pedals_detail() {
   lv_obj_align(lbl_foot, LV_ALIGN_LEFT_MID, 8, 0);
 
   seg_footswitch_.create(card_foot, {
-    tr("settings.key.foot_scene"),
-    tr("settings.key.foot_rotary"),
-    tr("settings.key.foot_liveset")
-  }, 90);
+    tr("settings.key.foot_next_scene"),
+    tr("settings.key.foot_prev_scene"),
+    tr("settings.key.foot_next_liveset"),
+    tr("settings.key.foot_rotary")
+  }, 92);
   lv_obj_align(seg_footswitch_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
   seg_footswitch_.set_selected_index(static_cast<int32_t>(cfg.footswitch_function));
   seg_footswitch_.set_on_change([this](int32_t idx) {

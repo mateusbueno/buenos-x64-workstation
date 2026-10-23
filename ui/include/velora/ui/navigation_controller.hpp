@@ -92,6 +92,8 @@ class NavigationController {
   void set_write_hold_ms(uint32_t ms) noexcept { write_hold_threshold_us_ = ms * 1000ULL; }
   uint32_t write_hold_ms() const noexcept { return static_cast<uint32_t>(write_hold_threshold_us_ / 1000ULL); }
 
+  void handle_footswitch(uint64_t ts = 0);
+
  private:
   void show_surface(SurfaceId surface);
   void hide_surface(SurfaceId surface);

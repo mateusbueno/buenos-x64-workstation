@@ -20,9 +20,14 @@ enum class VelocityCurve : uint8_t {
 };
 
 enum class FootswitchFunction : uint8_t {
-  SceneAdvance = 0,
-  RotarySpeed = 1,
-  LiveSetAdvance = 2,
+  NextScene = 0,
+  PreviousScene = 1,
+  NextLiveSet = 2,
+  RotarySpeed = 3,
+
+  // Backward-compatible aliases
+  SceneAdvance = NextScene,
+  LiveSetAdvance = NextLiveSet,
 };
 
 enum class ClockSourceMode : uint8_t {

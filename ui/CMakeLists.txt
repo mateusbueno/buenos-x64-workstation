@@ -233,3 +233,8 @@ set_tests_properties(epic12_fm_va_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR
 add_executable(ui_resilience_test tests/ui_resilience_test.cpp)
 target_link_libraries(ui_resilience_test PRIVATE velora_ui velora_host velora_core)
 add_test(NAME ui_resilience_test COMMAND ui_resilience_test)
+
+add_executable(footswitch_test tests/footswitch_test.cpp)
+target_link_libraries(footswitch_test PRIVATE velora_ui)
+add_test(NAME footswitch_test COMMAND footswitch_test)
+set_tests_properties(footswitch_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")

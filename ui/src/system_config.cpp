@@ -32,9 +32,10 @@ std::string SystemConfig::to_json() const {
   else if (velocity_curve == VelocityCurve::Heavy) vel_str = "heavy";
   else if (velocity_curve == VelocityCurve::Fixed) vel_str = "fixed";
 
-  const char* foot_str = "scene_advance";
-  if (footswitch_function == FootswitchFunction::RotarySpeed) foot_str = "rotary_speed";
-  else if (footswitch_function == FootswitchFunction::LiveSetAdvance) foot_str = "live_set_advance";
+  const char* foot_str = "next_scene";
+  if (footswitch_function == FootswitchFunction::PreviousScene) foot_str = "previous_scene";
+  else if (footswitch_function == FootswitchFunction::NextLiveSet) foot_str = "next_live_set";
+  else if (footswitch_function == FootswitchFunction::RotarySpeed) foot_str = "rotary_speed";
 
   const char* clk_str = "internal";
   if (clock_source == ClockSourceMode::DIN) clk_str = "din";
@@ -182,9 +183,10 @@ bool SystemConfig::from_json(std::string_view json) {
 
   const auto* ff = root.find("footswitch_function");
   if (ff && ff->is_string()) {
-    if (ff->string == "scene_advance") footswitch_function = FootswitchFunction::SceneAdvance;
+    if (ff->string == "next_scene" || ff->string == "scene_advance") footswitch_function = FootswitchFunction::NextScene;
+    else if (ff->string == "previous_scene") footswitch_function = FootswitchFunction::PreviousScene;
+    else if (ff->string == "next_live_set" || ff->string == "live_set_advance") footswitch_function = FootswitchFunction::NextLiveSet;
     else if (ff->string == "rotary_speed") footswitch_function = FootswitchFunction::RotarySpeed;
-    else if (ff->string == "live_set_advance") footswitch_function = FootswitchFunction::LiveSetAdvance;
   }
 
   const auto* smin = root.find("sustain_min");

@@ -450,6 +450,16 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
     return;
   }
 
+  // Story 4.36: Footswitch (MCU_CTRL_PEDAL_SWITCH)
+  if (ev.id == MCU_CTRL_PEDAL_SWITCH) {
+    const bool pressed = (ev.type == PanelEventType::Button && ev.pressed) ||
+                         (ev.type == PanelEventType::Fader && ev.delta != 0);
+    if (pressed) {
+      handle_footswitch(ev.timestamp_us);
+    }
+    return;
+  }
+
   // Handle WRITE hold vs short press:
   // On Performance and Scenes, WRITE hold (0.5s) triggers WriteDialog / Save Scene.
   // On other surfaces (Launcher, Library, Import, Settings, Part, SetlistBrowser), WRITE is immediate confirm on press!
@@ -752,6 +762,39 @@ void NavigationController::tick(uint32_t elapsed_ms) {
   notice_toast_.tick(elapsed_ms);
   import_view_.tick(elapsed_ms);
   boot_view_.tick(elapsed_ms);
+}
+
+void NavigationController::handle_footswitch(uint64_t ts) {
+  const auto fn = SystemConfig::instance().footswitch_function;
+  switch (fn) {
+    case FootswitchFunction::NextScene: {
+      scene_step_count_ += 1;
+      PanelEvent fwd = PanelEvent::button_press(MCU_BTN_SCENE_NEXT, ts);
+      performance_view_.on_panel_event(fwd);
+      break;
+    }
+    case FootswitchFunction::PreviousScene: {
+      scene_step_count_ -= 1;
+      PanelEvent fwd = PanelEvent::button_press(MCU_BTN_SCENE_PREV, ts);
+      performance_view_.on_panel_event(fwd);
+      break;
+    }
+    case FootswitchFunction::NextLiveSet: {
+      live_set_step_count_ += 1;
+      if (client_) {
+        ws::v1::ClientMessage msg;
+        msg.set_request_id(101);
+        msg.mutable_next_live_set();
+        client_->send_command(msg);
+      }
+      break;
+    }
+    case FootswitchFunction::RotarySpeed: {
+      PanelEvent fwd = PanelEvent::button_press(MCU_BTN_ROTARY_SF, ts);
+      performance_view_.on_panel_event(fwd);
+      break;
+    }
+  }
 }
 
 }  // namespace velora::ui

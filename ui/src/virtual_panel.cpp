@@ -84,6 +84,13 @@ bool VirtualPanel::handle_key(int32_t keycode, bool pressed) {
     return true;
   }
 
+  // 8. FOOTSWITCH (PEDAL_SWITCH): 'f' / 'F'
+  if (keycode == 'f' || keycode == 'F') {
+    dispatch(pressed ? PanelEvent::button_press(MCU_CTRL_PEDAL_SWITCH)
+                     : PanelEvent::button_release(MCU_CTRL_PEDAL_SWITCH));
+    return true;
+  }
+
   return false;
 }
 
