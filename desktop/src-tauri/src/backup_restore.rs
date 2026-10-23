@@ -30,11 +30,31 @@ pub enum RestoreMode {
 pub struct DeviceState {
     pub device_model: String,
     pub firmware_version: String,
+    #[serde(default)]
+    pub has_fm_va: bool,
     pub setlists: SetlistLibrary,
     pub assign_default: AssignDefault,
     pub favorites: Vec<String>,
     pub live_sets: Vec<LiveSet>,
     pub unsaved_edits: bool,
+}
+
+pub fn check_has_fm_va(firmware_version: &str) -> bool {
+    let parts: Vec<&str> = firmware_version.split('.').collect();
+    if parts.is_empty() {
+        return false;
+    }
+    if let Ok(major) = parts[0].parse::<u32>() {
+        if major > 1 {
+            return true;
+        }
+        if major == 1 && parts.len() > 1 {
+            if let Ok(minor) = parts[1].parse::<u32>() {
+                return minor >= 4;
+            }
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -409,6 +429,7 @@ mod tests {
         DeviceState {
             device_model: "Velora 73".to_string(),
             firmware_version: "1.2.0".to_string(),
+            has_fm_va: check_has_fm_va("1.2.0"),
             setlists: SetlistLibrary {
                 format_version: 1,
                 tags: vec![SetlistTag {
@@ -486,6 +507,7 @@ mod tests {
         let backup_state = DeviceState {
             device_model: "Velora 73".to_string(),
             firmware_version: "1.2.0".to_string(),
+            has_fm_va: check_has_fm_va("1.2.0"),
             setlists: SetlistLibrary {
                 format_version: 1,
                 tags: vec![SetlistTag {
@@ -542,6 +564,7 @@ mod tests {
         let backup_state = DeviceState {
             device_model: "Velora 73".to_string(),
             firmware_version: "1.2.0".to_string(),
+            has_fm_va: check_has_fm_va("1.2.0"),
             setlists: SetlistLibrary {
                 format_version: 1,
                 tags: vec![SetlistTag {

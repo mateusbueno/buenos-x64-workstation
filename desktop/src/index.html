@@ -85,19 +85,489 @@
           </div>
         </div>
 
-        <!-- Offline / Backup Live Set & Setlist Editor Container -->
+        <!-- Live Set Part Editor Container -->
         <div class="editor-container" id="editor-container" style="display: none;">
           <div class="editor-header">
             <div>
-              <small class="setting-label" id="editor-subtitle">OFFLINE BACKUP EDITING</small>
+              <small class="setting-label" id="editor-subtitle">VELORA STUDIO</small>
               <h1 class="editor-header-title" id="editor-title">Perfect</h1>
             </div>
             <div class="actions-section">
-              <button type="button" class="btn btn-primary" id="btn-save-backup" data-i18n="studio.offline.save_backup">Save Backup</button>
+              <span class="live-edit-tag" id="live-edit-badge" style="display: none;">◆ EDITED</span>
+              <button type="button" class="btn" id="btn-save-backup" style="display: none;" data-i18n="studio.offline.save_backup">Save Backup</button>
             </div>
           </div>
-          <div class="editor-part-strip" id="editor-part-strip">
-            <!-- Dynamic part cards -->
+
+          <!-- Part Strips (1-8) -->
+          <nav class="strips" id="editor-part-strips" aria-label="Part selection">
+            <!-- Dynamic part strips -->
+          </nav>
+
+          <!-- Studio Part Editor Section -->
+          <div class="ed" id="studio-part-editor" tabindex="0" role="region" aria-label="Part Editor">
+            <div class="hd" id="part-header-info">
+              <small id="part-num-label">PART 2</small>
+              <b id="part-name-display">Glass Keys</b>
+              <small id="part-category-display">E.PIANO</small>
+              <span class="ic">
+                <button class="btn" type="button" id="btn-part-power" aria-label="Part on/off" title="Part on/off">⏻</button>
+                <button class="btn" type="button" id="btn-part-favorite" aria-label="Add to Favorites" title="Favorite">★</button>
+              </span>
+            </div>
+
+            <!-- Sound Section -->
+            <div class="sec" id="sound-section">
+              <h3 data-i18n="studio.part_editor.sound">Sound</h3>
+
+              <!-- Jump Links Navigation -->
+              <nav class="jump" id="sound-jump-nav" aria-label="Sound groups">
+                <!-- Dynamic jump links for FM or VA -->
+              </nav>
+
+              <!-- Brightness / Knob 2 Readout -->
+              <div class="bm" id="brightness-readout">
+                <span class="lab" data-i18n="studio.part_editor.brightness_label">Brightness · KNOB 2</span>
+                <b id="brightness-val-text">64</b>
+                <span class="nt" id="brightness-note-text">→ modulator levels OP 2 · 4 · 6</span>
+              </div>
+
+              <!-- Firmware Mismatch / Not Available Banner (FR99) -->
+              <div class="ban" id="firmware-mismatch-banner" role="status" style="display: none;">
+                <span class="w" id="mismatch-banner-tag" data-i18n="studio.part_editor.firmware_mismatch_tag">! Needs update 1.4</span>
+                <strong data-i18n="studio.part_editor.firmware_mismatch_title">This timbre needs a newer firmware</strong>
+                <span id="mismatch-banner-desc" data-i18n="studio.part_editor.firmware_mismatch_desc">Velora 73 has firmware 1.2.0, which does not include this sound engine. The part stays silent on the Velora and nothing replaces it. Its settings stay in the Live Set.</span>
+                <div class="a">
+                  <button class="btn" type="button" id="btn-mismatch-change-timbre" data-i18n="studio.part_editor.btn_change_timbre">Change timbre</button>
+                  <button class="btn btn-primary" type="button" id="btn-mismatch-update-fw" data-i18n="studio.part_editor.btn_update_firmware">Update firmware</button>
+                </div>
+              </div>
+
+              <!-- FM Sound Cards Grid -->
+              <div class="cards" id="fm-sound-cards" style="display: none;">
+                <!-- Algorithm Card (spans 2 cols) -->
+                <section class="card span2" id="alg" tabindex="-1" aria-labelledby="alg-h">
+                  <h4 id="alg-h">Algorithm</h4>
+                  <div class="algo">
+                    <div class="diag">
+                      <svg id="fm-algo-svg" viewBox="0 0 348 236" role="img" aria-label="Algorithm 5: OP 2 to OP 1, OP 4 to OP 3, OP 6 to OP 5, feedback on OP 6">
+                        <!-- Rendered dynamically -->
+                      </svg>
+                      <div class="lg">Solid carrier · dashed modulator · ◐ moved by Brightness</div>
+                    </div>
+                    <div class="ctl">
+                      <label class="f">
+                        <span>Algorithm</span>
+                        <select id="fm-algo-select" aria-label="FM Algorithm">
+                          <!-- Options 1 to 32 populated dynamically -->
+                        </select>
+                      </label>
+                      <label class="f">
+                        <span id="fm-feedback-label">Feedback (OP 6)</span>
+                        <span class="rg">
+                          <input type="range" id="fm-feedback-slider" min="0" max="99" value="4" role="slider" aria-label="Feedback" aria-valuemin="0" aria-valuemax="99" aria-valuenow="4" aria-valuetext="4 of 99">
+                          <output id="fm-feedback-output">4</output>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- 6 Operator Cards (OP 1 to OP 6) -->
+                <div id="fm-operators-cards-container" style="display: contents;">
+                  <!-- Dynamic OP1..OP6 cards -->
+                </div>
+
+                <!-- Pitch Env Card -->
+                <section class="card" id="pe" tabindex="-1" aria-labelledby="pe-h">
+                  <h4 id="pe-h">Pitch env</h4>
+                  <div class="env">
+                    <svg viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true">
+                      <polyline id="fm-pe-poly" points="0,34 30,34 70,8 110,40 200,34" fill="none" style="stroke:var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+                    </svg>
+                  </div>
+                  <div class="row2">
+                    <label class="f"><span>Rate 1</span><input type="number" id="fm-pe-r1" value="99" min="0" max="99"></label>
+                    <label class="f"><span>Rate 2</span><input type="number" id="fm-pe-r2" value="99" min="0" max="99"></label>
+                    <label class="f"><span>Rate 3</span><input type="number" id="fm-pe-r3" value="99" min="0" max="99"></label>
+                    <label class="f"><span>Rate 4</span><input type="number" id="fm-pe-r4" value="60" min="0" max="99"></label>
+                    <label class="f"><span>Level 1</span><input type="number" id="fm-pe-l1" value="50" min="0" max="99"></label>
+                    <label class="f"><span>Level 2</span><input type="number" id="fm-pe-l2" value="50" min="0" max="99"></label>
+                    <label class="f"><span>Level 3</span><input type="number" id="fm-pe-l3" value="50" min="0" max="99"></label>
+                    <label class="f"><span>Level 4</span><input type="number" id="fm-pe-l4" value="50" min="0" max="99"></label>
+                  </div>
+                </section>
+
+                <!-- LFO Card -->
+                <section class="card" id="lfo" tabindex="-1" aria-labelledby="lfo-h">
+                  <h4 id="lfo-h">LFO</h4>
+                  <label class="f">
+                    <span>Wave</span>
+                    <select id="fm-lfo-wave" aria-label="FM LFO Wave">
+                      <option value="0" selected>Sine</option>
+                      <option value="1">Triangle</option>
+                      <option value="2">Saw up</option>
+                      <option value="3">Saw down</option>
+                      <option value="4">Square</option>
+                      <option value="5">S&amp;H</option>
+                    </select>
+                  </label>
+                  <label class="f">
+                    <span>Speed</span>
+                    <span class="rg">
+                      <input type="range" id="fm-lfo-speed" min="0" max="99" value="35" role="slider" aria-label="LFO Speed" aria-valuemin="0" aria-valuemax="99" aria-valuenow="35" aria-valuetext="35 of 99">
+                      <output id="fm-lfo-speed-out">35</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Delay</span>
+                    <span class="rg">
+                      <input type="range" id="fm-lfo-delay" min="0" max="99" value="12" role="slider" aria-label="LFO Delay" aria-valuemin="0" aria-valuemax="99" aria-valuenow="12" aria-valuetext="12 of 99">
+                      <output id="fm-lfo-delay-out">12</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Pitch depth</span>
+                    <span class="rg">
+                      <input type="range" id="fm-lfo-pdepth" min="0" max="99" value="8" role="slider" aria-label="LFO Pitch Depth" aria-valuemin="0" aria-valuemax="99" aria-valuenow="8" aria-valuetext="8 of 99">
+                      <output id="fm-lfo-pdepth-out">8</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Amp depth</span>
+                    <span class="rg">
+                      <input type="range" id="fm-lfo-adepth" min="0" max="99" value="0" role="slider" aria-label="LFO Amp Depth" aria-valuemin="0" aria-valuemax="99" aria-valuenow="0" aria-valuetext="0 of 99">
+                      <output id="fm-lfo-adepth-out">0</output>
+                    </span>
+                  </label>
+                  <label class="chk">
+                    <input type="checkbox" id="fm-lfo-keysync" checked> Key sync
+                  </label>
+                </section>
+              </div>
+
+              <!-- VA Sound Cards Grid -->
+              <div class="cards" id="va-sound-cards" style="display: none;">
+                <!-- Osc 1 -->
+                <section class="card" id="osc1" tabindex="-1" aria-labelledby="osc1-h">
+                  <h4 id="osc1-h">Osc 1</h4>
+                  <label class="f">
+                    <span>Wave</span>
+                    <select id="va-osc1-wave" aria-label="Osc 1 Wave">
+                      <option value="0" selected>Saw</option>
+                      <option value="1">Square</option>
+                      <option value="2">Tri</option>
+                      <option value="3">Sine</option>
+                    </select>
+                  </label>
+                  <div class="row2">
+                    <label class="f"><span>Octave</span><input type="number" id="va-osc1-oct" value="0" min="-3" max="3"></label>
+                    <label class="f"><span>Detune</span><input type="number" id="va-osc1-detune" value="0" min="-50" max="50"></label>
+                  </div>
+                  <label class="f">
+                    <span>Pulse width</span>
+                    <span class="rg">
+                      <input type="range" id="va-osc1-pw" min="0" max="99" value="50" role="slider" aria-label="Osc 1 Pulse Width" aria-valuemin="0" aria-valuemax="99" aria-valuenow="50" aria-valuetext="50 of 99">
+                      <output id="va-osc1-pw-out">50</output>
+                    </span>
+                  </label>
+                </section>
+
+                <!-- Osc 2 -->
+                <section class="card" id="osc2" tabindex="-1" aria-labelledby="osc2-h">
+                  <h4 id="osc2-h">Osc 2</h4>
+                  <label class="f">
+                    <span>Wave</span>
+                    <select id="va-osc2-wave" aria-label="Osc 2 Wave">
+                      <option value="0">Saw</option>
+                      <option value="1" selected>Square</option>
+                      <option value="2">Tri</option>
+                      <option value="3">Sine</option>
+                    </select>
+                  </label>
+                  <div class="row2">
+                    <label class="f"><span>Octave</span><input type="number" id="va-osc2-oct" value="-1" min="-3" max="3"></label>
+                    <label class="f"><span>Detune</span><input type="number" id="va-osc2-detune" value="7" min="-50" max="50"></label>
+                  </div>
+                  <label class="f">
+                    <span>Pulse width</span>
+                    <span class="rg">
+                      <input type="range" id="va-osc2-pw" min="0" max="99" value="38" role="slider" aria-label="Osc 2 Pulse Width" aria-valuemin="0" aria-valuemax="99" aria-valuenow="38" aria-valuetext="38 of 99">
+                      <output id="va-osc2-pw-out">38</output>
+                    </span>
+                  </label>
+                </section>
+
+                <!-- Mixer -->
+                <section class="card" id="mix" tabindex="-1" aria-labelledby="mix-h">
+                  <h4 id="mix-h">Mixer</h4>
+                  <label class="f">
+                    <span>Osc 1</span>
+                    <span class="rg">
+                      <input type="range" id="va-mix-osc1" min="0" max="99" value="80" role="slider" aria-label="Mixer Osc 1" aria-valuemin="0" aria-valuemax="99" aria-valuenow="80" aria-valuetext="80 of 99">
+                      <output id="va-mix-osc1-out">80</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Osc 2</span>
+                    <span class="rg">
+                      <input type="range" id="va-mix-osc2" min="0" max="99" value="64" role="slider" aria-label="Mixer Osc 2" aria-valuemin="0" aria-valuemax="99" aria-valuenow="64" aria-valuetext="64 of 99">
+                      <output id="va-mix-osc2-out">64</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Sub</span>
+                    <span class="rg">
+                      <input type="range" id="va-mix-sub" min="0" max="99" value="30" role="slider" aria-label="Mixer Sub" aria-valuemin="0" aria-valuemax="99" aria-valuenow="30" aria-valuetext="30 of 99">
+                      <output id="va-mix-sub-out">30</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Noise</span>
+                    <span class="rg">
+                      <input type="range" id="va-mix-noise" min="0" max="99" value="8" role="slider" aria-label="Mixer Noise" aria-valuemin="0" aria-valuemax="99" aria-valuenow="8" aria-valuetext="8 of 99">
+                      <output id="va-mix-noise-out">8</output>
+                    </span>
+                  </label>
+                </section>
+
+                <!-- Filter -->
+                <section class="card" id="flt" tabindex="-1" aria-labelledby="flt-h">
+                  <h4 id="flt-h">Filter</h4>
+                  <label class="f">
+                    <span>Type</span>
+                    <select id="va-flt-type" aria-label="Filter Type">
+                      <option value="0" selected>LP 24</option>
+                      <option value="1">LP 12</option>
+                      <option value="2">BP</option>
+                      <option value="3">HP</option>
+                    </select>
+                  </label>
+                  <label class="f">
+                    <span>Cutoff</span>
+                    <span class="rg">
+                      <input type="range" id="va-flt-cutoff" min="0" max="99" value="74" role="slider" aria-label="Filter Cutoff" aria-valuemin="0" aria-valuemax="99" aria-valuenow="74" aria-valuetext="74 of 99">
+                      <output id="va-flt-cutoff-out">74</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Resonance</span>
+                    <span class="rg">
+                      <input type="range" id="va-flt-res" min="0" max="99" value="22" role="slider" aria-label="Filter Resonance" aria-valuemin="0" aria-valuemax="99" aria-valuenow="22" aria-valuetext="22 of 99">
+                      <output id="va-flt-res-out">22</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Drive</span>
+                    <span class="rg">
+                      <input type="range" id="va-flt-drive" min="0" max="99" value="10" role="slider" aria-label="Filter Drive" aria-valuemin="0" aria-valuemax="99" aria-valuenow="10" aria-valuetext="10 of 99">
+                      <output id="va-flt-drive-out">10</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Key track</span>
+                    <span class="rg">
+                      <input type="range" id="va-flt-keytrack" min="0" max="99" value="50" role="slider" aria-label="Filter Key Track" aria-valuemin="0" aria-valuemax="99" aria-valuenow="50" aria-valuetext="50 of 99">
+                      <output id="va-flt-keytrack-out">50</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Env amount</span>
+                    <span class="rg">
+                      <input type="range" id="va-flt-envamt" min="0" max="99" value="70" role="slider" aria-label="Filter Env Amount" aria-valuemin="0" aria-valuemax="99" aria-valuenow="70" aria-valuetext="70 of 99">
+                      <output id="va-flt-envamt-out">70</output>
+                    </span>
+                  </label>
+                </section>
+
+                <!-- Amp Envelope -->
+                <section class="card" id="aenv" tabindex="-1" aria-labelledby="aenv-h">
+                  <h4 id="aenv-h">Amp envelope</h4>
+                  <div class="env">
+                    <svg viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true">
+                      <polyline id="va-aenv-poly" points="0,55 14,6 70,26 130,26 200,55" fill="none" style="stroke:var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+                    </svg>
+                  </div>
+                  <div class="row2">
+                    <label class="f"><span>Attack</span><input type="number" id="va-aenv-atk" value="4" min="0" max="99"></label>
+                    <label class="f"><span>Decay</span><input type="number" id="va-aenv-dec" value="52" min="0" max="99"></label>
+                    <label class="f"><span>Sustain</span><input type="number" id="va-aenv-sus" value="70" min="0" max="99"></label>
+                    <label class="f"><span>Release</span><input type="number" id="va-aenv-rel" value="38" min="0" max="99"></label>
+                  </div>
+                </section>
+
+                <!-- Filter Envelope -->
+                <section class="card" id="fenv" tabindex="-1" aria-labelledby="fenv-h">
+                  <h4 id="fenv-h">Filter envelope</h4>
+                  <div class="env">
+                    <svg viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true">
+                      <polyline id="va-fenv-poly" points="0,55 14,6 70,26 130,26 200,55" fill="none" style="stroke:var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+                    </svg>
+                  </div>
+                  <div class="row2">
+                    <label class="f"><span>Attack</span><input type="number" id="va-fenv-atk" value="4" min="0" max="99"></label>
+                    <label class="f"><span>Decay</span><input type="number" id="va-fenv-dec" value="52" min="0" max="99"></label>
+                    <label class="f"><span>Sustain</span><input type="number" id="va-fenv-sus" value="70" min="0" max="99"></label>
+                    <label class="f"><span>Release</span><input type="number" id="va-fenv-rel" value="38" min="0" max="99"></label>
+                  </div>
+                </section>
+
+                <!-- LFO -->
+                <section class="card" id="vlfo" tabindex="-1" aria-labelledby="vlfo-h">
+                  <h4 id="vlfo-h">LFO</h4>
+                  <label class="f">
+                    <span>Wave</span>
+                    <select id="va-lfo-wave" aria-label="VA LFO Wave">
+                      <option value="0">Sine</option>
+                      <option value="1" selected>Triangle</option>
+                      <option value="2">Saw up</option>
+                      <option value="3">Square</option>
+                      <option value="4">S&amp;H</option>
+                    </select>
+                  </label>
+                  <label class="f">
+                    <span>Rate</span>
+                    <span class="rg">
+                      <input type="range" id="va-lfo-rate" min="0" max="99" value="42" role="slider" aria-label="LFO Rate" aria-valuemin="0" aria-valuemax="99" aria-valuenow="42" aria-valuetext="42 of 99">
+                      <output id="va-lfo-rate-out">42</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>To pitch</span>
+                    <span class="rg">
+                      <input type="range" id="va-lfo-pitch" min="0" max="99" value="6" role="slider" aria-label="LFO To Pitch" aria-valuemin="0" aria-valuemax="99" aria-valuenow="6" aria-valuetext="6 of 99">
+                      <output id="va-lfo-pitch-out">6</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>To filter</span>
+                    <span class="rg">
+                      <input type="range" id="va-lfo-filter" min="0" max="99" value="20" role="slider" aria-label="LFO To Filter" aria-valuemin="0" aria-valuemax="99" aria-valuenow="20" aria-valuetext="20 of 99">
+                      <output id="va-lfo-filter-out">20</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>To amp</span>
+                    <span class="rg">
+                      <input type="range" id="va-lfo-amp" min="0" max="99" value="0" role="slider" aria-label="LFO To Amp" aria-valuemin="0" aria-valuemax="99" aria-valuenow="0" aria-valuetext="0 of 99">
+                      <output id="va-lfo-amp-out">0</output>
+                    </span>
+                  </label>
+                  <label class="chk">
+                    <input type="checkbox" id="va-lfo-keysync"> Key sync
+                  </label>
+                </section>
+
+                <!-- Voice -->
+                <section class="card" id="voice" tabindex="-1" aria-labelledby="voice-h">
+                  <h4 id="voice-h">Voice</h4>
+                  <label class="f">
+                    <span>Mode</span>
+                    <select id="va-voice-mode" aria-label="Voice Mode">
+                      <option value="0" selected>Poly</option>
+                      <option value="1">Mono</option>
+                      <option value="2">Legato</option>
+                    </select>
+                  </label>
+                  <div class="row2">
+                    <label class="f"><span>Unison voices</span><input type="number" id="va-unison-voices" value="4" min="1" max="8"></label>
+                    <label class="f"><span>Unison detune</span><input type="number" id="va-unison-detune" value="18" min="0" max="50"></label>
+                  </div>
+                  <label class="f">
+                    <span>Glide time</span>
+                    <span class="rg">
+                      <input type="range" id="va-glide-time" min="0" max="99" value="0" role="slider" aria-label="Glide Time" aria-valuemin="0" aria-valuemax="99" aria-valuenow="0" aria-valuetext="0 of 99">
+                      <output id="va-glide-time-out">0</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Glide mode</span>
+                    <select id="va-glide-mode" aria-label="Glide Mode">
+                      <option value="0">Always</option>
+                      <option value="1" selected>Legato only</option>
+                    </select>
+                  </label>
+                </section>
+              </div>
+            </div>
+
+            <!-- Lower Sections -->
+            <div class="lower">
+              <section class="sec" aria-labelledby="s2">
+                <h3 id="s2" data-i18n="studio.part_editor.amp_eq">Amp envelope + EQ</h3>
+                <div class="row2">
+                  <label class="f"><span>Attack</span><input type="number" id="lower-amp-atk" value="4" min="0" max="99"></label>
+                  <label class="f"><span>Release</span><input type="number" id="lower-amp-rel" value="38" min="0" max="99"></label>
+                  <label class="f"><span>EQ low</span><input type="number" id="lower-eq-low" value="0" min="-12" max="12"></label>
+                  <label class="f"><span>EQ mid</span><input type="number" id="lower-eq-mid" value="0" min="-12" max="12"></label>
+                  <label class="f"><span>Mid freq</span><input type="number" id="lower-eq-midfreq" value="1200" step="10" min="100" max="8000"></label>
+                  <label class="f"><span>EQ high</span><input type="number" id="lower-eq-high" value="2" min="-12" max="12"></label>
+                </div>
+              </section>
+
+              <section class="sec" aria-labelledby="s3">
+                <h3 id="s3" data-i18n="studio.part_editor.effects">Effects inserts + sends</h3>
+                <div class="row2">
+                  <label class="f">
+                    <span>Insert 1</span>
+                    <select id="lower-fx-insert1">
+                      <option selected>Chorus</option>
+                      <option>Phaser</option>
+                      <option>Drive</option>
+                    </select>
+                  </label>
+                  <label class="f">
+                    <span>Reverb send</span>
+                    <span class="rg">
+                      <input type="range" id="lower-fx-reverb" min="0" max="99" value="28" role="slider" aria-label="Reverb Send" aria-valuemin="0" aria-valuemax="99" aria-valuenow="28" aria-valuetext="28 of 99">
+                      <output id="lower-fx-reverb-out">28</output>
+                    </span>
+                  </label>
+                  <label class="f">
+                    <span>Delay send</span>
+                    <span class="rg">
+                      <input type="range" id="lower-fx-delay" min="0" max="99" value="12" role="slider" aria-label="Delay Send" aria-valuemin="0" aria-valuemax="99" aria-valuenow="12" aria-valuetext="12 of 99">
+                      <output id="lower-fx-delay-out">12</output>
+                    </span>
+                  </label>
+                  <button class="btn" type="button" style="align-self:end;" data-i18n="studio.part_editor.add_insert">+ Add insert</button>
+                </div>
+              </section>
+
+              <section class="sec" aria-labelledby="s4">
+                <h3 id="s4" data-i18n="studio.part_editor.zone_arp_assign">Zone &amp; keyboard · Arpeggiator · Assign</h3>
+                <div class="row2">
+                  <label class="f">
+                    <span>Low key</span>
+                    <select id="lower-zone-low">
+                      <option selected>C1</option>
+                      <option>C2</option>
+                    </select>
+                  </label>
+                  <label class="f">
+                    <span>High key</span>
+                    <select id="lower-zone-high">
+                      <option selected>C7</option>
+                      <option>B6</option>
+                    </select>
+                  </label>
+                  <label class="f">
+                    <span>Arp</span>
+                    <select id="lower-arp-enabled">
+                      <option selected>Off</option>
+                      <option>On</option>
+                    </select>
+                  </label>
+                  <label class="f">
+                    <span>Mode</span>
+                    <select id="lower-arp-mode">
+                      <option selected>Up</option>
+                      <option>Down</option>
+                      <option>As played</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+            </div>
           </div>
         </div>
       </main>
@@ -107,8 +577,10 @@
     <footer class="footer" id="footer-region" tabindex="0" aria-label="Status Bar">
       <div class="footer-left">
         <span class="status-device" id="footer-device-status" data-i18n="studio.conn.no_device">No Velora connected</span>
+        <span class="foot-badge foot-ok" id="footer-streaming-status" data-i18n="studio.part_editor.streaming_ok">STREAMING OK</span>
       </div>
       <div class="footer-right">
+        <span class="foot-badge" id="footer-live-edit-status" data-i18n="studio.part_editor.live_edit_clean">STUDIO</span>
         <span class="status-backup" id="footer-backup-status" data-i18n="studio.footer.no_backup_yet">No backup yet</span>
       </div>
     </footer>
