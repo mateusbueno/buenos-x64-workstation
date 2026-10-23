@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora Studio — Backup & Restore, Export, and Import Mockups (Story 9.4)</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #ecebe8;
+  font: 14px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif;
+  color: #151515;
+}
+.wrap {
+  max-width: 1320px;
+  margin: auto;
+  padding: 28px 16px 60px;
+}
+h1 { font-size: 24px; font-weight: 500; margin: 0 0 6px; }
+h2 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: #4d4d4d; margin: 36px 0 10px; font-weight: 600; }
+p { color: #4d4d4d; max-width: 960px; margin: 0 0 14px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+@media (max-width: 900px) { .pair { grid-template-columns: 1fr; } }
+figure { margin: 0; }
+figcaption { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #4d4d4d; margin: 0 0 6px 2px; }
+
+/* Sálvia desktop tokens */
+.t-stage {
+  --bg: #0b0d0c;
+  --surface: #151917;
+  --raised: #202622;
+  --line: #2b322e;
+  --line-strong: #5a6860;
+  --text: #e7ebe8;
+  --muted: #88938c;
+  --accent: #9fbaa8;
+  --on-accent: #0b0d0c;
+  --warn: #cdb86c;
+  --ok: #9fbaa8;
+}
+.t-studio {
+  --bg: #f2f4f2;
+  --surface: #e3e8e4;
+  --raised: #ffffff;
+  --line: #cbd4cd;
+  --line-strong: #728a77;
+  --text: #131714;
+  --muted: #5a635c;
+  --accent: #466853;
+  --on-accent: #f2f4f2;
+  --warn: #725f1e;
+  --ok: #466853;
+}
+
+/* Window frame */
+.win {
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.25);
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Gill Sans", "Gill Sans MT", Calibri, sans-serif;
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Backup & Restore Surface Area */
+.surface-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.surface-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.surface-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  gap: 16px;
+}
+.surface-row:last-child {
+  border-bottom: none;
+}
+.surface-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.surface-label b {
+  font-size: 15px;
+  color: var(--text);
+}
+.surface-label span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Modal Dialog overlay */
+.modal-overlay {
+  background: rgba(0, 0, 0, 0.55);
+  padding: 28px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dialog {
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  width: 100%;
+  max-width: 620px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dialog-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.dialog-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+/* Segmented Scope Control */
+.seg {
+  display: flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.seg span {
+  flex: 1;
+  padding: 8px 12px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.seg span + span {
+  border-left: 1px solid var(--line-strong);
+}
+.seg span.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Studio Selection List */
+.selection-list {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  max-height: 230px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.selection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  gap: 12px;
+}
+.selection-row:last-child {
+  border-bottom: none;
+}
+.selection-row:hover {
+  background: var(--raised);
+}
+.selection-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.chk {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.item-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.item-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.tag-ref {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.item-size {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Collision Choice Segmented Control (Skip / Replace / Keep both) */
+.collision-seg {
+  display: flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  overflow: hidden;
+  height: 28px;
+}
+.collision-seg span {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.collision-seg span + span {
+  border-left: 1px solid var(--line-strong);
+}
+.collision-seg span.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Large bundle warning */
+.bundle-warn {
+  background: rgba(205, 184, 108, 0.12);
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bundle-warn i {
+  color: var(--warn);
+  font-style: normal;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* Buttons */
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.total-estimate {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.btn-group {
+  display: flex;
+  gap: 10px;
+}
+.btn {
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.btn.pri {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 200% Zoom text class */
+.zoom-200 {
+  font-size: 200% !important;
+}
+.zoom-200 .dialog-title { font-size: 28px; }
+.zoom-200 .selection-row { font-size: 18px; }
+.zoom-200 .btn { font-size: 18px; padding: 12px 24px; }
+
+/* Tables */
+table {
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+  color: #3d3d3d;
+  margin: 12px 0;
+  width: 100%;
+}
+td, th {
+  border: 1px solid #d6d4cf;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: #f4f3f0;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Velora Studio — Backup & Restore, Export, and Import (Story 9.4)</h1>
+<p>Drawn for <b>Velora Studio</b> per <b>DESIGN.md</b> and <b>EXPERIENCE.md › Velora Studio</b>. Demonstrates the Backup & Restore surface (storage location, timestamp, file pick, merge/replace), the Export Dialog (scopes Live Sets / Timbres / Bundle, Studio Selection List with sizes, reference-only items, large-bundle warning), and the Import Dialog with per-item collision options (Skip / Replace / Keep both).</p>
+
+<h2>1 · Backup & Restore Surface in Stage & Studio Themes</h2>
+<p>Enables full system archival to a portable <code>.velorabackup</code> container, restoring either with non-destructive merge or clean replacement.</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (Dark) — Backup & Restore</figcaption>
+<div class="win t-stage">
+  <div style="padding: 24px;">
+    <div class="surface-card">
+      <h3 class="surface-title">Backup & Restore</h3>
+      
+      <div class="surface-row">
+        <div class="surface-label">
+          <b>Backup Storage Location</b>
+          <span>/Users/mateusbueno/Music/Velora Backups/</span>
+        </div>
+        <button class="btn">Change Location…</button>
+      </div>
+
+      <div class="surface-row">
+        <div class="surface-label">
+          <b>Last Full Backup</b>
+          <span>Today at 14:32 · 3 setlists, 42 Live Sets, 7 custom timbres (18.4 GB)</span>
+        </div>
+        <button class="btn pri">Back Up Now</button>
+      </div>
+
+      <div class="surface-row">
+        <div class="surface-label">
+          <b>Restore from File</b>
+          <span>Restore setlists, Live Sets, and timbres from a <code>.velorabackup</code> file.</span>
+        </div>
+        <button class="btn">Choose Backup File…</button>
+      </div>
+    </div>
+  </div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (Light) — Backup & Restore</figcaption>
+<div class="win t-studio">
+  <div style="padding: 24px;">
+    <div class="surface-card">
+      <h3 class="surface-title">Backup & Restore</h3>
+      
+      <div class="surface-row">
+        <div class="surface-label">
+          <b>Backup Storage Location</b>
+          <span>/Users/mateusbueno/Music/Velora Backups/</span>
+        </div>
+        <button class="btn">Change Location…</button>
+      </div>
+
+      <div class="surface-row">
+        <div class="surface-label">
+          <b>Last Full Backup</b>
+          <span>Today at 14:32 · 3 setlists, 42 Live Sets, 7 custom timbres (18.4 GB)</span>
+        </div>
+        <button class="btn pri">Back Up Now</button>
+      </div>
+
+      <div class="surface-row">
+        <div class="surface-label">
+          <b>Restore from File</b>
+          <span>Restore setlists, Live Sets, and timbres from a <code>.velorabackup</code> file.</span>
+        </div>
+        <button class="btn">Choose Backup File…</button>
+      </div>
+    </div>
+  </div>
+</div>
+</figure>
+</div>
+
+<h2>2 · Export Dialog (Bundle Scope with Selection List & Warning)</h2>
+<p>Allows partial export of Live Sets, timbres, or complete self-contained Live Set Bundles. Factory/partner assets are flagged "Reference only" at 0 B. Bundles exceeding threshold trigger an amber advisory.</p>
+
+<div class="win t-stage" style="max-width: 640px; margin: auto; margin-bottom: 28px;">
+  <div class="modal-overlay">
+    <div class="dialog" role="dialog" aria-labelledby="export-title">
+      <div class="dialog-header">
+        <h3 id="export-title" class="dialog-title">Export Content</h3>
+      </div>
+      
+      <!-- Scope Selection -->
+      <div class="seg" role="tablist">
+        <span>Live Sets</span>
+        <span>Timbres</span>
+        <span class="on">Live Set Bundle</span>
+      </div>
+
+      <p style="margin: 0; font-size: 13px; color: var(--muted);">
+        A Live Set Bundle exports chosen Live Sets plus all custom sample timbres they require.
+      </p>
+
+      <!-- Selection List -->
+      <div class="selection-list">
+        <div class="selection-row" style="background: var(--raised); font-weight: 600;">
+          <div class="selection-left">
+            <input type="checkbox" class="chk" checked>
+            <span>Live Sets & Dependencies</span>
+          </div>
+          <span>Size</span>
+        </div>
+        <div class="selection-row">
+          <div class="selection-left">
+            <input type="checkbox" class="chk" checked>
+            <div>
+              <span class="item-name">03 · Perfect</span>
+              <div class="item-meta">Live Set · 4 parts</div>
+            </div>
+          </div>
+          <span class="item-size">14 KB</span>
+        </div>
+        <div class="selection-row">
+          <div class="selection-left">
+            <input type="checkbox" class="chk" checked disabled>
+            <div>
+              <span class="item-name">Concert Grand (Steinway D)</span>
+              <div class="item-meta">Sample Timbre · Piano</div>
+            </div>
+          </div>
+          <span class="tag-ref">Reference only (0 B)</span>
+        </div>
+        <div class="selection-row">
+          <div class="selection-left">
+            <input type="checkbox" class="chk" checked disabled>
+            <div>
+              <span class="item-name">Rhodes Mk1 Stage Custom</span>
+              <div class="item-meta">User Timbre · E.Piano</div>
+            </div>
+          </div>
+          <span class="item-size">7.1 GB</span>
+        </div>
+        <div class="selection-row">
+          <div class="selection-left">
+            <input type="checkbox" class="chk" checked disabled>
+            <div>
+              <span class="item-name">Warm Saw Pad</span>
+              <div class="item-meta">Virtual Analog · Synth Pad</div>
+            </div>
+          </div>
+          <span class="item-size">2 KB</span>
+        </div>
+      </div>
+
+      <!-- Large Bundle Warning -->
+      <div class="bundle-warn">
+        <i>⚠</i>
+        <span><b>Large bundle size (7.1 GB).</b> Export may take several minutes to compile and transfer to removable media.</span>
+      </div>
+
+      <div class="dialog-actions">
+        <span class="total-estimate">Total export: ~7.1 GB</span>
+        <div class="btn-group">
+          <button class="btn">Cancel</button>
+          <button class="btn pri">Export Bundle…</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>3 · Import Dialog with Collision Resolution (Skip / Replace / Keep Both)</h2>
+<p>When importing external Live Sets or timbres, items that collide with existing local data offer per-item resolution choices, defaulting to "Keep both" with automatic renaming.</p>
+
+<div class="win t-studio" style="max-width: 640px; margin: auto; margin-bottom: 28px;">
+  <div class="modal-overlay">
+    <div class="dialog" role="dialog" aria-labelledby="import-title">
+      <div class="dialog-header">
+        <h3 id="import-title" class="dialog-title">Import Bundle</h3>
+        <span style="font-size: 12px; color: var(--muted);">Sunday_Service.velorasets (3 items)</span>
+      </div>
+
+      <div class="selection-list">
+        <div class="selection-row" style="background: var(--raised);">
+          <div class="selection-left">
+            <span style="font-weight: 600;">Incoming Items (2 Collisions)</span>
+          </div>
+          <div style="font-size: 11px; color: var(--accent); font-weight: 600; cursor: pointer;">
+            Apply "Keep both" to all
+          </div>
+        </div>
+        <div class="selection-row">
+          <div class="selection-left">
+            <div>
+              <span class="item-name">01 · Canon in D</span>
+              <div class="item-meta" style="color: var(--warn);">Collision: Already exists in Wedding Setlist</div>
+            </div>
+          </div>
+          <div class="collision-seg">
+            <span>Skip</span>
+            <span>Replace</span>
+            <span class="on">Keep both</span>
+          </div>
+        </div>
+        <div class="selection-row">
+          <div class="selection-left">
+            <div>
+              <span class="item-name">Gospel B3 Custom</span>
+              <div class="item-meta" style="color: var(--warn);">Collision: Timbre name matched</div>
+            </div>
+          </div>
+          <div class="collision-seg">
+            <span>Skip</span>
+            <span class="on">Replace</span>
+            <span>Keep both</span>
+          </div>
+        </div>
+        <div class="selection-row">
+          <div class="selection-left">
+            <div>
+              <span class="item-name">04 · Oceans (Where Feet May Fail)</span>
+              <div class="item-meta" style="color: var(--ok);">New Live Set · Ready to import</div>
+            </div>
+          </div>
+          <span style="font-size: 11px; font-weight: 600; color: var(--ok);">Ready</span>
+        </div>
+      </div>
+
+      <div class="dialog-actions">
+        <span class="total-estimate">Importing 3 Live Sets / Timbres</span>
+        <div class="btn-group">
+          <button class="btn">Cancel</button>
+          <button class="btn pri">Complete Import</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>4 · Accessibility, 200% Zoom Reflow & Focus Rings</h2>
+<p>Testing 200% text zoom and 2 px focus ring at 2 px offset on focused buttons.</p>
+
+<div class="win t-stage zoom-200" style="max-width: 720px; margin: auto; margin-bottom: 24px;">
+  <div class="modal-overlay">
+    <div class="dialog" style="max-width: 100%;">
+      <h3 class="dialog-title">200% Zoom Reflow Verification</h3>
+      <div class="dialog-body">
+        <p>Selection list items and dialog buttons wrap smoothly under 200% zoom without horizontal window scrollbars.</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn pri" style="outline: 2px solid var(--accent); outline-offset: 2px;">Focused Export</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>5 · Pseudo-localization (+40% Expansion with ÁÇÊÕÑ Ação)</h2>
+
+<div class="win t-studio" style="max-width: 640px; margin: auto; margin-bottom: 24px;">
+  <div class="modal-overlay">
+    <div class="dialog">
+      <div class="dialog-header">
+        <h3 class="dialog-title">Êxpõrtár Çõñtêúdõ ÁÇÊÕÑ Ação</h3>
+      </div>
+      <div class="selection-list">
+        <div class="selection-row">
+          <div class="selection-left">
+            <input type="checkbox" class="chk" checked>
+            <div>
+              <span class="item-name">03 · Pêrfêçt ÁÇÊÕÑ</span>
+              <div class="item-meta">Lívê Sêt · 4 pártês ÁÇÊÕ</div>
+            </div>
+          </div>
+          <span class="item-size">14 KB</span>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <span class="total-estimate">Tõtál êxpõrtáçãõ: ~14 KB ÁÇ</span>
+        <div class="btn-group">
+          <button class="btn">Çáñçêlár ÁÇ</button>
+          <button class="btn pri">Êxpõrtár ÁÇÊ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>6 · Contrast Audit</h2>
+<table>
+  <tr><th>Element Pair</th><th>Stage Theme</th><th>Ratio</th><th>Studio Theme</th><th>Ratio</th><th>Standard</th></tr>
+  <tr><td>Dialog Text on Raised</td><td>#e7ebe8 on #202622</td><td>12.5 : 1</td><td>#131714 on #ffffff</td><td>15.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Muted Text on Surface</td><td>#88938c on #151917</td><td>5.1 : 1</td><td>#5a635c on #e3e8e4</td><td>5.2 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Primary Button Text</td><td>#0b0d0c on #9fbaa8</td><td>9.6 : 1</td><td>#f2f4f2 on #466853</td><td>5.5 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Warn Text in Advisory</td><td>#cdb86c on #202622</td><td>7.4 : 1</td><td>#725f1e on #ffffff</td><td>5.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Checkbox Boundary</td><td>#5a6860 on #151917</td><td>3.6 : 1</td><td>#728a77 on #e3e8e4</td><td>3.4 : 1</td><td>≥ 3.0 : 1 (Pass)</td></tr>
+</table>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora Studio — Footer, Dialog, and Banner Mockup (Story 9.4)</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #ecebe8;
+  font: 14px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif;
+  color: #151515;
+}
+.wrap {
+  max-width: 1320px;
+  margin: auto;
+  padding: 28px 16px 60px;
+}
+h1 { font-size: 24px; font-weight: 500; margin: 0 0 6px; }
+h2 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: #4d4d4d; margin: 36px 0 10px; font-weight: 600; }
+p { color: #4d4d4d; max-width: 960px; margin: 0 0 14px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+@media (max-width: 900px) { .pair { grid-template-columns: 1fr; } }
+figure { margin: 0; }
+figcaption { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #4d4d4d; margin: 0 0 6px 2px; }
+
+/* Sálvia desktop tokens */
+.t-stage {
+  --bg: #0b0d0c;
+  --surface: #151917;
+  --raised: #202622;
+  --line: #2b322e;
+  --line-strong: #5a6860;
+  --text: #e7ebe8;
+  --muted: #88938c;
+  --accent: #9fbaa8;
+  --on-accent: #0b0d0c;
+  --warn: #cdb86c;
+  --ok: #9fbaa8;
+}
+.t-studio {
+  --bg: #f2f4f2;
+  --surface: #e3e8e4;
+  --raised: #ffffff;
+  --line: #cbd4cd;
+  --line-strong: #728a77;
+  --text: #131714;
+  --muted: #5a635c;
+  --accent: #466853;
+  --on-accent: #f2f4f2;
+  --warn: #725f1e;
+  --ok: #466853;
+}
+
+/* Window frame */
+.win {
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.25);
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Gill Sans", "Gill Sans MT", Calibri, sans-serif;
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Studio Banner (non-modal strip at top of main area) */
+.banner {
+  background: var(--raised);
+  border-left: 4px solid var(--warn);
+  border-bottom: 1px solid var(--line);
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+}
+.banner .msg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+.banner .msg i {
+  font-style: normal;
+  color: var(--warn);
+  font-weight: 700;
+  font-size: 16px;
+}
+.banner .action-btn {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.banner .action-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Studio Footer states */
+.footer {
+  height: 34px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: .04em;
+}
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.footer-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.footer-tag.live-edit {
+  color: var(--accent);
+}
+.footer-tag.live-edit i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+}
+.footer-tag.unsaved {
+  color: var(--warn);
+}
+.footer-progress-bar {
+  width: 140px;
+  height: 6px;
+  background: var(--line-strong);
+  border-radius: 3px;
+  overflow: hidden;
+  display: inline-block;
+}
+.footer-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+/* Studio Dialog Container (Modal over dimmed overlay) */
+.modal-overlay {
+  background: rgba(0, 0, 0, 0.55);
+  padding: 32px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dialog {
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  width: 100%;
+  max-width: 480px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dialog-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.dialog-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.dialog-body {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.45;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dialog-body p {
+  color: var(--text);
+  margin: 0;
+}
+.dialog-err {
+  color: var(--warn);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+.btn {
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.btn.pri {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Pairing Code Inputs */
+.code-inputs {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin: 8px 0;
+}
+.code-digit {
+  width: 46px;
+  height: 54px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.code-digit.err {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 1px var(--warn);
+}
+.code-digit:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Radio Choice Card for Scopes */
+.choice-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.choice-card.selected {
+  border-color: var(--accent);
+  background: var(--raised);
+}
+.choice-card.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.choice-radio {
+  margin-top: 3px;
+}
+.choice-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.choice-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.choice-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+.disabled-reason {
+  font-size: 12px;
+  color: var(--warn);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* 200% Zoom text class */
+.zoom-200 {
+  font-size: 200% !important;
+}
+.zoom-200 .dialog-title { font-size: 28px; }
+.zoom-200 .dialog-body { font-size: 18px; }
+.zoom-200 .btn { font-size: 18px; padding: 12px 24px; }
+
+/* Tables */
+table {
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+  color: #3d3d3d;
+  margin: 12px 0;
+  width: 100%;
+}
+td, th {
+  border: 1px solid #d6d4cf;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: #f4f3f0;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Velora Studio — Footer, Dialog, and Banner Design Mockup (Story 9.4)</h1>
+<p>Drawn for <b>Velora Studio</b> per <b>DESIGN.md</b> and <b>EXPERIENCE.md › Velora Studio</b>. Covers the Studio Footer (5 states), Studio Dialog variants (Pairing, Write to Velora scope, Restore Merge/Replace), Studio Banner non-modal warnings (Disconnect, Version mismatch, Write failed, Stale edit), focus rings, 200% zoom reflow, and pseudo-localization (+40% with <code>ÁÇÊÕÑ Ação</code>).</p>
+
+<h2>1 · Studio Footer (5 States) in Stage & Studio Themes</h2>
+<p>Sits at the bottom of the window (34 px). Displays live edit, pending unsaved scopes, write progress, sample transfer progress, and last backup timestamp.</p>
+
+<div class="pair">
+<figure>
+<figcaption>Stage Theme (Dark) — Footer States</figcaption>
+<div class="win t-stage">
+  <!-- State 1: Idle with last backup -->
+  <div class="footer">
+    <div class="footer-left">
+      <span>Velora 73 · Connected via USB</span>
+      <span>Last backup: Today at 14:32</span>
+    </div>
+    <span>Ready</span>
+  </div>
+  <!-- State 2: Live Edit On -->
+  <div class="footer">
+    <div class="footer-left">
+      <span class="footer-tag live-edit"><i></i>● LIVE EDIT ON</span>
+      <span>Tweaks play live on the instrument</span>
+    </div>
+    <span>Part 1: Concert Grand</span>
+  </div>
+  <!-- State 3: Unsaved Changes in Scene 2 -->
+  <div class="footer">
+    <div class="footer-left">
+      <span class="footer-tag live-edit"><i></i>● LIVE EDIT ON</span>
+      <span class="footer-tag unsaved">◆ UNSAVED: SCENE 2</span>
+    </div>
+    <span>Press Write to Velora to save</span>
+  </div>
+  <!-- State 4: Writing to Velora -->
+  <div class="footer">
+    <div class="footer-left">
+      <span style="color: var(--accent); font-weight: 600;">WRITING TO VELORA…</span>
+      <span>Syncing Scene 2 parameters to flash</span>
+    </div>
+    <span>Please wait</span>
+  </div>
+  <!-- State 5: Transfer Progress -->
+  <div class="footer">
+    <div class="footer-left">
+      <span>Transferring: Rhodes_Mk1_Stage (45%)</span>
+      <div class="footer-progress-bar"><div class="footer-progress-fill" style="width: 45%;"></div></div>
+    </div>
+    <span>3.2 / 7.1 GB · 42 MB/s</span>
+  </div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Studio Theme (Light) — Footer States</figcaption>
+<div class="win t-studio">
+  <!-- State 1: Idle with last backup -->
+  <div class="footer">
+    <div class="footer-left">
+      <span>Velora 73 · Connected via USB</span>
+      <span>Last backup: Today at 14:32</span>
+    </div>
+    <span>Ready</span>
+  </div>
+  <!-- State 2: Live Edit On -->
+  <div class="footer">
+    <div class="footer-left">
+      <span class="footer-tag live-edit"><i></i>● LIVE EDIT ON</span>
+      <span>Tweaks play live on the instrument</span>
+    </div>
+    <span>Part 1: Concert Grand</span>
+  </div>
+  <!-- State 3: Unsaved Changes in Scene 2 -->
+  <div class="footer">
+    <div class="footer-left">
+      <span class="footer-tag live-edit"><i></i>● LIVE EDIT ON</span>
+      <span class="footer-tag unsaved">◆ UNSAVED: SCENE 2</span>
+    </div>
+    <span>Press Write to Velora to save</span>
+  </div>
+  <!-- State 4: Writing to Velora -->
+  <div class="footer">
+    <div class="footer-left">
+      <span style="color: var(--accent); font-weight: 600;">WRITING TO VELORA…</span>
+      <span>Syncing Scene 2 parameters to flash</span>
+    </div>
+    <span>Please wait</span>
+  </div>
+  <!-- State 5: Transfer Progress -->
+  <div class="footer">
+    <div class="footer-left">
+      <span>Transferring: Rhodes_Mk1_Stage (45%)</span>
+      <div class="footer-progress-bar"><div class="footer-progress-fill" style="width: 45%;"></div></div>
+    </div>
+    <span>3.2 / 7.1 GB · 42 MB/s</span>
+  </div>
+</div>
+</figure>
+</div>
+
+<h2>2 · Studio Banner Variants (Non-Modal Notifications)</h2>
+<p>Positioned at the top of the main working area with a 4 px warn indicator stripe. Non-modal, persistent until resolved.</p>
+
+<div class="win t-stage" style="margin-bottom: 24px;">
+  <!-- Banner 1: Disconnect -->
+  <div class="banner">
+    <div class="msg">
+      <i>⚠</i>
+      <span><b>Velora 73 disconnected.</b> USB connection was interrupted. Offline editing mode is active; live sync paused.</span>
+    </div>
+    <button class="action-btn">Reconnect</button>
+  </div>
+  <!-- Banner 2: Version Mismatch -->
+  <div class="banner">
+    <div class="msg">
+      <i>⚠</i>
+      <span><b>Firmware version mismatch.</b> Velora 73 is running v1.1.0, but Studio requires v1.2.0 for 6-OP FM parameters.</span>
+    </div>
+    <button class="action-btn">Update Firmware…</button>
+  </div>
+  <!-- Banner 3: Write Failed -->
+  <div class="banner">
+    <div class="msg">
+      <i>⚠</i>
+      <span><b>Write to Velora failed.</b> Communication timed out while writing Scene 2. Your edits are preserved safely in memory.</span>
+    </div>
+    <button class="action-btn">Retry Write</button>
+  </div>
+  <!-- Banner 4: Stale Edit -->
+  <div class="banner">
+    <div class="msg">
+      <i>⚠</i>
+      <span><b>Stale edit detected.</b> Physical controls on the Velora were adjusted since your last sync. Reload to view current device state.</span>
+    </div>
+    <button class="action-btn">Reload from Device</button>
+  </div>
+</div>
+
+<h2>3 · Studio Dialog Variants</h2>
+
+<div class="pair">
+<figure>
+<figcaption>Variant A: Pairing Code Entry (with Error Message)</figcaption>
+<div class="win t-stage">
+  <div class="modal-overlay">
+    <div class="dialog" role="dialog" aria-labelledby="pair-title">
+      <div class="dialog-header">
+        <h3 id="pair-title" class="dialog-title">Pair with Velora 73</h3>
+      </div>
+      <div class="dialog-body">
+        <p>A pairing request was received from <b>Velora 73 (Serial #VL-73-0042)</b>. Enter the 6-digit code shown on the instrument's screen:</p>
+        <div class="code-inputs">
+          <input class="code-digit err" type="text" maxlength="1" value="7" autofocus>
+          <input class="code-digit err" type="text" maxlength="1" value="4">
+          <input class="code-digit err" type="text" maxlength="1" value="0">
+          <input class="code-digit err" type="text" maxlength="1" value="9">
+          <input class="code-digit err" type="text" maxlength="1" value="2">
+          <input class="code-digit err" type="text" maxlength="1" value="8">
+        </div>
+        <div class="dialog-err">
+          <i>⚠</i> Invalid pairing code. Check the code on the Velora screen and try again.
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn pri">Pair Device</button>
+      </div>
+    </div>
+  </div>
+</div>
+</figure>
+
+<figure>
+<figcaption>Variant B: Write to Velora Scope Choice (with Disabled Reason)</figcaption>
+<div class="win t-studio">
+  <div class="modal-overlay">
+    <div class="dialog" role="dialog" aria-labelledby="write-title">
+      <div class="dialog-header">
+        <h3 id="write-title" class="dialog-title">Write to Velora</h3>
+      </div>
+      <div class="dialog-body">
+        <p>Choose the scope of changes to commit permanently to the instrument:</p>
+        
+        <div class="choice-card disabled">
+          <input type="radio" name="scope" class="choice-radio" disabled>
+          <div class="choice-info">
+            <span class="choice-title">Scene Only (Scene 2: Verse)</span>
+            <span class="choice-desc">Updates active volumes, drawbars, and FX in Scene 2.</span>
+            <span class="disabled-reason">Disabled: Part 3 timbre was modified. Timbre changes require Whole Live Set scope.</span>
+          </div>
+        </div>
+
+        <div class="choice-card selected">
+          <input type="radio" name="scope" class="choice-radio" checked>
+          <div class="choice-info">
+            <span class="choice-title">Whole Live Set (03 · Perfect)</span>
+            <span class="choice-desc">Overwrites the Live Set on the device, including all 8 scenes and timbre assignments.</span>
+          </div>
+        </div>
+
+        <div class="choice-card">
+          <input type="radio" name="scope" class="choice-radio">
+          <div class="choice-info">
+            <span class="choice-title">Save as New Live Set…</span>
+            <span class="choice-desc">Creates a duplicate copy without modifying the existing Live Set.</span>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn pri">Write to Velora</button>
+      </div>
+    </div>
+  </div>
+</div>
+</figure>
+</div>
+
+<h2>4 · Variant C: Restore Merge / Replace Dialog</h2>
+<p>Presents a critical choice with the explicit outcome of each action stated plainly, preventing accidental data loss.</p>
+
+<div class="win t-stage" style="max-width: 600px; margin: auto;">
+  <div class="modal-overlay">
+    <div class="dialog" role="dialog" aria-labelledby="restore-title">
+      <div class="dialog-header">
+        <h3 id="restore-title" class="dialog-title">Restore from Backup</h3>
+      </div>
+      <div class="dialog-body">
+        <p>Backup file: <b>Velora_Backup_2026-10-20.velorabackup</b> (18.4 GB · 42 Live Sets, 7 timbres)</p>
+        <p>How would you like to restore this backup to your Velora 73?</p>
+
+        <div class="choice-card selected">
+          <input type="radio" name="restore_mode" class="choice-radio" checked>
+          <div class="choice-info">
+            <span class="choice-title">Merge with Existing Data</span>
+            <span class="choice-desc">Keeps your current setlists and Live Sets on the instrument. Adds missing items and updates matching Live Sets. Preserves local recordings.</span>
+          </div>
+        </div>
+
+        <div class="choice-card">
+          <input type="radio" name="restore_mode" class="choice-radio">
+          <div class="choice-info">
+            <span class="choice-title">Replace All (Clean Restore)</span>
+            <span class="choice-desc">Wipes all current Live Sets and user setlists on the instrument, replacing them with the exact contents of this backup.</span>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn pri">Proceed with Restore</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>5 · Accessibility, 200% Zoom Reflow & Focus Rings</h2>
+<p>Testing 200% text scaling (no horizontal scroll) and 2 px focus ring at 2 px offset on focused buttons.</p>
+
+<div class="win t-studio zoom-200" style="max-width: 700px; margin: auto; margin-bottom: 24px;">
+  <div class="modal-overlay">
+    <div class="dialog" style="max-width: 100%;">
+      <h3 class="dialog-title">200% Text Zoom Reflow Test</h3>
+      <div class="dialog-body">
+        <p>At 200% font size, all text wraps gracefully and buttons remain fully accessible without triggering horizontal window scrolling.</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn pri" style="outline: 2px solid var(--accent); outline-offset: 2px;">Focused Action</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>6 · Pseudo-localization (+40% Expansion with ÁÇÊÕÑ Ação)</h2>
+
+<div class="win t-stage" style="max-width: 600px; margin: auto; margin-bottom: 24px;">
+  <div class="modal-overlay">
+    <div class="dialog">
+      <div class="dialog-header">
+        <h3 class="dialog-title">Êngrêvêçêr ñõ Vêlõrá ÁÇÊÕÑ Ação</h3>
+      </div>
+      <div class="dialog-body">
+        <p>Êscõlhá õ êscõpõ dás áltêráçõês párá grávár ñõ íñstrúmêñtõ ÁÇÊÕÑ Ação:</p>
+        <div class="choice-card selected">
+          <input type="radio" checked>
+          <div class="choice-info">
+            <span class="choice-title">Tõdõ õ Lívê Sêt (03 · Pêrfêçt ÁÇÊ)</span>
+            <span class="choice-desc">Sõbrêscrêvê õ Lívê Sêt ñõ dízpõsítívõ çõm tõdás ás 8 çêñás ÁÇÊÕÑ Ação.</span>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn">Çáñçêlár ÁÇ</button>
+        <button class="btn pri">Grávár ñõ Vêlõrá ÁÇÊ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>7 · Contrast Audit</h2>
+<table>
+  <tr><th>Element Pair</th><th>Stage Theme</th><th>Ratio</th><th>Studio Theme</th><th>Ratio</th><th>Standard</th></tr>
+  <tr><td>Dialog Text on Raised</td><td>#e7ebe8 on #202622</td><td>12.5 : 1</td><td>#131714 on #ffffff</td><td>15.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Muted Text on Surface</td><td>#88938c on #151917</td><td>5.1 : 1</td><td>#5a635c on #e3e8e4</td><td>5.2 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Warn Text on Raised</td><td>#cdb86c on #202622</td><td>7.4 : 1</td><td>#725f1e on #ffffff</td><td>5.8 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Primary Button Text</td><td>#0b0d0c on #9fbaa8</td><td>9.6 : 1</td><td>#f2f4f2 on #466853</td><td>5.5 : 1</td><td>≥ 4.5 : 1 (Pass)</td></tr>
+  <tr><td>Card Boundary on Surface</td><td>#5a6860 on #151917</td><td>3.6 : 1</td><td>#728a77 on #e3e8e4</td><td>3.4 : 1</td><td>≥ 3.0 : 1 (Pass)</td></tr>
+</table>
+
+</div>
+</body>
+</html>
