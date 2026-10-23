@@ -7,6 +7,16 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
+  <!-- Polite Live Region for screen readers (UX-DR91) -->
+  <div id="live-region" role="status" aria-live="polite" class="sr-only"></div>
+
+  <!-- Toast notification -->
+  <div id="toast-notice" class="toast-notice" role="alert" aria-live="assertive"></div>
+
+  <!-- Hidden file inputs for backup open/restore -->
+  <input type="file" id="backup-file-input" accept=".velorabackup" class="sr-only" tabindex="-1">
+  <input type="file" id="restore-file-input" accept=".velorabackup" class="sr-only" tabindex="-1">
+
   <div class="app-container">
     <!-- Title Bar -->
     <header class="title-bar" id="header-region">
@@ -27,7 +37,8 @@
       <div class="actions-section">
         <button type="button" class="btn" id="btn-import" data-i18n="studio.title_bar.btn_import">Import</button>
         <button type="button" class="btn" id="btn-backup" data-i18n="studio.title_bar.btn_backup">Backup</button>
-        <button type="button" class="btn btn-primary" id="btn-write" data-i18n="studio.title_bar.btn_write" disabled>Write to Velora</button>
+        <button type="button" class="btn" id="btn-restore" data-i18n="studio.restore.btn_confirm">Restore</button>
+        <button type="button" class="btn btn-primary" id="btn-write" data-i18n="studio.title_bar.btn_write" disabled title="Connect a Velora">Write to Velora</button>
         <button type="button" class="btn" id="btn-open-settings" aria-label="Settings" data-i18n="studio.sidebar.settings">Settings</button>
       </div>
     </header>
@@ -38,18 +49,22 @@
       <nav class="sidebar" id="sidebar-region" tabindex="0" aria-label="Sidebar Navigation">
         <section class="sidebar-section">
           <h2 class="sidebar-heading" data-i18n="studio.sidebar.setlists">SETLISTS</h2>
-          <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_setlists">No setlists offline</div>
+          <div id="sidebar-setlists-list">
+            <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_setlists">No setlists offline</div>
+          </div>
         </section>
 
         <section class="sidebar-section">
           <h2 class="sidebar-heading" data-i18n="studio.sidebar.library">LIBRARY</h2>
-          <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_library">Library unavailable offline</div>
+          <div id="sidebar-livesets-list">
+            <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_library">Library unavailable offline</div>
+          </div>
         </section>
 
         <section class="sidebar-section">
           <h2 class="sidebar-heading" data-i18n="studio.sidebar.device">DEVICE</h2>
           <button type="button" class="sidebar-item" id="side-storage" data-i18n="studio.sidebar.storage">Storage</button>
-          <button type="button" class="sidebar-item" id="side-firmware" data-i18n="studio.sidebar.firmware">Firmware</button>
+          <button type="button" class="sidebar-item" id="side-firmware" data-i18n="studio.sidebar.firmware" disabled title="Connect a Velora">Firmware</button>
           <button type="button" class="sidebar-item" id="side-backups" data-i18n="studio.sidebar.backups">Backups</button>
           <button type="button" class="sidebar-item" id="side-settings" data-i18n="studio.sidebar.settings">Settings</button>
         </section>
@@ -57,14 +72,32 @@
 
       <!-- Main Area -->
       <main class="main-area" id="main-region" tabindex="0" aria-label="Main Content">
-        <div class="offline-card">
+        <!-- Empty / Offline Hero Card -->
+        <div class="offline-card" id="offline-empty-card">
           <div class="offline-icon" aria-hidden="true">&#x26A0;</div>
           <h1 class="offline-title" data-i18n="studio.offline.title">Organize sounds and manage your Velora 73</h1>
           <p class="offline-body" data-i18n="studio.offline.body">Connect your Velora via USB to sync setlists, live sets, and library, or manage backups and local settings.</p>
           <div class="offline-hint" data-i18n="studio.offline.hint">No device detected on USB ports.</div>
           <div class="offline-actions">
+            <button type="button" class="btn" id="btn-open-backup-file" data-i18n="studio.offline.open_backup">Open Backup (.velorabackup)</button>
             <button type="button" class="btn" id="btn-offline-import" data-i18n="studio.title_bar.btn_import">Import</button>
             <button type="button" class="btn" id="btn-offline-settings" data-i18n="studio.sidebar.settings">Settings</button>
+          </div>
+        </div>
+
+        <!-- Offline / Backup Live Set & Setlist Editor Container -->
+        <div class="editor-container" id="editor-container" style="display: none;">
+          <div class="editor-header">
+            <div>
+              <small class="setting-label" id="editor-subtitle">OFFLINE BACKUP EDITING</small>
+              <h1 class="editor-header-title" id="editor-title">Perfect</h1>
+            </div>
+            <div class="actions-section">
+              <button type="button" class="btn btn-primary" id="btn-save-backup" data-i18n="studio.offline.save_backup">Save Backup</button>
+            </div>
+          </div>
+          <div class="editor-part-strip" id="editor-part-strip">
+            <!-- Dynamic part cards -->
           </div>
         </div>
       </main>
@@ -73,7 +106,7 @@
     <!-- Footer -->
     <footer class="footer" id="footer-region" tabindex="0" aria-label="Status Bar">
       <div class="footer-left">
-        <span class="status-device" data-i18n="studio.conn.no_device">No Velora connected</span>
+        <span class="status-device" id="footer-device-status" data-i18n="studio.conn.no_device">No Velora connected</span>
       </div>
       <div class="footer-right">
         <span class="status-backup" id="footer-backup-status" data-i18n="studio.footer.no_backup_yet">No backup yet</span>
@@ -110,6 +143,45 @@
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-primary" id="btn-close-settings" data-i18n="studio.settings.close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Restore Dialog Modal (Story 9.17) -->
+  <dialog class="modal" id="restore-modal" aria-labelledby="restore-title">
+    <div class="modal-header">
+      <h2 class="modal-title" id="restore-title" data-i18n="studio.restore.title">Restore from Backup</h2>
+      <button type="button" class="btn" id="btn-close-restore-x" aria-label="Close" data-i18n="studio.settings.close">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="restore-options" role="radiogroup" aria-label="Restore Mode">
+        <button type="button" class="restore-option selected" id="opt-restore-merge" role="radio" aria-checked="true">
+          <span class="restore-option-title">
+            <span data-i18n="studio.restore.merge_label">Merge</span>
+          </span>
+          <span class="restore-option-desc" data-i18n="studio.restore.merge_desc">Add and update from the backup; keep what the backup doesn't have</span>
+        </button>
+
+        <button type="button" class="restore-option" id="opt-restore-replace" role="radio" aria-checked="false">
+          <span class="restore-option-title">
+            <span data-i18n="studio.restore.replace_label">Replace</span>
+          </span>
+          <span class="restore-option-desc" data-i18n="studio.restore.replace_desc">Velora content becomes the backup</span>
+        </button>
+      </div>
+
+      <!-- Live Counts Box -->
+      <div class="restore-counts-box" id="restore-counts-summary">
+        Calculating changes...
+      </div>
+
+      <!-- Replace Warning Box (only shown when Replace is selected) -->
+      <div class="restore-warning" id="restore-replace-warning" style="display: none;" data-i18n="studio.restore.replace_warning">
+        Replaces all Live Sets and setlists on the connected Velora with the contents of this backup. Any Live Sets not in this backup will be removed.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn" id="btn-cancel-restore" data-i18n="studio.restore.btn_cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="btn-confirm-restore" data-i18n="studio.restore.btn_confirm">Restore</button>
     </div>
   </dialog>
 

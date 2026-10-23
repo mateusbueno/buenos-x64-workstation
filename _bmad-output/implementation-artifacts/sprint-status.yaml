@@ -238,8 +238,8 @@ development_status:
   9-13-setlists-view-in-velora-studio: backlog
   9-14-library-management-and-heavy-sfz-conversion-on-the-computer: backlog
   9-15-library-transfer-to-the-unit: backlog
-  9-16-backup-to-a-velorabackup-file: backlog
-  9-17-restore-with-merge-or-replace-and-offline-backup-editing: backlog
+  9-16-backup-to-a-velorabackup-file: done
+  9-17-restore-with-merge-or-replace-and-offline-backup-editing: done
   9-18-export-selected-live-sets-and-timbres-individually-or-as-a-b: backlog
   9-19-import-partial-exports-with-per-item-merge-decisions: backlog
   9-20-send-firmware-from-velora-studio: backlog

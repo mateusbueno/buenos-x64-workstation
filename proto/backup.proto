@@ -1,0 +1,27 @@
+// .velorabackup file schema (Story 9.16, Story 9.17, AD-12, AD-31, FR93, FR94).
+// Full archival container for setlists, Live Sets, assign maps, tags and favorites.
+// Factory and partner timbres are stored by reference only (library_id, instrument_key), never audio.
+syntax = "proto3";
+
+package velora.backup.v1;
+
+import "setlist.proto";
+import "live_set.proto";
+
+enum FormatVersion {
+  FORMAT_VERSION_UNSPECIFIED = 0;
+  FORMAT_VERSION_1 = 1;
+}
+
+message VeloraBackup {
+  uint32 format_version = 1;          // FormatVersion (Story 9.16, AD-12: N=1)
+  string device_model = 2;            // e.g. "Velora 73"
+  string firmware_version = 3;        // e.g. "1.2.0"
+  string backup_time = 4;             // ISO-8601 UTC timestamp
+  string notes = 5;                   // optional note ("Unsaved edits on the Velora are not in this backup")
+
+  velora.setlist.v1.SetlistLibrary setlists = 6;
+  velora.setlist.v1.AssignDefault assign_default = 7;
+  repeated string favorites = 8;      // Live Set UUIDv4 strings
+  repeated velora.liveset.v1.LiveSet live_sets = 9;
+}

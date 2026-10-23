@@ -19,6 +19,9 @@ fn main() {
     let params_json = proto_dir.join("params.json");
 
     println!("cargo:rerun-if-changed={}", proto_dir.join("ws_v1.proto").display());
+    println!("cargo:rerun-if-changed={}", proto_dir.join("setlist.proto").display());
+    println!("cargo:rerun-if-changed={}", proto_dir.join("live_set.proto").display());
+    println!("cargo:rerun-if-changed={}", proto_dir.join("backup.proto").display());
     println!("cargo:rerun-if-changed={}", params_json.display());
     println!("cargo:rerun-if-changed={}", gen_params_py.display());
 
@@ -35,15 +38,20 @@ fn main() {
         .expect("Failed to run proto/gen_params.py");
     assert!(status.success(), "proto/gen_params.py failed");
 
-    // Compile proto/ws_v1.proto into Rust types with prost
+    // Compile protos into Rust types with prost
     let ws_v1_proto = proto_dir.join("ws_v1.proto");
+    let setlist_proto = proto_dir.join("setlist.proto");
+    let live_set_proto = proto_dir.join("live_set.proto");
+    let backup_proto = proto_dir.join("backup.proto");
+
     let mut config = prost_build::Config::new();
+    config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
     config
         .compile_protos(
-            &[ws_v1_proto],
+            &[ws_v1_proto, setlist_proto, live_set_proto, backup_proto],
             &[gen_proto_dir.as_path(), proto_dir.as_path()],
         )
-        .expect("Failed to compile ws_v1.proto with prost");
+        .expect("Failed to compile protos with prost");
 
     tauri_build::build();
 }
