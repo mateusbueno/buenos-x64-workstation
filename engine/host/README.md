@@ -21,6 +21,14 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
   (`Message` variant), `make_frame`/`parse_message`/`encode`, `StreamDecoder` (any chunking, counters, events), and the
   `FrameWriter`/`Loopback` helpers for Stories 3.2/3.5 and the Mac virtual panel. The generated `velora/host/mcu_ids.hpp` holds
   the constexpr control/button/LED ID tables. Control/I-O thread only (it allocates); the C library underneath never does.
+- `keybed_reader` + `keybed_calibration` -- Story 3.5. Keybed input-edge core, no hardware I/O: decodes KEY_CONTACT frames, converts
+  MCU ticks to host ns (`DriftClock`: least-squares offset and drift over a window of TIME_SYNC round trips, wrap-safe, order
+  never reversed), runs a per-key state machine driven by a data-driven `KeybedCalibration` (2 or 3 contacts, velocity pair,
+  release contact, key -> note map; built-ins `two_contact_73` / `three_contact_73`, or `KeybedCalibration::make(spec)`), and pushes
+  `contact_k` per-note controllers plus Note On (at the velocity pair's completing contact) / Note Off into the `HostEventQueue`
+  as `StampedUmp`. Velocity is a provisional linear time mapping behind `VelocityMapper` (the curve is Story 3.6). All times are
+  injected (`rx_ns`, `now_ns`), so tests are deterministic. A lost open is repaired by the next frame of the key or by
+  `report_key_state`; CRC errors, seq gaps, unknown keys and missed syncs are counted in `counters()`. Input thread only (allocates).
 - `library_resolver` (+ `fs_port`, `posix_fs`) -- Story 1.14. Resolves `(library_id, instrument_key)` to an opened bundle
   and its instrument entry from the index, never by scanning. Control/I-O thread only (allocates, does file I/O); not for
   the audio thread. Links `velora_format`; `engine/core` does not.

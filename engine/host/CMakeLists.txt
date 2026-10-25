@@ -11,7 +11,9 @@ add_library(velora_host STATIC
   src/secure_memory.cpp
   src/damage_registry.cpp
   src/trust_list.cpp
-  src/mcu_frame.cpp)
+  src/mcu_frame.cpp
+  src/keybed_calibration.cpp
+  src/keybed_reader.cpp)
 add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
 # velora_format_verify (Story 6.5): the resolver VERIFIES protected bundles (Ed25519 signature, hash list, index). It holds no cipher: the decrypting code is only in
@@ -308,6 +310,12 @@ add_test(NAME sysex_receiver_test COMMAND sysex_receiver_test)
 add_executable(mcu_wrapper_test tests/mcu_wrapper_test.cpp)
 target_link_libraries(mcu_wrapper_test PRIVATE velora_host)
 add_test(NAME mcu_wrapper_test COMMAND mcu_wrapper_test)
+
+# Keybed reader (Story 3.5): drift-tracked device time, contact_k + Note On/Off, calibration tables, organ render of a recorded slow press.
+add_executable(keybed_reader_test tests/keybed_reader_test.cpp)
+target_link_libraries(keybed_reader_test PRIVATE velora_host)
+add_test(NAME keybed_reader_test COMMAND keybed_reader_test)
+set_tests_properties(keybed_reader_test PROPERTIES TIMEOUT 300)
 
 add_executable(sample_bundle_loader_test tests/sample_bundle_loader_test.cpp)
 target_link_libraries(sample_bundle_loader_test PRIVATE velora_host)
