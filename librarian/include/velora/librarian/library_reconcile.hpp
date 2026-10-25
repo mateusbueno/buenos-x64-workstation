@@ -12,6 +12,7 @@
 // kill converges). Bundle directories that are not `current` are left alone (leases) EXCEPT those that still carry the checkpoint marker (Story 5.8: a superseded
 // checkpoint or a publish that was never flipped; see kCheckpointMarkerName): they are deleted. The marker of a `current` bundle is removed. Called by LibraryService::start() before it serves;
 // `rebuild_libraries` drops every library row first (the catalog rebuilt from bundles alone).
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -43,9 +44,14 @@ struct ReconcileReport {
   std::size_t rows_removed = 0, rows_added = 0, rows_updated = 0, rows_unchanged = 0;
   std::vector<std::string> skipped;   // "<library_id>: why" for a `current` bundle that was not cataloged
   std::vector<std::string> errors;    // I/O problems; a pass with an error never removes rows (it cannot tell absent from unreadable)
+  std::uint64_t elapsed_us = 0;       // Story 8.12: wall time of the pass (directory and manifest level work only)
   bool uncertain = false;             // some library could not be judged: its row (if any) is kept
   bool changed() const { return staging_removed || tmp_links_removed || bundles_pruned || rows_removed || rows_added || rows_updated; }
 };
+
+// Story 8.12: the one-line summary the service logs after every startup pass, counts per action:
+// `reconcile summary: staging_deleted=N tmp_links_deleted=N catalog_rows_removed=N catalog_rows_recreated=N catalog_rows_updated=N gc_bundles_deleted=N ...`
+std::string reconcile_summary(const ReconcileReport& report);
 
 CatalogStatus reconcile_libraries(Catalog& catalog, const std::string& data_dir, ReconcileReport& report, const ReconcileOptions& opt = {});
 CatalogStatus rebuild_libraries(Catalog& catalog, const std::string& data_dir, ReconcileReport& report, const ReconcileOptions& opt = {});

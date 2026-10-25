@@ -5,7 +5,10 @@
 # exits 1, so Restart= does not fight a running one (RestartPreventExitStatus).
 [Unit]
 Description=Velora librarian (catalog and Library API)
-After=local-fs.target data.mount
+# Story 8.12: ordered AFTER the engine unit, so the instrument is playable before the startup reconcile pass touches /data/lib. The engine publishes no separate
+# "playable" signal today, so the ordering is by unit (After= only: the librarian never pulls the engine in, and starts normally on a board without it). The pass
+# itself finishes before any command is served (the socket answers a typed RECONCILING refusal meanwhile); see librarian/README.md "Startup ordering".
+After=local-fs.target data.mount velora-engine.service
 Requires=data.mount
 
 [Service]

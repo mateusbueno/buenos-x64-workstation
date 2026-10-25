@@ -252,6 +252,13 @@ add_dependencies(librarian_crash_campaign librarian_test_cli)
 add_test(NAME librarian_crash_campaign COMMAND librarian_crash_campaign)
 set_tests_properties(librarian_crash_campaign PROPERTIES TIMEOUT 600)
 
+# Story 8.12: startup reconcile ordering and summary, 132 seeded kills at the six named import steps, boot bound on a 1 TB-apparent data root.
+add_executable(librarian_startup_reconcile_test tests/startup_reconcile_test.cpp)
+target_link_libraries(librarian_startup_reconcile_test PRIVATE velora_librarian_service velora_librarian)
+target_include_directories(librarian_startup_reconcile_test PRIVATE ${PROJECT_SOURCE_DIR}/formatlib/tests)
+add_test(NAME librarian_startup_reconcile_test COMMAND librarian_startup_reconcile_test)
+set_tests_properties(librarian_startup_reconcile_test PROPERTIES TIMEOUT 600)
+
 # Story 5.7: import preflight (scanner, statuses, duplicates, space, symlinks, truncation, headers-only, 1,000-file volume, cancel) over a real socket.
 add_executable(librarian_preflight_test tests/preflight_test.cpp)
 target_link_libraries(librarian_preflight_test PRIVATE velora_librarian_service velora_librarian)

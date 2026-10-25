@@ -217,7 +217,7 @@ development_status:
   8-9-boot-into-setting-and-restoring-the-target: backlog
   8-10-boot-to-playable-in-10-s-with-a-1-tb-library: backlog
   8-11-power-fail-acceptance-brown-out-recovery-and-scope-verificat: backlog
-  8-12-startup-reconcile-of-interrupted-imports-fault-injection-and: backlog
+  8-12-startup-reconcile-of-interrupted-imports-fault-injection-and: done
   8-13-power-cut-rig-100-cuts-during-update-and-100-during-import: backlog
   8-14-kernel-lts-migration-plan: backlog
   epic-8-retrospective: optional

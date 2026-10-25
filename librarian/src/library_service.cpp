@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <exception>
 #include <cstring>
 #include <filesystem>
 #include <optional>
@@ -133,18 +134,6 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
       if (std::strcmp(p, "library.before_commit") == 0) point("catalog-row-written", cur_job_, cur_item_);
       return fault_hook_ ? fault_hook_(p) : false;
     });
-    ReconcileOptions ro;
-    ro.hook = [this](const char* p) { point(p, 0, 0); };
-    ro.trusted = &opts_.trusted_keys;
-    const CatalogStatus rs = reconcile_libraries(*catalog_, opts_.data_dir, reconcile_report_, ro);
-    if (rs != CatalogStatus::kOk) {
-      err = std::string("reconcile: ") + to_string(rs);
-      if (status) *status = rs;
-      ::close(lib_lock_fd_);
-      lib_lock_fd_ = -1;
-      catalog_.reset();
-      return false;
-    }
   }
 
   sockaddr_un addr{};
@@ -218,6 +207,44 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
   }
   stop_.store(false);
   stopping_.store(false);
+  // Story 8.12: the socket is up and answers handshakes, but every command gets the typed RECONCILING refusal until the startup pass below has finished;
+  // the worker (imports, installs, preflights) does not exist before that.
+  schema_version_ = catalog_->schema_version();  // read here: the handshake must not touch the catalog while the pass runs
+  reconciling_.store(true, std::memory_order_release);
+  thread_ = std::thread([this] { run(); });
+  {
+    CatalogStatus rs = CatalogStatus::kOk;
+    std::string why;
+    try {
+      ReconcileOptions ro;
+      ro.hook = [this](const char* p) { point(p, 0, 0); };
+      ro.trusted = &opts_.trusted_keys;
+      rs = reconcile_libraries(*catalog_, opts_.data_dir, reconcile_report_, ro);
+      if (rs != CatalogStatus::kOk) why = std::string("reconcile: ") + to_string(rs);
+      else if (opts_.log) opts_.log(reconcile_summary(reconcile_report_));
+    } catch (const std::exception& e) {  // a throwing hook or log must not leave a joinable thread behind
+      rs = CatalogStatus::kIo;
+      why = std::string("reconcile: exception: ") + e.what();
+    } catch (...) {
+      rs = CatalogStatus::kIo;
+      why = "reconcile: unknown exception";
+    }
+    if (!why.empty()) {
+      if (status) *status = rs;
+      stop_.store(true);
+      const char b = 1;
+      [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
+      thread_.join();
+      for (Client& c : clients_) ::close(c.fd);
+      clients_.clear();
+      ::unlink(path.c_str());
+      try {
+        if (opts_.log) opts_.log(why + " (" + reconcile_summary(reconcile_report_) + ")");
+      } catch (...) {
+      }
+      return fail(why);
+    }
+  }
   started_ = true;
   detail::ImportWorker::Config wc;
   wc.data_dir = opts_.data_dir;
@@ -238,7 +265,7 @@ bool LibraryService::start(std::string& err, CatalogStatus* status) {
   };
   worker_ = std::make_unique<detail::ImportWorker>(std::move(wc));
   worker_->start();
-  thread_ = std::thread([this] { run(); });
+  reconciling_.store(false, std::memory_order_release);  // commands are accepted from here on
   return true;
 }
 
@@ -311,7 +338,7 @@ void LibraryService::run() {
       if (!c.handshaken && !c.dead && now - c.accepted > std::chrono::milliseconds(opts_.handshake_timeout_ms)) c.dead = true;
     for (auto it = clients_.begin(); it != clients_.end();) {
       if (it->dead) {
-        if (playing_ && playing_owner_ == it->id) {  // the engine/ui that said "performing" is gone
+        if (!reconciling_.load(std::memory_order_acquire) && playing_ && playing_owner_ == it->id) {  // the engine/ui that said "performing" is gone
           playing_ = false;
           playing_owner_ = 0;
           idle_flush();
@@ -323,6 +350,7 @@ void LibraryService::run() {
         ++it;
       }
     }
+    if (reconciling_.load(std::memory_order_acquire)) continue;  // Story 8.12: accept + handshake + RECONCILING refusal only; nothing below touches the catalog
     check_playing_lease();
     sync_counters();
   }
@@ -413,7 +441,7 @@ void LibraryService::process_frame(Client& c, const std::string& payload) {
     ws::v1::LibraryHelloAck* h = ack.mutable_hello_ack();
     h->set_version(kProtocolVersion);
     for (const char* f : {"library.v1", "favorites.v1", "recent.v1", "subscribe.v1", "import.v1", "catalog.v2", "preflight.v1", "import.checkpoints.v1", "install.protected.v1", "library.kind.v1"}) h->add_features(f);
-    h->set_catalog_schema_version(catalog_->schema_version());
+    h->set_catalog_schema_version(schema_version_);
     send(c, ack);
     return;
   }
@@ -554,6 +582,13 @@ void LibraryService::handle(Client& c, const ws::v1::LibraryClientMessage& msg) 
     (*e.mutable_error()->mutable_details())["reason"] = to_string(st);
     send(c, e);
   };
+  if (reconciling_.load(std::memory_order_acquire)) {  // Story 8.12: not before the startup reconcile pass is done
+    auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_RECONCILING, "the librarian is reconciling the library after start; retry shortly");
+    (*e.mutable_error()->mutable_details())["reason"] = "reconciling";
+    (*e.mutable_error()->mutable_details())["retry_after_ms"] = "250";
+    send(c, e);
+    return;
+  }
   switch (msg.body_case()) {
     case M::kHello:
       reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "already handshaken");
@@ -1338,7 +1373,7 @@ void LibraryService::push_job_event(detail::ImportJob& job, const ws::v1::Import
 }
 
 void LibraryService::process_worker() {
-  if (!worker_) return;
+  if (reconciling_.load(std::memory_order_acquire) || !worker_) return;
   for (detail::WorkerMsg& m : worker_->drain()) on_worker_msg(m);
 }
 

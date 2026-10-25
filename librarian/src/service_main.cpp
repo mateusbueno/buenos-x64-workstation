@@ -83,6 +83,10 @@ int main(int argc, char** argv) {
   opts.socket_group = socket_group;
   opts.checkpoint_timbres = static_cast<std::uint32_t>(checkpoint_timbres);
   opts.checkpoint_bytes = checkpoint_bytes;
+  opts.log = [](const std::string& line) {
+    std::printf("librarian-service: %s\n", line.c_str());
+    std::fflush(stdout);
+  };
   {
     std::string terr;
     if (!velora::librarian::resolve_trusted_keys(trust_list, opts.trusted_keys, terr)) {

@@ -36,6 +36,8 @@ enum LibraryErrorCode {
   LIBRARY_ERROR_CODE_UNKNOWN_PREFLIGHT = 17;   // no such preflight result (never made, or dropped: the service keeps the newest few)
   // Story 6.4 (additive).
   LIBRARY_ERROR_CODE_FACTORY_LIBRARY_PROTECTED = 18;  // an import (user import path) whose library_id is an installed Factory library: refused before anything is queued or written (details: path, library_id, reason=factory_library_protected). The same refusal found by the importer itself, after the request was accepted, ends the item FAILED with detail starting `factory_library_protected`
+  // Story 8.12 (additive).
+  LIBRARY_ERROR_CODE_RECONCILING = 19;         // the startup reconcile pass has not finished: no command is served yet (retry shortly; the handshake itself is answered). Nothing was changed
   // INVALID_COMMAND with details.reason=empty_reconcile: a Reconcile whose list is empty while the catalog is not (see Reconcile).
 }
 

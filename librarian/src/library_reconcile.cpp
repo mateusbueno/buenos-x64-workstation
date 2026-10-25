@@ -10,6 +10,7 @@
 #include <climits>
 #include <filesystem>
 #include <map>
+#include <chrono>
 #include <set>
 
 #include "velora/format/bundle.hpp"
@@ -89,7 +90,27 @@ void prune_marked(const fs::path& lib_dir, const std::string& current_id, Reconc
 
 }  // namespace
 
+std::string reconcile_summary(const ReconcileReport& r) {
+  return "reconcile summary: staging_deleted=" + std::to_string(r.staging_removed) + " tmp_links_deleted=" + std::to_string(r.tmp_links_removed) +
+         " catalog_rows_removed=" + std::to_string(r.rows_removed) + " catalog_rows_recreated=" + std::to_string(r.rows_added) +
+         " catalog_rows_updated=" + std::to_string(r.rows_updated) + " catalog_rows_unchanged=" + std::to_string(r.rows_unchanged) +
+         " gc_bundles_deleted=" + std::to_string(r.bundles_pruned) + " not_cataloged=" + std::to_string(r.skipped.size()) +
+         " errors=" + std::to_string(r.errors.size()) + " libraries=" + std::to_string(r.libraries_on_disk) + " elapsed_ms=" + std::to_string(r.elapsed_us / 1000);
+}
+
+namespace {
+CatalogStatus reconcile_impl(Catalog& cat, const std::string& data_dir, ReconcileReport& rep, const ReconcileOptions& opt);
+}
+
 CatalogStatus reconcile_libraries(Catalog& cat, const std::string& data_dir, ReconcileReport& rep, const ReconcileOptions& opt) {
+  const auto t0 = std::chrono::steady_clock::now();
+  const CatalogStatus st = reconcile_impl(cat, data_dir, rep, opt);
+  rep.elapsed_us = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+  return st;
+}
+
+namespace {
+CatalogStatus reconcile_impl(Catalog& cat, const std::string& data_dir, ReconcileReport& rep, const ReconcileOptions& opt) {
   rep = ReconcileReport{};
   auto hook = [&](const char* p) {
     if (opt.hook) opt.hook(p);
@@ -234,6 +255,7 @@ CatalogStatus reconcile_libraries(Catalog& cat, const std::string& data_dir, Rec
   rep.status = CatalogStatus::kOk;
   return rep.status;
 }
+}  // namespace
 
 CatalogStatus rebuild_libraries(Catalog& cat, const std::string& data_dir, ReconcileReport& rep, const ReconcileOptions& opt) {
   std::vector<LibraryRecord> rows;

@@ -66,6 +66,8 @@ struct LibraryServiceOptions {
   // playing_lease_ms > 0 it also expires that long after the last SetPlaying(true) (default 0 = no timeout). `clock` replaces steady_clock (tests).
   int playing_lease_ms = 0;
   std::function<std::chrono::steady_clock::time_point()> clock;
+  // Story 8.12: receives one line per startup reconcile pass (`reconcile summary: staging_deleted=...`, see reconcile_summary). The shipped service prints it.
+  std::function<void(const std::string& line)> log;
   // Story 5.6.
   std::size_t max_queued_jobs = 16;
   std::size_t reply_budget_bytes = 200000;  // size at which a ListLibraries / ListInstruments reply is cut (`more` is set); tests lower it  // jobs waiting behind the running one; one more is refused with QUEUE_FULL
@@ -206,6 +208,8 @@ class LibraryService {
   std::chrono::steady_clock::time_point playing_since_{};
   CatalogStatus storage_status_ = CatalogStatus::kOk;  // the status behind the last failed write
   bool recent_dirty_ = false;   // RAM Recent differs from what SQLite holds
+  std::uint32_t schema_version_ = 0;
+  std::atomic<bool> reconciling_{false};  // Story 8.12: the startup pass is running; commands are refused RECONCILING
   std::atomic<bool> stopping_{false};  // stop() has begun: new imports are refused (SHUTTING_DOWN)
   int lib_lock_fd_ = -1;
   ReconcileReport reconcile_report_;
