@@ -146,6 +146,11 @@ target_link_libraries(arpeggiator_tests PRIVATE velora_core)
 add_test(NAME arpeggiator_tests COMMAND arpeggiator_tests)
 set_tests_properties(arpeggiator_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
 
+add_executable(arp_timing_acceptance tests/arp_timing_acceptance_test.cpp)
+target_link_libraries(arp_timing_acceptance PRIVATE velora_core)
+add_test(NAME arp_timing_acceptance COMMAND arp_timing_acceptance)
+set_tests_properties(arp_timing_acceptance PROPERTIES TIMEOUT 900 FAIL_REGULAR_EXPRESSION "FAIL")
+
 add_executable(delay_tests tests/delay_test.cpp)
 target_link_libraries(delay_tests PRIVATE velora_core)
 add_test(NAME delay_tests COMMAND delay_tests)

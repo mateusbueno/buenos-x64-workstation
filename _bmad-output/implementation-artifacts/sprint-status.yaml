@@ -202,7 +202,7 @@ development_status:
   7-6-external-midi-clock-follower-and-clock-lost-behaviour: done
   7-7-clock-source-setting-and-din-usb-clock-inputs: backlog
   7-8-top-bar-tempo-clock-source-and-clock-lost-display: done
-  7-9-arpeggiator-timing-acceptance-on-the-board: backlog
+  7-9-arpeggiator-timing-acceptance-on-the-board: done
   epic-7-retrospective: optional
 
   epic-8: backlog

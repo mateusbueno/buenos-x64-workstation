@@ -10,6 +10,14 @@
 // Latch & Sustain (CC 64): Latch On keeps notes running after key release, replaces latched notes on the first new chord after all
 // keys are released, and ends unheld latched notes at the next grid step when switched Off. With Latch Off, sustain pedal down holds
 // notes in the arpeggiator pattern until pedal release without deferring arpeggiator-generated step Note Offs in VoiceArbiter.
+//
+// Tempo changes (internal clock): BlockRenderer reads the tempo parameter once per block, before the block's events run
+// (block_renderer.cpp, clock_.set_tempo_tenths), so a tempo parameter event applied inside block K changes the tempo from block K+1; the
+// transport position stays continuous. A pending step is (re)evaluated in every block with that block's tempo and fires in the first block
+// where its swung tick maps to a block frame < 64 (TransportClock::frame_of_tick). A swung tick that is already past (frame < 0) fires at
+// block frame 0 when it lies at most 64 frames (64 x tenths units) before the block start (catch-up window); an older tick is dropped
+// (the step is skipped, no note). A tempo change cannot move a pending tick more than half a frame into the past, so the window is a
+// safety net there; it is reached when notes start late relative to the grid.
 #include <array>
 #include <cstddef>
 #include <cstdint>
