@@ -6,45 +6,68 @@
 <title>Velora 73 — Performance screen</title>
 <style>
   /* Sálvia tokens
-     dark:  bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on-accent #0b0d0c warn #cdb86c
-     light: bg #f2f4f2 surface #e3e8e4 raised #ffffff line #cbd4cd text #131714 muted #5a635c accent #466853 on-accent #f2f4f2 warn #725f1e */
+     dark:  bg #0b0d0c surface #151917 raised #202622 line #2b322e line-strong #5a6860 text #e7ebe8 muted #88938c accent #9fbaa8 on-accent #0b0d0c warn #cdb86c
+     light: bg #f2f4f2 surface #e3e8e4 raised #ffffff line #cbd4cd line-strong #728a77 text #131714 muted #5a635c accent #466853 on-accent #f2f4f2 warn #725f1e
+     Story 4.14: corrected to DESIGN.md / EXPERIENCE.md (category short labels, warn Pickup Ghost with bg keylines + chevron, off parts muted + hollow ring + OFF tag,
+     power icon, 56/118/72/298/56 bars, ◆ Unsaved Indicator, 20 px bold underlined mode mirror, takeover status line). --u = 1 px at 1024 px wide. */
   * { box-sizing:border-box; }
   body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
   .wrap { max-width:1120px; margin:auto; padding:28px 16px 60px; }
   h1 { font-size:22px; font-weight:500; margin:0 0 6px; } h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:30px 0 6px; }
+  h3.pl { font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:22px 0 6px; font-weight:600; }
   p { color:#555; max-width:860px; margin:0 0 12px; }
   .frame { background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab); padding:12px; border-radius:12px; }
-  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; grid-template-rows:7% 22% 12% 1fr 8%; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; background:var(--bg); color:var(--text); container-type:inline-size; }
-  .dark { --bg:#0b0d0c; --surface:#151917; --raised:#202622; --line:#2b322e; --text:#e7ebe8; --muted:#88938c; --accent:#9fbaa8; --on:#0b0d0c; --warn:#cdb86c; }
-  .light { --bg:#f2f4f2; --surface:#e3e8e4; --raised:#ffffff; --line:#cbd4cd; --text:#131714; --muted:#5a635c; --accent:#466853; --on:#f2f4f2; --warn:#725f1e; }
-  .bar { display:flex; align-items:center; justify-content:space-between; padding:0 2.2cqw; background:var(--surface); color:var(--muted); font-size:1.5cqw; letter-spacing:.25em; }
-  .bar .modes span { margin-left:1.6cqw; } .bar .modes b { color:var(--accent); font-weight:600; }
-  .hero { display:grid; grid-template-columns:1fr auto; align-items:center; padding:0 2.2cqw; border-bottom:1px solid var(--line); }
-  .hero small { display:block; color:var(--muted); font-size:1.5cqw; letter-spacing:.2em; }
-  .hero .ls { font-size:5.2cqw; line-height:1.05; }
-  .hero .next { text-align:right; font-size:1.5cqw; color:var(--muted); letter-spacing:.08em; }
-  .hero .next b { display:block; color:var(--text); font-size:2.1cqw; font-weight:400; letter-spacing:0; }
-  .hero .next i { font-style:normal; color:var(--accent); }
-  .scenes { display:grid; grid-template-columns:repeat(8,1fr); gap:.8cqw; padding:1cqw 2.2cqw; }
-  .scenes div { border:1px solid var(--line); border-radius:.8cqw; display:flex; flex-direction:column; justify-content:center; padding:0 1cqw; font-size:1.6cqw; background:var(--surface); }
-  .scenes div small { color:var(--muted); font-size:1.2cqw; }
+  .scr { --u:calc(100cqw/1024); aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; grid-template-rows:9.3333% 19.6667% 12% 49.6667% 9.3333%; /* 56 / 118 / 72 / 298 / 56 of 600 */ font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; background:var(--bg); color:var(--text); container-type:inline-size; }
+  .dark { --bg:#0b0d0c; --surface:#151917; --raised:#202622; --line:#2b322e; --line-strong:#5a6860; --text:#e7ebe8; --muted:#88938c; --accent:#9fbaa8; --on:#0b0d0c; --warn:#cdb86c; }
+  .light { --bg:#f2f4f2; --surface:#e3e8e4; --raised:#ffffff; --line:#cbd4cd; --line-strong:#728a77; --text:#131714; --muted:#5a635c; --accent:#466853; --on:#f2f4f2; --warn:#725f1e; }
+  .bar { display:flex; align-items:center; justify-content:space-between; gap:calc(24*var(--u)); padding:0 calc(22*var(--u)); background:var(--surface); color:var(--muted); font-size:calc(15*var(--u)); letter-spacing:.25em; text-transform:uppercase; white-space:nowrap; }
+  .bar .ctx { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .modes { flex:none; display:flex; align-items:center; gap:calc(26*var(--u)); font-size:calc(20*var(--u)); font-weight:700; letter-spacing:.06em; line-height:1.2; }
+  .modes .on { color:var(--accent); border-bottom:calc(2*var(--u)) solid var(--accent); padding-bottom:calc(2*var(--u)); }
+  .modes .tempo { font-size:calc(15*var(--u)); font-weight:400; letter-spacing:.25em; }
+  .hero { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:calc(24*var(--u)); padding:0 calc(22*var(--u)); border-bottom:1px solid var(--line); }
+  .hero > div:first-child { min-width:0; }
+  .hero small { display:block; color:var(--muted); font-size:calc(15*var(--u)); letter-spacing:.25em; text-transform:uppercase; }
+  .hero .ls { display:flex; align-items:baseline; gap:calc(14*var(--u)); font-size:calc(53*var(--u)); line-height:1.25; }
+  .hero .ls .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .uns { flex:none; font-size:calc(22*var(--u)); color:var(--warn); }
+  .hero .next { text-align:right; font-size:calc(15*var(--u)); color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
+  .hero .next b { display:block; color:var(--text); font-size:calc(22*var(--u)); font-weight:400; letter-spacing:0; text-transform:none; max-width:calc(300*var(--u)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:auto; }
+  .hero .next i { font-style:normal; color:var(--accent); text-transform:none; letter-spacing:.04em; }
+  .scenes { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:calc(8*var(--u)); padding:calc(8*var(--u)) calc(22*var(--u)); }
+  .scenes div { border:1px solid var(--line); border-radius:calc(8*var(--u)); display:flex; flex-direction:column; justify-content:center; padding:0 calc(10*var(--u)); font-size:calc(16*var(--u)); background:var(--surface); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .scenes div small { color:var(--muted); font-size:calc(12*var(--u)); overflow:hidden; text-overflow:ellipsis; }
   .scenes .cur { background:var(--accent); color:var(--on); border-color:var(--accent); }
-  .scenes .cur small { color:var(--on); opacity:.75; }
-  .scenes .empty { background:transparent; color:var(--muted); border-style:dashed; }
-  .parts { display:grid; grid-template-columns:repeat(8,1fr); gap:.8cqw; padding:1cqw 2.2cqw; min-height:0; }
-  .p { background:var(--surface); border-radius:.8cqw; padding:1cqw; display:grid; grid-template-rows:auto auto 1fr auto; min-height:0; border:1px solid transparent; }
+  .scenes .cur small { color:var(--on); }
+  .scenes .empty { background:transparent; color:var(--muted); border:calc(2*var(--u)) dashed var(--line-strong); }
+  .parts { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:calc(8*var(--u)); padding:calc(10*var(--u)) calc(22*var(--u)); min-height:0; }
+  .p { background:var(--surface); border-radius:calc(8*var(--u)); padding:0 calc(8*var(--u)) calc(8*var(--u)); display:grid; grid-template-rows:calc(56*var(--u)) calc(41*var(--u)) auto minmax(0,1fr) auto; min-height:0; min-width:0; border:calc(3*var(--u)) solid transparent; }
   .p.sel { border-color:var(--accent); background:var(--raised); }
-  .p.off { opacity:.42; }
-  .p .n { font-size:1.2cqw; color:var(--muted); letter-spacing:.15em; display:flex; justify-content:space-between; }
-  .p .n i { width:1cqw; height:1cqw; border-radius:50%; background:var(--accent); display:inline-block; }
-  .p.off .n i { background:var(--line); }
-  .p .t { font-size:1.7cqw; line-height:1.15; margin:.4cqw 0; }
-  .p .e { font-size:1.15cqw; color:var(--muted); }
-  .vol { position:relative; background:var(--line); border-radius:.5cqw; margin-top:.8cqw; height:100%; min-height:3cqw; overflow:hidden; }
-  .vol .lv { position:absolute; left:0; right:0; bottom:0; background:var(--accent); opacity:.85; }
-  .vol .ghost { position:absolute; left:-2px; right:-2px; height:0; border-top:2px dashed var(--text); }
-  .status { display:flex; gap:2.4cqw; align-items:center; padding:0 2.2cqw; background:var(--surface); color:var(--muted); font-size:1.4cqw; letter-spacing:.06em; }
-  .status .ok { color:var(--accent); } .status .w { color:var(--warn); }
+  .p.pend { outline:calc(2*var(--u)) dashed var(--warn); outline-offset:calc(1*var(--u)); }
+  .p .top { display:flex; justify-content:space-between; align-items:flex-start; }
+  .p .n { font-size:calc(12*var(--u)); color:var(--muted); letter-spacing:.12em; display:flex; align-items:center; gap:calc(6*var(--u)); height:calc(56*var(--u)); }
+  .p .n i { width:calc(10*var(--u)); height:calc(10*var(--u)); border-radius:50%; background:var(--accent); display:inline-block; }
+  .p .n i.ring { background:transparent; border:calc(2*var(--u)) solid var(--line-strong); }
+  .p .pw { width:calc(56*var(--u)); height:calc(56*var(--u)); margin-right:calc(-8*var(--u)); display:flex; align-items:center; justify-content:center; font-size:calc(24*var(--u)); color:var(--text); }
+  .p.off .pw { color:var(--muted); }
+  .p .t { font-size:calc(17*var(--u)); line-height:1.2; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .p.off .t, .p.empty .t { color:var(--muted); }
+  .p .e { font-size:calc(12*var(--u)); letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-top:calc(4*var(--u)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .p .e.w { color:var(--warn); }
+  .vol { position:relative; background:var(--line-strong); border-radius:calc(5*var(--u)); margin-top:calc(8*var(--u)); min-height:calc(24*var(--u)); }
+  .vol .lv { position:absolute; left:0; right:0; bottom:0; background:var(--accent); border-radius:0 0 calc(5*var(--u)) calc(5*var(--u)); }
+  .p.off .vol { background:var(--line); } .p.off .vol .lv { background:var(--line-strong); }
+  .p.empty .vol { background:transparent; border:calc(1*var(--u)) dashed var(--line-strong); }
+  .vol .lv.full { border-radius:calc(5*var(--u)); }
+  /* Pickup Ghost: 3 px dashed warn, 2 px bg keyline on both sides, chevron at the strip edge */
+  .ghost { position:absolute; left:calc(-4*var(--u)); right:calc(-4*var(--u)); height:calc(7*var(--u)); margin-bottom:calc(-3.5*var(--u)); background:linear-gradient(var(--bg),var(--bg)) top/100% calc(2*var(--u)) no-repeat, linear-gradient(var(--bg),var(--bg)) bottom/100% calc(2*var(--u)) no-repeat; }
+  .ghost::before { content:""; position:absolute; left:0; right:0; top:calc(2*var(--u)); border-top:calc(3*var(--u)) dashed var(--warn); }
+  .ghost .chev { position:absolute; right:calc(4*var(--u)); bottom:calc(9*var(--u)); font-size:calc(14*var(--u)); line-height:1; padding:calc(1*var(--u)) calc(4*var(--u)); background:var(--bg); color:var(--warn); border-radius:calc(4*var(--u)); }
+  .p .val { margin-top:calc(8*var(--u)); font-size:calc(14*var(--u)); font-variant-numeric:tabular-nums; height:calc(20*var(--u)); display:flex; align-items:center; letter-spacing:.06em; }
+  .p .val .tag { font-size:calc(12*var(--u)); letter-spacing:.12em; color:var(--muted); border:calc(1*var(--u)) solid var(--line-strong); border-radius:calc(4*var(--u)); padding:0 calc(6*var(--u)); line-height:calc(18*var(--u)); }
+  .status { display:flex; gap:calc(24*var(--u)); align-items:center; padding:0 calc(22*var(--u)); background:var(--surface); color:var(--muted); font-size:calc(14*var(--u)); letter-spacing:.06em; text-transform:uppercase; white-space:nowrap; overflow:hidden; }
+  .status .ok { color:var(--accent); }
+  .status .tk { color:var(--warn); font-size:calc(24*var(--u)); font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .notes { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; margin-top:12px; }
   .notes div { background:#fff; border:1px solid #d6d4cf; border-radius:8px; padding:10px 12px; font-size:13px; color:#444; }
 </style>
@@ -52,68 +75,137 @@
 <body>
 <div class="wrap">
 <h1>Performance: a tela inicial</h1>
-<p>A tela foi feita para ser lida a 1,5 m de distância sob luz de palco. O nome da Live Set é o maior elemento, a cena atual é o único bloco preenchido e a próxima música aparece com o status "Ready" (pré-carregada). Os textos da tela estão em inglês, o idioma padrão.</p>
+<p>A tela foi feita para ser lida a 1,5 m de distância sob luz de palco. O nome da Live Set é o maior elemento, a cena atual é o único bloco preenchido e a próxima música aparece com o status "Ready" (pré-carregada). Os textos da tela estão em inglês, o idioma padrão. As alturas das barras são 56 / 118 / 72 / 298 / 56 px (Top Bar, Live Set Hero, cenas, partes, Status Bar).</p>
 
 <h2>Palco (escuro) · modo MIXER + PARTS + PART</h2>
+<!--PL title="Stage theme · MIXER + PARTS + PART"-->
 <div class="frame"><div class="scr dark">
-  <div class="bar"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span><b>MIXER</b></span><span><b>PARTS</b></span><span>KNOBS <b>PART 1</b></span><span>♩ 72</span></span></div>
-  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
+  <div class="bar"><span class="ctx">SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span class="on" data-en>MIXER</span><span class="on" data-en>PARTS</span><span><span data-en>KNOBS</span> <span class="on" data-en>PART 1</span></span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls"><span class="nm">Perfect</span></div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
   <div class="scenes"><div>1 Intro<small>piano</small></div><div class="cur">2 Verse<small>piano + pad</small></div><div>3 Chorus<small>+ strings</small></div><div>4 Bridge<small>organ</small></div><div>5 Final<small>tutti</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
   <div class="parts">
-    <div class="p sel"><div class="n">1 <i></i></div><div class="t">Concert Grand</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:78%"></div></div></div>
-    <div class="p"><div class="n">2 <i></i></div><div class="t">Warm Pad</div><div class="e">VA</div><div class="vol"><div class="lv" style="height:40%"></div></div></div>
-    <div class="p off"><div class="n">3 <i></i></div><div class="t">Chamber Strings</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:55%"></div></div></div>
-    <div class="p off"><div class="n">4 <i></i></div><div class="t">Gospel B</div><div class="e">Tonewheel</div><div class="vol"><div class="lv" style="height:62%"></div></div></div>
-    <div class="p off"><div class="n">5 <i></i></div><div class="t">Choir Aahs</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:30%"></div></div></div>
-    <div class="p off"><div class="n">6 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
-    <div class="p off"><div class="n">7 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
-    <div class="p off"><div class="n">8 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p sel"><div class="top"><div class="n">1 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Concert Grand</div><div class="e" data-short>Piano</div><div class="vol"><div class="lv" style="height:78%"></div></div><div class="val">78</div></div>
+    <div class="p"><div class="top"><div class="n">2 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Warm Pad</div><div class="e" data-short>Synth Pad</div><div class="vol"><div class="lv" style="height:40%"></div></div><div class="val">40</div></div>
+    <div class="p off"><div class="top"><div class="n">3 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">Chamber Strings</div><div class="e" data-short>Strings</div><div class="vol"><div class="lv" style="height:55%"></div></div><div class="val"><span class="tag">OFF</span></div></div>
+    <div class="p off"><div class="top"><div class="n">4 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">Gospel B</div><div class="e" data-short>Organ</div><div class="vol"><div class="lv" style="height:62%"></div></div><div class="val"><span class="tag">OFF</span></div></div>
+    <div class="p off"><div class="top"><div class="n">5 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">Choir Aahs</div><div class="e" data-short>Choir</div><div class="vol"><div class="lv" style="height:30%"></div></div><div class="val"><span class="tag">OFF</span></div></div>
+    <div class="p empty"><div class="top"><div class="n">6 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">7 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">8 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
   </div>
   <div class="status"><span>VOICES 142 / 256</span><span class="ok">● STREAMING OK</span><span>ROTARY SLOW</span><span>REV 35%</span></div>
 </div></div>
+<!--/PL-->
 
 <h2>Estúdio (claro) · mesma tela</h2>
+<!--PL title="Studio theme · same screen"-->
 <div class="frame"><div class="scr light">
-  <div class="bar"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span><b>MIXER</b></span><span><b>PARTS</b></span><span>KNOBS <b>PART 1</b></span><span>♩ 72</span></span></div>
-  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
+  <div class="bar"><span class="ctx">SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span class="on" data-en>MIXER</span><span class="on" data-en>PARTS</span><span><span data-en>KNOBS</span> <span class="on" data-en>PART 1</span></span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls"><span class="nm">Perfect</span></div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
   <div class="scenes"><div>1 Intro<small>piano</small></div><div class="cur">2 Verse<small>piano + pad</small></div><div>3 Chorus<small>+ strings</small></div><div>4 Bridge<small>organ</small></div><div>5 Final<small>tutti</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
   <div class="parts">
-    <div class="p sel"><div class="n">1 <i></i></div><div class="t">Concert Grand</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:78%"></div></div></div>
-    <div class="p"><div class="n">2 <i></i></div><div class="t">Warm Pad</div><div class="e">VA</div><div class="vol"><div class="lv" style="height:40%"></div></div></div>
-    <div class="p off"><div class="n">3 <i></i></div><div class="t">Chamber Strings</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:55%"></div></div></div>
-    <div class="p off"><div class="n">4 <i></i></div><div class="t">Gospel B</div><div class="e">Tonewheel</div><div class="vol"><div class="lv" style="height:62%"></div></div></div>
-    <div class="p off"><div class="n">5 <i></i></div><div class="t">Choir Aahs</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:30%"></div></div></div>
-    <div class="p off"><div class="n">6 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
-    <div class="p off"><div class="n">7 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
-    <div class="p off"><div class="n">8 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p sel"><div class="top"><div class="n">1 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Concert Grand</div><div class="e" data-short>Piano</div><div class="vol"><div class="lv" style="height:78%"></div></div><div class="val">78</div></div>
+    <div class="p"><div class="top"><div class="n">2 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Warm Pad</div><div class="e" data-short>Synth Pad</div><div class="vol"><div class="lv" style="height:40%"></div></div><div class="val">40</div></div>
+    <div class="p off"><div class="top"><div class="n">3 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">Chamber Strings</div><div class="e" data-short>Strings</div><div class="vol"><div class="lv" style="height:55%"></div></div><div class="val"><span class="tag">OFF</span></div></div>
+    <div class="p off"><div class="top"><div class="n">4 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">Gospel B</div><div class="e" data-short>Organ</div><div class="vol"><div class="lv" style="height:62%"></div></div><div class="val"><span class="tag">OFF</span></div></div>
+    <div class="p off"><div class="top"><div class="n">5 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">Choir Aahs</div><div class="e" data-short>Choir</div><div class="vol"><div class="lv" style="height:30%"></div></div><div class="val"><span class="tag">OFF</span></div></div>
+    <div class="p empty"><div class="top"><div class="n">6 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">7 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">8 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
   </div>
   <div class="status"><span>VOICES 142 / 256</span><span class="ok">● STREAMING OK</span><span>ROTARY SLOW</span><span>REV 35%</span></div>
 </div></div>
+<!--/PL-->
 
-<h2>Estado · troca para a cena "Chorus" com fader fora de posição (pickup)</h2>
+<h2>Estado · troca para a cena "Chorus" com fader fora de posição (pickup) e edições pendentes ◆</h2>
+<!--PL title="Pickup pending · scene Chorus · unsaved ◆"-->
 <div class="frame"><div class="scr dark">
-  <div class="bar"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span><b>MIXER</b></span><span><b>SCENES</b></span><span>KNOBS <b>ASSIGN</b></span><span>♩ 72</span></span></div>
-  <div class="hero"><div><small>LIVE SET 03</small><div class="ls">Perfect</div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
+  <div class="bar"><span class="ctx">SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span class="modes"><span class="on" data-en>MIXER</span><span class="on" data-en>SCENES</span><span><span data-en>KNOBS</span> <span class="on" data-en>ASSIGN</span></span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LIVE SET 03</small><div class="ls"><span class="nm">Perfect</span><span class="uns" role="img" aria-label="Unsaved changes">◆</span></div></div><div class="next">NEXT<b>Thinking Out Loud</b><i>● Ready</i></div></div>
   <div class="scenes"><div>1 Intro<small>piano</small></div><div>2 Verse<small>piano + pad</small></div><div class="cur">3 Chorus<small>+ strings</small></div><div>4 Bridge<small>organ</small></div><div>5 Final<small>tutti</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
   <div class="parts">
-    <div class="p"><div class="n">1 <i></i></div><div class="t">Concert Grand</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:70%"></div></div></div>
-    <div class="p"><div class="n">2 <i></i></div><div class="t">Warm Pad</div><div class="e">VA</div><div class="vol"><div class="lv" style="height:50%"></div></div></div>
-    <div class="p sel"><div class="n">3 <i></i></div><div class="t">Chamber Strings</div><div class="e">Sample · fader at 20%</div><div class="vol"><div class="lv" style="height:65%"></div><div class="ghost" style="bottom:20%"></div></div></div>
-    <div class="p off"><div class="n">4 <i></i></div><div class="t">Gospel B</div><div class="e">Tonewheel</div><div class="vol"><div class="lv" style="height:62%"></div></div></div>
-    <div class="p"><div class="n">5 <i></i></div><div class="t">Choir Aahs</div><div class="e">Sample</div><div class="vol"><div class="lv" style="height:35%"></div></div></div>
-    <div class="p off"><div class="n">6 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
-    <div class="p off"><div class="n">7 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
-    <div class="p off"><div class="n">8 <i></i></div><div class="t">—</div><div class="e">empty</div><div class="vol"></div></div>
+    <div class="p"><div class="top"><div class="n">1 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Concert Grand</div><div class="e" data-short>Piano</div><div class="vol"><div class="lv" style="height:70%"></div></div><div class="val">70</div></div>
+    <div class="p"><div class="top"><div class="n">2 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Warm Pad</div><div class="e" data-short>Synth Pad</div><div class="vol"><div class="lv" style="height:50%"></div></div><div class="val">50</div></div>
+    <div class="p sel pend"><div class="top"><div class="n">3 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Chamber Strings</div><div class="e" data-short>Strings</div><div class="vol"><div class="lv" style="height:65%"></div><div class="ghost" style="bottom:20%"><span class="chev" role="img" aria-label="Move fader up">▲</span></div></div><div class="val">65</div></div>
+    <div class="p off"><div class="top"><div class="n">4 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">Gospel B</div><div class="e" data-short>Organ</div><div class="vol"><div class="lv" style="height:62%"></div></div><div class="val"><span class="tag">OFF</span></div></div>
+    <div class="p"><div class="top"><div class="n">5 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">Choir Aahs</div><div class="e" data-short>Choir</div><div class="vol"><div class="lv" style="height:35%"></div></div><div class="val">35</div></div>
+    <div class="p empty"><div class="top"><div class="n">6 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">7 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">8 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>empty</div><div class="vol"></div><div class="val"></div></div>
   </div>
-  <div class="status"><span>VOICES 188 / 256</span><span class="ok">● STREAMING OK</span><span class="w">● FADER 3: MOVE UP TO 65% TO TAKE OVER</span></div>
+  <div class="status"><span class="tk">▲ FADER 3 → 65%</span></div>
 </div></div>
+<!--/PL-->
 
 <div class="notes">
   <div><b>Leitura sob luz forte:</b> o nome da Live Set ocupa cerca de 5% da largura, e a cena atual é o único bloco cheio de cor. O contraste é alto nos dois temas.</div>
-  <div><b>Pickup:</b> a linha tracejada mostra onde o fader físico está. O volume real (a barra) só muda quando o fader cruza o valor salvo.</div>
-  <div><b>Modos sempre à vista:</b> a barra do topo repete o estado dos três botões de alternância: MIXER/DRAWBARS, PARTS/SCENES e PART/ALL/ASSIGN.</div>
+  <div><b>Pickup:</b> a linha tracejada amarela (warn, com contorno de fundo nos dois lados) mostra onde o fader físico está, e o chevron ▲/▼ indica para que lado mover. O volume real (a barra) só muda quando o fader cruza o valor salvo. Enquanto o pickup está pendente, a Status Bar mostra só a linha de takeover.</div>
+  <div><b>Modos sempre à vista:</b> a barra do topo repete o estado dos três botões de alternância em 20 px negrito, com o modo ativo em accent e sublinhado: MIXER/DRAWBARS, PARTS/SCENES e PART/ALL/ASSIGN.</div>
+  <div><b>Partes:</b> cada faixa mostra a categoria (nome curto), nunca o tipo de engine. Parte desligada: texto em muted com opacidade total, LED em anel vazio e etiqueta OFF no lugar do volume. O ícone ⏻ liga/desliga a parte (área de toque de 56 px).</div>
+  <div><b>Não salvo:</b> o ◆ em warn logo após o nome da Live Set indica edições pendentes. Nunca é ●, que é o glifo de "ok".</div>
   <div><b>Próxima música:</b> "● Ready" confirma que a próxima Live Set já está carregada. Trocar de música não corta o som.</div>
 </div>
+<!--PSEUDO:START-->
+<h2>Pseudo-localization (+40% with ÁÇÊÕÑ Ação)</h2>
+<p>Every screen above again with each UI string lengthened by 40% with accented capitals, category short labels held to their 10-character budget, panel legends and Hint Bar control names kept in English, and every user-content name replaced by the clipping test string <code>ÁÇÊÕÑ Ação</code>. Nothing clips; names and labels that exceed their box truncate with an end ellipsis as specified.</p>
+<h3 class="pl">Stage theme · MIXER + PARTS + PART · +40%</h3>
+
+<div class="frame"><div class="scr dark">
+  <div class="bar"><span class="ctx">SÊTLÍST · ÁÇÊÕÑ Ação · 3 / 12 ÁÇ</span><span class="modes"><span class="on" data-en>MIXER</span><span class="on" data-en>PARTS</span><span><span data-en>KNOBS</span> <span class="on" data-en>PART 1</span></span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LÍVÊ SÊT 03 ÁÇ</small><div class="ls"><span class="nm">ÁÇÊÕÑ Ação</span></div></div><div class="next">NÊXT Á<b>ÁÇÊÕÑ Ação</b><i>● Rêády Á</i></div></div>
+  <div class="scenes"><div>1 ÁÇÊÕÑ Ação<small>píánõ Á</small></div><div class="cur">2 ÁÇÊÕÑ Ação<small>píánõ + pád ÁÇÊ</small></div><div>3 ÁÇÊÕÑ Ação<small>+ stríngs ÁÇ</small></div><div>4 ÁÇÊÕÑ Ação<small>õrgán Á</small></div><div>5 ÁÇÊÕÑ Ação<small>túttí Á</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts">
+    <div class="p sel"><div class="top"><div class="n">1 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Píánõ Á</div><div class="vol"><div class="lv" style="height:78%"></div></div><div class="val">78</div></div>
+    <div class="p"><div class="top"><div class="n">2 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Synth Pád Á</div><div class="vol"><div class="lv" style="height:40%"></div></div><div class="val">40</div></div>
+    <div class="p off"><div class="top"><div class="n">3 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Stríngs ÁÇ</div><div class="vol"><div class="lv" style="height:55%"></div></div><div class="val"><span class="tag">ÕFF Á</span></div></div>
+    <div class="p off"><div class="top"><div class="n">4 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Õrgán Á</div><div class="vol"><div class="lv" style="height:62%"></div></div><div class="val"><span class="tag">ÕFF Á</span></div></div>
+    <div class="p off"><div class="top"><div class="n">5 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Chõír Á</div><div class="vol"><div class="lv" style="height:30%"></div></div><div class="val"><span class="tag">ÕFF Á</span></div></div>
+    <div class="p empty"><div class="top"><div class="n">6 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">7 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">8 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+  </div>
+  <div class="status"><span>VÕÍCÊS 142 / 256 ÁÇ</span><span class="ok">● STRÊÁMÍNG ÕK ÁÇÊÕ</span><span>RÕTÁRY SLÕW ÁÇÊ</span><span>RÊV 35% Á</span></div>
+</div></div>
+
+<h3 class="pl">Studio theme · same screen · +40%</h3>
+
+<div class="frame"><div class="scr light">
+  <div class="bar"><span class="ctx">SÊTLÍST · ÁÇÊÕÑ Ação · 3 / 12 ÁÇ</span><span class="modes"><span class="on" data-en>MIXER</span><span class="on" data-en>PARTS</span><span><span data-en>KNOBS</span> <span class="on" data-en>PART 1</span></span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LÍVÊ SÊT 03 ÁÇ</small><div class="ls"><span class="nm">ÁÇÊÕÑ Ação</span></div></div><div class="next">NÊXT Á<b>ÁÇÊÕÑ Ação</b><i>● Rêády Á</i></div></div>
+  <div class="scenes"><div>1 ÁÇÊÕÑ Ação<small>píánõ Á</small></div><div class="cur">2 ÁÇÊÕÑ Ação<small>píánõ + pád ÁÇÊ</small></div><div>3 ÁÇÊÕÑ Ação<small>+ stríngs ÁÇ</small></div><div>4 ÁÇÊÕÑ Ação<small>õrgán Á</small></div><div>5 ÁÇÊÕÑ Ação<small>túttí Á</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts">
+    <div class="p sel"><div class="top"><div class="n">1 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Píánõ Á</div><div class="vol"><div class="lv" style="height:78%"></div></div><div class="val">78</div></div>
+    <div class="p"><div class="top"><div class="n">2 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Synth Pád Á</div><div class="vol"><div class="lv" style="height:40%"></div></div><div class="val">40</div></div>
+    <div class="p off"><div class="top"><div class="n">3 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Stríngs ÁÇ</div><div class="vol"><div class="lv" style="height:55%"></div></div><div class="val"><span class="tag">ÕFF Á</span></div></div>
+    <div class="p off"><div class="top"><div class="n">4 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Õrgán Á</div><div class="vol"><div class="lv" style="height:62%"></div></div><div class="val"><span class="tag">ÕFF Á</span></div></div>
+    <div class="p off"><div class="top"><div class="n">5 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Chõír Á</div><div class="vol"><div class="lv" style="height:30%"></div></div><div class="val"><span class="tag">ÕFF Á</span></div></div>
+    <div class="p empty"><div class="top"><div class="n">6 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">7 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">8 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+  </div>
+  <div class="status"><span>VÕÍCÊS 142 / 256 ÁÇ</span><span class="ok">● STRÊÁMÍNG ÕK ÁÇÊÕ</span><span>RÕTÁRY SLÕW ÁÇÊ</span><span>RÊV 35% Á</span></div>
+</div></div>
+
+<h3 class="pl">Pickup pending · scene Chorus · unsaved ◆ · +40%</h3>
+
+<div class="frame"><div class="scr dark">
+  <div class="bar"><span class="ctx">SÊTLÍST · ÁÇÊÕÑ Ação · 3 / 12 ÁÇ</span><span class="modes"><span class="on" data-en>MIXER</span><span class="on" data-en>SCENES</span><span><span data-en>KNOBS</span> <span class="on" data-en>ASSIGN</span></span><span class="tempo">♩ 72</span></span></div>
+  <div class="hero"><div><small>LÍVÊ SÊT 03 ÁÇ</small><div class="ls"><span class="nm">ÁÇÊÕÑ Ação</span><span class="uns" role="img" aria-label="Unsaved changes">◆</span></div></div><div class="next">NÊXT Á<b>ÁÇÊÕÑ Ação</b><i>● Rêády Á</i></div></div>
+  <div class="scenes"><div>1 ÁÇÊÕÑ Ação<small>píánõ Á</small></div><div>2 ÁÇÊÕÑ Ação<small>píánõ + pád ÁÇÊ</small></div><div class="cur">3 ÁÇÊÕÑ Ação<small>+ stríngs ÁÇ</small></div><div>4 ÁÇÊÕÑ Ação<small>õrgán Á</small></div><div>5 ÁÇÊÕÑ Ação<small>túttí Á</small></div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="parts">
+    <div class="p"><div class="top"><div class="n">1 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Píánõ Á</div><div class="vol"><div class="lv" style="height:70%"></div></div><div class="val">70</div></div>
+    <div class="p"><div class="top"><div class="n">2 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Synth Pád Á</div><div class="vol"><div class="lv" style="height:50%"></div></div><div class="val">50</div></div>
+    <div class="p sel pend"><div class="top"><div class="n">3 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Stríngs ÁÇ</div><div class="vol"><div class="lv" style="height:65%"></div><div class="ghost" style="bottom:20%"><span class="chev" role="img" aria-label="Move fader up">▲</span></div></div><div class="val">65</div></div>
+    <div class="p off"><div class="top"><div class="n">4 <i class="ring"></i></div><span class="pw" role="img" aria-label="Part off">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Õrgán Á</div><div class="vol"><div class="lv" style="height:62%"></div></div><div class="val"><span class="tag">ÕFF Á</span></div></div>
+    <div class="p"><div class="top"><div class="n">5 <i></i></div><span class="pw" role="img" aria-label="Part on">⏻</span></div><div class="t">ÁÇÊÕÑ Ação</div><div class="e" data-short>Chõír Á</div><div class="vol"><div class="lv" style="height:35%"></div></div><div class="val">35</div></div>
+    <div class="p empty"><div class="top"><div class="n">6 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">7 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+    <div class="p empty"><div class="top"><div class="n">8 <i class="ring"></i></div></div><div class="t">—</div><div class="e" data-short>êmpty Á</div><div class="vol"></div><div class="val"></div></div>
+  </div>
+  <div class="status"><span class="tk">▲ FÁDÊR 3 → 65% Á</span></div>
+</div></div>
+
+<!--PSEUDO:END-->
 </div>
 </body>
 </html>

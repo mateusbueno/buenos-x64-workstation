@@ -6,22 +6,26 @@
 <title>Velora 73 — Drawbars & categories</title>
 <style>
   /* Sálvia dark: bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on #0b0d0c warn #cdb86c
-     Drawbar heads (traditional, desaturated to fit Sálvia): brown #7a5a44, white #e7e4dc, black #1d201e */
+     Drawbar heads (traditional, desaturated to fit Sálvia): brown #7a5a44, white #e7e4dc, black #1d201e
+     Story 4.14: bars 56/118/72/298/56, 20 px bold underlined mode mirror, ◆ Unsaved Indicator, warn Pickup Ghost with bg keylines + chevron, registration 88 8600 000. --u = 1 px at 1024 px wide. */
   * { box-sizing:border-box; }
   body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
   .wrap { max-width:1120px; margin:auto; padding:28px 16px 60px; }
   h1 { font-size:22px; font-weight:500; margin:0 0 6px; } h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:30px 0 6px; }
   p { color:#555; max-width:860px; margin:0 0 12px; }
   .frame { background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab); padding:12px; border-radius:12px; }
-  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; grid-template-rows:7% 22% 12% 1fr 8%; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; color:#e7ebe8; background:#0b0d0c; container-type:inline-size; }
-  .bar { display:flex; align-items:center; justify-content:space-between; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.5cqw; letter-spacing:.25em; }
-  .bar b { color:#9fbaa8; font-weight:600; } .bar span span { margin-left:1.6cqw; }
-  .hero { display:grid; grid-template-columns:1fr auto; align-items:center; padding:0 2.2cqw; border-bottom:1px solid #2b322e; }
-  .hero small { display:block; color:#88938c; font-size:1.5cqw; letter-spacing:.2em; } .hero .ls { font-size:5.2cqw; line-height:1.05; }
-  .hero .next { text-align:right; font-size:1.5cqw; color:#88938c; letter-spacing:.08em; } .hero .next b { display:block; color:#e7ebe8; font-size:2.1cqw; font-weight:400; letter-spacing:0; } .hero .next i { font-style:normal; color:#9fbaa8; }
-  .scenes { display:grid; grid-template-columns:repeat(8,1fr); gap:.8cqw; padding:1cqw 2.2cqw; }
-  .scenes div { border:1px solid #2b322e; border-radius:.8cqw; display:flex; flex-direction:column; justify-content:center; padding:0 1cqw; font-size:1.6cqw; background:#151917; }
-  .scenes small { color:#88938c; font-size:1.2cqw; } .scenes .cur { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; } .scenes .cur small { color:#0b0d0c; opacity:.75; } .scenes .empty { background:transparent; color:#88938c; border-style:dashed; }
+  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; --u:calc(100cqw/1024); grid-template-rows:9.3333% 19.6667% 12% 49.6667% 9.3333%; /* 56 / 118 / 72 / 298 / 56 of 600 */ font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; color:#e7ebe8; background:#0b0d0c; container-type:inline-size; }
+  .bar { display:flex; align-items:center; justify-content:space-between; gap:calc(24*var(--u)); padding:0 calc(22*var(--u)); background:#151917; color:#88938c; font-size:calc(15*var(--u)); letter-spacing:.25em; text-transform:uppercase; white-space:nowrap; }
+  .bar .ctx { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .modes { flex:none; display:flex; align-items:center; gap:calc(26*var(--u)); font-size:calc(20*var(--u)); font-weight:700; letter-spacing:.06em; line-height:1.2; }
+  .modes .on { color:#9fbaa8; border-bottom:calc(2*var(--u)) solid #9fbaa8; padding-bottom:calc(2*var(--u)); }
+  .modes .tempo { font-size:calc(15*var(--u)); font-weight:400; letter-spacing:.25em; }
+  .hero { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:calc(24*var(--u)); align-items:center; padding:0 2.2cqw; border-bottom:1px solid #2b322e; }
+  .hero > div:first-child { min-width:0; } .hero small { display:block; color:#88938c; font-size:calc(15*var(--u)); letter-spacing:.25em; text-transform:uppercase; } .hero .ls { display:flex; align-items:baseline; gap:calc(14*var(--u)); font-size:calc(53*var(--u)); line-height:1.25; } .hero .ls .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .uns { flex:none; font-size:calc(22*var(--u)); color:#cdb86c; }
+  .hero .next { text-align:right; font-size:calc(15*var(--u)); color:#88938c; letter-spacing:.08em; text-transform:uppercase; } .hero .next b { display:block; color:#e7ebe8; font-size:calc(22*var(--u)); font-weight:400; letter-spacing:0; text-transform:none; max-width:calc(300*var(--u)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:auto; } .hero .next i { font-style:normal; color:#9fbaa8; text-transform:none; letter-spacing:.04em; }
+  .scenes { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:calc(8*var(--u)); padding:calc(8*var(--u)) calc(22*var(--u)); }
+  .scenes div { border:1px solid #2b322e; border-radius:.8cqw; display:flex; flex-direction:column; justify-content:center; padding:0 1cqw; font-size:calc(16*var(--u)); background:#151917; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .scenes small { color:#88938c; font-size:calc(12*var(--u)); overflow:hidden; text-overflow:ellipsis; } .scenes .cur { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; } .scenes .cur small { color:#0b0d0c; } .scenes .empty { background:transparent; color:#88938c; border:calc(2*var(--u)) dashed #5a6860; }
   .body { display:grid; grid-template-columns:1.2fr 3fr; gap:1.4cqw; padding:1cqw 2.2cqw; min-height:0; overflow:hidden; } .organ, .dbs { min-height:0; }
   .organ { background:#202622; border:1px solid #9fbaa8; border-radius:.8cqw; padding:1.2cqw; display:flex; flex-direction:column; gap:.6cqw; }
   .organ .n { font-size:1.2cqw; color:#88938c; letter-spacing:.15em; } .organ .t { font-size:2.2cqw; } .organ .c { font-size:1.3cqw; color:#9fbaa8; letter-spacing:.1em; }
@@ -33,10 +37,14 @@
   .slot { position:relative; background:#151917; border-radius:.6cqw; border:1px solid #2b322e; overflow:hidden; }
   .slot .rod { position:absolute; left:42%; right:42%; top:0; background:#88938c; opacity:.5; }
   .slot .head { position:absolute; left:12%; right:12%; height:13%; border-radius:.5cqw; display:flex; align-items:center; justify-content:center; font-size:1.6cqw; font-weight:600; }
-  .slot .ghost { position:absolute; left:4%; right:4%; border-top:2px dashed #cdb86c; }
+  /* Pickup Ghost: 3 px dashed warn, 2 px bg keyline on both sides, chevron at the slot edge */
+  .slot .ghost { position:absolute; left:0; right:0; height:calc(7*var(--u)); margin-top:calc(-3.5*var(--u)); background:linear-gradient(#0b0d0c,#0b0d0c) top/100% calc(2*var(--u)) no-repeat, linear-gradient(#0b0d0c,#0b0d0c) bottom/100% calc(2*var(--u)) no-repeat; }
+  .slot .ghost::before { content:""; position:absolute; left:0; right:0; top:calc(2*var(--u)); border-top:calc(3*var(--u)) dashed #cdb86c; }
+  .slot .ghost .chev { position:absolute; right:calc(2*var(--u)); top:calc(8*var(--u)); font-size:calc(14*var(--u)); line-height:1; padding:calc(1*var(--u)) calc(4*var(--u)); background:#0b0d0c; color:#cdb86c; border-radius:calc(4*var(--u)); }
   .br { background:#7a5a44; color:#f1e9df; } .wh { background:#e7e4dc; color:#1d201e; } .bk { background:#1d201e; color:#e7e4dc; border:1px solid #3a403c; }
   .db .v { font-size:1.9cqw; font-variant-numeric:tabular-nums; }
-  .status { display:flex; gap:2.4cqw; align-items:center; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.4cqw; } .status .ok { color:#9fbaa8; } .status .w { color:#cdb86c; }
+  .status { display:flex; gap:calc(24*var(--u)); align-items:center; padding:0 calc(22*var(--u)); background:#151917; color:#88938c; font-size:calc(14*var(--u)); letter-spacing:.06em; text-transform:uppercase; white-space:nowrap; overflow:hidden; } .status .ok { color:#9fbaa8; } .status .tk { color:#cdb86c; font-size:calc(24*var(--u)); font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  h3.pl { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:22px 0 6px; font-weight:600; }
   table { border-collapse:collapse; width:100%; max-width:980px; background:#fff; border:1px solid #d6d4cf; border-radius:8px; overflow:hidden; }
   td, th { text-align:left; padding:7px 10px; border-bottom:1px solid #e3e1dc; vertical-align:top; font-size:13px; }
   th { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:#666; background:#f6f5f2; }
@@ -46,33 +54,64 @@
 <body>
 <div class="wrap">
 <h1>Drawbars na tela e categorias de timbre</h1>
-<p>Com o botão em <b>DRAWBARS</b>, a área das partes vira o <b>registro do órgão</b>: os 9 drawbars aparecem como num órgão de verdade, com o valor de 0 a 8 em cada um. O fantasma amarelo indica onde está o fader físico que ainda não "pegou" o valor. O registro aparece também em números, como os organistas falam (88 8000 000).</p>
+<p>Com o botão em <b>DRAWBARS</b>, a área das partes vira o <b>registro do órgão</b>: os 9 drawbars aparecem como num órgão de verdade, com o valor de 0 a 8 em cada um. O fantasma (linha tracejada amarela, com contorno de fundo e um chevron ▲/▼) indica onde está o fader físico que ainda não "pegou" o valor. O registro aparece também em números, como os organistas falam (88 8600 000).</p>
 
 <h2>Performance · modo DRAWBARS (parte 4 = órgão)</h2>
+<!--PL title="Performance · DRAWBARS mode (part 4 = organ)"-->
 <div class="frame"><div class="scr">
-  <div class="bar"><span>SETLIST · SUNDAY SERVICE · 5 / 9</span><span><span><b>DRAWBARS</b></span><span><b>PARTS</b></span><span>KNOBS <b>PART 4</b></span><span>♩ 96</span></span></div>
-  <div class="hero"><div><small>LIVE SET 05</small><div class="ls">Oceans</div></div><div class="next">NEXT<b>Goodness of God</b><i>● Ready</i></div></div>
+  <div class="bar"><span class="ctx">SETLIST · SUNDAY SERVICE · 5 / 9</span><span class="modes"><span class="on" data-en>DRAWBARS</span><span class="on" data-en>PARTS</span><span><span data-en>KNOBS</span> <span class="on" data-en>PART 4</span></span><span class="tempo">♩ 96</span></span></div>
+  <div class="hero"><div><small>LIVE SET 05</small><div class="ls"><span class="nm">Oceans</span><span class="uns" role="img" aria-label="Unsaved changes">◆</span></div></div><div class="next">NEXT<b>Goodness of God</b><i>● Ready</i></div></div>
   <div class="scenes"><div>1 Intro<small>pad</small></div><div>2 Verse<small>piano + organ</small></div><div class="cur">3 Chorus<small>organ full</small></div><div>4 Bridge<small>organ soft</small></div><div class="empty">5</div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
   <div class="body">
-    <div class="organ"><div class="n">PART 4 · DRAWBARS</div><div class="t">Gospel B</div><div class="c">ORGAN</div>
+    <div class="organ"><div class="n">PART 4 · DRAWBARS</div><div class="t">Gospel B</div><div class="c" data-short>ORGAN</div>
       <div class="meta">Percussion 2nd · Soft · Fast<br>Vibrato C3 · Rotary <b style="color:#9fbaa8">FAST</b></div>
       <div class="reg">88 8600 000</div></div>
     <div class="dbs">
       <div class="db"><div class="ft">16'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head br" style="top:87%">8</div></div><div class="v">8</div></div>
       <div class="db"><div class="ft">5⅓'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head br" style="top:87%">8</div></div><div class="v">8</div></div>
       <div class="db"><div class="ft">8'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head wh" style="top:87%">8</div></div><div class="v">8</div></div>
-      <div class="db"><div class="ft">4'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head wh" style="top:87%">8</div></div><div class="v">8</div></div>
-      <div class="db"><div class="ft">2⅔'</div><div class="slot"><div class="rod" style="height:71%"></div><div class="head bk" style="top:65%">6</div><div class="ghost" style="top:39%"></div></div><div class="v">6</div></div>
+      <div class="db"><div class="ft">4'</div><div class="slot"><div class="rod" style="height:71%"></div><div class="head wh" style="top:65%">6</div><div class="ghost" style="top:33%"><span class="chev" role="img" aria-label="Move fader down">▼</span></div></div><div class="v">6</div></div>
+      <div class="db"><div class="ft">2⅔'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
       <div class="db"><div class="ft">2'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head wh" style="top:0%">0</div></div><div class="v">0</div></div>
       <div class="db"><div class="ft">1⅗'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
       <div class="db"><div class="ft">1⅓'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
       <div class="db"><div class="ft">1'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head wh" style="top:0%">0</div></div><div class="v">0</div></div>
-      </div>
     </div>
   </div>
-  <div class="status"><span>VOICES 96 / 256</span><span class="ok">● STREAMING OK</span><span class="w">● DRAWBAR 2⅔': MOVE TO 6 TO TAKE OVER (NOW 3)</span></div>
+  <div class="status"><span class="tk">▼ DRAWBAR 4' → 6</span></div>
 </div></div>
+<!--/PL-->
 <p style="margin-top:10px">Se a Live Set <b>não tem órgão</b>, o botão DRAWBARS não muda de modo. O LED pisca duas vezes e a tela mostra "No organ in this Live Set". Se houver <b>dois órgãos</b>, os faders controlam o órgão selecionado pelo toque longo (PART).</p>
+
+<!--PSEUDO:START-->
+<h2>Pseudo-localization (+40% with ÁÇÊÕÑ Ação)</h2>
+<p>Every screen above again with each UI string lengthened by 40% with accented capitals, category short labels held to their 10-character budget, panel legends and Hint Bar control names kept in English, and every user-content name replaced by the clipping test string <code>ÁÇÊÕÑ Ação</code>. Nothing clips; names and labels that exceed their box truncate with an end ellipsis as specified.</p>
+<h3 class="pl">Performance · DRAWBARS mode (part 4 = organ) · +40%</h3>
+
+<div class="frame"><div class="scr">
+  <div class="bar"><span class="ctx">SÊTLÍST · ÁÇÊÕÑ Ação · 5 / 9 ÁÇ</span><span class="modes"><span class="on" data-en>DRAWBARS</span><span class="on" data-en>PARTS</span><span><span data-en>KNOBS</span> <span class="on" data-en>PART 4</span></span><span class="tempo">♩ 96</span></span></div>
+  <div class="hero"><div><small>LÍVÊ SÊT 05 ÁÇ</small><div class="ls"><span class="nm">ÁÇÊÕÑ Ação</span><span class="uns" role="img" aria-label="Unsaved changes">◆</span></div></div><div class="next">NÊXT Á<b>ÁÇÊÕÑ Ação</b><i>● Rêády Á</i></div></div>
+  <div class="scenes"><div>1 ÁÇÊÕÑ Ação<small>pád Á</small></div><div>2 ÁÇÊÕÑ Ação<small>píánõ + õrgán ÁÇÊ</small></div><div class="cur">3 ÁÇÊÕÑ Ação<small>õrgán fúll ÁÇÊ</small></div><div>4 ÁÇÊÕÑ Ação<small>õrgán sõft ÁÇÊ</small></div><div class="empty">5</div><div class="empty">6</div><div class="empty">7</div><div class="empty">8</div></div>
+  <div class="body">
+    <div class="organ"><div class="n">PÁRT 4 · DRÁWBÁRS ÁÇÊÕ</div><div class="t">ÁÇÊÕÑ Ação</div><div class="c" data-short>ÕRGÁN Á</div>
+      <div class="meta">Pêrcússíõn 2nd · Sõft · Fást ÁÇÊÕÑÁÇ<br>Víbrátõ C3 · Rõtáry ÁÇÊÕÑ <b style="color:#9fbaa8">FÁST Á</b></div>
+      <div class="reg">88 8600 000</div></div>
+    <div class="dbs">
+      <div class="db"><div class="ft">16'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head br" style="top:87%">8</div></div><div class="v">8</div></div>
+      <div class="db"><div class="ft">5⅓'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head br" style="top:87%">8</div></div><div class="v">8</div></div>
+      <div class="db"><div class="ft">8'</div><div class="slot"><div class="rod" style="height:93%"></div><div class="head wh" style="top:87%">8</div></div><div class="v">8</div></div>
+      <div class="db"><div class="ft">4'</div><div class="slot"><div class="rod" style="height:71%"></div><div class="head wh" style="top:65%">6</div><div class="ghost" style="top:33%"><span class="chev" role="img" aria-label="Move fader down">▼</span></div></div><div class="v">6</div></div>
+      <div class="db"><div class="ft">2⅔'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
+      <div class="db"><div class="ft">2'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head wh" style="top:0%">0</div></div><div class="v">0</div></div>
+      <div class="db"><div class="ft">1⅗'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
+      <div class="db"><div class="ft">1⅓'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head bk" style="top:0%">0</div></div><div class="v">0</div></div>
+      <div class="db"><div class="ft">1'</div><div class="slot"><div class="rod" style="height:6%"></div><div class="head wh" style="top:0%">0</div></div><div class="v">0</div></div>
+    </div>
+  </div>
+  <div class="status"><span class="tk">▼ DRÁWBÁR 4' → 6 ÁÇ</span></div>
+</div></div>
+
+<!--PSEUDO:END-->
 
 <h2>Categorias propostas (baseadas no que Yamaha, Korg, Roland e Nord usam)</h2>
 <table>

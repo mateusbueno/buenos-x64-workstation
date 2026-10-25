@@ -23,7 +23,7 @@
 <body>
 <div class="wrap">
 <h1>Velora 73: painel v2 (disposição A)</h1>
-<p>Todo o painel em inglês. Cada par de botões virou <b>um botão de alternância</b> com duas legendas, uma acima e outra abaixo, e um LED ao lado de cada legenda. Só o LED do modo ativo acende, então o modo atual está sempre visível, e a tela confirma.</p>
+<p>Todo o painel em inglês. Cada grupo de botões virou <b>um botão de alternância</b> com duas legendas (três no caso dos knobs: PART, ALL e ASSIGN), e um LED ao lado de cada legenda. Só o LED do modo ativo acende, então o modo atual está sempre visível, e a tela confirma.</p>
 
 <svg width="0" height="0" style="position:absolute"><defs>
   <linearGradient id="al" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dadddf"/><stop offset=".55" stop-color="#c3c7ca"/><stop offset="1" stop-color="#b1b5b8"/></linearGradient>
@@ -36,9 +36,9 @@
 </defs></svg>
 
 <div class="panel">
-<svg class="main" viewBox="0 0 1120 300">
-  <rect x="0" y="0" width="1120" height="190" rx="10" fill="url(#al)"/>
-  <rect x="120" y="196" width="990" height="96" rx="3" fill="#f7f7f5" stroke="#cfcfcc"/>
+<svg class="main" viewBox="0 0 1160 300">
+  <rect x="0" y="0" width="1160" height="190" rx="10" fill="url(#al)"/>
+  <rect x="120" y="196" width="1030" height="96" rx="3" fill="#f7f7f5" stroke="#cfcfcc"/>
   <!-- brand -->
   <g transform="translate(22,24)"><g fill="#2b322e"><rect x="0" y="0" width="4" height="22" rx="2"/><rect x="6" y="15" width="4" height="7" rx="2"/><rect x="12" y="15" width="4" height="7" rx="2"/><rect x="18" y="15" width="4" height="7" rx="2"/></g><text x="30" y="20" class="lblb">LADIANI</text><text x="0" y="38" class="lbl">VELORA 73</text></g>
   <!-- master + leslie -->
@@ -76,7 +76,8 @@
   </g>
   <!-- knobs -->
   <g transform="translate(800,20)">
-    <g transform="translate(286,10)"><use href="#ledOn" x="-30" y="-2"/><text x="-24" y="1" class="lbl">PART</text><use href="#btn" x="0" y="12"/><use href="#ledOff" x="-30" y="30"/><text x="-24" y="33" class="lbl">ALL</text></g>
+    <!-- 3-state knob toggle PART / ALL / ASSIGN: one button, three legends, one LED beside each; only the active mode's LED is lit -->
+    <g transform="translate(330,10)"><use href="#ledOn" x="-70" y="-4"/><text x="-64" y="-1" class="lbl">PART</text><use href="#ledOff" x="-70" y="14"/><text x="-64" y="17" class="lbl">ALL</text><use href="#ledOff" x="-70" y="32"/><text x="-64" y="35" class="lbl">ASSIGN</text><use href="#btn" x="0" y="14"/></g>
     <g transform="translate(20,42)"><use href="#enc" x="0"/><use href="#enc" x="70"/><use href="#enc" x="140"/><use href="#enc" x="210"/></g>
     <g class="lbl" text-anchor="middle"><text x="20" y="76">DELAY</text><text x="90" y="76">BRIGHTNESS</text><text x="160" y="76">ATTACK</text><text x="230" y="76">RELEASE</text></g>
     <g transform="translate(20,114)"><use href="#enc" x="0"/><use href="#enc" x="70"/><use href="#enc" x="140"/><use href="#enc" x="210"/></g>
@@ -89,7 +90,7 @@
   <tr><th>Botão de alternância</th><th>Comportamento</th></tr>
   <tr><td><b>DRAWBARS / MIXER</b></td><td>Os 9 faders controlam as drawbars da parte de órgão, ou os volumes das partes 1–8 mais o reverb. O LED marca o modo, e a tela mostra o rótulo de cada fader.</td></tr>
   <tr><td><b>PARTS / SCENES</b></td><td>No modo PARTS, os 8 botões ligam e desligam cada parte no teclado. Um toque longo seleciona a parte para os knobs. No modo SCENES, eles vão direto para as cenas 1–8: as cenas existentes ficam com o LED fraco e a atual com o LED forte.</td></tr>
-  <tr><td><b>PART / ALL</b></td><td>Os 8 knobs agem na parte selecionada ou em todas as partes ao mesmo tempo. No modo ALL, a tela mostra os valores como relativos.</td></tr>
+  <tr><td><b>PART / ALL / ASSIGN</b></td><td>Botão de alternância de <b>3 estados</b>, com 3 LEDs (só o do modo ativo acende). PART: os 8 knobs agem na parte selecionada. ALL: agem em todas as partes ao mesmo tempo, e a tela mostra os valores como relativos. ASSIGN: cada knob controla o parâmetro escolhido pelo usuário, mapa salvo por Live Set (a tela mostra o ASSIGN Overlay).</td></tr>
   <tr><td><b>MENU</b></td><td>Fica entre EXIT e WRITE. Abre a grade de atalhos (launcher): Setlist Browser, Setlist, Library, Effects, Scenes, Import, Settings. EXIT volta para a Performance.</td></tr>
   <tr><td>Faders</td><td>Modo pickup: depois de trocar de cena ou de Live Set, o fader só assume o controle quando passa pelo valor salvo. A tela mostra o fantasma. Faders motorizados ficam para a Pro.</td></tr>
 </table>

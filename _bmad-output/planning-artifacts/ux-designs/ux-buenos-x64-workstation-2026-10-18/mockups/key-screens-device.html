@@ -5,25 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Velora 73 — device screens</title>
 <style>
-  /* Sálvia dark: bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on #0b0d0c warn #cdb86c */
+  /* Sálvia dark: bg #0b0d0c surface #151917 raised #202622 line #2b322e text #e7ebe8 muted #88938c accent #9fbaa8 on #0b0d0c warn #cdb86c
+     Story 4.14: Top/Hint bars 56 px (9.33% of 600), ◆ Unsaved Indicator, ▶ NOW row, Settings rows per EXPERIENCE.md, "Live Sets" not "songs", no opacity on text. */
   * { box-sizing:border-box; }
   body { margin:0; background:#ecebe8; font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif; color:#151515; }
   .wrap { max-width:1120px; margin:auto; padding:28px 16px 60px; }
   h1 { font-size:22px; font-weight:500; margin:0 0 6px; } h2 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:34px 0 6px; }
   p { color:#555; max-width:880px; margin:0 0 12px; }
   .frame { background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab); padding:12px; border-radius:12px; }
-  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; grid-template-rows:7% 1fr 9%; font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; background:#0b0d0c; color:#e7ebe8; container-type:inline-size; position:relative; }
+  .scr { aspect-ratio:1024/600; width:100%; border-radius:6px; overflow:hidden; display:grid; --u:calc(100cqw/1024); grid-template-rows:9.3333% 1fr 9.3333%; /* 56 / 488 / 56 of 600 */ font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif; background:#0b0d0c; color:#e7ebe8; container-type:inline-size; position:relative; }
   .bar { display:flex; align-items:center; justify-content:space-between; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.5cqw; letter-spacing:.25em; }
-  .bar b { color:#e7ebe8; font-weight:400; }
+  .bar b { color:#e7ebe8; font-weight:400; } .bar > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .bar > span:last-child { flex:none; white-space:nowrap; margin-left:calc(24*var(--u)); }
   .cnt { padding:1.6cqw 2.2cqw; min-height:0; overflow:hidden; }
   .hint { display:flex; gap:2.6cqw; align-items:center; padding:0 2.2cqw; background:#151917; color:#88938c; font-size:1.35cqw; letter-spacing:.08em; }
   .hint b { color:#e7ebe8; font-weight:400; border:1px solid #2b322e; border-radius:.5cqw; padding:.2cqw .7cqw; margin-right:.6cqw; }
   .cols { display:grid; grid-template-columns:1fr 1.6fr; gap:1.6cqw; height:100%; }
   .list > div { display:flex; justify-content:space-between; align-items:center; padding:1cqw 1.4cqw; border-radius:.7cqw; font-size:1.9cqw; margin-bottom:.6cqw; background:#151917; }
-  .list > div small { color:#88938c; font-size:1.3cqw; }
+  .list > div small { color:#88938c; font-size:1.3cqw; flex:none; margin-left:1cqw; } .list > div > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .list .sel { background:#202622; border:1px solid #9fbaa8; }
   .list .cur { color:#9fbaa8; }
-  .list .drag { border:1px dashed #9fbaa8; background:transparent; opacity:.8; }
+  .list .drag { border:1px dashed #9fbaa8; background:transparent; }
+  .list .nowrow { color:#9fbaa8; } .list .nowrow small { color:#9fbaa8; letter-spacing:.12em; } .uns { color:#cdb86c; margin-left:.8cqw; }
   .tag { font-size:1.2cqw; letter-spacing:.12em; color:#88938c; margin-bottom:.8cqw; display:block; }
   .chips { display:flex; flex-wrap:wrap; gap:.7cqw; margin-bottom:1.2cqw; }
   .chips span { font-size:1.4cqw; padding:.5cqw 1.1cqw; border-radius:2cqw; background:#151917; border:1px solid #2b322e; }
@@ -51,13 +53,15 @@
   .modal .act .yes { background:#9fbaa8; color:#0b0d0c; border-color:#9fbaa8; }
   .dim { filter:brightness(.35); }
   .set { display:grid; grid-template-columns:1fr 2fr; gap:1.6cqw; height:100%; }
-  .set .rows > div { display:flex; justify-content:space-between; padding:1cqw 1.4cqw; border-bottom:1px solid #2b322e; font-size:1.7cqw; }
-  .set .rows > div span:last-child { color:#9fbaa8; }
+  .set .rows > div { display:flex; justify-content:space-between; align-items:center; gap:1.2cqw; padding:.35cqw 1.4cqw; min-height:calc(38*var(--u)); border-bottom:1px solid #2b322e; font-size:calc(16*var(--u)); }
+  .set .rows .gd { display:block; color:#88938c; font-size:calc(12*var(--u)); letter-spacing:.02em; margin-top:calc(1*var(--u)); }
+  .set .rows > div > span:last-child { color:#9fbaa8; }
   .seg { display:inline-flex; border:1px solid #2b322e; border-radius:.6cqw; overflow:hidden; }
   .seg span { padding:.2cqw 1cqw; font-size:1.4cqw; color:#88938c; } .seg .on { background:#9fbaa8; color:#0b0d0c; }
   .boot { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:2cqw; }
   .boot small { color:#88938c; font-size:1.4cqw; letter-spacing:.2em; }
   .bootbar { width:22cqw; height:.4cqw; background:#2b322e; border-radius:1cqw; overflow:hidden; } .bootbar span { display:block; height:100%; width:70%; background:#9fbaa8; }
+  h3.pl { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:#555; margin:22px 0 6px; font-weight:600; }
   .notes { background:#fff; border:1px solid #d6d4cf; border-radius:8px; padding:10px 14px; font-size:13px; color:#444; margin-top:10px; }
   .notes li { margin:3px 0; }
 </style>
@@ -69,23 +73,26 @@
 
 <!-- 1 SETLIST -->
 <h2>1 · Setlist: escolher e reordenar</h2>
+<!--PL title="1 · Setlist"-->
 <div class="frame"><div class="scr">
-  <div class="bar"><span>SETLISTS</span><span><b>Wedding Ana &amp; Pedro</b> · 12 songs</span></div>
+  <div class="bar"><span>SETLISTS</span><span><b>Wedding Ana &amp; Pedro</b> · 12 Live Sets</span></div>
   <div class="cnt"><div class="cols">
     <div class="list"><span class="tag">YOUR SETLISTS</span>
       <div class="sel">Wedding Ana &amp; Pedro<small>12</small></div><div>Sunday Service<small>9</small></div><div>Rock Covers<small>18</small></div><div>Jazz Trio<small>14</small></div><div style="color:#88938c">+ New setlist</div></div>
-    <div class="list"><span class="tag">SONGS · DRAG OR HOLD ▲▼ TO REORDER</span>
-      <div>01 Canon in D<small>4 scenes</small></div><div>02 A Thousand Years<small>3 scenes</small></div><div class="cur sel">03 Perfect ● now<small>5 scenes</small></div><div class="drag">04 Thinking Out Loud ⇅<small>moving…</small></div><div>05 All of Me<small>4 scenes</small></div><div style="color:#88938c">+ Add Live Set</div></div>
+    <div class="list"><span class="tag">LIVE SETS · DRAG OR HOLD ▲▼ TO REORDER</span>
+      <div>01 Canon in D<small>4 scenes</small></div><div>02 A Thousand Years<small>3 scenes</small></div><div class="nowrow sel"><span>▶ 03 Perfect<span class="uns" role="img" aria-label="Unsaved changes">◆</span></span><small>NOW · 5 scenes</small></div><div class="drag"><span>04 Thinking Out Loud ⇅</span><small>moving…</small></div><div>05 All of Me<small>4 scenes</small></div><div style="color:#88938c">+ Add Live Set</div></div>
   </div></div>
   <div class="hint"><span><b>VALUE</b>scroll</span><span><b>WRITE</b>load setlist</span><span><b>EXIT</b>back to Performance</span><span style="margin-left:auto">Loading a setlist keeps the current sound playing</span></div>
 </div></div>
+<!--/PL-->
 
 <!-- 1b SETLIST BROWSER -->
 <h2>1b · Setlist Browser: busca e seleção (no padrão da Library)</h2>
+<!--PL title="1b · Setlist Browser"-->
 <div class="frame"><div class="scr">
   <div class="bar"><span>SETLIST BROWSER</span><span>4 results for "thou"</span></div>
   <div class="cnt">
-    <div class="search"><i>⌕</i>thou<span class="caret"></span><i style="margin-left:auto">searches setlists and songs</i></div>
+    <div class="search"><i>⌕</i>thou<span class="caret"></span><i style="margin-left:auto">searches setlists and Live Sets</i></div>
     <div class="chips"><span>★ Favorites</span><span>Recent</span><span>Setlists</span><span class="on">All Live Sets</span><span>Wedding</span><span>Church</span><span>Pop</span><span>Jazz</span><span>…</span></div>
     <div class="grid">
       <div class="sel">A Thousand Years<small>LIVE SET · IN WEDDING ANA &amp; PEDRO +2</small><em>★</em></div>
@@ -94,12 +101,14 @@
       <div>Thousand Lights Tour<small>SETLIST · 16 SONGS · LAST MONTH</small></div>
     </div>
   </div>
-  <div class="hint"><span><b>VALUE</b>scroll</span><span><b>WRITE</b>load setlist · or jump to Live Set</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Jumping to a song outside the setlist keeps the setlist; ◀ ▶ return to it</span></div>
+  <div class="hint"><span><b>VALUE</b>scroll</span><span><b>WRITE</b>load setlist · or jump to Live Set</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Jumping to a Live Set outside the setlist keeps the setlist; ◀ ▶ return to it</span></div>
 </div></div>
+<!--/PL-->
 <p style="margin-top:10px">Serve também para o imprevisto: a banda puxa uma música fora do roteiro, você busca "thou" e entra direto na Live Set certa. A troca não corta o som, e o setlist continua carregado para você voltar com ◀ ▶. As etiquetas (Wedding, Church, Pop…) são criadas pelo usuário e servem de filtro.</p>
 
 <!-- 2 LIBRARY -->
 <h2>2 · Library: busca e categorias, escolhendo o timbre da Parte 3</h2>
+<!--PL title="2 · Library"-->
 <div class="frame"><div class="scr">
   <div class="bar"><span>LIBRARY · CHOOSE TIMBRE FOR <b>PART 3</b></span><span>1,284 instruments · 412 GB</span></div>
   <div class="cnt">
@@ -113,9 +122,11 @@
   </div>
   <div class="hint"><span><b>KEYS</b>preview while browsing</span><span><b>VALUE</b>scroll</span><span><b>WRITE</b>assign to Part 3</span><span><b>EXIT</b>cancel</span></div>
 </div></div>
+<!--/PL-->
 
 <!-- 3 IMPORT -->
 <h2>3 · Import: pendrive ou SSD, com sugestão de categoria</h2>
+<!--PL title="3 · Import"-->
 <div class="frame"><div class="scr">
   <div class="bar"><span>IMPORT · USB DRIVE "SANDISK 128GB"</span><span>7 instruments found · 18.4 GB</span></div>
   <div class="cnt">
@@ -129,14 +140,16 @@
     <div style="display:flex;justify-content:space-between;font-size:1.4cqw;color:#88938c"><span>Apply one category to all ▾</span><span>Free space after import: 529 GB</span></div>
     <div class="prog"><span></span></div><div style="font-size:1.35cqw;color:#88938c">Importing 2 of 7 · Upright_Bass_Jazz · converting &amp; verifying (lossless) · you can keep playing</div>
   </div>
-  <div class="hint"><span><b>WRITE</b>start import</span><span><b>EXIT</b>import in background</span><span style="margin-left:auto;color:#cdb86c">● 1 instrument needs a category before import</span></div>
+  <div class="hint"><span><b>WRITE</b>start import</span><span><b>EXIT</b>import in background</span><span style="margin-left:auto;color:#cdb86c">⚠ 1 instrument needs a category before import</span></div>
 </div></div>
+<!--/PL-->
 
 <!-- 4 WRITE -->
 <h2>4 · Write: confirmação ao salvar</h2>
+<!--PL title="4 · Write"-->
 <div class="frame"><div class="scr">
   <div class="bar dim"><span>SETLIST · WEDDING ANA &amp; PEDRO · 3 / 12</span><span>♩ 72</span></div>
-  <div class="cnt dim" style="font-size:5cqw;padding-top:3cqw">Perfect</div>
+  <div class="cnt dim" style="font-size:5cqw;padding-top:3cqw">Perfect<span class="uns" style="font-size:2.2cqw" role="img" aria-label="Unsaved changes">◆</span></div>
   <div class="hint dim"><span>VOICES 142 / 256</span></div>
   <div class="modal">
     <h3>Write changes?</h3>
@@ -146,27 +159,36 @@
     <div class="act"><span>EXIT · Cancel</span><span class="yes">WRITE · Yes</span></div>
   </div>
 </div></div>
+<!--/PL-->
 
 <!-- 5 SETTINGS -->
 <h2>5 · Settings</h2>
+<!--PL title="5 · Settings"-->
 <div class="frame"><div class="scr">
   <div class="bar"><span>SETTINGS</span><span>Velora 73 · firmware 1.2.0</span></div>
   <div class="cnt"><div class="set">
     <div class="list"><div class="sel">Display &amp; Language</div><div>Keyboard &amp; Pedals</div><div>MIDI &amp; Clock</div><div>Knobs · Global Assign</div><div>Computer (Velora Studio)</div><div>Storage &amp; Library</div><div>System &amp; Update</div></div>
     <div class="rows">
-      <div><span>Theme</span><span class="seg"><span class="on">Stage</span><span>Studio</span></span></div>
-      <div><span>Language</span><span>English ▾</span></div>
-      <div><span>Brightness</span><span>85%</span></div>
-      <div><span>Large text on Performance</span><span>On</span></div>
-      <div><span>Boot into</span><span>Last sound used</span></div>
-      <div><span>Accidental-press guard</span><span>Hold Write 0.5 s</span></div>
+      <div><span>Theme<small class="gd">Studio theme reads best in daylight; Stage theme in dark venues</small></span><span class="seg"><span class="on">Stage</span><span>Studio</span></span></div>
+      <div><span>Language</span><span data-en>English ▾</span></div>
+      <div><span>Screen brightness</span><span>85%</span></div>
+      <div><span>Panel LED brightness</span><span class="seg"><span>Low</span><span class="on">Mid</span><span>High</span><span>Follow screen</span></span></div>
+      <div><span>Large text on Performance</span><span class="seg"><span>Off</span><span class="on">On</span></span></div>
+      <div><span>Reduced motion</span><span class="seg"><span class="on">Off</span><span>On</span></span></div>
+      <div><span>Touch on Performance</span><span class="seg"><span>Full</span><span class="on">Safe</span><span>Off</span></span></div>
+      <div><span>Write hold</span><span>0.5 s</span></div>
+      <div><span>Long press</span><span class="seg"><span>400 ms</span><span class="on">500 ms</span><span>800 ms</span></span></div>
+      <div><span>Panel guard</span><span class="seg"><span class="on">Off</span><span>On</span></span></div>
+      <div><span>Boot into</span><span>Last sound used ▾</span></div>
     </div>
   </div></div>
-  <div class="hint"><span><b>VALUE</b>change</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Languages: English · Português (Brasil) · Español</span></div>
+  <div class="hint"><span><b>VALUE</b>change</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Languages: <span data-en>English · Português (Brasil) · Español</span></span></div>
 </div></div>
+<!--/PL-->
 
 <!-- 6 BOOT -->
 <h2>6 · Boot (≤ 10 s)</h2>
+<!--PL title="6 · Boot (≤ 10 s)"-->
 <div class="frame"><div class="scr" style="grid-template-rows:1fr">
   <div class="boot">
     <svg width="120" height="96" viewBox="0 0 80 64"><g fill="#e7ebe8"><rect x="8" y="4" width="9" height="56" rx="4.5"/><rect x="22" y="44" width="9" height="16" rx="4.5"/><rect x="36" y="44" width="9" height="16" rx="4.5"/><rect x="50" y="44" width="9" height="16" rx="4.5"/><rect x="64" y="44" width="9" height="16" rx="4.5"/></g></svg>
@@ -175,13 +197,132 @@
     <small>RESTORING · PERFECT · SCENE 2</small>
   </div>
 </div></div>
+<!--/PL-->
+
+<!--PSEUDO:START-->
+<h2>Pseudo-localization (+40% with ÁÇÊÕÑ Ação)</h2>
+<p>Every screen above again with each UI string lengthened by 40% with accented capitals, category short labels held to their 10-character budget, panel legends and Hint Bar control names kept in English, and every user-content name replaced by the clipping test string <code>ÁÇÊÕÑ Ação</code>. Nothing clips; names and labels that exceed their box truncate with an end ellipsis as specified.</p>
+<h3 class="pl">1 · Setlist · +40%</h3>
+
+<div class="frame"><div class="scr">
+  <div class="bar"><span>SÊTLÍSTS ÁÇÊ</span><span><b>ÁÇÊÕÑ Ação</b> · 12 Lívê Sêts ÁÇÊ</span></div>
+  <div class="cnt"><div class="cols">
+    <div class="list"><span class="tag">YÕÚR SÊTLÍSTS ÁÇÊÕ</span>
+      <div class="sel">ÁÇÊÕÑ Ação<small>12</small></div><div>ÁÇÊÕÑ Ação<small>9</small></div><div>ÁÇÊÕÑ Ação<small>18</small></div><div>ÁÇÊÕÑ Ação<small>14</small></div><div style="color:#88938c">+ Nêw sêtlíst ÁÇÊ</div></div>
+    <div class="list"><span class="tag">LÍVÊ SÊTS · DRÁG ÕR HÕLD ▲▼ TÕ RÊÕRDÊR ÁÇÊÕÑÁÇÊÕÑ</span>
+      <div>01 ÁÇÊÕÑ Ação<small>4 scênês ÁÇ</small></div><div>02 ÁÇÊÕÑ Ação<small>3 scênês ÁÇ</small></div><div class="nowrow sel"><span>▶ 03 ÁÇÊÕÑ Ação<span class="uns" role="img" aria-label="Unsaved changes">◆</span></span><small>NÕW · 5 scênês ÁÇÊ</small></div><div class="drag"><span>04 ÁÇÊÕÑ Ação ⇅</span><small>mõvíng… ÁÇ</small></div><div>05 ÁÇÊÕÑ Ação<small>4 scênês ÁÇ</small></div><div style="color:#88938c">+ Ádd Lívê Sêt ÁÇÊ</div></div>
+  </div></div>
+  <div class="hint"><span><b>VALUE</b>scrõll ÁÇ</span><span><b>WRITE</b>lõád sêtlíst ÁÇÊÕ</span><span><b>EXIT</b>báck tõ Pêrfõrmáncê ÁÇÊÕÑÁ</span><span style="margin-left:auto">Lõádíng á sêtlíst kêêps thê cúrrênt sõúnd pláyíng ÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑÁ</span></div>
+</div></div>
+
+<h3 class="pl">1b · Setlist Browser · +40%</h3>
+
+<div class="frame"><div class="scr">
+  <div class="bar"><span>SÊTLÍST BRÕWSÊR ÁÇÊÕÑ</span><span>4 rêsúlts fõr "ÁÇÊÕÑ Ação" ÁÇÊ</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>ÁÇÊÕÑ Ação<span class="caret"></span><i style="margin-left:auto">sêárchês sêtlísts ánd Lívê Sêts ÁÇÊÕÑÁÇÊÕÑ</i></div>
+    <div class="chips"><span>★ Fávõrítês ÁÇÊ</span><span>Rêcênt ÁÇ</span><span>Sêtlísts ÁÇÊ</span><span class="on">Áll Lívê Sêts ÁÇÊÕ</span><span>ÁÇÊÕÑ Ação</span><span>ÁÇÊÕÑ Ação</span><span>ÁÇÊÕÑ Ação</span><span>ÁÇÊÕÑ Ação</span><span>…</span></div>
+    <div class="grid">
+      <div class="sel">ÁÇÊÕÑ Ação<small>LÍVÊ SÊT · ÍN ÁÇÊÕÑ Ação +2 ÁÇÊ</small><em>★</em></div>
+      <div>ÁÇÊÕÑ Ação<small>LÍVÊ SÊT · ÍN ÁÇÊÕÑ Ação ÁÇÊ</small></div>
+      <div>ÁÇÊÕÑ Ação<small>LÍVÊ SÊT · ÍN ÁÇÊÕÑ Ação ÁÇÊ</small></div>
+      <div>ÁÇÊÕÑ Ação<small>SÊTLÍST · 16 SÕNGS · LÁST MÕNTH ÁÇÊÕÑÁÇÊ</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>VALUE</b>scrõll ÁÇ</span><span><b>WRITE</b>lõád sêtlíst · õr júmp tõ Lívê Sêt ÁÇÊÕÑÁÇÊÕÑ</span><span><b>EXIT</b>báck Á</span><span style="margin-left:auto">Júmpíng tõ á Lívê Sêt õútsídê thê sêtlíst kêêps thê sêtlíst; ◀ ▶ rêtúrn tõ ít ÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑÁÇÊ</span></div>
+</div></div>
+
+<h3 class="pl">2 · Library · +40%</h3>
+
+<div class="frame"><div class="scr">
+  <div class="bar"><span>LÍBRÁRY · CHÕÕSÊ TÍMBRÊ FÕR ÁÇÊÕÑÁÇÊ <b>PÁRT 3 Á</b></span><span>1,284 ínstrúmênts · 412 GB ÁÇÊÕÑ</span></div>
+  <div class="cnt">
+    <div class="search"><i>⌕</i>stríngs ÁÇ<span class="caret"></span><i style="margin-left:auto">õn-scrêên kêybõárd ÁÇÊÕÑÁ</i></div>
+    <div class="chips"><span>★ Fávõrítês ÁÇÊ</span><span>Rêcênt ÁÇ</span><span>Píánõ Á</span><span>Ê.Píánõ ÁÇ</span><span>Õrgán Á</span><span class="on">Stríngs ÁÇ</span><span>Bráss Á</span><span>Chõír &amp; Võcál ÁÇÊ</span><span>Synth Pád ÁÇÊ</span><span>Wõrld Á</span><span>…</span></div>
+    <div class="grid">
+      <div class="sel">ÁÇÊÕÑ Ação<small>STRÍNGS · FÁCTÕRY ÁÇÊÕÑ</small><em>★</em></div><div>ÁÇÊÕÑ Ação<small>STRÍNGS · FÁCTÕRY ÁÇÊÕÑ</small></div><div>ÁÇÊÕÑ Ação<small>STRÍNGS · FÁCTÕRY ÁÇÊÕÑ</small></div>
+      <div>ÁÇÊÕÑ Ação<small>STRÍNGS · FÁCTÕRY ÁÇÊÕÑ</small></div><div>ÁÇÊÕÑ Ação<small>STRÍNGS · ÍMPÕRTÊD ÁÇÊÕÑ</small></div><div>ÁÇÊÕÑ Ação<small>STRÍNGS · FÁCTÕRY ÁÇÊÕÑ</small></div>
+      <div>ÁÇÊÕÑ Ação<small>STRÍNGS · ÍMPÕRTÊD ÁÇÊÕÑ</small></div><div>ÁÇÊÕÑ Ação<small>STRÍNGS · FÁCTÕRY ÁÇÊÕÑ</small></div><div>ÁÇÊÕÑ Ação<small>STRÍNGS · ÍMPÕRTÊD ÁÇÊÕÑ</small></div>
+    </div>
+  </div>
+  <div class="hint"><span><b>KEYS</b>prêvíêw whílê brõwsíng ÁÇÊÕÑÁÇ</span><span><b>VALUE</b>scrõll ÁÇ</span><span><b>WRITE</b>ássígn tõ Párt 3 ÁÇÊÕ</span><span><b>EXIT</b>cáncêl ÁÇ</span></div>
+</div></div>
+
+<h3 class="pl">3 · Import · +40%</h3>
+
+<div class="frame"><div class="scr">
+  <div class="bar"><span>ÍMPÕRT · ÚSB DRÍVÊ "ÁÇÊÕÑ Ação" ÁÇÊÕÑ</span><span>7 ínstrúmênts fõúnd · 18.4 GB ÁÇÊÕÑÁÇ</span></div>
+  <div class="cnt">
+    <div class="imp">
+      <div><span>ÁÇÊÕÑ Ação<br><small>2.1 GB · SFZ Á</small></span><span class="cat sug">Ê.Píánõ ✓ súggêstêd ÁÇÊÕÑ</span><small>rêády Á</small></div>
+      <div><span>ÁÇÊÕÑ Ação<br><small>1.4 GB · SFZ Á</small></span><span class="cat sug">Báss ✓ súggêstêd ÁÇÊÕÑ</span><small>rêády Á</small></div>
+      <div><span>ÁÇÊÕÑ Ação<br><small>0.9 GB · SFZ Á</small></span><span class="cat need">Chõõsê cátêgõry ▾ ÁÇÊÕÑ</span><small>nêêds cátêgõry ÁÇÊÕÑ</small></div>
+      <div><span>ÁÇÊÕÑ Ação<br><small>6.8 GB · SF2 Á</small></span><span class="cat sug">Píánõ ✓ súggêstêd ÁÇÊÕÑ</span><small>rêády Á</small></div>
+      <div><span>ÁÇÊÕÑ Ação<br><small>3.2 GB · SFZ Á</small></span><span class="cat sug">Chõír &amp; Võcál ✓ súggêstêd ÁÇÊÕÑÁÇ</span><small>rêády Á</small></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:1.4cqw;color:#88938c"><span>Ápply õnê cátêgõry tõ áll ▾ ÁÇÊÕÑÁÇÊ</span><span>Frêê spácê áftêr ímpõrt: 529 GB ÁÇÊÕÑÁÇÊ</span></div>
+    <div class="prog"><span></span></div><div style="font-size:1.35cqw;color:#88938c">Ímpõrtíng 2 õf 7 · ÁÇÊÕÑ Ação · cõnvêrtíng &amp; vêrífyíng (lõsslêss) · yõú cán kêêp pláyíng ÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑÁ</div>
+  </div>
+  <div class="hint"><span><b>WRITE</b>stárt ímpõrt ÁÇÊÕ</span><span><b>EXIT</b>ímpõrt ín báckgrõúnd ÁÇÊÕÑÁÇ</span><span style="margin-left:auto;color:#cdb86c">⚠ 1 ínstrúmênt nêêds á cátêgõry bêfõrê ímpõrt ÁÇÊÕÑÁÇÊÕÑÁÇÊÕ</span></div>
+</div></div>
+
+<h3 class="pl">4 · Write · +40%</h3>
+
+<div class="frame"><div class="scr">
+  <div class="bar dim"><span>SÊTLÍST · ÁÇÊÕÑ Ação · 3 / 12 ÁÇ</span><span>♩ 72</span></div>
+  <div class="cnt dim" style="font-size:5cqw;padding-top:3cqw">ÁÇÊÕÑ Ação<span class="uns" style="font-size:2.2cqw" role="img" aria-label="Unsaved changes">◆</span></div>
+  <div class="hint dim"><span>VÕÍCÊS 142 / 256 ÁÇ</span></div>
+  <div class="modal">
+    <h3>Wrítê chángês? ÁÇÊÕ</h3>
+    <div class="opt"><span class="on">Scênê 2 "ÁÇÊÕÑ Ação" Á</span><span>Whõlê Lívê Sêt ÁÇÊÕ</span><span>Sávê ás nêw… ÁÇÊ</span></div>
+    <div class="name">ÁÇÊÕÑ Ação</div>
+    <div style="font-size:1.4cqw;color:#88938c">Chángêd: Párt 2 võlúmê, Rêvêrb sênd, Dráwbárs (Párt 4) ÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑ</div>
+    <div class="act"><span>ÊXÍT · Cáncêl ÁÇÊ</span><span class="yes">WRÍTÊ · Yês ÁÇÊ</span></div>
+  </div>
+</div></div>
+
+<h3 class="pl">5 · Settings · +40%</h3>
+
+<div class="frame"><div class="scr">
+  <div class="bar"><span>SÊTTÍNGS ÁÇÊ</span><span>Vêlõrá 73 · fírmwárê 1.2.0 ÁÇÊÕÑ</span></div>
+  <div class="cnt"><div class="set">
+    <div class="list"><div class="sel">Díspláy &amp; Lángúágê ÁÇÊÕÑ</div><div>Kêybõárd &amp; Pêdáls ÁÇÊÕÑ</div><div>MÍDÍ &amp; Clõck ÁÇÊ</div><div>Knõbs · Glõbál Ássígn ÁÇÊÕÑÁ</div><div>Cõmpútêr (Vêlõrá Stúdíõ) ÁÇÊÕÑÁÇ</div><div>Stõrágê &amp; Líbráry ÁÇÊÕÑ</div><div>Systêm &amp; Úpdátê ÁÇÊÕ</div></div>
+    <div class="rows">
+      <div><span>Thêmê Á<small class="gd">Stúdíõ thêmê rêáds bêst ín dáylíght; Stágê thêmê ín dárk vênúês ÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑÁÇÊÕÑ</small></span><span class="seg"><span class="on">Stágê Á</span><span>Stúdíõ ÁÇ</span></span></div>
+      <div><span>Lángúágê ÁÇÊ</span><span data-en>English ▾</span></div>
+      <div><span>Scrêên bríghtnêss ÁÇÊÕÑÁ</span><span>85%</span></div>
+      <div><span>Pánêl LÊD bríghtnêss ÁÇÊÕÑÁÇ</span><span class="seg"><span>Lõw Á</span><span class="on">Míd Á</span><span>Hígh Á</span><span>Fõllõw scrêên ÁÇÊÕ</span></span></div>
+      <div><span>Lárgê têxt õn Pêrfõrmáncê ÁÇÊÕÑÁÇÊ</span><span class="seg"><span>Õff Á</span><span class="on">Õn Á</span></span></div>
+      <div><span>Rêdúcêd mõtíõn ÁÇÊÕÑ</span><span class="seg"><span class="on">Õff Á</span><span>Õn Á</span></span></div>
+      <div><span>Tõúch õn Pêrfõrmáncê ÁÇÊÕÑÁÇ</span><span class="seg"><span>Fúll Á</span><span class="on">Sáfê Á</span><span>Õff Á</span></span></div>
+      <div><span>Wrítê hõld ÁÇÊ</span><span>0.5 s Á</span></div>
+      <div><span>Lõng prêss ÁÇÊ</span><span class="seg"><span>400 ms Á</span><span class="on">500 ms Á</span><span>800 ms Á</span></span></div>
+      <div><span>Pánêl gúárd ÁÇÊ</span><span class="seg"><span class="on">Õff Á</span><span>Õn Á</span></span></div>
+      <div><span>Bõõt íntõ ÁÇÊ</span><span>Lást sõúnd úsêd ▾ ÁÇÊÕÑ</span></div>
+    </div>
+  </div></div>
+  <div class="hint"><span><b>VALUE</b>chángê ÁÇ</span><span><b>EXIT</b>báck Á</span><span style="margin-left:auto">Lángúágês: ÁÇÊ <span data-en>English · Português (Brasil) · Español</span></span></div>
+</div></div>
+
+<h3 class="pl">6 · Boot (≤ 10 s) · +40%</h3>
+
+<div class="frame"><div class="scr" style="grid-template-rows:1fr">
+  <div class="boot">
+    <svg width="120" height="96" viewBox="0 0 80 64"><g fill="#e7ebe8"><rect x="8" y="4" width="9" height="56" rx="4.5"/><rect x="22" y="44" width="9" height="16" rx="4.5"/><rect x="36" y="44" width="9" height="16" rx="4.5"/><rect x="50" y="44" width="9" height="16" rx="4.5"/><rect x="64" y="44" width="9" height="16" rx="4.5"/></g></svg>
+    <div style="font-size:2.4cqw;letter-spacing:1.2cqw">VÊLÕRÁ ÁÇ</div>
+    <div class="bootbar"><span></span></div>
+    <small>RÊSTÕRÍNG · ÁÇÊÕÑ Ação · SCÊNÊ 2 ÁÇÊÕÑ</small>
+  </div>
+</div></div>
+
+<!--PSEUDO:END-->
 
 <div class="notes"><b>Comportamentos que estas telas fixam:</b>
 <ul>
   <li>Carregar outro setlist ou importar uma biblioteca <b>nunca interrompe o som atual</b>, e a importação roda em segundo plano.</li>
   <li>Na Library, tocar no teclado faz uma <b>pré-escuta</b> do timbre destacado antes de confirmar.</li>
   <li>O <b>Write</b> mostra o que mudou e pergunta o escopo: cena, Live Set inteira ou "salvar como novo".</li>
-  <li><b>Proteção contra toque acidental</b> (nos Ajustes): o Write exige segurar o botão por 0,5 s.</li>
+  <li><b>Write hold</b> (Settings › Display &amp; Language, 0,3 a 1,0 s, padrão 0,5 s): o Write exige segurar o botão, o que protege contra toque acidental. O <b>Panel guard</b> faz o mesmo para LIVE SET ◀ ▶ (300 ms).</li>
   <li>O boot termina <b>no último som usado</b>, e a tela de boot diz o que está restaurando.</li>
 </ul></div>
 </div>
