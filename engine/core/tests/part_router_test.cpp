@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "velora/core/block_renderer.hpp"
@@ -955,6 +956,75 @@ void test_ref_across_banks() {
   CHECK(f.count == 1 && f.t[0].release_first && f.t[0].old_pitch == 60);
 }
 
+// --- pitch bend in a Live Set generation (Story 3.10) -------------------------------------------------------------
+
+// Records pitch bend deliveries (part, value) as the block loop applies them.
+class PitchSpy final : public Engine {
+ public:
+  EngineTypeId type_id() const noexcept override { return EngineTypeId::kFm; }
+  std::uint32_t cost_units_per_voice() const noexcept override { return 1; }
+  std::uint32_t voice_capacity() const noexcept override { return 1; }
+  EngineStatus start_voice(std::uint32_t, std::uint32_t, std::uint32_t) noexcept override { return EngineStatus::kOk; }
+  EngineStatus stop_voice(std::uint32_t, std::uint32_t) noexcept override { return EngineStatus::kVoiceNotFound; }
+  void set_param(std::uint32_t, float) noexcept override {}
+  void render(float*, float*, std::uint32_t) noexcept override {}
+  void render_split(float* const*, float* const*, std::uint32_t) noexcept override {}
+  bool voice_info(std::uint32_t, VoiceInfo&) const noexcept override { return false; }
+  bool begin_steal_fade(std::uint32_t, std::uint32_t) noexcept override { return false; }
+  bool set_part_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept override {
+    log.emplace_back(part, value32);
+    return true;
+  }
+  std::vector<std::pair<std::uint32_t, std::uint32_t>> log;
+};
+
+void test_pitch_bend_live_set() {
+  auto br = std::make_unique<BlockRenderer>(8);
+  PitchSpy spy;
+  CHECK(br->bind_engine(spy));
+  std::vector<std::unique_ptr<Snapshot>> gens;
+  Snapshot cur = Snapshot::defaults();
+  cur.live_set = true;
+  for (std::uint32_t p = 0; p < 3; ++p) {
+    cur.parts[p].engine_type = static_cast<std::uint32_t>(EngineTypeId::kFm);
+    cur.parts[p].state = PartState::kReady;
+  }
+  cur.parts[1].keyboard_on = 0;  // part 1 does not sound with the keyboard
+  auto publish = [&] {
+    auto g = std::make_unique<Snapshot>(cur);
+    g->ledger_index = static_cast<std::uint32_t>(gens.size() % SnapshotExchange::kLedgerSlots);
+    g->revision = gens.size() + 1;
+    br->snapshots().publish(g.get());
+    gens.push_back(std::move(g));
+  };
+  float l[kBlockFrames], r[kBlockFrames];
+  publish();
+  br->process_block(l, r);
+  CHECK(br->router().active());
+  const std::uint32_t bend = 0xC0000000u;
+  CHECK(br->submit({make_pitch_bend(0, 9, bend), 0}));  // the channel names the keyboard source, not a part
+  br->process_block(l, r);
+  CHECK(spy.log.size() == 2 && spy.log[0] == std::make_pair(0u, bend) && spy.log[1] == std::make_pair(2u, bend));  // only the keyboard-on parts
+  CHECK(br->ignored_events() == 0);
+  // part 1 joins the keyboard in the next generation: it takes the keyboard's last bend, like the controllers
+  spy.log.clear();
+  cur.parts[1].keyboard_on = 1;
+  publish();
+  br->process_block(l, r);
+  bool got1 = false;
+  for (const auto& e : spy.log) got1 = got1 || (e.first == 1 && e.second == bend);
+  CHECK(got1);
+  // no part sounds with the keyboard: the bend reaches nobody and is counted as ignored
+  for (std::uint32_t p = 0; p < 3; ++p) cur.parts[p].keyboard_on = 0;
+  publish();
+  br->process_block(l, r);
+  spy.log.clear();
+  const std::uint64_t before = br->ignored_events();
+  CHECK(br->submit({make_pitch_bend(0, 0, 0u), 0}));
+  br->process_block(l, r);
+  CHECK(spy.log.empty() && br->ignored_events() == before + 1);
+}
+
 int main() {
   test_router_unit();
   test_ref_across_banks();
@@ -980,6 +1050,7 @@ int main() {
   test_shared_pitch();
   test_engine_remap_syncs_parameters();
   test_pedal_up_after_keyboard_off();
+  test_pitch_bend_live_set();
   if (g_fail) {
     std::printf("part_router_tests: %d FAILED\n", g_fail);
     return 1;

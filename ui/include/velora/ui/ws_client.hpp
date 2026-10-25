@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstdint>
 
+#include "velora/ui/panel_event.hpp"
 #include "ws_v1.pb.h"
 
 namespace velora::ui {
@@ -45,6 +46,10 @@ class WsClient {
   using ErrorCallback = std::function<void(const ws::v1::Error&)>;
   void set_error_callback(ErrorCallback cb);
 
+  // Story 3.10: register a listener for the panel button events the engine pushes (ServerMessage.panel_event, after Subscribe). Invoked on the client
+  // thread with a Button PanelEvent whose timestamp_us is the engine's device time of the press / release.
+  void set_panel_event_listener(PanelEventListener cb);
+
   // Send a command to the engine
   bool send_command(const ws::v1::ClientMessage& msg);
 
@@ -69,6 +74,7 @@ class WsClient {
   ws::v1::State latest_state_;
   StateCallback state_cb_;
   ErrorCallback error_cb_;
+  PanelEventListener panel_cb_;
 
   std::thread worker_thread_;
   int active_fd_{-1};

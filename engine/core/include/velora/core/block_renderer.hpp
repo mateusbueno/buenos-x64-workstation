@@ -133,6 +133,10 @@ class BlockRenderer {
   // class, part out of range). Relaxed counters, readable from any thread.
   std::uint64_t param_events_applied() const noexcept { return param_applied_.load(std::memory_order_relaxed); }
   std::uint64_t param_events_rejected() const noexcept { return param_rejected_.load(std::memory_order_relaxed); }
+  // Story 3.10: raw panel control events (faders, VALUE encoder, pedals; assign_events.hpp) that reached the RT plane; binding them is Epic 4.
+  std::uint64_t panel_control_events() const noexcept { return panel_controls_.load(std::memory_order_relaxed); }
+  // The last raw value of panel control `control_id` (0..255), as the frame carried it; 0 before the first event.
+  std::uint16_t panel_control_value(std::uint32_t control_id) const noexcept { return panel_value_[control_id & 0xFFu].load(std::memory_order_relaxed); }
 
   // The RT plane's single tempo value in bpm (Story 2.11): the live value of the performance parameter `tempo_bpm` (master scope, 20..300, default 120), clamped.
   // Today it is set by an ordinary parameter event (ws.v1 SetPerformanceParam, a UMP, the offline renderer's options): the internal tempo is the only
@@ -227,6 +231,9 @@ class BlockRenderer {
   // The raw controller path: `channel` is the part (outside a Live Set) or the keyboard source (in one, fanned out to every part that
   // listens). `count_ignored`: a control change nobody read is an ignored event (not for the copy of a mapped CC that also was a parameter).
   void route_cc(std::uint32_t channel, std::uint32_t cc, std::uint32_t value32, bool count_ignored) noexcept VELORA_NONBLOCKING;
+  // Pitch bend (Story 3.10): like a controller. In a Live Set generation the keyboard's bend goes to every part that sounds with the keyboard on; otherwise to the channel's part.
+  void route_pitch_bend(std::uint32_t channel, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
+  bool deliver_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
   bool deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
   // Gives the keyboard's last controller values to the parts that listen and did not have them (all = a seamless switch: every listening part).
   void replay_keyboard_ccs(const Snapshot& s, bool all, const std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
@@ -277,6 +284,8 @@ class BlockRenderer {
   std::uint64_t applied_reservation_epoch_ = 0;   // RT-owned: the Snapshot::reservation_epoch last committed to the arbiter (Story 4.5)
   std::array<std::uint32_t, 128> keyboard_cc_{};  // RT-owned: the last value of every controller the keyboard sent in a Live Set generation (32 bit)
   std::array<bool, 128> keyboard_cc_seen_{};
+  std::uint32_t keyboard_pitch_bend_ = Ump::kPitchBendCentre32;  // RT-owned: the keyboard's last pitch bend in a Live Set generation (replayed like the controllers)
+  bool keyboard_pitch_seen_ = false;
   std::array<bool, params::kPartCount> replay_listening_{};    // RT-owned: parts that listened to the keyboard at the last replay decision
   std::array<std::uint64_t, params::kPartCount> replay_bank_{};  // ... and the SampleBank::id they had
   // Story 8.8: physical input activity (group 0 note on/off, CC 64), published once per block through LastValueTable::store_input_activity().
@@ -289,6 +298,8 @@ class BlockRenderer {
   std::array<std::uint8_t, 16 * 128> present_{};  // scratch for reap_generation_refs()
   std::uint32_t ref_keys_ = 0;                     // keys with a non-zero mask
   std::atomic<std::uint64_t> param_applied_{0}, param_rejected_{0};
+  std::atomic<std::uint64_t> panel_controls_{0};
+  std::array<std::atomic<std::uint16_t>, 256> panel_value_{};
   std::atomic<std::uint64_t> aux_folded_{0}, rejected_outputs_{0};
   std::array<float, 2 * 64> fold_{};  // scratch: Aux bus of the single-output overload (64 = kBlockFrames)
   std::atomic<std::uint64_t> contact_routed_{0}, contact_dropped_{0};

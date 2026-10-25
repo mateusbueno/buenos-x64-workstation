@@ -24,6 +24,7 @@
 #include "velora/host/control_server.hpp"
 #include "velora/host/dev_config.hpp"
 #include "velora/host/midi_ingest.hpp"
+#include "velora/host/panel_reader.hpp"
 #include "velora/host/render_driver.hpp"
 
 using namespace velora;
@@ -1395,6 +1396,72 @@ static void test_subscribe_off_and_fragmentation() {
   CHECK(c.recv(r) && r.revision() == 10);
 }
 
+// Story 3.10: a panel BUTTON frame, read by the panel reader, reaches subscribed clients as a ServerMessage.panel_event (request_id 0), in order, and
+// nobody else; the RT lane gets nothing for it.
+static void test_panel_event_push() {
+  Live L("panel");
+  Client sub, quiet;
+  CHECK(L.connect(sub) && L.connect(quiet));
+  ws::v1::ServerMessage r, push;
+  ws::v1::ClientMessage m;
+  m.set_request_id(++g_rid);
+  m.mutable_subscribe()->set_enable(true);
+  CHECK(sub.call(m, r) && sub.recv(push) && push.has_state());  // the current state right away
+  HostEventQueue q;
+  KeyboardOnParts parts;
+  PanelReader reader(q, parts);
+  ControlServer* srv = L.server.get();
+  reader.set_button_sink([srv](const PanelButtonEvent& ev) { srv->push_panel_event(ev.id, ev.pressed, ev.device_ns); });
+  mcu::FrameWriter w;
+  std::uint64_t t = 5'000'000'000ull;
+  std::vector<std::pair<std::uint8_t, bool>> sent = {{20, true}, {20, false}, {23, true}, {23, false}, {1, true}};
+  for (const auto& [id, pressed] : sent) {
+    const auto wire = w.write(mcu::Button{id, pressed}, static_cast<std::uint32_t>(t / 1000));
+    reader.on_bytes(wire.data(), wire.size(), t);
+    t += 10'000'000;
+  }
+  std::uint64_t last_ns = 0;
+  for (const auto& [id, pressed] : sent) {
+    CHECK(sub.recv(push) && push.request_id() == 0 && push.has_panel_event());
+    CHECK(push.panel_event().button_id() == id && push.panel_event().pressed() == pressed);
+    CHECK(push.panel_event().device_ns() >= last_ns && push.panel_event().device_ns() != 0);
+    last_ns = push.panel_event().device_ns();
+  }
+  CHECK(!quiet.recv(push, 150));  // not subscribed: nothing pushed
+  StampedUmp u;
+  CHECK(!q.pop(u));               // buttons never go to the RT plane
+  CHECK(L.server->panel_events_sent() == sent.size() && L.server->panel_events_dropped() == 0);
+  CHECK(sub.call(get_state(), r) && r.has_state());  // the connection is fine
+}
+
+// Story 3.10 review: a full PanelEvent queue sheds presses first and never loses a release; events pushed with no subscriber are not counted as sent.
+static void test_panel_event_overflow_and_no_subscriber() {
+  Rig rig;
+  CHECK(rig.load("{}"));
+  const std::string path = "/tmp/velora-ctl-pov-" + std::to_string(::getpid()) + ".sock";
+  ControlServer srv(rig.plane, path);
+  srv.set_panel_queue_max(4);
+  for (std::uint32_t i = 1; i <= 4; ++i) CHECK(srv.push_panel_event(i, true, 100 + i));
+  CHECK(!srv.push_panel_event(9, true, 200));   // a press on a full queue is dropped
+  CHECK(srv.push_panel_event(1, false, 300));   // a release is kept: it takes the place of the oldest pending press
+  CHECK(srv.push_panel_event(2, false, 301));
+  CHECK(srv.panel_events_dropped() == 3);
+  const auto pend = srv.panel_pending();
+  CHECK(pend.size() == 4);
+  int releases = 0;
+  for (const auto& e : pend) releases += !e.second;
+  CHECK(releases == 2 && pend.back().first == 2 && !pend.back().second);
+  // a queue holding only releases still takes one more release (beyond the bound, never lost)
+  srv.set_panel_queue_max(1);
+  CHECK(srv.push_panel_event(3, false, 302));
+  std::string err;
+  CHECK_MSG(srv.start(err), err);
+  CHECK(wait_until([&] { return srv.panel_pending().empty(); }));
+  CHECK(srv.panel_events_sent() == 0);  // nobody subscribed: nothing was delivered
+  srv.stop();
+  srv.push_panel_event(5, true, 1);  // after stop a push is harmless (queued, never written to a closed fd)
+}
+
 static void test_disconnect_mid_frame_and_file_modes() {
   Custom L("mid");
   {
@@ -1490,6 +1557,8 @@ int main() {
   test_handshake_deadline_and_client_cap();
   test_slow_subscriber_is_dropped();
   test_diagnostics();
+  test_panel_event_push();
+  test_panel_event_overflow_and_no_subscriber();
   if (g_fail) std::printf("control_tests: %d failure(s)\n", g_fail);
   else std::printf("control_tests: ok\n");
   return g_fail ? 1 : 0;

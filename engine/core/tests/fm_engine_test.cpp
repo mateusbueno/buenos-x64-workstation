@@ -1,5 +1,7 @@
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <vector>
@@ -294,6 +296,26 @@ void test_fm_anti_aliasing_high_key_and_ratio() {
   std::cout << "[PASS] FM anti-aliasing and high-key stability (peak=" << peak << ", rms=" << rms << ")\n";
 }
 
+// Story 3.10: MIDI 2.0 pitch bend through Engine::set_part_pitch_bend (+-2 semitones, centre 0x80000000). Explicit checks: asserts vanish under NDEBUG.
+static void test_fm_part_pitch_bend() {
+  FmEngine engine(48000.0f);
+  auto want = [&](std::uint32_t part, std::uint32_t v, double semis) {
+    if (!engine.set_part_pitch_bend(part, v) || std::fabs(static_cast<double>(engine.part_pitch_bend(part)) - semis) > 1e-4) {
+      std::cerr << "[FAIL] fm pitch bend part " << part << " value " << v << " -> " << engine.part_pitch_bend(part) << ", want " << semis << "\n";
+      std::exit(1);
+    }
+  };
+  want(0, 0x80000000u, 0.0);   // centre: no bend
+  want(0, 0u, -2.0);           // minimum
+  want(0, 0xFFFFFFFFu, 2.0);   // maximum (about +2)
+  want(3, 0xC0000000u, 1.0);   // half way up the upper half
+  if (std::fabs(engine.part_pitch_bend(0) - 2.0f) > 1e-4f || engine.part_pitch_bend(1) != 0.0f) {  // parts are independent
+    std::cerr << "[FAIL] fm pitch bend parts are not independent\n";
+    std::exit(1);
+  }
+  std::cout << "[PASS] FmEngine MIDI 2.0 pitch bend\n";
+}
+
 int main() {
   test_fm_engine_initialization_and_metadata();
   test_fm_algorithms_sweep();
@@ -303,6 +325,7 @@ int main() {
   test_fm_steal_fade_and_metadata();
   test_fm_split_render_and_brightness();
   test_fm_anti_aliasing_high_key_and_ratio();
+  test_fm_part_pitch_bend();
 
   std::cout << "\nAll FM Engine (Story 12.1) unit tests passed successfully!\n";
   return 0;

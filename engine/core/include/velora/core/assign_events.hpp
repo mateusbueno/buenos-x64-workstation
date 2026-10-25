@@ -9,6 +9,7 @@
 //
 //   id            event                  word1
 //   0x3FFF        control->RT fence      sequence number                     (Story 4.9, param_events.hpp)
+//   0x3FE0        PanelControl           (control id << 16) | value16: a raw panel CONTROL frame (fader, VALUE encoder, pedal), Story 3.10; binding is Epic 4
 //   0x3FF0..0x3FF7 EncoderStep(n)        signed delta, int32 two's complement, within int16 (encoder n = 0..7 = K1..K8)
 //   0x3FF8        SetEncoderMode         0 = PART, 1 = ALL, 2 = ASSIGN
 //   0x3FF9        SelectPart             part 0..7
@@ -37,6 +38,7 @@ inline constexpr std::uint32_t kEncoderCount = 8;
 
 inline constexpr std::uint32_t kReservedEventChannel = 0xF;  // == kFenceChannel
 inline constexpr std::uint32_t kReservedEventFirstId = 0x3FE0;  // the registry refuses ids from here on
+inline constexpr std::uint32_t kPanelControlEventId = 0x3FE0;
 inline constexpr std::uint32_t kEncoderStepFirstId = 0x3FF0;    // ..0x3FF7
 inline constexpr std::uint32_t kEncoderModeEventId = 0x3FF8;
 inline constexpr std::uint32_t kSelectPartEventId = 0x3FF9;
@@ -58,6 +60,12 @@ constexpr Ump make_encoder_step_event(std::uint32_t encoder, std::int32_t delta)
   if (delta < -32768) delta = -32768;
   return detail::make_reserved_event(kEncoderStepFirstId + (encoder & 7u), static_cast<std::uint32_t>(delta));
 }
+// A raw panel control event (Story 3.10): MCU control id (1..255) and the 16-bit value as the frame carried it (an encoder delta in two's complement).
+constexpr Ump make_panel_control_event(std::uint32_t control_id, std::uint32_t value16) noexcept {
+  return detail::make_reserved_event(kPanelControlEventId, ((control_id & 0xFFu) << 16) | (value16 & 0xFFFFu));
+}
+constexpr std::uint32_t panel_control_id(const Ump& u) noexcept { return (u.word1 >> 16) & 0xFFu; }
+constexpr std::uint32_t panel_control_value16(const Ump& u) noexcept { return u.word1 & 0xFFFFu; }
 constexpr Ump make_encoder_mode_event(EncoderMode mode) noexcept {
   return detail::make_reserved_event(kEncoderModeEventId, static_cast<std::uint32_t>(mode));
 }

@@ -13,9 +13,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "velora/host/control_plane.hpp"
@@ -51,6 +54,25 @@ class ControlServer {
   // Set it before start().
   void set_thread_start(std::function<void()> f) { thread_start_ = std::move(f); }
 
+  // Story 3.10: a panel BUTTON frame for the subscribed ui clients (ServerMessage.panel_event, request_id 0). Callable from any thread (the panel input
+  // thread): it queues the event and wakes the server thread, which pushes it. False when the queue is full (the event is dropped and counted).
+  // Never relayed through sysd: this is the only path a button takes to the ui.
+  bool push_panel_event(std::uint32_t button_id, bool pressed, std::uint64_t device_ns);
+  // Bound of the pending PanelEvent queue (default 1024); presses beyond it are dropped, a release replaces the oldest pending press. Test seam.
+  void set_panel_queue_max(std::size_t n) {
+    std::lock_guard<std::mutex> lk(panel_mu_);
+    panel_max_ = n ? n : 1;
+  }
+  // The pending (not yet pushed) PanelEvents as (button id, pressed), oldest first. Test seam.
+  std::vector<std::pair<std::uint32_t, bool>> panel_pending() const {
+    std::lock_guard<std::mutex> lk(panel_mu_);
+    std::vector<std::pair<std::uint32_t, bool>> v;
+    for (const PanelItem& p : panel_q_) v.emplace_back(p.id, p.pressed);
+    return v;
+  }
+  std::uint64_t panel_events_sent() const noexcept { return panel_sent_.load(std::memory_order_relaxed); }
+  std::uint64_t panel_events_dropped() const noexcept { return panel_dropped_.load(std::memory_order_relaxed); }
+
   std::uint64_t accepted() const noexcept { return accepted_.load(std::memory_order_relaxed); }
   std::uint64_t dropped_slow() const noexcept { return dropped_slow_.load(std::memory_order_relaxed); }
   std::uint64_t frames_in() const noexcept { return frames_in_.load(std::memory_order_relaxed); }
@@ -70,6 +92,7 @@ class ControlServer {
   void send(Client& c, const ws::v1::ServerMessage& msg);
   void flush(Client& c);
   void broadcast_state();
+  void drain_panel_events();
 
   ControlPlane& plane_;
   std::string path_;
@@ -81,6 +104,12 @@ class ControlServer {
   std::vector<Client> clients_;
   std::function<bool()> tick_;
   std::function<void()> thread_start_;
+  struct PanelItem { std::uint32_t id; bool pressed; std::uint64_t ns; };
+  std::size_t panel_max_ = 1024;  // guarded by panel_mu_
+  mutable std::mutex panel_mu_;
+  int panel_wake_ = -1;  // wake_[1] while running; guarded by panel_mu_
+  std::deque<PanelItem> panel_q_;
+  std::atomic<std::uint64_t> panel_sent_{0}, panel_dropped_{0};
   std::atomic<std::uint64_t> accepted_{0}, frames_in_{0}, dropped_slow_{0};
 };
 

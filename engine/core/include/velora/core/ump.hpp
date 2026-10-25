@@ -17,7 +17,10 @@ struct Ump {
   static constexpr std::uint32_t kStatusAssignableController = 0x3;  // MIDI 2.0 assignable controller (NRPN)
   static constexpr std::uint32_t kStatusAssignablePerNoteController = 0x1;  // MIDI 2.0 assignable per-note controller
   static constexpr std::uint32_t kStatusControlChange = 0xB;
+  static constexpr std::uint32_t kStatusPitchBend = 0xE;  // MIDI 2.0 pitch bend: word1 = unsigned 32-bit value, centre 0x80000000 (Story 3.10)
+  static constexpr std::uint32_t kControllerModulation = 1;
   static constexpr std::uint32_t kControllerSustain = 64;
+  static constexpr std::uint32_t kPitchBendCentre32 = 0x80000000u;
 
   // SysEx7 Status (Form) bits: word0 [23:20]
   static constexpr std::uint32_t kSysex7FormComplete = 0x0;
@@ -67,6 +70,10 @@ struct Ump {
   constexpr bool is_control_change() const noexcept {
     return message_type() == kMessageTypeChannelVoice2 && status() == kStatusControlChange;
   }
+  constexpr bool is_pitch_bend() const noexcept {
+    return message_type() == kMessageTypeChannelVoice2 && status() == kStatusPitchBend;
+  }
+  constexpr std::uint32_t pitch_bend_value32() const noexcept { return word1; }
   constexpr bool is_assignable_controller() const noexcept {
     return message_type() == kMessageTypeChannelVoice2 && status() == kStatusAssignableController;
   }
@@ -122,6 +129,12 @@ constexpr Ump make_control_change(std::uint32_t group, std::uint32_t channel, st
                                   std::uint32_t value32) noexcept {
   return Ump{(Ump::kMessageTypeChannelVoice2 << 28) | ((group & 0xF) << 24) |
                  (Ump::kStatusControlChange << 20) | ((channel & 0xF) << 16) | ((index & 0x7F) << 8),
+             value32};
+}
+
+// MIDI 2.0 pitch bend (status 0xE): `value32` unsigned, 0x80000000 = centre.
+constexpr Ump make_pitch_bend(std::uint32_t group, std::uint32_t channel, std::uint32_t value32) noexcept {
+  return Ump{(Ump::kMessageTypeChannelVoice2 << 28) | ((group & 0xF) << 24) | (Ump::kStatusPitchBend << 20) | ((channel & 0xF) << 16),
              value32};
 }
 

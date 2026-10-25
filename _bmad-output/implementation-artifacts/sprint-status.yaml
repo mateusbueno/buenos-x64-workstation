@@ -95,7 +95,7 @@ development_status:
   3-7-aftertouch-read-and-routed-when-the-keybed-has-it: backlog
   3-8-panel-mcu-firmware-inputs: backlog
   3-9-panel-mcu-firmware-soc-driven-leds: backlog
-  3-10-panel-reader-on-the-soc-and-the-mac-virtual-panel: backlog
+  3-10-panel-reader-on-the-soc-and-the-mac-virtual-panel: done
   3-11-pedals-with-half-pedal-calibration-and-expression: backlog
   3-12-soc-driven-led-state-and-toggle-state-with-led-per-state: backlog
   3-13-pcm3168a-codec-as-clock-master-with-the-alsa-machine-driver: backlog

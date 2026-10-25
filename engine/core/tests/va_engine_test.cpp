@@ -1,5 +1,7 @@
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -381,6 +383,26 @@ void test_va_golden_render_bit_identical() {
   std::cout << "[PASS] VA Golden Render is bit-identically reproducible\n";
 }
 
+// Story 3.10: MIDI 2.0 pitch bend through Engine::set_part_pitch_bend (+-2 semitones, centre 0x80000000). Explicit checks: asserts vanish under NDEBUG.
+static void test_va_part_pitch_bend() {
+  VaEngine engine(48000.0f);
+  auto want = [&](std::uint32_t part, std::uint32_t v, double semis) {
+    if (!engine.set_part_pitch_bend(part, v) || std::fabs(static_cast<double>(engine.part_pitch_bend(part)) - semis) > 1e-4) {
+      std::cerr << "[FAIL] va pitch bend part " << part << " value " << v << " -> " << engine.part_pitch_bend(part) << ", want " << semis << "\n";
+      std::exit(1);
+    }
+  };
+  want(0, 0x80000000u, 0.0);   // centre: no bend
+  want(0, 0u, -2.0);           // minimum
+  want(0, 0xFFFFFFFFu, 2.0);   // maximum (about +2)
+  want(3, 0xC0000000u, 1.0);   // half way up the upper half
+  if (std::fabs(engine.part_pitch_bend(0) - 2.0f) > 1e-4f || engine.part_pitch_bend(1) != 0.0f) {  // parts are independent
+    std::cerr << "[FAIL] va pitch bend parts are not independent\n";
+    std::exit(1);
+  }
+  std::cout << "[PASS] VaEngine MIDI 2.0 pitch bend\n";
+}
+
 int main() {
   std::cout << "=== Running VA Engine DSP & Real-Time Test Suite (Story 12.6) ===\n";
   test_va_engine_initialization_and_metadata();
@@ -390,6 +412,7 @@ int main() {
   test_va_envelope_timing_accuracy();
   test_va_glide_mono_legato_and_unison();
   test_va_golden_render_bit_identical();
+  test_va_part_pitch_bend();
   std::cout << "=== All VA Engine Tests Passed! ===\n";
   return 0;
 }

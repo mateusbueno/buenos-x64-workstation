@@ -149,6 +149,14 @@ class Engine {
     return false;
   }
 
+  // Pitch bend (Story 3.10): MIDI 2.0 pitch bend addressed to `part`, value32 unsigned with 0x80000000 = centre, delivered at the event's frame between
+  // render segments. Returns true when the engine follows it; the block loop counts the event as ignored when no engine did. Default: not followed.
+  virtual bool set_part_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING {
+    (void)part;
+    (void)value32;
+    return false;
+  }
+
   // The key (channel, note) physically came up (Story 5.2). Called at the note off even when the sustain pedal defers the engine's
   // stop_voice() to the pedal up, so that engines that follow held keys (sw_down / sw_up keyswitches) see the release at once.
   // Idempotent for the engine: stop_voice() of the same key afterwards changes nothing more. Default: nothing.

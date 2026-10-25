@@ -13,7 +13,10 @@ add_library(velora_host STATIC
   src/trust_list.cpp
   src/mcu_frame.cpp
   src/keybed_calibration.cpp
-  src/keybed_reader.cpp)
+  src/drift_clock.cpp
+  src/keybed_reader.cpp
+  src/panel_reader.cpp
+  src/virtual_panel_map.cpp)
 add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
 # velora_format_verify (Story 6.5): the resolver VERIFIES protected bundles (Ed25519 signature, hash list, index). It holds no cipher: the decrypting code is only in
@@ -316,6 +319,19 @@ add_executable(keybed_reader_test tests/keybed_reader_test.cpp)
 target_link_libraries(keybed_reader_test PRIVATE velora_host)
 add_test(NAME keybed_reader_test COMMAND keybed_reader_test)
 set_tests_properties(keybed_reader_test PROPERTIES TIMEOUT 300)
+
+# Panel reader (Story 3.10): wheels -> pitch bend / modulation for every keyboard-on part, raw panel controls, BUTTON sink, bad frames, drift-tracked time,
+# an offline BlockRenderer render; the Mac virtual panel mapping file, its frames and the UMP sink. (The PanelEvent push over the UDS is in control_tests.)
+add_executable(panel_reader_test tests/panel_reader_test.cpp)
+target_link_libraries(panel_reader_test PRIVATE velora_host)
+add_test(NAME panel_reader_test COMMAND panel_reader_test)
+set_tests_properties(panel_reader_test PROPERTIES TIMEOUT 300)
+
+add_executable(virtual_panel_map_test tests/virtual_panel_map_test.cpp)
+target_link_libraries(virtual_panel_map_test PRIVATE velora_host)
+target_compile_definitions(virtual_panel_map_test PRIVATE VELORA_VIRTUAL_PANEL_MAP="${CMAKE_CURRENT_SOURCE_DIR}/dev/virtual-panel.json")
+add_test(NAME virtual_panel_map_test COMMAND virtual_panel_map_test)
+set_tests_properties(virtual_panel_map_test PROPERTIES TIMEOUT 120)
 
 add_executable(sample_bundle_loader_test tests/sample_bundle_loader_test.cpp)
 target_link_libraries(sample_bundle_loader_test PRIVATE velora_host)

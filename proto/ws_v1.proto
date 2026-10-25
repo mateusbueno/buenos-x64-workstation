@@ -598,6 +598,13 @@ message Ack {
   bool not_durable = 1;                  // Story 4.6: a setlist command was committed (the new file is in place) but the directory sync failed; the change is applied
 }
 
+// Story 3.10: a panel BUTTON frame pushed to subscribed clients (request_id 0). Only the engine produces it; it never goes through sysd.
+message PanelEvent {
+  uint32 button_id = 1;                  // MCU button id (mcu/common/MCU-ID-MAP.md section 7)
+  bool pressed = 2;                      // true pressed, false released
+  uint64 device_ns = 3;                  // the press / release time on the engine's host clock (CLOCK_MONOTONIC_RAW ns), drift-corrected from the panel MCU tick
+}
+
 message ServerMessage {
   uint64 request_id = 1;                 // 0 for pushed messages
   uint64 revision = 2;                   // snapshot revision after the command (unchanged on error)
@@ -616,5 +623,6 @@ message ServerMessage {
     SetlistsReply setlists_reply = 21;
     WriteReply write_reply = 22;          // Story 4.9
     DiagnosticsReply diagnostics_reply = 23;  // Story 1.21
+    PanelEvent panel_event = 24;          // Story 3.10: pushed (request_id 0) to subscribers
   }
 }

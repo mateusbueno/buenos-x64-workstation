@@ -125,6 +125,10 @@ bool ControlServer::start(std::string& err) {
   }
   if (!set_nonblocking(wake_[0]) || !set_nonblocking(wake_[1])) return fail_setup("wake pipe");  // also FD_CLOEXEC
   stop_.store(false);
+  {
+    std::lock_guard<std::mutex> lk(panel_mu_);
+    panel_wake_ = wake_[1];
+  }
   thread_ = std::thread([this] { run(); });
   return true;
 }
@@ -135,6 +139,11 @@ void ControlServer::stop() {
   const char b = 1;
   [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
   thread_.join();
+  {
+    std::lock_guard<std::mutex> lk(panel_mu_);  // a push can no longer write to the fd we close next
+    panel_wake_ = -1;
+    panel_q_.clear();
+  }
   for (Client& c : clients_) ::close(c.fd);
   clients_.clear();
   ::close(listen_fd_);
@@ -169,6 +178,7 @@ void ControlServer::run() {
       if (!c.dead && !c.tx.empty()) flush(c);
       if (!c.dead && c.closing && c.tx.empty()) c.dead = true;
     }
+    drain_panel_events();
     // Replies produced above may be queued for other clients (broadcasts): push them out now.
     for (Client& c : clients_)
       if (!c.dead && !c.tx.empty()) flush(c);
@@ -300,6 +310,52 @@ void ControlServer::broadcast_state() {
   plane_.fill_state(push.mutable_state());
   for (Client& c : clients_)
     if (c.subscribed && !c.dead) send(c, push);
+}
+
+bool ControlServer::push_panel_event(std::uint32_t button_id, bool pressed, std::uint64_t device_ns) {
+  std::lock_guard<std::mutex> lk(panel_mu_);
+  if (panel_q_.size() >= panel_max_) {
+    if (pressed) {  // a full queue sheds presses first
+      panel_dropped_.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+    // A release is never lost (the ui would see a stuck button): it replaces the oldest queued press, else it is queued beyond the bound.
+    auto it = std::find_if(panel_q_.begin(), panel_q_.end(), [](const PanelItem& p) { return p.pressed; });
+    if (it != panel_q_.end()) {
+      panel_q_.erase(it);
+      panel_dropped_.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+  panel_q_.push_back({button_id, pressed, device_ns});
+  if (panel_wake_ >= 0) {  // events queued before start() go out when the thread runs
+    const char b = 1;
+    [[maybe_unused]] const ssize_t n = ::write(panel_wake_, &b, 1);
+  }
+  return true;
+}
+
+void ControlServer::drain_panel_events() {
+  std::deque<PanelItem> items;
+  {
+    std::lock_guard<std::mutex> lk(panel_mu_);
+    items.swap(panel_q_);
+  }
+  for (const PanelItem& it : items) {
+    ws::v1::ServerMessage m;
+    m.set_request_id(0);
+    m.set_revision(plane_.revision());
+    ws::v1::PanelEvent* pe = m.mutable_panel_event();
+    pe->set_button_id(it.id);
+    pe->set_pressed(it.pressed);
+    pe->set_device_ns(it.ns);
+    bool delivered = false;
+    for (Client& c : clients_)
+      if (c.subscribed && !c.dead) {
+        send(c, m);
+        delivered = true;
+      }
+    if (delivered) panel_sent_.fetch_add(1, std::memory_order_relaxed);
+  }
 }
 
 void ControlServer::send(Client& c, const ws::v1::ServerMessage& msg) {

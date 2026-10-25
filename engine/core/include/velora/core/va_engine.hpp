@@ -42,6 +42,12 @@ class VaEngine final : public Engine {
   // Real-time control
   void set_sustain(uint32_t channel, bool sustain) noexcept;
   void set_pitch_bend(uint32_t channel, float semitones) noexcept;
+  float part_pitch_bend(uint32_t part) const noexcept { return part_pitch_bend_[part % kPartCount]; }
+  // MIDI 2.0 pitch bend (Story 3.10): +-2 semitones over the full range, centre 0x80000000.
+  bool set_part_pitch_bend(uint32_t part, uint32_t value32) noexcept override {
+    set_pitch_bend(part, static_cast<float>((static_cast<double>(value32) / 2147483648.0 - 1.0) * 2.0));
+    return true;
+  }
   void set_brightness_offset(uint32_t channel, uint8_t brightness) noexcept;
 
   uint32_t active_voice_count() const noexcept;

@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <sys/stat.h>
 #include <string>
@@ -42,6 +43,8 @@
 #include "velora/host/library_client.hpp"
 #include "velora/host/live_set_switcher.hpp"
 #include "velora/host/midi_ingest.hpp"
+#include "velora/host/panel_reader.hpp"
+#include "velora/host/virtual_panel_map.hpp"
 #include "velora/host/render_driver.hpp"
 #include "velora/host/scene_controller.hpp"
 #include "velora/host/setlist_controller.hpp"
@@ -65,7 +68,7 @@ int main(int argc, char** argv) {
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false, no_audio = false;
-  std::string live_set_path, library_root, live_set_dir, data_dir, library_socket;
+  std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path;
   std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
   bool factory_live_sets_required = false;      // --factory-live-sets-required: a failed import is fatal
   std::string factory_live_sets_path;            // Story 6.9 (dev builds): the signed factory Live Set file imported on first boot
@@ -121,6 +124,8 @@ int main(int argc, char** argv) {
         return 2;
       }
 #endif
+    } else if (!std::strcmp(argv[i], "--virtual-panel") && i + 1 < argc) {
+      virtual_panel_path = argv[++i];  // Story 3.10: the Mac virtual panel mapping file (a USB MIDI control surface becomes the panel)
     } else if (!std::strcmp(argv[i], "--library-socket") && i + 1 < argc) {
       library_socket = argv[++i];  // Story 4.11: tell the librarian service which Live Set became active and when the engine is performing
     } else {
@@ -139,6 +144,8 @@ int main(int argc, char** argv) {
                    "                                                 into DIR/live_sets through the Live Set store before the catalog is scanned; idempotent, user edits and deletions are kept)\n"
                    "                   [--factory-live-sets-required]   (a failed factory import is fatal: exit 1, instead of starting with the Live Sets the engine has)\n"
 #endif
+                   "                   [--virtual-panel MAP.json]   (Story 3.10: a mapping file (engine/host/dev/virtual-panel.json) turns the faders, knobs and buttons of a MIDI control surface\n"
+                   "                                                 into panel MCU frames for the panel reader; wheels reach the keyboard-on parts, BUTTON frames reach subscribed ui clients)\n"
                    "                   [--library-socket PATH [--library-playing-idle-ms N]]   (report the active Live Set and the performing state to the librarian service's Library API;\n"
                    "                                                                           performing = a note within the last N ms, default 3000; default off)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
@@ -440,6 +447,34 @@ int main(int argc, char** argv) {
   } line_in_guard{*renderer, audio};
   host::macos::CoreMidiInput midi;
   std::string err;
+  // Story 3.10: the Mac virtual panel. A MIDI control surface's mapped CCs / notes / pitch bend become panel MCU frames fed to the panel reader (the same
+  // reader the panel MCU's UART feeds on the SoC); the reader's UMP joins the MIDI lane (the CoreMIDI thread stays its only producer) and BUTTON frames are
+  // pushed to subscribed ui clients over ws.v1. Everything the map does not name goes on to the ingest unchanged.
+  host::KeyboardOnParts keyboard_parts;
+  std::unique_ptr<host::PanelReader> panel_reader;
+  std::unique_ptr<host::VirtualPanel> virtual_panel;
+  std::unique_ptr<host::VirtualPanelUmpSink> panel_sink;
+  std::atomic<host::ControlServer*> panel_push{nullptr};  // set once the control server exists; read on the MIDI thread
+  if (!virtual_panel_path.empty()) {
+    host::VirtualPanelMap vmap;
+    std::string verr;
+    if (!host::VirtualPanelMap::load_file(virtual_panel_path, vmap, verr)) {
+      std::fprintf(stderr, "engine-host: virtual panel: %s\n", verr.c_str());
+      return 2;
+    }
+    panel_reader = std::make_unique<host::PanelReader>(*queue, keyboard_parts);
+    panel_reader->set_button_sink([&panel_push](const host::PanelButtonEvent& ev) {
+      if (host::ControlServer* c = panel_push.load(std::memory_order_acquire)) c->push_panel_event(ev.id, ev.pressed, ev.device_ns);
+    });
+    host::PanelReader* pr = panel_reader.get();
+    virtual_panel = std::make_unique<host::VirtualPanel>(
+        std::move(vmap), [] { return host::macos::now_ns(); },
+        [pr](const std::uint8_t* data, std::size_t len, std::uint64_t rx_ns) { pr->on_bytes(data, len, rx_ns); });
+    virtual_panel->start();
+    panel_sink = std::make_unique<host::VirtualPanelUmpSink>(*virtual_panel, ingest);
+    std::printf("virtual panel: %s\n", virtual_panel_path.c_str());
+  }
+  ports::UmpSink& midi_sink = panel_sink ? static_cast<ports::UmpSink&>(*panel_sink) : static_cast<ports::UmpSink&>(ingest);
   if (no_audio) {
     std::printf("audio and midi: off (--no-audio, dev/test only)\n");
   } else {
@@ -451,7 +486,7 @@ int main(int argc, char** argv) {
     std::printf("audio: %u Hz, device buffer %u frames (requested %u)%s\n", info.sample_rate,
                 info.buffer_frames, core::kBlockFrames,
                 info.buffer_frames == core::kBlockFrames ? "" : " [closest the device granted]");
-    if (!midi.open(ingest, err)) {
+    if (!midi.open(midi_sink, err)) {
       std::fprintf(stderr, "engine-host: midi: %s\n", err.c_str());
       return 1;
     }
@@ -470,6 +505,25 @@ int main(int argc, char** argv) {
     std::printf("library: Library API client on %s (reconnects when the librarian service is down)\n", library_socket.c_str());
   }
   host::ControlServer control(plane, socket_path);
+  panel_push.store(&control, std::memory_order_release);
+  // Teardown order: `control` is destroyed before `midi` (declared earlier), and the CoreMIDI thread must never reach a destroyed server. On every exit
+  // path (returns included) this guard stops MIDI first and detaches the panel push.
+  struct PanelPushGuard {
+    host::macos::CoreMidiInput& midi;
+    std::atomic<host::ControlServer*>& push;
+    ~PanelPushGuard() {
+      midi.close();
+      push.store(nullptr, std::memory_order_release);
+    }
+  } panel_push_guard{midi, panel_push};
+  // The keyboard-on parts follow the published generation (control thread, every tick): the panel reader sends the wheels to those parts.
+  std::function<bool()> panel_tick;
+  if (panel_reader) {
+    panel_tick = [pl = &plane, kp = &keyboard_parts] {
+      if (const core::Snapshot* s = pl->current_snapshot()) kp->update_from(*s);
+      return false;
+    };
+  }
   if (switcher) {
     host::LiveSetSwitcher* sw = switcher.get();
     host::SetlistController* sc = setlists.get();
@@ -490,7 +544,8 @@ int main(int argc, char** argv) {
       bp.import_verifying = [] { return false; };
       boot_tracker = std::make_unique<host::bootinto::BootIntoTracker>(*boot_store, std::move(bp));
     }
-    control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string(), bt = boot_tracker.get(), scn = scenes.get()]() mutable {
+    control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string(), bt = boot_tracker.get(), scn = scenes.get(), pt = &panel_tick]() mutable {
+      if (*pt) (*pt)();
       if (lc && !sw->sounding_id().empty() && sw->sounding_id() != last) {
         last = sw->sounding_id();
         lc->report_active(last);
@@ -509,6 +564,8 @@ int main(int argc, char** argv) {
       const bool d = pl->take_content_changed();  // Story 6.5: an I/O edge thread reported a damaged block of a protected library: push State.content
       return a || b || c || d;
     });
+  } else if (panel_tick) {
+    control.set_tick(panel_tick);
   }
   if (setlists) {
     // The server thread is the control thread: the single-writer stores (opened on this thread) are handed over to it before it serves a command.
@@ -626,6 +683,7 @@ int main(int argc, char** argv) {
   renderer->set_line_in(nullptr);
   line_in.stop();
   midi.close();
+  panel_push.store(nullptr, std::memory_order_release);
   control.stop();
   edits.reset();     // before the setlist controller, the scene controller and the plane it registered with
   setlists.reset();  // before the switcher and the plane it registered with

@@ -156,6 +156,7 @@ void BlockRenderer::leave_live_set(std::array<bool, params::kPartCount>& remappe
     channel_engine_[p] = legacy_engine_[p];
   }
   in_live_set_ = false;
+  keyboard_pitch_seen_ = false;
   keyboard_cc_seen_.fill(false);  // the keyboard's controllers of that Live Set must not be replayed into a later one
   replay_listening_.fill(false);
   keyboard_pedal_down_ = false;  // the plain path owns the pedal again (its own events set it)
@@ -205,6 +206,11 @@ void BlockRenderer::apply_param(const ParamEvent& ev) noexcept {
 // The reserved channel-15 events (assign_events.hpp). Runs between render segments, at the event's frame, in the same order as parameter events.
 void BlockRenderer::apply_reserved_event(std::uint32_t id, const Ump& ump) noexcept {
   EncoderState& enc = last_.encoder_rt();
+  if (id == kPanelControlEventId) {  // a raw panel control (Story 3.10): kept for the Epic 4 bindings, nothing is bound here
+    panel_value_[panel_control_id(ump)].store(static_cast<std::uint16_t>(panel_control_value16(ump)), std::memory_order_relaxed);
+    panel_controls_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
   if (id >= kEncoderStepFirstId && id < kEncoderStepFirstId + kEncoderCount) {
     const std::int32_t delta = static_cast<std::int32_t>(ump.word1);
     if (delta < -32768 || delta > 32767) {  // the wire carries an int16 in an int32
@@ -409,6 +415,10 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     if (!down) release_deferred(ch);
     return;
   }
+  if (ump.group() == 0 && ump.is_pitch_bend()) {  // Story 3.10
+    route_pitch_bend(ump.channel(), ump.pitch_bend_value32());
+    return;
+  }
   if (ump.group() == 0 && ump.is_assignable_per_note_controller()) {  // contact_k (Story 2.5)
     apply_contact(ump);
     return;
@@ -559,6 +569,25 @@ void BlockRenderer::route_cc(std::uint32_t channel, std::uint32_t cc, std::uint3
   if (!consumed && count_ignored) ++ignored_;
 }
 
+bool BlockRenderer::deliver_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept {
+  Engine* engine = nullptr;
+  if (part >= 16 || registry_.resolve(channel_engine_[part], engine) != EngineStatus::kOk) return false;
+  return engine->set_part_pitch_bend(part, value32);
+}
+
+void BlockRenderer::route_pitch_bend(std::uint32_t channel, std::uint32_t value32) noexcept {
+  bool consumed = false;
+  if (router_.active()) {
+    keyboard_pitch_bend_ = value32;
+    keyboard_pitch_seen_ = true;
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p)
+      if (router_.pedal_down_target(p)) consumed = deliver_pitch_bend(p, value32) || consumed;
+  } else {
+    consumed = deliver_pitch_bend(channel, value32);
+  }
+  if (!consumed) ++ignored_;
+}
+
 // A Live Set switch: the keyboard's controllers are physical, so every part that sounds with the keyboard on takes their last values
 // (a part the keyboard did not reach before would otherwise start from the instrument defaults).
 void BlockRenderer::replay_keyboard_ccs(const Snapshot& s, bool all, const std::array<bool, params::kPartCount>& remapped) noexcept {
@@ -572,6 +601,7 @@ void BlockRenderer::replay_keyboard_ccs(const Snapshot& s, bool all, const std::
     if (!needs) continue;
     for (std::uint32_t cc = 0; cc < 128; ++cc)
       if (keyboard_cc_seen_[cc]) deliver_cc(p, cc, keyboard_cc_[cc]);
+    if (keyboard_pitch_seen_) deliver_pitch_bend(p, keyboard_pitch_bend_);
   }
 }
 

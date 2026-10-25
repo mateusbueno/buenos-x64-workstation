@@ -16,50 +16,12 @@
 #include <vector>
 
 #include "velora/core/ump.hpp"
+#include "velora/host/drift_clock.hpp"
 #include "velora/host/keybed_calibration.hpp"
 #include "velora/host/mcu_frame.hpp"
 #include "velora/host/midi_ingest.hpp"
 
 namespace velora::host {
-
-// Estimates MCU tick -> host ns from TIME_SYNC round trips: a least-squares line over a sliding window of samples
-// (offset and drift), the nominal tick rate until the window is long enough to measure drift.
-class DriftClock {
- public:
-  explicit DriftClock(double nominal_hz = 1'000'000.0, std::size_t window = 32) noexcept;
-  bool valid() const noexcept { return valid_; }
-  std::size_t samples() const noexcept { return samples_.size(); }
-  // Widens a 32-bit MCU tick to a 64-bit tick near the newest one seen (wrap-safe, tolerates small reordering).
-  std::int64_t unwrap(std::uint32_t tick) noexcept;
-  // First contact with the MCU: tick `tick` happened about `host_ns` (used until a TIME_SYNC reply arrives).
-  void bootstrap(std::uint32_t tick, std::uint64_t host_ns) noexcept;
-  // A TIME_SYNC round trip: the MCU built its reply at `tick`, which is taken as the midpoint `mid_ns` of the round trip of
-  // length `rtt_ns`. Returns false when the sample is rejected (round trip far above the best seen).
-  bool add_sample(std::uint32_t tick, std::uint64_t mid_ns, std::uint64_t rtt_ns) noexcept;
-  // Pure conversion with the current estimate.
-  std::uint64_t to_host_ns(std::int64_t utick) const noexcept;
-  double drift_ppm() const noexcept;  // estimated MCU clock error vs nominal
-  std::uint64_t rejected() const noexcept { return rejected_; }
-  // True when `tick` is earlier than the newest tick seen by more than `tolerance_ticks` (an MCU restart, not reordering).
-  bool went_backwards(std::uint32_t tick, std::uint32_t tolerance_ticks) const noexcept;
-  void reset() noexcept;
-
- private:
-  struct Sample { std::int64_t utick; std::uint64_t ns; };
-  void refit() noexcept;
-  double nominal_ns_per_tick_;
-  std::size_t window_;
-  std::deque<Sample> samples_;
-  std::int64_t ref_ = 0;         // newest unwrapped tick seen
-  bool have_ref_ = false;
-  bool valid_ = false;
-  std::int64_t base_tick_ = 0;   // fit anchor: host_ns(u) = base_ns_ + dy_ + slope_ * ((u - base_tick_) - dx_)
-  std::int64_t base_ns_ = 0;
-  double dx_ = 0, dy_ = 0, slope_;
-  std::uint64_t min_rtt_ = ~0ull;
-  std::uint32_t rtt_rejects_in_row_ = 0;
-  std::uint64_t rejected_ = 0;
-};
 
 struct KeybedReaderConfig {
   std::uint32_t group = 0;                      // UMP group (the core serves group 0)
@@ -88,7 +50,7 @@ struct KeybedReaderCounters {
 
 class KeybedReader {
  public:
-  using TxFn = std::function<void(const std::uint8_t* data, std::size_t len)>;
+  using TxFn = TimeSyncLink::TxFn;
   // `cfg` is sanitised: tick_hz <= 0 or NaN becomes 1 MHz, group and channel are clamped to 0..15.
   KeybedReader(HostEventQueue& out, KeybedCalibration table, KeybedReaderConfig cfg = {});
   KeybedReader(const KeybedReader&) = delete;
@@ -97,7 +59,7 @@ class KeybedReader {
   KeybedReader& operator=(KeybedReader&&) = delete;
 
   // Where TIME_SYNC requests go (the MCU link). Without it no requests are sent.
-  void set_tx(TxFn tx) { tx_ = std::move(tx); }
+  void set_tx(TxFn tx) { link_.set_tx(std::move(tx)); }
   // Replace the (provisional) velocity mapper; not owned, must outlive the reader. nullptr restores the linear default.
   void set_velocity_mapper(const VelocityMapper* m) noexcept { mapper_ = m ? m : &default_mapper_; }
   // Swaps the calibration table (data change, no code change). Sounding keys are released first.
@@ -116,7 +78,7 @@ class KeybedReader {
   bool recovery_pending() const noexcept { return recovery_pending_; }
 
   KeybedReaderCounters counters() const;
-  const DriftClock& clock() const noexcept { return clock_; }
+  const DriftClock& clock() const noexcept { return link_.clock(); }
   const mcu::Hello* hello() const noexcept { return have_hello_ ? &hello_ : nullptr; }
   bool key_sounding(std::uint8_t key) const noexcept { return key < keys_.size() && keys_[key].sounding; }
   std::uint8_t key_mask(std::uint8_t key) const noexcept { return key < keys_.size() ? keys_[key].mask : 0; }
@@ -137,29 +99,18 @@ class KeybedReader {
   void do_open(std::uint8_t key, std::uint8_t contact, std::uint64_t t);
   void release_key(std::uint8_t key, std::uint64_t t);
   void emit(const core::Ump& u, std::uint64_t t);
-  std::uint64_t convert(std::uint32_t tick, std::uint64_t rx_ns);
 
   HostEventQueue& out_;
   KeybedCalibration table_;
   KeybedReaderConfig cfg_;
   mcu::StreamDecoder decoder_;
-  mcu::FrameWriter writer_;
-  DriftClock clock_;
+  TimeSyncLink link_;
   LinearVelocityMapper default_mapper_;
   const VelocityMapper* mapper_ = &default_mapper_;
-  TxFn tx_;
   std::vector<KeyState> keys_;
   KeybedReaderCounters c_;
   std::uint64_t last_out_ns_ = 0;
-  std::uint64_t last_rx_ns_ = 0;
-  bool have_rx_ = false;
-  std::uint64_t max_gap_ns_ = 0;  // silence after which the 32-bit tick can no longer be unwrapped
   bool recovery_pending_ = false;
-  // time sync
-  bool outstanding_ = false;
-  std::uint32_t token_ = 0;
-  std::uint64_t sent_ns_ = 0;
-  std::uint64_t next_sync_ns_ = 0;
   mcu::Hello hello_{};
   bool have_hello_ = false;
   std::vector<mcu::Frame> frames_;  // scratch
