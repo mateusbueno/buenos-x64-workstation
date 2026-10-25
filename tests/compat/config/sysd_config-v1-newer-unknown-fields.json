@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "theme": "studio",
+  "footswitch_function": "previous_scene",
+  "future_flag": true,
+  "future_nested": {"a": [1, 2.5, "x"], "b": null}
+}

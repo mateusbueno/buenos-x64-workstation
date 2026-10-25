@@ -61,7 +61,8 @@ add_library(velora_control STATIC
   src/boot_into_store.cpp
   src/setlist_controller.cpp
   src/edit_session.cpp
-  src/fader_bindings.cpp)
+  src/fader_bindings.cpp
+  src/migration_runner.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
 target_link_libraries(velora_control PUBLIC velora_core velora_host protobuf::libprotobuf Threads::Threads)
@@ -170,7 +171,7 @@ add_test(NAME control_tests COMMAND control_tests)
 set_tests_properties(control_tests PROPERTIES TIMEOUT 120)
 
 # --- Live Set format and store (Story 4.2) ------------------------------------------------------------------
-set(VELORA_LIVESET_CORPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus/live_sets")
+set(VELORA_LIVESET_CORPUS_DIR "${PROJECT_SOURCE_DIR}/tests/compat/live_sets")
 set(VELORA_LIVESET_GOLDEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
 add_executable(live_set_tests tests/live_set_test.cpp)
 target_link_libraries(live_set_tests PRIVATE velora_control)
@@ -218,7 +219,7 @@ add_test(NAME switch_rt_traffic_test COMMAND switch_rt_traffic_test)
 set_tests_properties(switch_rt_traffic_test PROPERTIES TIMEOUT 300)
 
 # Setlists, setlist tags, the default ASSIGN map, new Live Sets (Story 4.6): format, store commands, atomicity, single writer, corpus.
-set(VELORA_SETLIST_CORPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus/setlists")
+set(VELORA_SETLIST_CORPUS_DIR "${PROJECT_SOURCE_DIR}/tests/compat/setlists")
 add_executable(boot_into_tests tests/boot_into_test.cpp)
 target_link_libraries(boot_into_tests PRIVATE velora_control)
 add_test(NAME boot_into_tests COMMAND boot_into_tests)
@@ -391,3 +392,23 @@ endif()
 if(APPLE)
   add_subdirectory(macos)
 endif()
+
+# --- Format versions N / N-1, compatibility corpus gate, migration runner (Story 8.5) ------------------------------------------------------------------
+# Version policy across the forms of engine-host (Live Set, setlist library, default ASSIGN map, ws.v1 handshake, MCU protocol).
+add_executable(format_versions_test tests/format_versions_test.cpp)
+target_link_libraries(format_versions_test PRIVATE velora_control)
+add_test(NAME format_versions_test COMMAND format_versions_test)
+set_tests_properties(format_versions_test PROPERTIES TIMEOUT 120)
+
+# The corpus gate: every Live Set / setlist library / ASSIGN map under tests/compat (releases add theirs with tools/compat/add_release.py) opens on this build.
+# (The sysd config files of the same tree are the ui build's compat_config_test.) A file that does not open fails the build's test run and is named.
+add_executable(compat_corpus_test tests/compat_corpus_test.cpp)
+target_link_libraries(compat_corpus_test PRIVATE velora_control)
+add_test(NAME compat_corpus_test COMMAND compat_corpus_test "${PROJECT_SOURCE_DIR}/tests/compat")
+set_tests_properties(compat_corpus_test PROPERTIES TIMEOUT 120)
+
+# Migration runner: read-only before mark-good, atomic after, N never N+1, rollback byte-identical, kill mid-migration, N-1 reader on migrated data.
+add_executable(migration_runner_test tests/migration_runner_test.cpp)
+target_link_libraries(migration_runner_test PRIVATE velora_control)
+add_test(NAME migration_runner_test COMMAND migration_runner_test)
+set_tests_properties(migration_runner_test PROPERTIES TIMEOUT 120)

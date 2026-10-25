@@ -1,6 +1,6 @@
 // Regenerates the Live Set compatibility corpus and the golden file (Story 4.2):
 //   cmake --build build --target live_set_corpus_regen
-// Writes tests/corpus/live_sets/*.liveset and tests/golden/live_set_fixed.bin from tests/live_set_fixtures.hpp using
+// Writes (repo root) tests/compat/live_sets/*.liveset and tests/golden/live_set_fixed.bin from tests/live_set_fixtures.hpp using
 // this release's writer. Commit the result only when the change is intended: the corpus is what every future build
 // must keep opening.
 #include <cstdio>

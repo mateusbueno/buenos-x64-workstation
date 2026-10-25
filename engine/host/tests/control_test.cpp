@@ -272,6 +272,16 @@ static void test_handshake() {
     ws::v1::ServerMessage r;
     CHECK(c.call(hello(99), r));
     CHECK(is_err(r, ws::v1::ERROR_CODE_UNSUPPORTED_VERSION) && r.error().details().at("supported") == "1");
+    CHECK(r.error().details().at("reason") == "too_new" && r.error().details().at("supported_min") == "1" && r.error().details().at("requested") == "99");
+    CHECK(c.closed_by_peer());
+  }
+  {  // version 0 (PROTOCOL_VERSION_UNSPECIFIED) is too old. The N-1 acceptance and the echoed version cannot be asserted end to end while
+     // ControlPlane::kProtocolVersion is 1 (N-1 = 0 is never valid); format_versions_test covers check_protocol_version() for N = 2 and 3.
+    Client c;
+    CHECK(c.open(L.path));
+    ws::v1::ServerMessage r;
+    CHECK(c.call(hello(0), r));
+    CHECK(is_err(r, ws::v1::ERROR_CODE_UNSUPPORTED_VERSION) && r.error().details().at("reason") == "too_old" && r.error().details().at("supported_min") == "1");
     CHECK(c.closed_by_peer());
   }
   {  // a command before Hello

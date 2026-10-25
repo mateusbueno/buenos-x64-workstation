@@ -269,10 +269,13 @@ void ControlServer::process_frame(Client& c, const std::string& payload) {
       c.closing = true;
       return;
     }
-    if (msg.hello().version() != ControlPlane::kProtocolVersion) {
+    const ProtocolCheck pc = check_protocol_version(msg.hello().version(), ControlPlane::kProtocolVersion);
+    if (pc != ProtocolCheck::kOk) {
       auto e = make_error(msg.request_id(), plane_.revision(), ws::v1::ERROR_CODE_UNSUPPORTED_VERSION,
                           "unsupported protocol version");
       (*e.mutable_error()->mutable_details())["supported"] = std::to_string(ControlPlane::kProtocolVersion);
+      (*e.mutable_error()->mutable_details())["supported_min"] = std::to_string(min_protocol_version(ControlPlane::kProtocolVersion));
+      (*e.mutable_error()->mutable_details())["reason"] = pc == ProtocolCheck::kTooOld ? "too_old" : "too_new";
       (*e.mutable_error()->mutable_details())["requested"] = std::to_string(msg.hello().version());
       send(c, e);
       c.closing = true;
@@ -283,7 +286,7 @@ void ControlServer::process_frame(Client& c, const std::string& payload) {
     ack.set_request_id(msg.request_id());
     ack.set_revision(plane_.revision());
     ws::v1::HelloAck* h = ack.mutable_hello_ack();
-    h->set_version(ControlPlane::kProtocolVersion);
+    h->set_version(msg.hello().version());  // the dialect the client asked for (N or N-1), which this server speaks
     for (const char* f : {"params.v1", "snapshots.v1", "subscribe.v1"}) h->add_features(f);
     h->set_revision(plane_.revision());
     send(c, ack);

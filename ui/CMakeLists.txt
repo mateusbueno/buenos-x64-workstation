@@ -252,3 +252,12 @@ add_executable(led_toggle_test tests/led_toggle_test.cpp)
 target_link_libraries(led_toggle_test PRIVATE velora_ui)
 add_test(NAME led_toggle_test COMMAND led_toggle_test)
 set_tests_properties(led_toggle_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+# Story 8.5: sysd config version policy (N / N-1, typed refusals, unknown members) and its slice of the compatibility corpus gate (tests/compat/**/*.json).
+add_executable(config_version_test tests/config_version_test.cpp)
+target_link_libraries(config_version_test PRIVATE velora_ui)
+add_test(NAME config_version_test COMMAND config_version_test)
+
+add_executable(compat_config_test tests/compat_config_test.cpp)
+target_link_libraries(compat_config_test PRIVATE velora_ui)
+add_test(NAME compat_config_test COMMAND compat_config_test "${CMAKE_CURRENT_SOURCE_DIR}/../tests/compat")

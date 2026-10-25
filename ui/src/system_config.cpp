@@ -1,12 +1,88 @@
 #include "velora/ui/system_config.hpp"
 #include "velora/format/json_lite.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
 
 namespace velora::ui {
+
+namespace {
+
+void append_json_string(std::string& out, const std::string& s) {
+  out += '"';
+  for (unsigned char c : s) {
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (c < 0x20) {
+          char b[8];
+          std::snprintf(b, sizeof(b), "\\u%04x", c);
+          out += b;
+        } else {
+          out += static_cast<char>(c);
+        }
+    }
+  }
+  out += '"';
+}
+
+// Compact JSON text of a parsed value, for members this build does not know. They are RE-SERIALIZED, not copied byte for byte: the value is preserved
+// semantically (numbers keep up to 17 significant digits, whitespace is normalised, member order is kept).
+void append_json_value(std::string& out, const format::JsonValue& v) {
+  using T = format::JsonValue::Type;
+  switch (v.type) {
+    case T::kNull: out += "null"; break;
+    case T::kBool: out += v.boolean ? "true" : "false"; break;
+    case T::kNumber: {
+      char b[40];
+      if (v.number > -9e15 && v.number < 9e15 && v.number == static_cast<double>(static_cast<long long>(v.number)))
+        std::snprintf(b, sizeof(b), "%lld", static_cast<long long>(v.number));
+      else
+        std::snprintf(b, sizeof(b), "%.17g", v.number);
+      out += b;
+      break;
+    }
+    case T::kString: append_json_string(out, v.string); break;
+    case T::kArray:
+      out += '[';
+      for (size_t i = 0; i < v.array.size(); ++i) {
+        if (i) out += ',';
+        append_json_value(out, v.array[i]);
+      }
+      out += ']';
+      break;
+    case T::kObject:
+      out += '{';
+      for (size_t i = 0; i < v.keys.size(); ++i) {
+        if (i) out += ',';
+        append_json_string(out, v.keys[i]);
+        out += ':';
+        append_json_value(out, v.values[i]);
+      }
+      out += '}';
+      break;
+  }
+}
+
+// Must list every key to_json() emits (config_version_test checks it: a key missing here would be emitted twice, as a field and as an unknown member).
+bool known_config_key(const std::string& k) {
+  static const char* const kKnown[] = {"schema_version", "theme", "language", "screen_brightness", "led_brightness", "large_text", "reduced_motion",
+                                       "touch_mode", "write_hold_ms", "long_press_ms", "panel_guard", "boot_into", "velocity_curve",
+                                       "aftertouch_available", "aftertouch_enabled", "footswitch_function", "sustain_min", "sustain_max",
+                                       "expression_min", "expression_max", "clock_source", "midi_out_channel", "keybed_to_midi_out", "midi_thru"};
+  for (const char* n : kKnown)
+    if (k == n) return true;
+  return false;
+}
+
+}  // namespace
 
 SystemConfig& SystemConfig::instance() {
   static SystemConfig s_instance;
@@ -97,19 +173,49 @@ std::string SystemConfig::to_json() const {
                 midi_out_channel,
                 keybed_to_midi_out ? "true" : "false",
                 midi_thru ? "true" : "false");
-  return std::string(buf);
+  std::string out(buf);
+  if (!unknown_fields.empty()) {  // members of a newer minor survive read-modify-write: appended before the closing brace
+    const size_t close = out.rfind("\n}");
+    if (close == std::string::npos) return out;  // cannot happen with the fixed template above; never insert at npos
+    std::string extra;
+    for (const auto& kv : unknown_fields) {
+      extra += ",\n  ";
+      append_json_string(extra, kv.first);
+      extra += ": " + kv.second;
+    }
+    out.insert(close, extra);
+  }
+  return out;
 }
 
-bool SystemConfig::from_json(std::string_view json) {
+bool SystemConfig::from_json(std::string_view json) { return load(json) == ConfigLoadStatus::Ok; }
+
+ConfigLoadStatus SystemConfig::load(std::string_view json, uint32_t current_version) {
   format::JsonValue root;
   std::string err;
   if (!format::parse_json(json, root, &err) || !root.is_object()) {
-    return false;
+    return ConfigLoadStatus::ParseError;
   }
 
+  // Version policy first: nothing is touched when the file is refused.
+  uint32_t file_version = current_version;
   const auto* ver = root.find("schema_version");
-  if (ver && ver->is_number()) {
-    schema_version = static_cast<uint32_t>(ver->number);
+  if (ver) {
+    if (!ver->is_number() || !std::isfinite(ver->number) || ver->number != std::floor(ver->number)) return ConfigLoadStatus::ParseError;
+    if (ver->number < 1) return ConfigLoadStatus::TooOld;
+    if (ver->number > static_cast<double>(current_version)) return ConfigLoadStatus::TooNew;
+    file_version = static_cast<uint32_t>(ver->number);
+    if (file_version < min_readable_config_version(current_version)) return ConfigLoadStatus::TooOld;
+  }
+  migrated = file_version < current_version;
+  schema_version = current_version;  // an N-1 file is held as N (its members are read by the same code; no field moved yet)
+
+  unknown_fields.clear();
+  for (size_t i = 0; i < root.keys.size(); ++i) {
+    if (known_config_key(root.keys[i])) continue;
+    std::string raw;
+    append_json_value(raw, root.values[i]);
+    unknown_fields.emplace_back(root.keys[i], std::move(raw));
   }
 
   const auto* thm = root.find("theme");
@@ -221,7 +327,7 @@ bool SystemConfig::from_json(std::string_view json) {
   const auto* mt = root.find("midi_thru");
   if (mt && mt->type == format::JsonValue::Type::kBool) midi_thru = mt->boolean;
 
-  return true;
+  return ConfigLoadStatus::Ok;
 }
 
 bool SystemConfig::load_from_file(const std::string& path) {

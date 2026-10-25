@@ -1,6 +1,6 @@
 // Regenerates the setlist compatibility corpus and the golden file (Story 4.6):
 //   cmake --build build --target setlist_corpus_regen
-// Writes tests/corpus/setlists/* and tests/golden/setlist_library_fixed.bin from tests/setlist_fixtures.hpp using this release's writer. Commit the
+// Writes (repo root) tests/compat/setlists/* and tests/golden/setlist_library_fixed.bin from tests/setlist_fixtures.hpp using this release's writer. Commit the
 // result only when the change is intended: the corpus is what every future build must keep opening.
 #include <cstdio>
 #include <fstream>

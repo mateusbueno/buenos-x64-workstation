@@ -25,6 +25,17 @@
 
 namespace velora::host {
 
+// ws.v1 handshake version policy (Story 8.5): a server at version N accepts a Hello at N or N-1 (min_readable = N-1, never below 1); version 0
+// (unspecified), anything older and anything newer is a typed refusal (ERROR_CODE_UNSUPPORTED_VERSION, details: supported_min, supported, requested,
+// reason = too_old | too_new). Unknown fields of the messages are kept by protobuf and ignored.
+enum class ProtocolCheck : std::uint8_t { kOk = 0, kTooOld, kTooNew };
+constexpr std::uint32_t min_protocol_version(std::uint32_t current) { return current > 1 ? current - 1 : 1; }
+constexpr ProtocolCheck check_protocol_version(std::uint32_t requested, std::uint32_t current) {
+  if (requested > current) return ProtocolCheck::kTooNew;
+  if (requested < min_protocol_version(current)) return ProtocolCheck::kTooOld;
+  return ProtocolCheck::kOk;
+}
+
 struct ControlFail;  // validation failure: closed error code + message + details (control_plane.cpp)
 
 using ControlEventQueue = HostEventQueue;  // single producer: the control thread; consumer: RenderDriver

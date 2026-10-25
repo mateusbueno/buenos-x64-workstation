@@ -37,6 +37,10 @@ add_subdirectory(tools/registry)
 add_subdirectory(tools/spikes)
 add_subdirectory(tools/diag)
 add_subdirectory(ui)
+# Story 8.5: the engine corpus gate does not open the config .json files of tests/compat; the ui gate does. Both must exist in every configuration.
+if(NOT TARGET compat_config_test OR NOT TARGET compat_corpus_test)
+  message(FATAL_ERROR "the compatibility corpus gates (compat_corpus_test, compat_config_test) must both be built")
+endif()
 
 # Dependency-purity gate for engine/core (see tools/ci/check_core_deps.py).
 if(DEFINED ENV{CI})
@@ -74,6 +78,9 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME color_literals_lint_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_color_literals.py
                    --self-test)
+  # Story 8.5: the compatibility corpus gate (tests/compat) is not vacuous: a planted unreadable / unclaimed file (Live Set, library, ASSIGN map, config JSON) must fail the engine / ui gates and be named.
+  add_test(NAME compat_gate_selftest
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/compat/add_release.py --self-test --gate $<TARGET_FILE:compat_corpus_test> --gate-config $<TARGET_FILE:compat_config_test>)
   # Story 9.5: Velora Studio desktop app shell and Rust ws.v1 type link
   find_program(CARGO_EXECUTABLE cargo HINTS "$ENV{HOME}/.cargo/bin")
   if(CARGO_EXECUTABLE)

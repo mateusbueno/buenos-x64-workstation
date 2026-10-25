@@ -210,7 +210,7 @@ development_status:
   8-2-production-release-signing-and-per-root-update-bundles: backlog
   8-3-install-flow-on-the-device: backlog
   8-4-mcu-firmware-manifest-in-the-a-b-image-and-boot-time-version: backlog
-  8-5-format-versions-n-n-1-and-migrations-only-after-the-slot-is: backlog
+  8-5-format-versions-n-n-1-and-migrations-only-after-the-slot-is: done
   8-6-a-firmware-update-adds-a-new-engine-on-a-v1-unit: backlog
   8-7-boot-screen-with-drawbar-animation-and-reduced-motion: done
   8-8-journaled-boot-into-pointer: done

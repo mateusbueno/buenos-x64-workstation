@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace velora::ui {
 
@@ -43,8 +45,27 @@ enum class LedBrightnessMode : uint8_t {
   FollowScreen = 3,
 };
 
+// The sysd config file (`/data/config/sysd_config.json`) version policy (Story 8.5): N = kConfigSchemaVersion. A file at N or N-1
+// (never below 1) loads; a schema_version above N is kTooNew, below N-1 (0 or negative) kTooOld, a non-integer or a document that is
+// not a JSON object kParseError: all refused with nothing changed in the config. A file without schema_version is read as N (a deliberate leniency: the writer always emits it). Members this
+// build does not know (written by a newer minor) are semantically preserved: re-serialized (whitespace normalised, order kept) and written back by to_json().
+// load() into a non-default object merges: known keys absent from the file keep the object's current values (load into a fresh SystemConfig for a clean read). An N-1 file loads as migrated (the
+// in-memory config is N; the file is rewritten as N only by the migration runner after the slot is good, or by the next explicit save).
+inline constexpr uint32_t kConfigSchemaVersion = 1;
+constexpr uint32_t min_readable_config_version(uint32_t current) { return current > 1 ? current - 1 : 1; }
+
+enum class ConfigLoadStatus : uint8_t {
+  Ok = 0,
+  ParseError,
+  TooOld,
+  TooNew,
+};
+
 struct SystemConfig {
-  uint32_t schema_version{1};
+  uint32_t schema_version{kConfigSchemaVersion};
+  bool migrated{false};  // set by load(): the file was at N-1
+  // Top-level members this build does not know, as (key, compact re-serialized JSON text) in file order; written back by to_json().
+  std::vector<std::pair<std::string, std::string>> unknown_fields;
 
   // Display & Language
   std::string theme{"stage"};        // "stage" or "studio"
@@ -81,7 +102,9 @@ struct SystemConfig {
   bool save_to_file(const std::string& path = "") const;
 
   std::string to_json() const;
-  bool from_json(std::string_view json);
+  bool from_json(std::string_view json);  // load(json) == Ok
+  // Version policy above; nothing is changed unless the result is Ok. `current_version` is N (tests set 2 to exercise N-1).
+  ConfigLoadStatus load(std::string_view json, uint32_t current_version = kConfigSchemaVersion);
 
   static std::string default_config_path();
 };
