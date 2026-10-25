@@ -30,6 +30,7 @@
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/sample_engine.hpp"
 #include "velora/core/va_engine.hpp"
+#include "velora/host/boot_into_store.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
 #include "velora/host/edit_session.hpp"
@@ -312,6 +313,8 @@ int main(int argc, char** argv) {
                 dev_keys->device_key_id()[7]);
   }
 #endif
+  std::unique_ptr<host::bootinto::BootIntoStore> boot_store;      // Story 8.8: journaled Boot-into pointer (control thread only); outlives the control server
+  std::unique_ptr<host::bootinto::BootIntoTracker> boot_tracker;  // dirty tracking + idle-safe policy
   std::unique_ptr<host::SceneController> scenes;  // Story 4.4: ws.v1 RecallScene / NextScene / PreviousScene; destroyed before the plane
   std::unique_ptr<host::LiveSetLoader> loader;     // kept for the run: the switcher commits through it
   std::unique_ptr<host::LiveSetSwitcher> switcher; // Story 4.5: ws.v1 JumpToLiveSet / CancelLoad; destroyed before the loader and the plane
@@ -474,10 +477,31 @@ int main(int argc, char** argv) {
     // The control tick: loading status at least once per second, commit of a finished load, the setlist position following jumps, and the edit session
     // (live values captured into the edits, the dirty flags).
     // Story 4.11: the Live Set that sounds is reported to the librarian (Recent) when it changes; the client never blocks this thread.
-    control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string()]() mutable {
+    if (!data_dir.empty()) {
+      host::bootinto::StoreOptions bo;
+      bo.dir = data_dir;
+      boot_store = std::make_unique<host::bootinto::BootIntoStore>(std::move(bo));
+      host::bootinto::TrackerProbes bp;
+      bp.now_ns = [] { return host::macos::now_ns(); };
+      bp.held_notes = [pl = &plane] { return pl->held_notes(); };
+      bp.pedal_down = [pl = &plane] { return pl->pedal_down(); };
+      // No import runs inside the engine process (imports verify in the librarian), so there is no verify phase to wait for here; a deployment that
+      // runs imports in-process sets this probe (Story 8.8: never a write while an import verifies).
+      bp.import_verifying = [] { return false; };
+      boot_tracker = std::make_unique<host::bootinto::BootIntoTracker>(*boot_store, std::move(bp));
+    }
+    control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string(), bt = boot_tracker.get(), scn = scenes.get()]() mutable {
       if (lc && !sw->sounding_id().empty() && sw->sounding_id() != last) {
         last = sw->sounding_id();
         lc->report_active(last);
+      }
+      if (bt && scn) {  // Story 8.8: the position the player is on; dirty in memory only, written at idle-safe moments (binds the store to this thread on first call)
+        host::bootinto::BootIntoTracker::Position pos;
+        pos.live_set_id = sw->sounding_id();
+        pos.scene = scn->current_scene();
+        pos.loading = sw->loading();
+        if (sc) pos.setlist_id = sc->loaded_setlist_id();
+        bt->update(pos);
       }
       const bool a = sw->tick();
       const bool b = sc ? sc->tick() : false;

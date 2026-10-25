@@ -53,6 +53,7 @@ add_library(velora_control STATIC
   src/scene_controller.cpp
   src/live_set_switcher.cpp
   src/setlist_store.cpp
+  src/boot_into_store.cpp
   src/setlist_controller.cpp
   src/edit_session.cpp
   src/fader_bindings.cpp)
@@ -213,6 +214,11 @@ set_tests_properties(switch_rt_traffic_test PROPERTIES TIMEOUT 300)
 
 # Setlists, setlist tags, the default ASSIGN map, new Live Sets (Story 4.6): format, store commands, atomicity, single writer, corpus.
 set(VELORA_SETLIST_CORPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus/setlists")
+add_executable(boot_into_tests tests/boot_into_test.cpp)
+target_link_libraries(boot_into_tests PRIVATE velora_control)
+add_test(NAME boot_into_tests COMMAND boot_into_tests)
+set_tests_properties(boot_into_tests PROPERTIES TIMEOUT 180)
+
 add_executable(setlist_tests tests/setlist_test.cpp)
 target_link_libraries(setlist_tests PRIVATE velora_control)
 target_compile_definitions(setlist_tests PRIVATE

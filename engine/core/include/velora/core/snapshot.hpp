@@ -172,6 +172,15 @@ class LastValueTable {
   Diagnostics& diagnostics_rt() noexcept { return diag_; }
   const Diagnostics& diagnostics() const noexcept { return diag_; }
 
+  // Story 8.8: player input activity for the journaled Boot-into pointer's idle-safe policy. RT stores the number of physical keys held and the
+  // sustain pedal state once per block (relaxed atomic stores, no syscall); the control thread reads them. Read-only engine state, not a parameter.
+  void store_input_activity(std::uint32_t held_notes, bool pedal_down) noexcept VELORA_NONBLOCKING {
+    held_notes_.store(held_notes, std::memory_order_relaxed);
+    pedal_down_.store(pedal_down, std::memory_order_relaxed);
+  }
+  std::uint32_t load_held_notes() const noexcept { return held_notes_.load(std::memory_order_relaxed); }
+  bool load_pedal_down() const noexcept { return pedal_down_.load(std::memory_order_relaxed); }
+
   // Story 7.6 / 7.8: published external clock lost state.
   void store_clock_lost(bool lost) noexcept VELORA_NONBLOCKING { clock_lost_.store(lost, std::memory_order_release); }
   bool load_clock_lost() const noexcept { return clock_lost_.load(std::memory_order_acquire); }
@@ -183,6 +192,8 @@ class LastValueTable {
   std::atomic<std::uint64_t> adopted_revision_{0};
   std::atomic<std::uint64_t> content_integrity_{0};
   std::atomic<bool> clock_lost_{false};
+  std::atomic<std::uint32_t> held_notes_{0};
+  std::atomic<bool> pedal_down_{false};
   EncoderState encoder_;
   Diagnostics diag_;
 };

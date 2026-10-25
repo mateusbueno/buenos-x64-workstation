@@ -351,6 +351,30 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     last_.store_fence_ack(ump.word1);
     return;
   }
+  if (ump.group() == 0) {  // Story 8.8: input activity for the host's idle-safe policy (relaxed counters only)
+    if (ump.is_note_on() || ump.is_note_off()) {
+      const std::size_t k = static_cast<std::size_t>(ump.channel() & 0xFu) * 128u + (ump.note() & 0x7Fu);
+      const std::uint8_t want = (ump.is_note_on() && ump.velocity16() != 0) ? 1 : 0;  // note on with velocity 0 is a note off
+      if (input_held_[k] != want) {
+        input_held_[k] = want;
+        if (want) ++input_held_count_;
+        else --input_held_count_;
+      }
+    } else if (ump.is_control_change()) {
+      const std::uint32_t cc = ump.controller_index();
+      if (cc == Ump::kControllerSustain) {
+        input_pedal_down_ = ump.controller_value32() >= 0x80000000u;
+      } else if (cc == 120 || cc == 123) {  // all sound off / all notes off: that channel's keys are up (a lost note off must not stick)
+        const std::size_t base = static_cast<std::size_t>(ump.channel() & 0xFu) * 128u;
+        for (std::size_t n = 0; n < 128; ++n) {
+          if (input_held_[base + n]) {
+            input_held_[base + n] = 0;
+            --input_held_count_;
+          }
+        }
+      }
+    }
+  }
   if (ump.group() == 0 && ump.is_assignable_controller()) {
     std::uint32_t reserved_id = 0;
     if (decode_reserved_event_id(ump, reserved_id)) {  // channel 15: the encoder / mode / select-part events (Story 4.10)
@@ -887,6 +911,7 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   last_.store_content_integrity(integrity);
   // Story 1.21: the arbiter's steal / exhausted totals for the diagnostics reply.
   last_.diagnostics_rt().store_voice_totals(arbiter_.steals(), arbiter_.exhausted());
+  last_.store_input_activity(input_held_count_, input_pedal_down_);  // Story 8.8
 }
 
 }  // namespace velora::core

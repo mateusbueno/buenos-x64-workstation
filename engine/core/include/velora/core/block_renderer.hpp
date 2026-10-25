@@ -279,6 +279,10 @@ class BlockRenderer {
   std::array<bool, 128> keyboard_cc_seen_{};
   std::array<bool, params::kPartCount> replay_listening_{};    // RT-owned: parts that listened to the keyboard at the last replay decision
   std::array<std::uint64_t, params::kPartCount> replay_bank_{};  // ... and the SampleBank::id they had
+  // Story 8.8: physical input activity (group 0 note on/off, CC 64), published once per block through LastValueTable::store_input_activity().
+  std::array<std::uint8_t, 16 * 128> input_held_{};
+  std::uint32_t input_held_count_ = 0;
+  bool input_pedal_down_ = false;
   bool keyboard_pedal_down_ = false;              // RT-owned: the last keyboard sustain (CC 64) state seen in a Live Set generation
   // Per (channel, note): bit i set = this key holds one reference on ledger slot i (a generation).
   std::array<std::uint32_t, 16 * 128> gen_mask_{};

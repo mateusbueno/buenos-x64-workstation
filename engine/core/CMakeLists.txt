@@ -44,6 +44,11 @@ add_executable(content_integrity_tests tests/content_integrity_test.cpp)
 target_link_libraries(content_integrity_tests PRIVATE velora_core)
 add_test(NAME content_integrity_tests COMMAND content_integrity_tests)
 
+# Story 8.8: the input-activity flags (keys held, sustain pedal) RT publishes for the Boot-into pointer's idle-safe policy.
+add_executable(input_activity_tests tests/input_activity_test.cpp)
+target_link_libraries(input_activity_tests PRIVATE velora_core)
+add_test(NAME input_activity_tests COMMAND input_activity_tests)
+
 # Story 1.21: in-RAM diagnostics counters and histograms.
 add_executable(diagnostics_tests tests/diagnostics_test.cpp)
 target_link_libraries(diagnostics_tests PRIVATE velora_core)

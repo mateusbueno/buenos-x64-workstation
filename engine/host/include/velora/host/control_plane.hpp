@@ -190,6 +190,10 @@ class ControlPlane {
   // The published state changed without a new generation (a setlist, a tag, the loaded setlist): moves the revision so subscribers and
   // replies see a new one. Control thread only.
   void bump_revision() noexcept { revision_.fetch_add(1, std::memory_order_acq_rel); }
+  // Story 8.8: player input activity as RT last published it (relaxed atomics, once per block): physical keys held, sustain pedal down. Read-only; the Boot-into
+  // pointer's idle-safe policy (BootIntoTracker) polls them from the control tick.
+  std::uint32_t held_notes() const noexcept { return live_.load_held_notes(); }
+  bool pedal_down() const noexcept { return live_.load_pedal_down(); }
   // A reservation epoch that was never handed out before (Snapshot::reservation_epoch); control thread only.
   std::uint64_t next_reservation_epoch() noexcept { return ++reservation_epoch_; }
   // The generation RT announced it is reading (hazard pointer), nullptr before RT ran. Control thread only: it is the only thread that frees
