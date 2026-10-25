@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 #include "velora/core/block_renderer.hpp"
@@ -38,6 +39,8 @@ class RenderDriver final : public ports::BlockSink {
 
   const RenderCounters& counters() const noexcept { return counters_; }
   const TimeMapper& mapper() const noexcept { return mapper_; }
+  // Story 1.21: a device adapter that detects an underrun / xrun itself (e.g. an ALSA xrun) records it here.
+  void record_xrun() noexcept VELORA_NONBLOCKING { renderer_.diagnostics_rt().record_xrun(); }
 
  private:
   struct Lane {
@@ -47,6 +50,7 @@ class RenderDriver final : public ports::BlockSink {
     bool counted = false;
     bool fence_waited = false;  // a fence event was held back one block (see drain)
   };
+  void record_render_time(std::chrono::steady_clock::time_point t0) noexcept VELORA_NONBLOCKING;
   void drain(Lane& lane, std::uint64_t block_start_ns) noexcept VELORA_NONBLOCKING;
 
   core::BlockRenderer& renderer_;

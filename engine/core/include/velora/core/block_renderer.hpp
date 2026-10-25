@@ -126,6 +126,8 @@ class BlockRenderer {
   // until that note's voices are gone (AD-23), so the control thread can tell when a generation is free.
   SnapshotExchange& snapshots() noexcept { return exchange_; }
   const LastValueTable& last_values() const noexcept { return last_; }
+  // Story 1.21: the host render path records xruns, render times and event latencies here (atomics only).
+  Diagnostics& diagnostics_rt() noexcept { return last_.diagnostics_rt(); }
   const Snapshot* held_snapshot() const noexcept { return held_; }  // RT thread only
   // Performance parameter UMPs applied to / refused by the last-value table (unknown id, structural
   // class, part out of range). Relaxed counters, readable from any thread.

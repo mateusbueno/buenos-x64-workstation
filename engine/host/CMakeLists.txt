@@ -277,6 +277,16 @@ target_link_libraries(control_rt_traffic_test PRIVATE velora_control)
 add_test(NAME control_rt_traffic_test COMMAND control_rt_traffic_test)
 set_tests_properties(control_rt_traffic_test PROPERTIES TIMEOUT 120)
 
+# Story 1.21: the host render path with the diagnostics updates (render-time and latency histograms), without the sanitizer so macOS runs its logic too
+# (the RTSan build of the same file is rtsan_host_render_test below).
+add_executable(diag_rt_traffic_test tests/rtsan_host_render_test.cpp)
+target_link_libraries(diag_rt_traffic_test PRIVATE velora_host)
+add_test(NAME diag_rt_traffic_test COMMAND diag_rt_traffic_test)
+
+add_executable(diag_render_driver_test tests/diag_render_driver_test.cpp)
+target_link_libraries(diag_render_driver_test PRIVATE velora_host)
+add_test(NAME diag_render_driver_test COMMAND diag_render_driver_test)
+
 add_executable(host_tests tests/host_test.cpp)
 target_link_libraries(host_tests PRIVATE velora_host)
 add_test(NAME host_tests COMMAND host_tests)

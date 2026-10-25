@@ -44,6 +44,11 @@ add_executable(content_integrity_tests tests/content_integrity_test.cpp)
 target_link_libraries(content_integrity_tests PRIVATE velora_core)
 add_test(NAME content_integrity_tests COMMAND content_integrity_tests)
 
+# Story 1.21: in-RAM diagnostics counters and histograms.
+add_executable(diagnostics_tests tests/diagnostics_test.cpp)
+target_link_libraries(diagnostics_tests PRIVATE velora_core)
+add_test(NAME diagnostics_tests COMMAND diagnostics_tests)
+
 # Story 5.2: keyswitches, CC crossfades and filters of the sample engine (the sfizz parity is in tools/offline-render).
 add_executable(sample_features_tests tests/sample_features_test.cpp)
 target_link_libraries(sample_features_tests PRIVATE velora_core)

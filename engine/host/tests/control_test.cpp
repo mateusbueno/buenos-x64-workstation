@@ -1316,6 +1316,49 @@ static std::string wire(const ws::v1::ClientMessage& m) {
   return Client::frame(b);
 }
 
+static ws::v1::ClientMessage get_diag() {
+  ws::v1::ClientMessage m;
+  m.set_request_id(++g_rid);
+  m.mutable_get_diagnostics();
+  return m;
+}
+
+// Story 1.21: GetDiagnostics after Hello carries the counters, both histograms (edges + counts) and uptime; before Hello it is HANDSHAKE_REQUIRED.
+static void test_diagnostics() {
+  Live L("diag");
+  {
+    Client c;
+    CHECK(c.open(L.path));
+    ws::v1::ServerMessage r;
+    CHECK(c.call(get_diag(), r));
+    CHECK(is_err(r, ws::v1::ERROR_CODE_HANDSHAKE_REQUIRED));
+  }
+  Client c;
+  CHECK(L.connect(c));
+  core::Diagnostics& d = L.rig.br->diagnostics_rt();
+  d.record_xrun();
+  d.record_xrun();
+  d.record_stream_underrun();
+  d.record_latency_ns(2'500'000);  // 2500 us -> bin [2000, 3000)
+  L.rig.step(3);                   // renders blocks: render-time histogram fills, steals are published
+  L.rig.clock_ns.fetch_add(5'000'000);  // 5 ms of host clock since the control plane started
+  ws::v1::ServerMessage r;
+  CHECK(c.call(get_diag(), r) && r.has_diagnostics_reply());
+  const auto& dr = r.diagnostics_reply();
+  CHECK(dr.xrun() >= 2 && dr.stream_underrun() == 1 && dr.voice_steal() == 0 && dr.voice_exhausted() == 0);
+  CHECK(dr.uptime_ms() >= 5);
+  CHECK(dr.render_time().counts_size() == dr.render_time().edges_us_size() + 1);
+  CHECK(dr.latency().counts_size() == dr.latency().edges_us_size() + 1);
+  std::uint64_t rt = 0, lat = 0;
+  for (auto v : dr.render_time().counts()) rt += v;
+  for (auto v : dr.latency().counts()) lat += v;
+  CHECK(rt == 3 && lat == 1);
+  bool bin_ok = false;
+  for (int i = 0; i + 1 < dr.latency().edges_us_size(); ++i)
+    if (dr.latency().edges_us(i) == 2000 && dr.latency().edges_us(i + 1) == 3000 && dr.latency().counts(i + 1) == 1) bin_ok = true;
+  CHECK(bin_ok);
+}
+
 static void test_subscribe_off_and_fragmentation() {
   Custom L("frag");
   Client sub, c;
@@ -1446,6 +1489,7 @@ int main() {
   test_disconnect_mid_frame_and_file_modes();
   test_handshake_deadline_and_client_cap();
   test_slow_subscriber_is_dropped();
+  test_diagnostics();
   if (g_fail) std::printf("control_tests: %d failure(s)\n", g_fail);
   else std::printf("control_tests: ok\n");
   return g_fail ? 1 : 0;

@@ -34,6 +34,15 @@ int main() {
               (unsigned long long)drv.counters().events.load(),
               (unsigned long long)drv.counters().late.load());
   const auto& c = drv.counters();
+  // Story 1.21: the diagnostics were updated inside the nonblocking path (atomics only): every block timed, every on-time event's latency recorded.
+  const auto& dg = br->last_values().diagnostics();
+  // (a block is 1.33 ms of budget; unsanitized, the stub render stays far below it. Under RTSan the sanitizer overhead may exceed it, so only count there.)
+#if !defined(__has_feature) || !__has_feature(realtime_sanitizer)
+  if (dg.xruns() != 0) return 1;
+#endif
+  const std::uint64_t xr = dg.xruns();
+  drv.record_xrun();
+  if (dg.render_time().total() != c.blocks.load() || dg.latency().total() == 0 || dg.latency().total() > c.events || dg.xruns() != xr + 1) return 1;
   return (c.events > 0 && c.deferred > 0 && c.deferred < c.events && c.late == 0 &&
           c.renderer_rejected == 0 && ing.counters().queue_full == 0)
              ? 0

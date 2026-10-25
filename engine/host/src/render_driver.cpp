@@ -1,19 +1,32 @@
 #include "velora/host/render_driver.hpp"
 
+#include <chrono>
+
 namespace velora::host {
 
 void RenderDriver::render_block(float* left, float* right, std::uint64_t block_start_ns) noexcept {
   drain(midi_, block_start_ns);
   drain(control_, block_start_ns);
+  const auto t0 = std::chrono::steady_clock::now();
   renderer_.process_block(left, right);
+  record_render_time(t0);
   counters_.blocks.fetch_add(1, std::memory_order_relaxed);
 }
 
 void RenderDriver::render_block_buses(const core::OutputBuses& out, std::uint64_t block_start_ns) noexcept {
   drain(midi_, block_start_ns);
   drain(control_, block_start_ns);
+  const auto t0 = std::chrono::steady_clock::now();
   renderer_.process_block(out);
+  record_render_time(t0);
   counters_.blocks.fetch_add(1, std::memory_order_relaxed);
+}
+
+void RenderDriver::record_render_time(std::chrono::steady_clock::time_point t0) noexcept {
+  const auto dt = std::chrono::steady_clock::now() - t0;
+  const std::uint64_t ns = dt.count() > 0 ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count()) : 0;
+  const TimeMapperConfig& c = mapper_.config();
+  renderer_.diagnostics_rt().record_render(ns, frames_to_ns(c.block_frames, c.sample_rate));
 }
 
 void RenderDriver::drain(Lane& lane, std::uint64_t block_start_ns) noexcept {
@@ -45,9 +58,15 @@ void RenderDriver::drain(Lane& lane, std::uint64_t block_start_ns) noexcept {
     if (m.timing == EventTiming::kLate) counters_.late.fetch_add(1, std::memory_order_relaxed);
     else if (m.timing == EventTiming::kDeferred) counters_.deferred.fetch_add(1, std::memory_order_relaxed);
     counters_.last_frame.store(m.frame, std::memory_order_relaxed);
-    if (renderer_.submit(core::TimedUmp{lane.held.ump, m.frame}))
+    if (renderer_.submit(core::TimedUmp{lane.held.ump, m.frame})) {
       counters_.events.fetch_add(1, std::memory_order_relaxed);
-    else
+      // Story 1.21: event-to-onset latency = onset time - the event's host timestamp (late events, which play at frame 0 of this block, are not recorded).
+      if (m.timing != EventTiming::kLate && lane.held.host_ns != 0) {
+        const TimeMapperConfig& c = mapper_.config();
+        const std::uint64_t onset_ns = block_start_ns + frames_to_ns(m.frame, c.sample_rate);
+        if (onset_ns >= lane.held.host_ns) renderer_.diagnostics_rt().record_latency_ns(onset_ns - lane.held.host_ns);
+      }
+    } else
       counters_.renderer_rejected.fetch_add(1, std::memory_order_relaxed);
     lane.has_held = false;
     lane.fence_waited = false;

@@ -35,6 +35,7 @@ add_subdirectory(tools/content-pack)
 add_subdirectory(tools/factory-release)
 add_subdirectory(tools/registry)
 add_subdirectory(tools/spikes)
+add_subdirectory(tools/diag)
 add_subdirectory(ui)
 
 # Dependency-purity gate for engine/core (see tools/ci/check_core_deps.py).

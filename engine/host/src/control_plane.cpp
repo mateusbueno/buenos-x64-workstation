@@ -275,7 +275,9 @@ void fill_from(const core::Snapshot& s, ws::v1::State* out) {
 
 ControlPlane::ControlPlane(core::SnapshotExchange& exchange, const core::LastValueTable& live,
                            ControlEventQueue& rt_events, Clock now_ns)
-    : exchange_(exchange), live_(live), rt_events_(rt_events), clock_(std::move(now_ns)) {}
+    : exchange_(exchange), live_(live), rt_events_(rt_events), clock_(std::move(now_ns)) {
+  start_ns_ = clock_ ? clock_() : 0;
+}
 
 ControlPlane::~ControlPlane() {
   if (damage_) damage_->set_listener({});  // an edge thread must not call into a plane that is gone
@@ -448,6 +450,25 @@ void ControlPlane::fill_state(ws::v1::State* out) const {
   if (setlist_handler_) setlist_handler_->fill_status(out);
   if (edit_handler_) edit_handler_->fill_status(out);
   if (fader_handler_) fader_handler_->fill_status(out);
+}
+
+template <typename H>
+static void fill_histogram(const H& h, ws::v1::Histogram* out) {
+  for (const std::uint32_t e : h.edges_us()) out->add_edges_us(e);
+  for (std::size_t i = 0; i < H::kBins; ++i) out->add_counts(h.count(i));
+}
+
+void ControlPlane::fill_diagnostics(ws::v1::DiagnosticsReply* out) const {
+  out->Clear();
+  const core::Diagnostics& d = live_.diagnostics();
+  out->set_xrun(d.xruns());
+  out->set_voice_steal(d.voice_steals());
+  out->set_voice_exhausted(d.voice_exhausted());
+  out->set_stream_underrun(d.stream_underruns());
+  const std::uint64_t now = clock_ ? clock_() : 0;
+  out->set_uptime_ms(now > start_ns_ ? (now - start_ns_) / 1'000'000 : 0);
+  fill_histogram(d.render_time(), out->mutable_render_time());
+  fill_histogram(d.latency(), out->mutable_latency());
 }
 
 void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
@@ -696,6 +717,10 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
         break;
       case B::kGetPerformanceValues:
         fill_live_values(reply.mutable_performance_values());
+        ok = true;
+        break;
+      case B::kGetDiagnostics:
+        fill_diagnostics(reply.mutable_diagnostics_reply());
         ok = true;
         break;
       case B::kSubscribe:

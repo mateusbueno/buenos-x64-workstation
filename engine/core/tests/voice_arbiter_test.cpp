@@ -421,6 +421,32 @@ void test_no_candidate_exhausted() {
   CHECK(br->arbiter().steals() == 1 && br->arbiter().last_steal().note == 62);
 }
 
+// Story 1.21: the block loop publishes the arbiter's steal / exhausted totals to the diagnostics (distinct non-zero values).
+void test_diagnostics_voice_totals() {
+  auto br = std::make_unique<BlockRenderer>(8);
+  FakeEngine fm(EngineTypeId::kFm, 2, 70);
+  br->bind_engine(fm);
+  br->arbiter().set_min_fm_floor_for_tests(0);
+  br->set_channel_engine(1, kFmId);
+  auto c = cfg(4);
+  add_floor(c, kFmId, 2);
+  CHECK(br->arbiter().reserve(c) == RS::kOk);
+  CHECK(br->last_values().diagnostics().voice_steals() == 0);
+  on(*br, 1, 60, 60000);
+  on(*br, 1, 62, 60000);
+  render(*br);
+  on(*br, 0, 70, 60000);  // exhausted: tone has no pool
+  render(*br);
+  for (std::uint32_t n = 64; n < 67; ++n) {  // three steals within the FM floor
+    on(*br, 1, n, 60000);
+    render(*br);
+  }
+  const auto& a = br->arbiter();
+  CHECK(a.steals() == 3 && a.exhausted() == 1);
+  const auto& d = br->last_values().diagnostics();
+  CHECK(d.voice_steals() == a.steals() && d.voice_exhausted() == a.exhausted());
+}
+
 void test_unreserved_is_legacy() {
   auto br = std::make_unique<BlockRenderer>(2);
   on(*br, 0, 60, 60000);
@@ -1488,6 +1514,7 @@ int main() {
   test_sustain_pedal();
   test_releasing_first_and_last_resort();
   test_no_candidate_exhausted();
+  test_diagnostics_voice_totals();
   test_unreserved_is_legacy();
   test_mixed_costs_and_floors();
   test_sample_floor_256();

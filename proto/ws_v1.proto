@@ -522,6 +522,24 @@ message MoveFader {
 
 message GetState {}
 message GetPerformanceValues {}
+// Story 1.21: fixed-bin histogram. Bin i < edges_us.size() counts values in [edges_us[i-1], edges_us[i]) (edges_us[-1] = 0); the last bin
+// (counts.size() == edges_us.size() + 1) is the overflow bin, values >= the last edge.
+message Histogram {
+  repeated uint32 edges_us = 1;
+  repeated uint64 counts = 2;
+}
+
+message DiagnosticsReply {
+  uint64 xrun = 1;                       // block renders over their deadline plus device-reported xruns
+  uint64 voice_steal = 2;
+  uint64 voice_exhausted = 3;
+  uint64 stream_underrun = 4;            // stays 0 until streaming (Story 1.17) feeds it
+  uint64 uptime_ms = 5;                  // since the control plane started
+  Histogram render_time = 6;             // block render duration
+  Histogram latency = 7;                 // event host timestamp -> onset
+}
+
+message GetDiagnostics {}                // Story 1.21: in-RAM health counters and histograms (after Hello)
 message Subscribe {                      // after this, every new revision is pushed as a State message
   bool enable = 1;
 }
@@ -572,6 +590,7 @@ message ClientMessage {
     SetFaderMode set_fader_mode = 50;     // Story 4.12
     SelectOrganPart select_organ_part = 51;
     MoveFader move_fader = 52;
+    GetDiagnostics get_diagnostics = 53;  // Story 1.21
   }
 }
 
@@ -596,5 +615,6 @@ message ServerMessage {
     StepReply step_reply = 20;
     SetlistsReply setlists_reply = 21;
     WriteReply write_reply = 22;          // Story 4.9
+    DiagnosticsReply diagnostics_reply = 23;  // Story 1.21
   }
 }

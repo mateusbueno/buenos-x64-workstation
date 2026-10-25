@@ -31,6 +31,12 @@ set(_ehs_dir ${CMAKE_SOURCE_DIR}/tools/offline-render/tests/live_set)
 add_test(NAME engine_host_scene_smoke COMMAND engine_host_scene_smoke $<TARGET_FILE:engine-host> ${_ehs_dir}/scenes.liveset ${_ehs_dir}/root)
 set_tests_properties(engine_host_scene_smoke PROPERTIES TIMEOUT 60)
 
+# velora-diag smoke test (Story 1.21): the CLI queries a running engine-host --no-audio; an unreachable socket exits 1.
+add_executable(engine_host_diag_smoke engine_host_diag_smoke.cpp)
+add_dependencies(engine_host_diag_smoke engine-host velora-diag)
+add_test(NAME engine_host_diag_smoke COMMAND engine_host_diag_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-diag>)
+set_tests_properties(engine_host_diag_smoke PROPERTIES TIMEOUT 60)
+
 # engine-host switching smoke test (Story 4.5): a subprocess with --live-set-dir renders audio while a ws.v1 client jumps to the other Live Set (seamless
 # switch, background load, loading status). Runs engine-host --no-audio.
 add_executable(engine_host_switch_smoke engine_host_switch_smoke.cpp)

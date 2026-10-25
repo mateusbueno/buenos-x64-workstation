@@ -885,6 +885,8 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   std::uint64_t integrity = 0;
   for (std::size_t i = 0; i < registry_.size(); ++i) integrity += registry_.at(i)->content_integrity_events();
   last_.store_content_integrity(integrity);
+  // Story 1.21: the arbiter's steal / exhausted totals for the diagnostics reply.
+  last_.diagnostics_rt().store_voice_totals(arbiter_.steals(), arbiter_.exhausted());
 }
 
 }  // namespace velora::core

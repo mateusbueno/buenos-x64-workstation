@@ -208,6 +208,7 @@ class ControlPlane {
   ws::v1::EncoderMode commanded_encoder_mode() const noexcept { return enc_mode_req_; }
   std::uint32_t commanded_selected_part() const noexcept { return sel_part_req_; }
   void fill_live_values(ws::v1::PerformanceValues* out) const;  // RT-owned values, read lock-free
+  void fill_diagnostics(ws::v1::DiagnosticsReply* out) const;   // Story 1.21: RT counters / histograms, read lock-free; uptime from the clock
 
   std::uint64_t revision() const noexcept { return revision_.load(std::memory_order_acquire); }
   std::size_t live_generations() const noexcept { return live_count_.load(std::memory_order_acquire); }
@@ -241,6 +242,7 @@ class ControlPlane {
   const core::LastValueTable& live_;
   ControlEventQueue& rt_events_;
   Clock clock_;
+  std::uint64_t start_ns_ = 0;  // clock_() at construction (diagnostics uptime)
   const core::Snapshot* current_ = nullptr;
   SceneHandler* scene_handler_ = nullptr;
   SwitchHandler* switch_handler_ = nullptr;

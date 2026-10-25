@@ -18,6 +18,7 @@
 
 #include "velora/core/arpeggiator.hpp"
 #include "velora/core/assign_events.hpp"
+#include "velora/core/diagnostics.hpp"
 #include "velora/core/fx.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/rt.hpp"
@@ -167,6 +168,10 @@ class LastValueTable {
   void store_content_integrity(std::uint64_t n) noexcept VELORA_NONBLOCKING { content_integrity_.store(n, std::memory_order_release); }
   std::uint64_t load_content_integrity() const noexcept { return content_integrity_.load(std::memory_order_acquire); }
 
+  // Story 1.21: in-RAM diagnostics counters and histograms (RT / host render path writes, control thread reads).
+  Diagnostics& diagnostics_rt() noexcept { return diag_; }
+  const Diagnostics& diagnostics() const noexcept { return diag_; }
+
   // Story 7.6 / 7.8: published external clock lost state.
   void store_clock_lost(bool lost) noexcept VELORA_NONBLOCKING { clock_lost_.store(lost, std::memory_order_release); }
   bool load_clock_lost() const noexcept { return clock_lost_.load(std::memory_order_acquire); }
@@ -179,6 +184,7 @@ class LastValueTable {
   std::atomic<std::uint64_t> content_integrity_{0};
   std::atomic<bool> clock_lost_{false};
   EncoderState encoder_;
+  Diagnostics diag_;
 };
 
 // Publication point between the control thread and the RT side.
