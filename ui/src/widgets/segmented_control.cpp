@@ -22,6 +22,12 @@ bool SegmentedControl::create(lv_obj_t* parent, const std::vector<std::string>& 
 
   segments_ = segments;
   int32_t seg_w = (min_segment_width < sp.touch_target_min) ? sp.touch_target_min : min_segment_width;
+  for (const auto& s : segments) {
+    int32_t est_w = static_cast<int32_t>(s.length() * 9) + 24;
+    if (est_w > seg_w) {
+      seg_w = est_w;
+    }
+  }
   int32_t total_w = seg_w * static_cast<int32_t>(segments.size());
   int32_t height = sp.touch_target_min;  // 56px
 
@@ -34,6 +40,7 @@ bool SegmentedControl::create(lv_obj_t* parent, const std::vector<std::string>& 
   lv_obj_set_style_border_width(container_, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(container_, r.sm, LV_PART_MAIN);
   lv_obj_set_style_pad_all(container_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(container_, 0, LV_PART_MAIN);
   lv_obj_set_flex_flow(container_, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(container_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -46,9 +53,13 @@ bool SegmentedControl::create(lv_obj_t* parent, const std::vector<std::string>& 
     lv_obj_set_scrollable(seg, false);
     lv_obj_set_clickable(seg, true);
     lv_obj_set_style_pad_all(seg, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(seg, 4, LV_PART_MAIN);
     lv_obj_add_event_cb(seg, segment_click_cb, LV_EVENT_CLICKED, this);
 
     lv_obj_t* lbl = lv_label_create(seg);
+    lv_obj_set_width(lbl, seg_w - 8);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_text(lbl, segments[i].c_str());
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
 

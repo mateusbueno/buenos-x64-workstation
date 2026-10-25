@@ -84,6 +84,9 @@ bool ScenesView::create(lv_obj_t* parent) {
   lv_obj_add_event_cb(btn_new_, on_new_scene_click, LV_EVENT_CLICKED, this);
 
   lv_obj_t* lbl_new = lv_label_create(btn_new_);
+  lv_obj_set_width(lbl_new, btn_w - 12);
+  lv_label_set_long_mode(lbl_new, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(lbl_new, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(lbl_new, tr("scenes.action.new_scene").c_str());
   lv_obj_set_style_text_color(lbl_new, p.on_accent, LV_PART_MAIN);
   lv_obj_align(lbl_new, LV_ALIGN_CENTER, 0, 0);
@@ -104,6 +107,9 @@ bool ScenesView::create(lv_obj_t* parent) {
   lv_obj_add_event_cb(btn_rename_, on_rename_click, LV_EVENT_CLICKED, this);
 
   lv_obj_t* lbl_rename = lv_label_create(btn_rename_);
+  lv_obj_set_width(lbl_rename, btn_w - 12);
+  lv_label_set_long_mode(lbl_rename, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(lbl_rename, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(lbl_rename, tr("scenes.action.rename").c_str());
   lv_obj_add_style(lbl_rename, Theme::style_text(), LV_PART_MAIN);
   lv_obj_align(lbl_rename, LV_ALIGN_CENTER, 0, 0);
@@ -124,6 +130,9 @@ bool ScenesView::create(lv_obj_t* parent) {
   lv_obj_add_event_cb(btn_dup_, on_duplicate_click, LV_EVENT_CLICKED, this);
 
   lv_obj_t* lbl_dup = lv_label_create(btn_dup_);
+  lv_obj_set_width(lbl_dup, btn_w - 12);
+  lv_label_set_long_mode(lbl_dup, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(lbl_dup, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(lbl_dup, tr("scenes.action.duplicate").c_str());
   lv_obj_add_style(lbl_dup, Theme::style_text(), LV_PART_MAIN);
   lv_obj_align(lbl_dup, LV_ALIGN_CENTER, 0, 0);
@@ -144,6 +153,9 @@ bool ScenesView::create(lv_obj_t* parent) {
   lv_obj_add_event_cb(btn_move_, on_move_click, LV_EVENT_CLICKED, this);
 
   lv_obj_t* lbl_move = lv_label_create(btn_move_);
+  lv_obj_set_width(lbl_move, btn_w - 12);
+  lv_label_set_long_mode(lbl_move, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(lbl_move, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(lbl_move, tr("scenes.action.move").c_str());
   lv_obj_add_style(lbl_move, Theme::style_text(), LV_PART_MAIN);
   lv_obj_align(lbl_move, LV_ALIGN_CENTER, 0, 0);
@@ -164,6 +176,9 @@ bool ScenesView::create(lv_obj_t* parent) {
   lv_obj_add_event_cb(btn_clear_, on_clear_click, LV_EVENT_CLICKED, this);
 
   lv_obj_t* lbl_clear = lv_label_create(btn_clear_);
+  lv_obj_set_width(lbl_clear, btn_w - 12);
+  lv_label_set_long_mode(lbl_clear, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(lbl_clear, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(lbl_clear, tr("scenes.action.clear").c_str());
   lv_obj_add_style(lbl_clear, Theme::style_text(), LV_PART_MAIN);
   lv_obj_align(lbl_clear, LV_ALIGN_CENTER, 0, 0);
@@ -252,6 +267,8 @@ void ScenesView::rebuild_grid() {
 
     // Title label
     lv_obj_t* lbl_name = lv_label_create(card);
+    lv_obj_set_width(lbl_name, col_w - 32);
+    lv_label_set_long_mode(lbl_name, LV_LABEL_LONG_DOT);
     if (is_empty) {
       lv_label_set_text(lbl_name, tr("scenes.empty_slot").c_str());
       lv_obj_add_style(lbl_name, Theme::style_text_muted(), LV_PART_MAIN);
@@ -267,6 +284,8 @@ void ScenesView::rebuild_grid() {
 
     // Sub label
     lv_obj_t* lbl_sub = lv_label_create(card);
+    lv_obj_set_width(lbl_sub, col_w - 32);
+    lv_label_set_long_mode(lbl_sub, LV_LABEL_LONG_DOT);
     if (is_empty) {
       lv_label_set_text(lbl_sub, tr("scenes.slot_available").c_str());
       lv_obj_add_style(lbl_sub, Theme::style_text_muted(), LV_PART_MAIN);

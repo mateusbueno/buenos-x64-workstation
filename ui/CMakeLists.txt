@@ -54,6 +54,8 @@ add_library(velora_ui
   src/screens/boot_view.cpp
   src/system_config.cpp
   src/navigation_controller.cpp
+  src/font_manager.cpp
+  src/fonts/dejavu_sans_data.cpp
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
   src/widgets/segmented_control.cpp
@@ -238,3 +240,8 @@ add_executable(footswitch_test tests/footswitch_test.cpp)
 target_link_libraries(footswitch_test PRIVATE velora_ui)
 add_test(NAME footswitch_test COMMAND footswitch_test)
 set_tests_properties(footswitch_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(full_navigation_suite_test tests/full_navigation_suite_test.cpp)
+target_link_libraries(full_navigation_suite_test PRIVATE velora_ui)
+add_test(NAME full_navigation_suite_test COMMAND full_navigation_suite_test)
+set_tests_properties(full_navigation_suite_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")

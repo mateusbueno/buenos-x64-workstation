@@ -939,6 +939,8 @@ void SettingsView::build_display_detail() {
   lv_obj_align(lbl_th, LV_ALIGN_TOP_LEFT, 8, 4);
 
   lv_obj_t* lbl_th_guide = lv_label_create(card_th);
+  lv_obj_set_width(lbl_th_guide, 440);
+  lv_label_set_long_mode(lbl_th_guide, LV_LABEL_LONG_WRAP);
   lv_label_set_text(lbl_th_guide, tr("settings.display.theme_guidance").c_str());
   lv_obj_add_style(lbl_th_guide, Theme::style_text_muted(), LV_PART_MAIN);
   lv_obj_set_style_text_color(lbl_th_guide, p.muted, LV_PART_MAIN);
@@ -969,7 +971,7 @@ void SettingsView::build_display_detail() {
     tr("settings.display.lang_en"),
     tr("settings.display.lang_pt"),
     tr("settings.display.lang_es")
-  }, 100);
+  }, 110);
   lv_obj_align(seg_language_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
   int lang_idx = 0;
   if (cfg.language == "pt-BR") lang_idx = 1;
@@ -1024,7 +1026,7 @@ void SettingsView::build_display_detail() {
     tr("settings.display.led_mid"),
     tr("settings.display.led_high"),
     tr("settings.display.led_follow")
-  }, 85);
+  }, 100);
   lv_obj_align(seg_led_brightness_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
   seg_led_brightness_.set_selected_index(static_cast<int32_t>(cfg.led_brightness));
   seg_led_brightness_.set_on_change([this](int32_t idx) {
@@ -1137,6 +1139,8 @@ void SettingsView::build_display_detail() {
   lv_obj_align(lbl_pg, LV_ALIGN_TOP_LEFT, 8, 4);
 
   lv_obj_t* lbl_pg_desc = lv_label_create(card_pg);
+  lv_obj_set_width(lbl_pg_desc, 440);
+  lv_label_set_long_mode(lbl_pg_desc, LV_LABEL_LONG_WRAP);
   lv_label_set_text(lbl_pg_desc, tr("settings.display.panel_guard_desc").c_str());
   lv_obj_add_style(lbl_pg_desc, Theme::style_text_muted(), LV_PART_MAIN);
   lv_obj_set_style_text_color(lbl_pg_desc, p.muted, LV_PART_MAIN);
@@ -1270,7 +1274,7 @@ void SettingsView::build_keyboard_pedals_detail() {
     tr("settings.key.foot_prev_scene"),
     tr("settings.key.foot_next_liveset"),
     tr("settings.key.foot_rotary")
-  }, 92);
+  }, 115);
   lv_obj_align(seg_footswitch_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
   seg_footswitch_.set_selected_index(static_cast<int32_t>(cfg.footswitch_function));
   seg_footswitch_.set_on_change([this](int32_t idx) {

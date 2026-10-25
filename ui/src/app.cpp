@@ -2,7 +2,9 @@
 #include "velora/ui/adapters/headless_adapter.hpp"
 #include "velora/ui/adapters/sdl_adapter.hpp"
 #include "velora/ui/adapters/drm_adapter.hpp"
+#include "velora/ui/virtual_panel.hpp"
 
+#include <cstdio>
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -28,7 +30,9 @@ bool UiApp::init() {
     adapter_ = std::make_unique<HeadlessAdapter>();
   } else {
 #if defined(__APPLE__) || defined(VELORA_USE_SDL)
-    adapter_ = std::make_unique<SdlAdapter>();
+    auto sdl = std::make_unique<SdlAdapter>();
+    sdl->set_scale(options_.scale);
+    adapter_ = std::move(sdl);
 #elif defined(__linux__) && LV_USE_LINUX_DRM
     adapter_ = std::make_unique<DrmAdapter>();
 #else
@@ -44,7 +48,7 @@ bool UiApp::init() {
     }
   }
 
-  if (!shell_view_.create()) {
+  if (!build_navigation()) {
     return false;
   }
 
@@ -57,6 +61,55 @@ bool UiApp::init() {
   return true;
 }
 
+bool UiApp::build_navigation() {
+  nav_controller_ = std::make_unique<NavigationController>(&ws_client_);
+  if (!nav_controller_->initialize(lv_screen_active())) {
+    return false;
+  }
+  nav_controller_->set_on_language_changed([this]() { rebuild_pending_ = true; });
+
+  if (!options_.start_surface.empty()) {
+    static const std::pair<const char*, SurfaceId> kSurfaces[] = {
+        {"performance", SurfaceId::Performance}, {"launcher", SurfaceId::Launcher},
+        {"effects", SurfaceId::Effects},         {"setlist", SurfaceId::Setlist},
+        {"browser", SurfaceId::SetlistBrowser},  {"scenes", SurfaceId::Scenes},
+        {"part", SurfaceId::Part},               {"settings", SurfaceId::Settings},
+        {"library", SurfaceId::Library},         {"import", SurfaceId::Import}};
+    for (const auto& [name, id] : kSurfaces) {
+      if (options_.start_surface == name) {
+        nav_controller_->navigate_to(id);
+        if (id == SurfaceId::Settings) {
+          nav_controller_->settings_view().select_section(
+              static_cast<SettingsSection>(options_.start_section));
+        } else if (id == SurfaceId::Part) {
+          nav_controller_->part_view().set_section(
+              static_cast<PartSection>(options_.start_section));
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// Re-creates every view so all labels pick up the newly selected language.
+void UiApp::rebuild_navigation() {
+  rebuild_pending_ = false;
+  const SurfaceId surface = nav_controller_->current_surface();
+  const SettingsSection section = nav_controller_->settings_view().selected_section();
+  const std::string saved_surface = options_.start_surface;
+  options_.start_surface.clear();
+
+  lv_obj_clean(lv_screen_active());
+  nav_controller_.reset();
+  if (!build_navigation()) return;
+
+  options_.start_surface = saved_surface;
+  nav_controller_->navigate_to(surface);
+  if (surface == SurfaceId::Settings) {
+    nav_controller_->settings_view().select_section(section);
+  }
+}
+
 void UiApp::on_state_updated(const ws::v1::State& state) {
   std::lock_guard<std::mutex> lock(pending_mutex_);
   pending_state_ = state;
@@ -65,6 +118,7 @@ void UiApp::on_state_updated(const ws::v1::State& state) {
 
 int UiApp::run() {
   auto start_time = std::chrono::steady_clock::now();
+  int frame = 0;
 
   while (running_.load()) {
     if (adapter_->should_close()) {
@@ -83,13 +137,43 @@ int UiApp::run() {
     {
       std::lock_guard<std::mutex> lock(pending_mutex_);
       if (has_pending_state_) {
-        shell_view_.update_from_state(pending_state_);
+        if (nav_controller_) {
+          nav_controller_->update_from_state(pending_state_);
+        }
         has_pending_state_ = false;
       }
     }
 
+    if (rebuild_pending_) {
+      rebuild_navigation();
+    }
+    if (nav_controller_) {
+      nav_controller_->tick(10);
+    }
+
     adapter_->update();
     lv_timer_handler();
+
+    if (!options_.screenshot_path.empty() && ++frame == 60) {
+      lv_refr_now(nullptr);
+      if (lv_draw_buf_t* snap = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_ARGB8888)) {
+        // Dev aid: raw PPM (P6) dump; convert externally.
+        if (FILE* f = std::fopen(options_.screenshot_path.c_str(), "wb")) {
+          const uint32_t w = snap->header.w, h = snap->header.h;
+          std::fprintf(f, "P6\n%u %u\n255\n", w, h);
+          for (uint32_t y = 0; y < h; ++y) {
+            const uint8_t* row = static_cast<const uint8_t*>(snap->data) + y * snap->header.stride;
+            for (uint32_t x = 0; x < w; ++x) {
+              const uint8_t px[3] = {row[x * 4 + 2], row[x * 4 + 1], row[x * 4 + 0]};
+              std::fwrite(px, 1, 3, f);
+            }
+          }
+          std::fclose(f);
+        }
+        lv_draw_buf_destroy(snap);
+      }
+      break;
+    }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
@@ -100,6 +184,7 @@ int UiApp::run() {
 void UiApp::stop() {
   if (!running_.exchange(false)) return;
 
+  VirtualPanel::instance().clear_listeners();
   ws_client_.stop();
   if (adapter_) {
     adapter_->shutdown();

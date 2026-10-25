@@ -25,7 +25,7 @@ bool HintBar::create(lv_obj_t* parent) {
 
   // Left flex container for hint keycaps
   left_box_ = lv_obj_create(container_);
-  lv_obj_set_size(left_box_, 750, sp.device_hint);
+  lv_obj_set_size(left_box_, 560, sp.device_hint);
   lv_obj_set_pos(left_box_, sp.space_5, 0);
   lv_obj_set_scrollable(left_box_, false);
   lv_obj_set_style_bg_opa(left_box_, LV_OPA_TRANSP, LV_PART_MAIN);
@@ -37,6 +37,9 @@ bool HintBar::create(lv_obj_t* parent) {
 
   // Right-aligned status/reassurance label
   lbl_right_ = lv_label_create(container_);
+  lv_obj_set_size(lbl_right_, 400, 20);
+  lv_label_set_long_mode(lbl_right_, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(lbl_right_, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
   lv_label_set_text(lbl_right_, "");
   lv_obj_add_style(lbl_right_, Theme::style_text_muted(), LV_PART_MAIN);
   lv_obj_align(lbl_right_, LV_ALIGN_RIGHT_MID, -sp.space_5, 0);

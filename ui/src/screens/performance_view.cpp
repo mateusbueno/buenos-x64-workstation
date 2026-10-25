@@ -2,6 +2,7 @@
 #include "velora/ui/ws_client.hpp"
 #include "velora/ui/locale.hpp"
 #include "velora/ui/theme.hpp"
+#include "velora/ui/font_manager.hpp"
 
 #include <cstdio>
 #include <algorithm>
@@ -660,7 +661,7 @@ bool PerformanceView::create(lv_obj_t* parent) {
 
   // REV button (opens Effects surface)
   btn_status_rev_ = lv_obj_create(status_normal_container_);
-  lv_obj_set_size(btn_status_rev_, 100, sp.device_status);
+  lv_obj_set_size(btn_status_rev_, 120, sp.device_status);
   lv_obj_align(btn_status_rev_, LV_ALIGN_RIGHT_MID, -sp.screen_gutter, 0);
   lv_obj_set_scrollable(btn_status_rev_, false);
   lv_obj_set_clickable(btn_status_rev_, true);
@@ -845,27 +846,27 @@ void PerformanceView::set_large_text(bool enabled) {
     if (name) {
       lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
       if (large_text_) {
-        lv_obj_set_style_text_font(name, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_font(name, FontManager::instance().font_18(), LV_PART_MAIN);
       } else {
-        lv_obj_set_style_text_font(name, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_set_style_text_font(name, FontManager::instance().font_14(), LV_PART_MAIN);
       }
     }
   }
   for (auto* title : scene_title_objs_) {
     if (title) {
       if (large_text_) {
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_font(title, FontManager::instance().font_18(), LV_PART_MAIN);
       } else {
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_set_style_text_font(title, FontManager::instance().font_14(), LV_PART_MAIN);
       }
     }
   }
   if (lbl_hero_name_) {
     lv_label_set_long_mode(lbl_hero_name_, LV_LABEL_LONG_DOT);
     if (large_text_) {
-      lv_obj_set_style_text_font(lbl_hero_name_, &lv_font_montserrat_24, LV_PART_MAIN);
+      lv_obj_set_style_text_font(lbl_hero_name_, FontManager::instance().font_24(), LV_PART_MAIN);
     } else {
-      lv_obj_set_style_text_font(lbl_hero_name_, &lv_font_montserrat_18, LV_PART_MAIN);
+      lv_obj_set_style_text_font(lbl_hero_name_, FontManager::instance().font_18(), LV_PART_MAIN);
     }
   }
   update_scene_tiles();

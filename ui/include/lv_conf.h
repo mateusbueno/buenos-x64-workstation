@@ -16,6 +16,8 @@
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 
+#define LV_USE_SNAPSHOT 1
+
 /* Widget choices */
 #define LV_USE_LABEL 1
 #define LV_USE_BUTTON 1
@@ -28,6 +30,7 @@
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_18 1
 #define LV_FONT_MONTSERRAT_24 1
+#define LV_USE_TINY_TTF 1
 
 /* Drivers */
 #if defined(__APPLE__) || defined(VELORA_USE_SDL)

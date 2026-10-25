@@ -339,6 +339,8 @@ void Theme::init_styles_if_needed() {{
   lv_style_set_bg_color(&s_style_root, p.bg);
   lv_style_set_bg_opa(&s_style_root, LV_OPA_COVER);
   lv_style_set_radius(&s_style_root, 0);
+  lv_style_set_pad_all(&s_style_root, 0);
+  lv_style_set_border_width(&s_style_root, 0);
 
   // Top Bar style
   lv_style_set_bg_color(&s_style_topbar, p.surface);
@@ -347,6 +349,7 @@ void Theme::init_styles_if_needed() {{
   lv_style_set_border_width(&s_style_topbar, 1);
   lv_style_set_border_side(&s_style_topbar, LV_BORDER_SIDE_BOTTOM);
   lv_style_set_radius(&s_style_topbar, 0);
+  lv_style_set_pad_all(&s_style_topbar, 0);
 
   // Surface style (tonal elevation level 1)
   lv_style_set_bg_color(&s_style_surface, p.surface);
@@ -369,6 +372,7 @@ void Theme::init_styles_if_needed() {{
   lv_style_set_border_width(&s_style_hintbar, 1);
   lv_style_set_border_side(&s_style_hintbar, LV_BORDER_SIDE_TOP);
   lv_style_set_radius(&s_style_hintbar, 0);
+  lv_style_set_pad_all(&s_style_hintbar, 0);
 
   // Text styles
   lv_style_set_text_color(&s_style_text, p.text);

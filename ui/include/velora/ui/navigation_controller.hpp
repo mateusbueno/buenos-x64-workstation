@@ -1,7 +1,9 @@
 #pragma once
 
 #include <lvgl.h>
+#include <functional>
 #include <memory>
+#include <string>
 #include <optional>
 #include <vector>
 
@@ -94,6 +96,10 @@ class NavigationController {
 
   void handle_footswitch(uint64_t ts = 0);
 
+  // Fired (from an LVGL event) when the UI language changed; the host should rebuild the UI
+  // outside the event callback so every label is re-created with the new catalog.
+  void set_on_language_changed(std::function<void()> cb) { on_language_changed_ = std::move(cb); }
+
  private:
   void show_surface(SurfaceId surface);
   void hide_surface(SurfaceId surface);
@@ -117,6 +123,9 @@ class NavigationController {
   SurfaceId current_surface_{SurfaceId::Performance};
   SurfaceId previous_surface_{SurfaceId::Performance};
   SurfaceId surface_before_launcher_{SurfaceId::Performance};
+
+  std::function<void()> on_language_changed_;
+  std::string applied_language_;
 
   int live_set_step_count_{0};
   int scene_step_count_{0};

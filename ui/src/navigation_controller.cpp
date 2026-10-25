@@ -2,6 +2,7 @@
 #include "velora/ui/ws_client.hpp"
 #include "velora/ui/locale.hpp"
 #include "velora/ui/theme.hpp"
+#include "velora/ui/font_manager.hpp"
 
 namespace velora::ui {
 
@@ -24,6 +25,9 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     parent = lv_screen_active();
   }
   if (!parent) return false;
+
+  FontManager::instance().initialize();
+  FontManager::instance().apply_to_screen(parent);
 
   if (!performance_view_.create(parent)) return false;
   if (!launcher_view_.create(parent)) return false;
@@ -197,11 +201,16 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     boot_view_.set_reduced_motion(c.reduced_motion);
     performance_view_.set_large_text(c.large_text);
     Theme::set_theme((c.theme == "studio") ? ThemeId::Studio : ThemeId::Stage);
+    if (c.language != applied_language_) {
+      applied_language_ = c.language;
+      if (on_language_changed_) on_language_changed_();
+    }
   });
 
   // Apply current system config
   SystemConfig::instance().load_from_file();
   const auto& init_cfg = SystemConfig::instance();
+  applied_language_ = init_cfg.language;
   performance_view_.set_touch_mode(init_cfg.touch_mode);
   performance_view_.set_long_press_time_ms(init_cfg.long_press_ms);
   set_write_hold_ms(init_cfg.write_hold_ms);
