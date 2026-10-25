@@ -78,6 +78,9 @@ class TimeSyncLink {
   void on_reply(const mcu::TimeSync& ts, std::uint64_t rx_ns);
   // Sends requests when due, counts missed syncs.
   void poll(std::uint64_t now_ns);
+  // Sends any other frame on the same link with the link's own frame numbering (Story 3.12: LED_SET). False without a tx hook or for an invalid message.
+  // Not thread-safe with poll(): the owner serialises the two.
+  bool transmit(const mcu::Message& m, std::uint32_t tick);
   // The MCU restarted: its ticks start over.
   void restart() noexcept;
   const DriftClock& clock() const noexcept { return clock_; }

@@ -18,6 +18,7 @@
 // rejected as a whole with an error naming the entry: nothing of it is applied.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -112,6 +113,34 @@ class VirtualPanel {
   VirtualPanelCounters c_;
   std::vector<std::uint8_t> button_state_;  // per MIDI entry that maps a CC to a button: last pressed state
   std::vector<std::uint8_t> key_down_;      // per key entry: held
+};
+
+// The LED side of the Mac virtual panel (Story 3.12): the bytes the panel reader writes to its TX hook are what a panel MCU would receive. This is the
+// simulated MCU's receiver: it decodes LED_SET frames into the LED state an on-screen LED view shows, one entry per LED id of the ID map (the other frames, the
+// reader's TIME_SYNC requests, are ignored). Thread-safe.
+struct VirtualLedCounters {
+  std::uint64_t frames = 0, led_frames = 0, other_frames = 0;
+};
+class VirtualPanelLeds {
+ public:
+  using ChangeFn = std::function<void(std::uint8_t led_id, std::uint8_t brightness, std::uint8_t arg)>;
+  // Feeds wire bytes from the panel reader's TX hook.
+  void on_bytes(const std::uint8_t* data, std::size_t len);
+  // The LED's last state (0 / 0 for an LED never set).
+  mcu::LedSet led(std::uint8_t id) const;
+  // Every LED that was set, ascending by id.
+  std::vector<mcu::LedSet> snapshot() const;
+  // Called (on the feeding thread, outside the lock) for every LED_SET frame. Set before feeding.
+  void set_on_change(ChangeFn fn) { on_change_ = std::move(fn); }
+  VirtualLedCounters counters() const;
+
+ private:
+  mutable std::mutex mu_;
+  mcu::StreamDecoder decoder_;
+  std::array<mcu::LedSet, 256> leds_{};
+  std::array<bool, 256> set_{};
+  VirtualLedCounters c_;
+  ChangeFn on_change_;
 };
 
 // A UMP sink in front of the engine's MidiIngest: packets the map names (a CC, a note, a pitch bend) become panel frames and are consumed; every other

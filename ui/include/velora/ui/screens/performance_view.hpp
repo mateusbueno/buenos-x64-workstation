@@ -8,6 +8,7 @@
 
 #include "ws_v1.pb.h"
 #include "velora/ui/panel_event.hpp"
+#include "velora/ui/toggle_state.hpp"
 #include "velora/ui/system_config.hpp"
 
 namespace velora::ui {
@@ -86,7 +87,7 @@ class PerformanceView {
   void toggle_parts_scenes_mode();
   void select_knob_part(int32_t part_idx);
   int32_t selected_knob_part() const noexcept { return selected_knob_part_idx_; }
-  bool is_scenes_mode() const noexcept { return mode_scenes_; }
+  bool is_scenes_mode() const noexcept { return toggles_.scenes(); }
   LedLevel button_led_level(size_t index) const;
   bool is_scene_led_dipping() const noexcept { return scene_led_dipping_; }
   void handle_part_scene_press(int32_t btn_idx, bool pressed, uint64_t timestamp_us = 0);
@@ -101,22 +102,29 @@ class PerformanceView {
   lv_obj_t* part_ghost(size_t idx) const { return (idx < part_ghost_objs_.size()) ? part_ghost_objs_[idx] : nullptr; }
   lv_obj_t* part_chevron(size_t idx) const { return (idx < part_chevron_objs_.size()) ? part_chevron_objs_[idx] : nullptr; }
 
+  // Story 3.12: the toggle state (read by the Top Bar mirror and the mode behaviours; published from the ToggleState listener).
+  ToggleState& toggles() noexcept { return toggles_; }
+  const ToggleState& toggles() const noexcept { return toggles_; }
+  // Ends the 200 ms recall dip of the part/scene LEDs (UX-DR81) once it has run.
+  void tick(uint32_t elapsed_ms);
+
   // Story 4.25 Features: Drawbars & Organ Card
   bool has_organ_part() const;
   void toggle_drawbars_mixer_mode();
-  bool is_drawbars_mode() const noexcept { return mode_drawbars_; }
+  bool is_drawbars_mode() const noexcept { return toggles_.drawbars(); }
   void set_drawbar(size_t index, uint8_t value);
   uint8_t drawbar(size_t index) const { return (index < 9) ? drawbars_[index] : 0; }
   std::string registration_string() const;
   void set_rotary_speed(int32_t speed);
   int32_t rotary_speed() const noexcept { return organ_rotary_speed_; }
   bool drawbars_led_blinking() const noexcept { return drawbars_led_blinking_; }
+  uint32_t drawbars_refused_count() const noexcept { return drawbars_refused_; }  // DRAWBARS pressed with no organ part: each press blinks the LED twice
   lv_obj_t* organ_card() const noexcept { return organ_card_obj_; }
   lv_obj_t* drawbar_col(size_t index) const { return (index < drawbar_col_objs_.size()) ? drawbar_col_objs_[index] : nullptr; }
 
   // Story 4.26 Features: PART/ALL/ASSIGN & Encoder LED Rings
   void cycle_knob_mode();
-  int32_t knob_mode() const noexcept { return mode_knobs_; }
+  int32_t knob_mode() const noexcept { return toggles_.knob_mode(); }
   LedLevel knob_mode_led(uint8_t led_id) const;
   void handle_encoder_turn(size_t encoder_idx, int16_t delta, uint64_t timestamp_ms = 0);
   void set_encoder_value(size_t encoder_idx, float val);
@@ -289,6 +297,7 @@ class PerformanceView {
   int32_t organ_part_idx_{3};
   int32_t organ_rotary_speed_{1}; // 0 = STOP, 1 = SLOW, 2 = FAST
   bool drawbars_led_blinking_{false};
+  uint32_t drawbars_refused_{0};
 
   // Status Bar elements
   lv_obj_t* status_normal_container_{nullptr};
@@ -319,9 +328,7 @@ class PerformanceView {
 
   // Modes
   bool large_text_{false};
-  bool mode_drawbars_{false};
-  bool mode_scenes_{false};
-  int32_t mode_knobs_{0}; // 0 = PART, 1 = ALL, 2 = ASSIGN
+  ToggleState toggles_;  // Story 3.12: the single owner of the three toggles (0 = PART, 1 = ALL, 2 = ASSIGN for the knob mode)
   int32_t knob_part_{1};
   int32_t selected_knob_part_idx_{0};
 
@@ -350,6 +357,7 @@ class PerformanceView {
   uint64_t part_btn_press_time_[8]{0};
   bool scene_led_dipping_{false};
   uint64_t scene_dip_start_us_{0};
+  uint32_t scene_dip_elapsed_ms_{0};
 };
 
 }  // namespace velora::ui

@@ -39,6 +39,7 @@ add_library(velora_ui
   src/app.cpp
   src/locale.cpp
   src/ws_client.cpp
+  src/led_driver.cpp
   src/screens/shell_view.cpp
   src/screens/surface_skeleton.cpp
   src/screens/effects_view.cpp
@@ -64,6 +65,7 @@ add_library(velora_ui
   src/components/write_dialog.cpp
   src/components/category_picker.cpp
   src/components/notice_toast.cpp
+  src/components/led_view.cpp
   src/virtual_panel.cpp
   src/theme.cpp
   src/adapters/headless_adapter.cpp
@@ -245,3 +247,8 @@ add_executable(full_navigation_suite_test tests/full_navigation_suite_test.cpp)
 target_link_libraries(full_navigation_suite_test PRIVATE velora_ui)
 add_test(NAME full_navigation_suite_test COMMAND full_navigation_suite_test)
 set_tests_properties(full_navigation_suite_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(led_toggle_test tests/led_toggle_test.cpp)
+target_link_libraries(led_toggle_test PRIVATE velora_ui)
+add_test(NAME led_toggle_test COMMAND led_toggle_test)
+set_tests_properties(led_toggle_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")

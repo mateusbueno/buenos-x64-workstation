@@ -1434,6 +1434,67 @@ static void test_panel_event_push() {
   CHECK(sub.call(get_state(), r) && r.has_state());  // the connection is fine
 }
 
+// Story 3.12: a ws.v1 SetLed over the UDS reaches the panel reader, which writes one LED_SET frame to its TX hook and stores the state; an unknown id is an
+// error and nothing is sent; the RT lane gets nothing.
+static void test_set_led_over_uds() {
+  Live L("led");
+  HostEventQueue q;
+  KeyboardOnParts parts;
+  PanelReader reader(q, parts);
+  std::vector<std::uint8_t> wire;
+  reader.set_tx([&wire](const std::uint8_t* d, std::size_t n) { wire.insert(wire.end(), d, d + n); });
+  L.rig.plane.set_led_sink([&reader](std::uint8_t id, std::uint8_t b, std::uint8_t a) { reader.set_led(id, b, a, 1'000'000); });
+  Client c;
+  CHECK(L.connect(c));
+  ws::v1::ServerMessage r;
+  auto set_led = [&](std::uint32_t id, std::uint32_t b, std::uint32_t a) {
+    ws::v1::ClientMessage m;
+    m.set_request_id(++g_rid);
+    ws::v1::SetLed* sl = m.mutable_set_led();
+    sl->set_led_id(id);
+    sl->set_brightness(b);
+    sl->set_arg(a);
+    return m;
+  };
+  CHECK(c.call(set_led(mcu_ids::leds::TOGGLE_LED_MIXER, 200, 3), r) && r.has_ack());
+  mcu::StreamDecoder rx;
+  const auto frames = rx.feed(wire);
+  CHECK(frames.size() == 1);
+  const auto msg = frames.empty() ? std::nullopt : mcu::parse_message(frames[0]);
+  CHECK(msg && std::holds_alternative<mcu::LedSet>(*msg));
+  if (msg && std::holds_alternative<mcu::LedSet>(*msg)) CHECK((std::get<mcu::LedSet>(*msg) == mcu::LedSet{mcu_ids::leds::TOGGLE_LED_MIXER, 200, 3}));
+  CHECK((reader.led(mcu_ids::leds::TOGGLE_LED_MIXER) == LedValue{200, 3}));
+  // unknown id (never an LED), an id inside the gaps of the map, and a value above 255: errors, no frame, no state
+  wire.clear();
+  CHECK(c.call(set_led(99, 255, 0), r) && r.has_error() && r.error().code() == ws::v1::ERROR_CODE_UNKNOWN_LED);
+  CHECK(c.call(set_led(24, 255, 0), r) && r.has_error() && r.error().code() == ws::v1::ERROR_CODE_UNKNOWN_LED);
+  CHECK(c.call(set_led(1000, 255, 0), r) && r.has_error() && r.error().code() == ws::v1::ERROR_CODE_UNKNOWN_LED);
+  CHECK(c.call(set_led(mcu_ids::leds::TOGGLE_LED_PART, 256, 0), r) && r.has_error() && r.error().code() == ws::v1::ERROR_CODE_OUT_OF_RANGE);
+  CHECK(wire.empty() && !reader.led(mcu_ids::leds::TOGGLE_LED_PART));
+  // arg above 255: out of range, no frame
+  CHECK(c.call(set_led(mcu_ids::leds::TOGGLE_LED_PART, 10, 256), r) && r.has_error() && r.error().code() == ws::v1::ERROR_CODE_OUT_OF_RANGE);
+  CHECK(wire.empty());
+  StampedUmp u;
+  CHECK(!q.pop(u));
+  CHECK(c.call(get_state(), r) && r.has_state());
+}
+
+// Story 3.12: with no panel (no LED sink) a valid SetLed is acknowledged and dropped; an unknown id is still an error.
+static void test_set_led_without_sink() {
+  Live L("ledns");
+  Client c;
+  CHECK(L.connect(c));
+  ws::v1::ServerMessage r;
+  ws::v1::ClientMessage m;
+  m.set_request_id(++g_rid);
+  m.mutable_set_led()->set_led_id(mcu_ids::leds::TOGGLE_LED_ALL);
+  m.mutable_set_led()->set_brightness(255);
+  CHECK(c.call(m, r) && r.has_ack());
+  m.set_request_id(++g_rid);
+  m.mutable_set_led()->set_led_id(99);
+  CHECK(c.call(m, r) && r.has_error() && r.error().code() == ws::v1::ERROR_CODE_UNKNOWN_LED);
+}
+
 // Story 3.10 review: a full PanelEvent queue sheds presses first and never loses a release; events pushed with no subscriber are not counted as sent.
 static void test_panel_event_overflow_and_no_subscriber() {
   Rig rig;
@@ -1558,6 +1619,8 @@ int main() {
   test_slow_subscriber_is_dropped();
   test_diagnostics();
   test_panel_event_push();
+  test_set_led_over_uds();
+  test_set_led_without_sink();
   test_panel_event_overflow_and_no_subscriber();
   if (g_fail) std::printf("control_tests: %d failure(s)\n", g_fail);
   else std::printf("control_tests: ok\n");

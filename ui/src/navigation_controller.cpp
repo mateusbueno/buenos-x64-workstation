@@ -16,9 +16,70 @@ NavigationController::NavigationController(WsClient* client)
       settings_view_(client),
       library_view_(client),
       import_view_(client),
-      boot_view_(client) {}
+      boot_view_(client) {
+  // Story 3.12: LED commands go to the engine over ws.v1 only (the engine writes the panel link). Not delivered (no connection) = dirty until the next resend.
+  connected_fn_ = [this]() { return client_ && client_->is_connected(); };
+  command_fn_ = [this](const ws::v1::ClientMessage& m) { return client_ && client_->send_command(m); };
+  led_driver_.set_send([this](uint8_t id, uint8_t brightness, uint8_t arg) {
+    if (!connected_fn_ || !connected_fn_()) return false;
+    ws::v1::ClientMessage msg;
+    msg.set_request_id(103);
+    ws::v1::SetLed* sl = msg.mutable_set_led();
+    sl->set_led_id(id);
+    sl->set_brightness(brightness);
+    sl->set_arg(arg);
+    return command_fn_ && command_fn_(msg);
+  });
+  // The one publication point of the toggle state: every change lights the active state's LED only.
+  performance_view_.toggles().set_listener([this]() { sync_leds(); });
+}
 
 NavigationController::~NavigationController() = default;
+
+namespace {
+constexpr uint8_t kLedPart[8] = {MCU_LED_PART_SCENE_LED_1, MCU_LED_PART_SCENE_LED_2, MCU_LED_PART_SCENE_LED_3, MCU_LED_PART_SCENE_LED_4,
+                                 MCU_LED_PART_SCENE_LED_5, MCU_LED_PART_SCENE_LED_6, MCU_LED_PART_SCENE_LED_7, MCU_LED_PART_SCENE_LED_8};
+constexpr uint8_t kToggleLeds[7] = {MCU_LED_TOGGLE_LED_DRAWBARS, MCU_LED_TOGGLE_LED_MIXER, MCU_LED_TOGGLE_LED_PARTS, MCU_LED_TOGGLE_LED_SCENES,
+                                    MCU_LED_TOGGLE_LED_PART,     MCU_LED_TOGGLE_LED_ALL,   MCU_LED_TOGGLE_LED_ASSIGN};
+constexpr uint8_t kLedWeak = 64;
+}  // namespace
+
+// Story 3.12: derives every LED the ui owns from the state (toggle state, part / scene state) and gives it to the LED driver. Idempotent: the driver only sends
+// a change. Exactly one LED of each toggle is lit.
+void NavigationController::sync_leds() {
+  led_driver_.tick(now_ms_);  // the driver's clock follows the ui's, so a command made now is stamped now
+  const ToggleState& t = performance_view_.toggles();
+  for (uint8_t id : kToggleLeds) led_driver_.set(id, t.led_lit(id) ? LedDriver::kOn : 0);
+  for (size_t i = 0; i < 8; ++i) {
+    LedLevel lv = performance_view_.button_led_level(i);
+    // The recall dip is a pattern on top of the steady state: the steady state of the current scene stays lit.
+    if (t.scenes() && static_cast<int32_t>(i) == performance_view_.current_scene() && performance_view_.is_scene_led_dipping()) lv = LedLevel::Strong;
+    led_driver_.set(kLedPart[i], lv == LedLevel::Strong ? LedDriver::kOn : (lv == LedLevel::Weak ? kLedWeak : 0));
+  }
+  // Patterns start on the edge of the view's flags (a scene recalled from the part/scene buttons; DRAWBARS pressed with no organ part).
+  const bool dip = performance_view_.is_scene_led_dipping();
+  if (dip && !prev_scene_dip_) {
+    const int32_t cur = performance_view_.current_scene();
+    if (cur >= 0 && cur < 8) led_driver_.dip(kLedPart[cur]);
+  }
+  prev_scene_dip_ = dip;
+  const uint32_t refused = performance_view_.drawbars_refused_count();
+  if (refused != prev_drawbars_refused_) led_driver_.blink_twice(MCU_LED_TOGGLE_LED_DRAWBARS);
+  prev_drawbars_refused_ = refused;
+  if (led_view_enabled_) led_view_.update(led_driver_);
+}
+
+bool NavigationController::enable_led_view() {
+  if (!led_view_.created() && !led_view_.create()) return false;
+  led_view_enabled_ = true;
+  led_view_.update(led_driver_);
+  return true;
+}
+
+void NavigationController::resend_leds() {
+  sync_leds();
+  led_driver_.resend_all();
+}
 
 bool NavigationController::initialize(lv_obj_t* parent) {
   if (!parent) {
@@ -439,6 +500,7 @@ void NavigationController::update_from_state(const ws::v1::State& state) {
   }
 
   performance_view_.update_from_state(state);
+  sync_leds();
   setlist_view_.update_from_state(state);
   setlist_browser_view_.update_from_state(state);
   scenes_view_.update_from_state(state);
@@ -453,6 +515,11 @@ void NavigationController::update_from_state(const ws::v1::State& state) {
 }
 
 void NavigationController::on_panel_event(const PanelEvent& ev) {
+  on_panel_event_impl(ev);
+  sync_leds();
+}
+
+void NavigationController::on_panel_event_impl(const PanelEvent& ev) {
   // If WriteDialog is open, it captures all panel events
   if (write_dialog_.is_open()) {
     write_dialog_.on_panel_event(ev);
@@ -768,6 +835,13 @@ void NavigationController::on_sysex_damaged() {
 }
 
 void NavigationController::tick(uint32_t elapsed_ms) {
+  now_ms_ += elapsed_ms;
+  performance_view_.tick(elapsed_ms);
+  sync_leds();  // also advances the LED driver's patterns and deferred edges to now
+  // A (re)connection to the engine (or a freshly started ui meeting it): the full LED state again. The engine also replays its own copy to a (re)connected MCU.
+  const bool connected = connected_fn_ && connected_fn_();
+  if (connected && !was_connected_) led_driver_.resend_all();
+  was_connected_ = connected;
   notice_toast_.tick(elapsed_ms);
   import_view_.tick(elapsed_ms);
   boot_view_.tick(elapsed_ms);

@@ -64,6 +64,8 @@ enum ErrorCode {
   // Story 4.12: Fader bindings with pickup. A refused command changes nothing.
   ERROR_CODE_NO_ORGAN = 38;            // SetFaderMode DRAWBARS requested with no organ part in the Live Set
   ERROR_CODE_NOT_ORGAN_PART = 39;      // SelectOrganPart for a part that is not an organ
+  // Story 3.12: panel LEDs. A refused command changes nothing and sends no frame.
+  ERROR_CODE_UNKNOWN_LED = 40;         // SetLed named a led_id that mcu/common/MCU-ID-MAP.md section 8 does not have (details: led_id)
 }
 
 message Error {
@@ -544,6 +546,14 @@ message Subscribe {                      // after this, every new revision is pu
   bool enable = 1;
 }
 
+// Story 3.12: drive one panel LED (LED_SET frame, MCU-ID-MAP.md section 8). Only the engine writes the panel link: it turns this into an LED_SET frame
+// through the panel reader and remembers the state (replayed when the panel MCU reconnects). The ui owns the toggle state, the patterns and the timing.
+message SetLed {
+  uint32 led_id = 1;                     // an LED id of the ID map (unknown -> ERROR_CODE_UNKNOWN_LED, nothing is sent)
+  uint32 brightness = 2;                 // 0..255 (above -> ERROR_CODE_OUT_OF_RANGE)
+  uint32 arg = 3;                        // 0..255: colour index for single LEDs, fill position for rings
+}
+
 message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
   oneof body {
@@ -591,6 +601,7 @@ message ClientMessage {
     SelectOrganPart select_organ_part = 51;
     MoveFader move_fader = 52;
     GetDiagnostics get_diagnostics = 53;  // Story 1.21
+    SetLed set_led = 54;                  // Story 3.12
   }
 }
 

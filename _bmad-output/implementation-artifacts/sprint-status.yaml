@@ -97,7 +97,7 @@ development_status:
   3-9-panel-mcu-firmware-soc-driven-leds: backlog
   3-10-panel-reader-on-the-soc-and-the-mac-virtual-panel: done
   3-11-pedals-with-half-pedal-calibration-and-expression: backlog
-  3-12-soc-driven-led-state-and-toggle-state-with-led-per-state: backlog
+  3-12-soc-driven-led-state-and-toggle-state-with-led-per-state: done
   3-13-pcm3168a-codec-as-clock-master-with-the-alsa-machine-driver: backlog
   3-14-balanced-outputs-and-headphone-output: backlog
   3-15-stereo-line-input-mixed-into-the-master: backlog

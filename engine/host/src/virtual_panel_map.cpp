@@ -589,4 +589,46 @@ void VirtualPanelUmpSink::on_ump(const std::uint32_t* words, std::size_t count, 
   }
 }
 
+void VirtualPanelLeds::on_bytes(const std::uint8_t* data, std::size_t len) {
+  std::vector<mcu::Frame> frames;
+  std::vector<mcu::LedSet> changed;
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    decoder_.feed(data, len, &frames, nullptr);
+    for (const mcu::Frame& f : frames) {
+      ++c_.frames;
+      const auto msg = mcu::parse_message(f);
+      const auto* l = msg ? std::get_if<mcu::LedSet>(&*msg) : nullptr;
+      if (!l) {
+        ++c_.other_frames;
+        continue;
+      }
+      ++c_.led_frames;
+      leds_[l->id] = *l;
+      set_[l->id] = true;
+      changed.push_back(*l);
+    }
+  }
+  if (on_change_)
+    for (const mcu::LedSet& l : changed) on_change_(l.id, l.brightness, l.arg);
+}
+
+mcu::LedSet VirtualPanelLeds::led(std::uint8_t id) const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return set_[id] ? leds_[id] : mcu::LedSet{id, 0, 0};
+}
+
+std::vector<mcu::LedSet> VirtualPanelLeds::snapshot() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  std::vector<mcu::LedSet> out;
+  for (std::size_t i = 0; i < set_.size(); ++i)
+    if (set_[i]) out.push_back(leds_[i]);
+  return out;
+}
+
+VirtualLedCounters VirtualPanelLeds::counters() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return c_;
+}
+
 }  // namespace velora::host

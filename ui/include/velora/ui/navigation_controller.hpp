@@ -9,6 +9,7 @@
 
 #include "velora/format/sysex_6op.hpp"
 #include "velora/ui/panel_event.hpp"
+#include "velora/ui/led_driver.hpp"
 #include "velora/ui/screens/performance_view.hpp"
 #include "velora/ui/screens/launcher_view.hpp"
 #include "velora/ui/screens/effects_view.hpp"
@@ -20,6 +21,7 @@
 #include "velora/ui/screens/library_view.hpp"
 #include "velora/ui/screens/import_view.hpp"
 #include "velora/ui/screens/boot_view.hpp"
+#include "velora/ui/components/led_view.hpp"
 #include "velora/ui/components/notice_toast.hpp"
 #include "velora/ui/components/write_dialog.hpp"
 
@@ -96,11 +98,26 @@ class NavigationController {
 
   void handle_footswitch(uint64_t ts = 0);
 
+  // Story 3.12: panel LEDs. The toggle state (PerformanceView::toggles()) is the single source; the LED driver turns it into ws.v1 SetLed commands, one lit LED
+  // per toggle state, with the blink-twice / recall-dip patterns. A (re)connection to the engine, and a freshly started ui, send the full LED state.
+  LedDriver& led_driver() noexcept { return led_driver_; }
+  const LedDriver& led_driver() const noexcept { return led_driver_; }
+  ToggleState& toggles() noexcept { return performance_view_.toggles(); }
+  // Simulator only (the physical panel has real LEDs): an on-screen view of the LEDs on the top layer.
+  bool enable_led_view();
+  LedView& led_view() noexcept { return led_view_; }
+  // Test seams (default: the WsClient): whether the engine connection is up, and where a built ws.v1 command goes.
+  void set_connected_probe(std::function<bool()> fn) { connected_fn_ = std::move(fn); }
+  void set_command_sender(std::function<bool(const ws::v1::ClientMessage&)> fn) { command_fn_ = std::move(fn); }
+  void resend_leds();  // the full LED state again (what the connection edge in tick() does)
+
   // Fired (from an LVGL event) when the UI language changed; the host should rebuild the UI
   // outside the event callback so every label is re-created with the new catalog.
   void set_on_language_changed(std::function<void()> cb) { on_language_changed_ = std::move(cb); }
 
  private:
+  void on_panel_event_impl(const PanelEvent& ev);
+  void sync_leds();
   void show_surface(SurfaceId surface);
   void hide_surface(SurfaceId surface);
 
@@ -126,6 +143,16 @@ class NavigationController {
 
   std::function<void()> on_language_changed_;
   std::string applied_language_;
+
+  std::function<bool()> connected_fn_;
+  std::function<bool(const ws::v1::ClientMessage&)> command_fn_;
+  LedDriver led_driver_;
+  LedView led_view_;
+  bool led_view_enabled_{false};
+  uint64_t now_ms_{0};
+  bool was_connected_{false};
+  bool prev_scene_dip_{false};
+  uint32_t prev_drawbars_refused_{0};
 
   int live_set_step_count_{0};
   int scene_step_count_{0};

@@ -822,13 +822,11 @@ void PerformanceView::set_scenes(const std::vector<SceneTileData>& scenes, int32
 }
 
 void PerformanceView::set_modes(bool drawbars, bool scenes_mode, int32_t knob_mode, int32_t knob_part) {
-  mode_drawbars_ = drawbars;
-  mode_scenes_ = scenes_mode;
-  mode_knobs_ = knob_mode;
+  toggles_.set_all(drawbars, scenes_mode, knob_mode);
   knob_part_ = knob_part;
-  if (mixer_container_) lv_obj_set_hidden(mixer_container_, mode_drawbars_);
-  if (drawbars_container_) lv_obj_set_hidden(drawbars_container_, !mode_drawbars_);
-  if (mode_drawbars_) {
+  if (mixer_container_) lv_obj_set_hidden(mixer_container_, toggles_.drawbars());
+  if (drawbars_container_) lv_obj_set_hidden(drawbars_container_, !toggles_.drawbars());
+  if (toggles_.drawbars()) {
     update_drawbars_ui();
   }
   update_top_bar_modes();
@@ -935,7 +933,7 @@ void PerformanceView::set_parts(const std::vector<PartStripData>& parts) {
   }
 
   update_part_strips();
-  if (mode_drawbars_) {
+  if (toggles_.drawbars()) {
     update_drawbars_ui();
   }
 }
@@ -954,7 +952,7 @@ void PerformanceView::set_part_volume(int32_t part_idx, float volume) {
   if (part_idx < 0 || part_idx >= 8) return;
   parts_[part_idx].volume = std::clamp(volume, 0.0f, 1.0f);
   update_part_strips();
-  if (mode_drawbars_) {
+  if (toggles_.drawbars()) {
     update_drawbars_ui();
   }
 }
@@ -1051,21 +1049,21 @@ void PerformanceView::update_top_bar_modes() {
 
   // Mode 1: MIXER / DRAWBARS
   lv_label_set_text(lbl_mode_mixer_,
-                    mode_drawbars_ ? tr("performance.mode.drawbars").c_str()
+                    toggles_.drawbars() ? tr("performance.mode.drawbars").c_str()
                                    : tr("performance.mode.mixer").c_str());
   lv_obj_set_style_text_color(lbl_mode_mixer_, p.accent, LV_PART_MAIN);
 
   // Mode 2: PARTS / SCENES
   lv_label_set_text(lbl_mode_parts_,
-                    mode_scenes_ ? tr("performance.mode.scenes").c_str()
+                    toggles_.scenes() ? tr("performance.mode.scenes").c_str()
                                  : tr("performance.mode.parts").c_str());
   lv_obj_set_style_text_color(lbl_mode_parts_, p.accent, LV_PART_MAIN);
 
   // Mode 3: KNOBS PART n / ALL / ASSIGN
   char buf[32];
-  if (mode_knobs_ == 1) {
+  if (toggles_.knob_mode() == 1) {
     std::snprintf(buf, sizeof(buf), "%s %s", tr("performance.mode.knobs").c_str(), tr("performance.mode.all").c_str());
-  } else if (mode_knobs_ == 2) {
+  } else if (toggles_.knob_mode() == 2) {
     std::snprintf(buf, sizeof(buf), "%s %s", tr("performance.mode.knobs").c_str(), tr("performance.mode.assign").c_str());
   } else {
     std::snprintf(buf, sizeof(buf), "%s %s %d", tr("performance.mode.knobs").c_str(), tr("performance.mode.part").c_str(), knob_part_);
@@ -1091,7 +1089,7 @@ void PerformanceView::update_part_strips() {
     lv_obj_t* fill = part_vol_fill_objs_[i];
 
     // Knob-target selection border (only in PART mode)
-    if (!mode_scenes_ && mode_knobs_ == 0 && static_cast<int32_t>(i) == selected_knob_part_idx_) {
+    if (!toggles_.scenes() && toggles_.knob_mode() == 0 && static_cast<int32_t>(i) == selected_knob_part_idx_) {
       lv_obj_set_style_border_color(card, p.accent, LV_PART_MAIN);
       lv_obj_set_style_border_width(card, Theme::spacing().selection_border, LV_PART_MAIN);
     } else {
@@ -1289,10 +1287,10 @@ void PerformanceView::update_from_state(const ws::v1::State& state) {
 }
 
 void PerformanceView::toggle_parts_scenes_mode() {
-  mode_scenes_ = !mode_scenes_;
+  toggles_.toggle_scenes();
   update_top_bar_modes();
   update_part_strips();
-  if (mode_drawbars_) {
+  if (toggles_.drawbars()) {
     update_drawbars_ui();
   }
 }
@@ -1300,7 +1298,7 @@ void PerformanceView::toggle_parts_scenes_mode() {
 void PerformanceView::select_knob_part(int32_t part_idx) {
   selected_knob_part_idx_ = std::clamp(part_idx, 0, 7);
   knob_part_ = selected_knob_part_idx_ + 1;
-  mode_knobs_ = 0; // PART mode
+  toggles_.set_knob_mode(0); // PART mode
   update_part_strips();
   update_top_bar_modes();
 }
@@ -1317,7 +1315,7 @@ void PerformanceView::handle_part_scene_press(int32_t btn_idx, bool pressed, uin
 
     if (duration >= 500000) {
       // Long press (>= 500 ms) in PARTS mode: selects knob target without toggling
-      if (!mode_scenes_) {
+      if (!toggles_.scenes()) {
         select_knob_part(btn_idx);
       } else {
         if (on_scene_long_press_) {
@@ -1326,13 +1324,14 @@ void PerformanceView::handle_part_scene_press(int32_t btn_idx, bool pressed, uin
       }
     } else {
       // Short press
-      if (!mode_scenes_) {
+      if (!toggles_.scenes()) {
         set_part_enabled(btn_idx, !parts_[btn_idx].enabled);
       } else {
         // SCENES mode: recall scene if non-empty
         if (btn_idx < static_cast<int32_t>(scenes_.size()) && !scenes_[btn_idx].is_empty) {
           recall_scene(btn_idx);
           scene_led_dipping_ = true;
+          scene_dip_elapsed_ms_ = 0;
           scene_dip_start_us_ = timestamp_us;
         }
       }
@@ -1340,10 +1339,16 @@ void PerformanceView::handle_part_scene_press(int32_t btn_idx, bool pressed, uin
   }
 }
 
+void PerformanceView::tick(uint32_t elapsed_ms) {
+  if (!scene_led_dipping_) return;
+  scene_dip_elapsed_ms_ += elapsed_ms;
+  if (scene_dip_elapsed_ms_ >= 200) scene_led_dipping_ = false;  // UX-DR81: a single 200 ms dip, then the LED is restored
+}
+
 LedLevel PerformanceView::button_led_level(size_t index) const {
   if (index >= 8) return LedLevel::Off;
 
-  if (!mode_scenes_) {
+  if (!toggles_.scenes()) {
     return parts_[index].enabled ? LedLevel::Strong : LedLevel::Off;
   }
 
@@ -1438,14 +1443,15 @@ bool PerformanceView::has_organ_part() const {
 void PerformanceView::toggle_drawbars_mixer_mode() {
   if (!has_organ_part()) {
     drawbars_led_blinking_ = true;
+    ++drawbars_refused_;
     set_warning_takeover(tr("organ.no_organ_notice"));
     return;
   }
 
   drawbars_led_blinking_ = false;
-  mode_drawbars_ = !mode_drawbars_;
+  toggles_.toggle_drawbars();
 
-  if (mode_drawbars_) {
+  if (toggles_.drawbars()) {
     // Determine active organ part
     if (selected_knob_part_idx_ >= 0 && selected_knob_part_idx_ < static_cast<int32_t>(parts_.size()) &&
         !parts_[selected_knob_part_idx_].is_empty &&
@@ -1583,8 +1589,8 @@ void PerformanceView::update_drawbars_ui() {
 }
 
 void PerformanceView::cycle_knob_mode() {
-  mode_knobs_ = (mode_knobs_ + 1) % 3;
-  if (mode_knobs_ == 1) {
+  toggles_.cycle_knob_mode();
+  if (toggles_.knob_mode() == 1) {
     // Entering ALL mode: snapshot base values
     for (size_t p = 0; p < 8; ++p) {
       for (size_t k = 0; k < 8; ++k) {
@@ -1595,7 +1601,7 @@ void PerformanceView::cycle_knob_mode() {
       all_encoder_offsets_[k] = 0.0f;
     }
   }
-  if (mode_knobs_ != 2 && assign_overlay_visible_) {
+  if (toggles_.knob_mode() != 2 && assign_overlay_visible_) {
     hide_assign_overlay();
   }
   update_top_bar_modes();
@@ -1605,11 +1611,11 @@ void PerformanceView::cycle_knob_mode() {
 LedLevel PerformanceView::knob_mode_led(uint8_t led_id) const {
   switch (led_id) {
     case MCU_LED_TOGGLE_LED_PART:
-      return (mode_knobs_ == 0) ? LedLevel::Strong : LedLevel::Off;
+      return (toggles_.knob_mode() == 0) ? LedLevel::Strong : LedLevel::Off;
     case MCU_LED_TOGGLE_LED_ALL:
-      return (mode_knobs_ == 1) ? LedLevel::Strong : LedLevel::Off;
+      return (toggles_.knob_mode() == 1) ? LedLevel::Strong : LedLevel::Off;
     case MCU_LED_TOGGLE_LED_ASSIGN:
-      return (mode_knobs_ == 2) ? LedLevel::Strong : LedLevel::Off;
+      return (toggles_.knob_mode() == 2) ? LedLevel::Strong : LedLevel::Off;
     default:
       return LedLevel::Off;
   }
@@ -1697,10 +1703,10 @@ void PerformanceView::handle_encoder_turn(size_t encoder_idx, int16_t delta, uin
   if (encoder_idx >= 8) return;
   float step = static_cast<float>(delta) * 0.01f;
 
-  if (mode_knobs_ == 0) {
+  if (toggles_.knob_mode() == 0) {
     size_t p = static_cast<size_t>(std::clamp(selected_knob_part_idx_, 0, 7));
     part_encoder_values_[p][encoder_idx] = std::clamp(part_encoder_values_[p][encoder_idx] + step, 0.0f, 1.0f);
-  } else if (mode_knobs_ == 1) {
+  } else if (toggles_.knob_mode() == 1) {
     all_encoder_offsets_[encoder_idx] = std::clamp(all_encoder_offsets_[encoder_idx] + step, -0.5f, 0.5f);
     for (size_t p = 0; p < 8; ++p) {
       part_encoder_values_[p][encoder_idx] = std::clamp(part_base_values_[p][encoder_idx] + all_encoder_offsets_[encoder_idx], 0.0f, 1.0f);
@@ -1721,10 +1727,10 @@ void PerformanceView::handle_encoder_turn(size_t encoder_idx, int16_t delta, uin
 void PerformanceView::set_encoder_value(size_t encoder_idx, float val) {
   if (encoder_idx >= 8) return;
   float clamped = std::clamp(val, 0.0f, 1.0f);
-  if (mode_knobs_ == 0) {
+  if (toggles_.knob_mode() == 0) {
     size_t p = static_cast<size_t>(std::clamp(selected_knob_part_idx_, 0, 7));
     part_encoder_values_[p][encoder_idx] = clamped;
-  } else if (mode_knobs_ == 1) {
+  } else if (toggles_.knob_mode() == 1) {
     all_encoder_offsets_[encoder_idx] = clamped - 0.5f;
     for (size_t p = 0; p < 8; ++p) {
       part_encoder_values_[p][encoder_idx] = std::clamp(part_base_values_[p][encoder_idx] + all_encoder_offsets_[encoder_idx], 0.0f, 1.0f);
@@ -1737,10 +1743,10 @@ void PerformanceView::set_encoder_value(size_t encoder_idx, float val) {
 float PerformanceView::encoder_ring_value(size_t encoder_idx) const {
   if (encoder_idx >= 8) return 0.0f;
 
-  if (mode_knobs_ == 0) {
+  if (toggles_.knob_mode() == 0) {
     size_t p = static_cast<size_t>(std::clamp(selected_knob_part_idx_, 0, 7));
     return part_encoder_values_[p][encoder_idx];
-  } else if (mode_knobs_ == 1) {
+  } else if (toggles_.knob_mode() == 1) {
     return std::clamp(0.5f + all_encoder_offsets_[encoder_idx], 0.0f, 1.0f);
   } else {
     return assign_encoder_values_[encoder_idx];
@@ -1762,7 +1768,7 @@ void PerformanceView::on_panel_event(const PanelEvent& ev) {
   }
 
   if (ev.type == PanelEventType::Fader) {
-    if (mode_drawbars_) {
+    if (toggles_.drawbars()) {
       if (ev.id >= MCU_CTRL_FADER_1 && ev.id <= MCU_CTRL_FADER_8) {
         size_t idx = static_cast<size_t>(ev.id - MCU_CTRL_FADER_1);
         uint8_t val = static_cast<uint8_t>(std::round((static_cast<float>(ev.delta) / 4095.0f) * 8.0f));

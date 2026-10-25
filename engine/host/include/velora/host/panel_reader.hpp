@@ -7,13 +7,20 @@
 //
 // The reader touches the RT plane only through the HostEventQueue (StampedUmp with host_ns, CLOCK_MONOTONIC_RAW ns). Every time it needs "now"
 // the caller passes it in, so the whole reader is deterministic under test. Single thread (the panel input thread); allocates (frame decode),
-// never runs on the RT thread. Binding faders / encoders / pedals to parameters is Epic 4, pedal semantics Story 3.11, LEDs Story 3.12.
+// never runs on the RT thread. Binding faders / encoders / pedals to parameters is Epic 4, pedal semantics Story 3.11.
+//
+// LEDs (Story 3.12): the reader is the ONLY writer of the panel link. set_led() (any thread: the control thread, from a ws.v1 SetLed) validates the LED id
+// against the ID map, keeps the full LED state and sends one LED_SET frame through the TX hook; every HELLO of the panel MCU replays the stored state, so a
+// restarted MCU lights what the SoC owns. All writes to the link (time sync requests included) are serialised by one mutex. Never touches the RT plane.
 #pragma once
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <functional>
+#include <mutex>
+#include <optional>
 #include <vector>
 
 #include "velora/core/snapshot.hpp"
@@ -73,6 +80,15 @@ struct PanelReaderCounters {
   std::uint64_t clock_clamps = 0;                      // converted times raised to keep events in order
   std::uint64_t queue_full = 0, controllers_dropped = 0;
   std::uint64_t mcu_resets = 0;
+  std::uint64_t leds_sent = 0, leds_replayed = 0;      // LED_SET frames written for set_led() / replayed after a panel HELLO
+  std::uint64_t leds_unlinked = 0, leds_rejected = 0;  // LED states stored with no TX hook / set_led() calls with an unknown id
+};
+
+// One LED of the stored state (MCU-ID-MAP.md section 8): brightness 0..255, arg = colour index or ring fill.
+struct LedValue {
+  std::uint8_t brightness = 0;
+  std::uint8_t arg = 0;
+  friend bool operator==(const LedValue&, const LedValue&) = default;
 };
 
 class PanelReader {
@@ -86,7 +102,11 @@ class PanelReader {
   PanelReader(PanelReader&&) = delete;
   PanelReader& operator=(PanelReader&&) = delete;
 
-  void set_tx(TxFn tx) { link_.set_tx(std::move(tx)); }
+  void set_tx(TxFn tx) {
+    std::lock_guard<std::mutex> lk(link_mu_);
+    have_tx_ = static_cast<bool>(tx);
+    link_.set_tx(std::move(tx));
+  }
   // Where BUTTON frames go (the ws.v1 PanelEvent push). Called on the input thread, so it must not block.
   void set_button_sink(ButtonSink sink) { sink_ = std::move(sink); }
 
@@ -94,6 +114,13 @@ class PanelReader {
   void on_bytes(const std::uint8_t* data, std::size_t len, std::uint64_t rx_ns);
   // Periodic housekeeping: sends TIME_SYNC requests, counts missed syncs.
   void poll(std::uint64_t now_ns);
+
+  // Story 3.12: sets one panel LED. Thread-safe. Returns false (nothing stored, nothing sent) for an id the ID map has no LED for. The state is stored even with
+  // no TX hook yet (replayed on HELLO). `now_ns` stamps the frame (0 = the last time the reader saw).
+  bool set_led(std::uint8_t id, std::uint8_t brightness, std::uint8_t arg, std::uint64_t now_ns = 0);
+  // The stored state of one LED (nullopt: the id is not an LED, or it was never set). Thread-safe.
+  std::optional<LedValue> led(std::uint8_t id) const;
+  static bool is_led_id(std::uint8_t id) noexcept;
 
   PanelReaderCounters counters() const;
   const DriftClock& clock() const noexcept { return link_.clock(); }
@@ -129,6 +156,14 @@ class PanelReader {
   mcu::Hello hello_{};
   bool have_hello_ = false;
   std::vector<mcu::Frame> frames_;  // scratch
+
+  void send_led_locked(std::uint8_t id, const LedValue& v, std::uint64_t now_ns, bool replay);
+  mutable std::mutex link_mu_;                      // serialises every write to the panel link and guards the LED state
+  std::array<LedValue, 256> leds_{};
+  std::array<bool, 256> led_set_{};
+  std::uint64_t last_now_ns_ = 0;
+  std::uint64_t leds_sent_ = 0, leds_replayed_ = 0, leds_unlinked_ = 0, leds_rejected_ = 0;
+  bool have_tx_ = false;
 };
 
 }  // namespace velora::host

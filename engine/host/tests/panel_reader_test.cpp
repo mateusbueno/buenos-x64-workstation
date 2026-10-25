@@ -481,6 +481,71 @@ void test_pitch_bend_ump() {
 
 }  // namespace
 
+// Story 3.12: set_led emits one LED_SET frame via the TX hook and stores the state; unknown ids are refused; a HELLO (first or after an MCU restart) replays the
+// stored state; no TX hook still stores; the frames share the link's numbering with the time sync requests.
+void test_leds() {
+  Rig r(0b1);
+  std::vector<mcu::Frame> tx_frames;
+  mcu::StreamDecoder sim_rx;
+  r.reader->set_tx([&](const std::uint8_t* d, std::size_t n) {
+    for (auto& f : sim_rx.feed(std::vector<std::uint8_t>(d, d + n))) tx_frames.push_back(f);
+  });
+  auto leds_sent = [&] {
+    std::vector<mcu::LedSet> v;
+    for (const mcu::Frame& f : tx_frames) {
+      auto m = mcu::parse_message(f);
+      if (m && std::holds_alternative<mcu::LedSet>(*m)) v.push_back(std::get<mcu::LedSet>(*m));
+    }
+    return v;
+  };
+  namespace leds = mcu_ids::leds;
+  // stored before the link is up of course also works (state kept, replayed below)
+  CHECK(r.reader->set_led(leds::TOGGLE_LED_DRAWBARS, 255, 0, r.host0));
+  CHECK(r.reader->set_led(leds::ENCODER_RING_3, 128, 77, r.host0 + kMs));
+  CHECK(leds_sent().size() == 2);
+  CHECK((leds_sent()[0] == mcu::LedSet{leds::TOGGLE_LED_DRAWBARS, 255, 0}) && (leds_sent()[1] == mcu::LedSet{leds::ENCODER_RING_3, 128, 77}));
+  CHECK((r.reader->led(leds::ENCODER_RING_3) == LedValue{128, 77}));
+  CHECK(!r.reader->led(leds::TOGGLE_LED_ALL));
+  // unknown ids (a button id, an unused id) are refused: nothing stored, nothing sent
+  CHECK(!r.reader->set_led(0x20 + 0x30, 255, 0));
+  CHECK(!r.reader->set_led(9, 255, 0));
+  CHECK(!r.reader->led(9));
+  CHECK(leds_sent().size() == 2 && r.reader->counters().leds_rejected == 2);
+  // the last value of an LED wins in the replay
+  CHECK(r.reader->set_led(leds::TOGGLE_LED_DRAWBARS, 0, 0));
+  CHECK(r.reader->set_led(leds::TOGGLE_LED_MIXER, 255, 0));
+  tx_frames.clear();
+  // the panel MCU says HELLO (boot): the stored state is replayed in id order, only LEDs that are not at the default (off, arg 0): DRAWBARS is off
+  r.feed(mcu::Hello{1, mcu::kProtocolVersion, 2, 0}, r.host0 + 10 * kMs);
+  auto rep = leds_sent();
+  CHECK(rep.size() == 2);
+  if (rep.size() == 2) {
+    CHECK((rep[0] == mcu::LedSet{leds::ENCODER_RING_3, 128, 77}));
+    CHECK((rep[1] == mcu::LedSet{leds::TOGGLE_LED_MIXER, 255, 0}));
+  }
+  CHECK(r.reader->counters().leds_replayed == 2);
+  // the MCU restarts (a different HELLO): replayed again
+  tx_frames.clear();
+  r.feed(mcu::Hello{2, mcu::kProtocolVersion, 2, 0}, r.host0 + 20 * kMs);
+  CHECK(leds_sent().size() == 2 && r.reader->counters().leds_replayed == 4);
+  // a HELLO from another board (the keybed MCU) replays nothing
+  tx_frames.clear();
+  r.feed(mcu::Hello{1, mcu::kProtocolVersion, 1, 3}, r.host0 + 30 * kMs);
+  CHECK(leds_sent().empty());
+  // frame numbering is the link's: a time sync request and LED frames follow each other without a seq gap
+  tx_frames.clear();
+  r.reader->poll(r.host0 + 40 * kMs);
+  CHECK(r.reader->set_led(leds::TOGGLE_LED_ALL, 10, 0));
+  CHECK(tx_frames.size() == 2 && static_cast<std::uint16_t>(tx_frames[0].seq + 1) == tx_frames[1].seq);
+  // no TX hook: stored, counted, nothing sent
+  Rig n(0b1);
+  CHECK(n.reader->set_led(leds::TOGGLE_LED_PART, 255, 0));
+  CHECK((n.reader->led(leds::TOGGLE_LED_PART) == LedValue{255, 0}) && n.reader->counters().leds_unlinked == 1);
+  // the RT plane is never involved
+  StampedUmp u;
+  CHECK(!n.q.pop(u));
+}
+
 int main() {
   test_pitch_bend_ump();
   test_keyboard_on_parts_from_snapshot();
@@ -492,6 +557,7 @@ int main() {
   test_hello_and_restart();
   test_full_queue();
   test_unknown_button();
+  test_leds();
   test_drift(+150.0);
   test_drift(-150.0);
   test_render_reaches_all_keyboard_parts();

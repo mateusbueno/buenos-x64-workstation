@@ -67,6 +67,7 @@ bool UiApp::build_navigation() {
     return false;
   }
   nav_controller_->set_on_language_changed([this]() { rebuild_pending_ = true; });
+  if (!options_.headless && dynamic_cast<SdlAdapter*>(adapter_.get())) nav_controller_->enable_led_view();  // Story 3.12: the simulator shows the panel LEDs
 
   if (!options_.start_surface.empty()) {
     static const std::pair<const char*, SurfaceId> kSurfaces[] = {
@@ -100,6 +101,7 @@ void UiApp::rebuild_navigation() {
   options_.start_surface.clear();
 
   lv_obj_clean(lv_screen_active());
+  lv_obj_clean(lv_layer_top());  // only the simulator's LED view lives on the top layer (checked: nothing else uses it)
   nav_controller_.reset();
   if (!build_navigation()) return;
 

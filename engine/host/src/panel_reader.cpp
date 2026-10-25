@@ -21,6 +21,12 @@ const mcu_ids::IdInfo* find_control(std::uint8_t id) {
   return nullptr;
 }
 
+const mcu_ids::IdInfo* find_led(std::uint8_t id) {
+  for (const mcu_ids::IdInfo& i : mcu_ids::kLeds)
+    if (i.id == id) return &i;
+  return nullptr;
+}
+
 const mcu_ids::IdInfo* find_button(std::uint8_t id) {
   for (const mcu_ids::IdInfo& i : mcu_ids::kButtons)
     if (i.id == id) return &i;
@@ -62,6 +68,11 @@ PanelReaderCounters PanelReader::counters() const {
   c.missed_syncs = t.missed;
   c.sync_stray = t.stray;
   c.unsynced_events = t.unsynced_events;
+  std::lock_guard<std::mutex> lk(link_mu_);
+  c.leds_sent = leds_sent_;
+  c.leds_replayed = leds_replayed_;
+  c.leds_unlinked = leds_unlinked_;
+  c.leds_rejected = leds_rejected_;
   return c;
 }
 
@@ -136,12 +147,49 @@ void PanelReader::sync_parts_and_flush() {
   }
 }
 
+bool PanelReader::is_led_id(std::uint8_t id) noexcept { return find_led(id) != nullptr; }
+
+// Caller holds link_mu_.
+void PanelReader::send_led_locked(std::uint8_t id, const LedValue& v, std::uint64_t now_ns, bool replay) {
+  if (!have_tx_) {
+    ++leds_unlinked_;
+    return;
+  }
+  if (link_.transmit(mcu::LedSet{id, v.brightness, v.arg}, static_cast<std::uint32_t>(now_ns / 1000))) ++(replay ? leds_replayed_ : leds_sent_);
+}
+
+bool PanelReader::set_led(std::uint8_t id, std::uint8_t brightness, std::uint8_t arg, std::uint64_t now_ns) {
+  std::lock_guard<std::mutex> lk(link_mu_);
+  if (!find_led(id)) {
+    ++leds_rejected_;
+    return false;
+  }
+  leds_[id] = LedValue{brightness, arg};
+  led_set_[id] = true;
+  send_led_locked(id, leds_[id], now_ns != 0 ? now_ns : last_now_ns_, false);
+  return true;
+}
+
+std::optional<LedValue> PanelReader::led(std::uint8_t id) const {
+  std::lock_guard<std::mutex> lk(link_mu_);
+  if (!led_set_[id]) return std::nullopt;
+  return leds_[id];
+}
+
 void PanelReader::poll(std::uint64_t now_ns) {
-  link_.poll(now_ns);
+  {
+    std::lock_guard<std::mutex> lk(link_mu_);
+    last_now_ns_ = now_ns;
+    link_.poll(now_ns);
+  }
   sync_parts_and_flush();
 }
 
 void PanelReader::on_bytes(const std::uint8_t* data, std::size_t len, std::uint64_t rx_ns) {
+  {
+    std::lock_guard<std::mutex> lk(link_mu_);
+    last_now_ns_ = rx_ns;
+  }
   sync_parts_and_flush();
   frames_.clear();
   decoder_.feed(data, len, &frames_, nullptr);
@@ -195,6 +243,11 @@ void PanelReader::on_hello(const mcu::Hello& h, std::uint32_t tick, std::uint64_
   }
   hello_ = h;
   have_hello_ = true;
+  // The MCU never sets an LED on its own: a (re)connected panel gets the LED state the SoC holds. A restarted MCU has every LED off, so only non-default
+  // LEDs (brightness or arg set) are sent.
+  std::lock_guard<std::mutex> lk(link_mu_);
+  for (std::size_t i = 0; i < leds_.size(); ++i)
+    if (led_set_[i] && (leds_[i].brightness != 0 || leds_[i].arg != 0)) send_led_locked(static_cast<std::uint8_t>(i), leds_[i], rx_ns, true);
 }
 
 void PanelReader::on_button(const mcu::Button& b, std::uint64_t t) {

@@ -451,6 +451,7 @@ int main(int argc, char** argv) {
   // reader the panel MCU's UART feeds on the SoC); the reader's UMP joins the MIDI lane (the CoreMIDI thread stays its only producer) and BUTTON frames are
   // pushed to subscribed ui clients over ws.v1. Everything the map does not name goes on to the ingest unchanged.
   host::KeyboardOnParts keyboard_parts;
+  std::unique_ptr<host::VirtualPanelLeds> panel_leds;  // before the reader: the reader's TX hook points at it
   std::unique_ptr<host::PanelReader> panel_reader;
   std::unique_ptr<host::VirtualPanel> virtual_panel;
   std::unique_ptr<host::VirtualPanelUmpSink> panel_sink;
@@ -470,6 +471,10 @@ int main(int argc, char** argv) {
     virtual_panel = std::make_unique<host::VirtualPanel>(
         std::move(vmap), [] { return host::macos::now_ns(); },
         [pr](const std::uint8_t* data, std::size_t len, std::uint64_t rx_ns) { pr->on_bytes(data, len, rx_ns); });
+    // Story 3.12: what the reader writes to the panel link (LED_SET frames, time sync requests) is received by the simulated MCU's LED model.
+    panel_leds = std::make_unique<host::VirtualPanelLeds>();
+    host::VirtualPanelLeds* pl = panel_leds.get();
+    panel_reader->set_tx([pl](const std::uint8_t* data, std::size_t len) { pl->on_bytes(data, len); });
     virtual_panel->start();
     panel_sink = std::make_unique<host::VirtualPanelUmpSink>(*virtual_panel, ingest);
     std::printf("virtual panel: %s\n", virtual_panel_path.c_str());
@@ -504,6 +509,8 @@ int main(int argc, char** argv) {
     library_client->start();
     std::printf("library: Library API client on %s (reconnects when the librarian service is down)\n", library_socket.c_str());
   }
+  // Story 3.12: a ws.v1 SetLed goes to the panel reader, the only writer of the panel link (control thread -> reader's thread-safe set_led).
+  if (panel_reader) plane.set_led_sink([pr = panel_reader.get()](std::uint8_t id, std::uint8_t b, std::uint8_t a) { pr->set_led(id, b, a, host::macos::now_ns()); });
   host::ControlServer control(plane, socket_path);
   panel_push.store(&control, std::memory_order_release);
   // Teardown order: `control` is destroyed before `midi` (declared earlier), and the CoreMIDI thread must never reach a destroyed server. On every exit

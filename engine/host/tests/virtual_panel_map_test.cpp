@@ -301,11 +301,37 @@ void test_ump_sink() {
 
 }  // namespace
 
+// Story 3.12: the virtual panel's LED model shows every LED_SET frame the reader writes (the simulated MCU's receiver); time sync requests are ignored.
+void test_virtual_leds() {
+  HostEventQueue q;
+  KeyboardOnParts parts;
+  PanelReader reader{q, parts};
+  VirtualPanelLeds model;
+  std::vector<mcu::LedSet> changes;
+  model.set_on_change([&](std::uint8_t id, std::uint8_t b, std::uint8_t a) { changes.push_back(mcu::LedSet{id, b, a}); });
+  reader.set_tx([&](const std::uint8_t* d, std::size_t n) { model.on_bytes(d, n); });
+  CHECK(model.snapshot().empty());
+  reader.poll(5'000'000'000ull);  // a TIME_SYNC request
+  CHECK(model.counters().other_frames == 1 && model.counters().led_frames == 0);
+  CHECK(reader.set_led(mcu_ids::leds::TOGGLE_LED_PART, 255, 0));
+  CHECK(reader.set_led(mcu_ids::leds::TOGGLE_LED_ALL, 0, 0));
+  CHECK(reader.set_led(mcu_ids::leds::ENCODER_RING_1, 100, 40));
+  CHECK((model.led(mcu_ids::leds::TOGGLE_LED_PART) == mcu::LedSet{mcu_ids::leds::TOGGLE_LED_PART, 255, 0}));
+  CHECK((model.led(mcu_ids::leds::ENCODER_RING_1) == mcu::LedSet{mcu_ids::leds::ENCODER_RING_1, 100, 40}));
+  CHECK((model.led(mcu_ids::leds::TOGGLE_LED_ASSIGN) == mcu::LedSet{mcu_ids::leds::TOGGLE_LED_ASSIGN, 0, 0}));
+  CHECK(model.snapshot().size() == 3 && changes.size() == 3);
+  // a panel HELLO makes the reader replay the whole state: the model ends up the same
+  const auto hello = mcu::FrameWriter{}.write(mcu::Hello{1, mcu::kProtocolVersion, 2, 0}, 100);
+  reader.on_bytes(hello.data(), hello.size(), 6'000'000'000ull);
+  CHECK(model.counters().led_frames == 5 && model.snapshot().size() == 3);  // the replay skips the LED at its default (ALL, off)
+}
+
 int main() {
   test_map_parsing();
   test_same_frames_same_output();
   test_scaling_and_edges();
   test_ump_sink();
+  test_virtual_leds();
   if (g_fail) std::printf("virtual_panel_map_test: %d failure(s)\n", g_fail);
   else std::printf("virtual_panel_map_test: ok\n");
   return g_fail ? 1 : 0;

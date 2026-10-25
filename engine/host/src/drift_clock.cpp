@@ -152,6 +152,14 @@ void TimeSyncLink::poll(std::uint64_t now_ns) {
   tx_(wire.data(), wire.size());
 }
 
+bool TimeSyncLink::transmit(const mcu::Message& m, std::uint32_t tick) {
+  if (!tx_) return false;
+  const auto wire = writer_.write(m, tick);
+  if (wire.empty()) return false;
+  tx_(wire.data(), wire.size());
+  return true;
+}
+
 void TimeSyncLink::restart() noexcept {
   clock_.reset();
   outstanding_ = false;

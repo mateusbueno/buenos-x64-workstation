@@ -1,4 +1,5 @@
 #include "velora/host/control_plane.hpp"
+#include "velora/host/mcu_ids.hpp"
 
 #include <algorithm>
 #include <array>
@@ -726,6 +727,27 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kSubscribe:
         ok = true;
         break;
+      case B::kSetLed: {  // Story 3.12: validated here, written to the panel link by the panel reader (never the RT plane)
+        const ws::v1::SetLed& sl = msg.set_led();
+        bool known = false;
+        if (sl.led_id() <= 255) {
+          for (const mcu_ids::IdInfo& i : mcu_ids::kLeds)
+            if (i.id == sl.led_id()) known = true;
+        }
+        if (!known) {
+          f.details["led_id"] = std::to_string(sl.led_id());
+          fail(f, ws::v1::ERROR_CODE_UNKNOWN_LED, "SetLed names an LED id the panel does not have");
+          break;
+        }
+        if (sl.brightness() > 255 || sl.arg() > 255) {
+          f.details["led_id"] = std::to_string(sl.led_id());
+          fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "SetLed brightness and arg are 0..255");
+          break;
+        }
+        if (led_sink_) led_sink_(static_cast<std::uint8_t>(sl.led_id()), static_cast<std::uint8_t>(sl.brightness()), static_cast<std::uint8_t>(sl.arg()));
+        ok = true;
+        break;
+      }
       case B::kRecallScene:
       case B::kNextScene:
       case B::kPreviousScene:

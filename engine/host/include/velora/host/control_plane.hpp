@@ -163,6 +163,10 @@ class ControlPlane {
   // Fader commands (Story 4.12): the FaderController registers itself here (and unregisters in its destructor). Control thread only.
   void set_fader_handler(FaderHandler* h) noexcept { fader_handler_ = h; }
   FaderHandler* fader_handler() const noexcept { return fader_handler_; }
+  // Panel LEDs (Story 3.12): where a validated SetLed goes (the engine's PanelReader::set_led, the only writer of the panel link). The id is already checked
+  // against the ID map, brightness / arg are 0..255. With no sink (no panel attached) a valid SetLed is acknowledged and dropped. Set before the server runs.
+  using LedSink = std::function<void(std::uint8_t led_id, std::uint8_t brightness, std::uint8_t arg)>;
+  void set_led_sink(LedSink sink) { led_sink_ = std::move(sink); }
 
   // Story 6.5: the registry the I/O edge threads report damaged protected-library blocks to. State.content shows its libraries and the RT content_integrity
   // counter; every report bumps the revision so subscribers get a State push. Control thread only to set (null detaches); the registry outlives the plane's use.
@@ -253,6 +257,7 @@ class ControlPlane {
   SetlistHandler* setlist_handler_ = nullptr;
   EditHandler* edit_handler_ = nullptr;
   FaderHandler* fader_handler_ = nullptr;
+  LedSink led_sink_;
   std::uint32_t fence_seq_ = 0;
   std::uint64_t program_generation_ = 0;
   std::uint64_t reservation_epoch_ = 0;
