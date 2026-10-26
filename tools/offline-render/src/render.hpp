@@ -77,6 +77,9 @@ struct RenderOptions {
   float gain_db = 0.0f;  // sample engine output gain (the sfizz null tests use sfizz's -7.35 dB default master volume)
   velora::core::SampleInterpolation interpolation = velora::core::SampleInterpolation::kHermite3;
   std::uint32_t voices = 32;
+  // Sample engine only (Story 1.18): parallel voice render. 0 = off (the serial render, the default), 1 = the three fixed partitions run inline, 3 = three
+  // worker threads. 1 and 3 render bit-identically; other values are clamped by the renderer.
+  std::uint32_t parallel_voice_threads = 0;
   // Organ engine only: nine drawbar steps 0..8 in drawbar order (16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1'),
   // applied to every organ part (channels 0..7) at frame 0 as performance parameter events.
   std::string drawbars = "008000000";

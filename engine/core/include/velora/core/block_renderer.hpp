@@ -18,6 +18,7 @@
 #include "velora/core/spsc_queue.hpp"
 #include "velora/core/test_tone_engine.hpp"
 #include "velora/core/transport_clock.hpp"
+#include "velora/core/worker_pool.hpp"
 #include "velora/core/ump.hpp"
 #include "velora/core/voice_arbiter.hpp"
 
@@ -52,6 +53,9 @@ class BlockRenderer {
   static constexpr std::size_t kPendingCapacity = 256;
 
   explicit BlockRenderer(std::uint32_t test_tone_voices = 32);
+  ~BlockRenderer();
+  BlockRenderer(const BlockRenderer&) = delete;
+  BlockRenderer& operator=(const BlockRenderer&) = delete;
 
   // Producer side (any single producer thread). UMP is the only accepted input type.
   // False when the queue is full; events already queued are unaffected.
@@ -72,7 +76,9 @@ class BlockRenderer {
   // The engine joins the voice pool arbiter as well (call before arbiter().reserve()).
   bool bind_engine(Engine& engine) {
     if (!registry_.bind(engine)) return false;
-    if (arbiter_.bind(engine)) {  // channels mapped before the bind receive the current performance values
+    if (arbiter_.bind(engine)) {
+      if (voice_pool_active_) engine.set_parallel_voice_pool(&voice_pool_, kBlockFrames);
+      // channels mapped before the bind receive the current performance values
       for (std::uint32_t ch = 0; ch < 16; ++ch)
         if (channel_engine_[ch] == static_cast<std::uint32_t>(engine.type_id())) sync_part_params(ch);
       return true;
@@ -80,6 +86,17 @@ class BlockRenderer {
     registry_.unbind_last();  // keep registry and arbiter in step
     return false;
   }
+
+  // Story 1.18, setup-time (never while process_block runs): the parallel voice render. Each block still runs its events serially; the voices of
+  // the engines that support it (the sample engine) are then rendered in 3 fixed partitions on a lock-free worker pool, a barrier, and a
+  // summation in fixed partition order (see SampleEngine::set_parallel_voice_pool). `threads`: 0 = off (the default: the exact serial render),
+  // 1 = the three partitions run inline on the audio thread, 3 = one worker per partition (other values are clamped, see
+  // WorkerPool::StartResult). 1 and 3 give bit-identical output. `affinity` (nullable) pins worker p to cpus[p] (nullable: cpu p), once at start.
+  // Applies to the engines bound now and later. SETUP-TIME ONLY: never call it while process_block() runs (asserted in debug builds); the bound
+  // engines must outlive the renderer while it is on (the destructor detaches the pool from them).
+  WorkerPool::StartResult set_parallel_voice_render(std::uint32_t threads, ports::ThreadAffinity* affinity = nullptr,
+                                                    const std::uint32_t* cpus = nullptr);
+  std::uint32_t parallel_voice_threads() const noexcept { return voice_pool_active_ ? voice_pool_.threads() : 0u; }
 
   // The voice pool arbiter (Story 1.19): the sole allocator and stealer. reserve() it with the Live Set
   // configuration; until then voices are first-free and a full pool reports kPoolExhausted.
@@ -253,7 +270,11 @@ class BlockRenderer {
   void bind_generation(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING;
   void reap_generation_refs() noexcept VELORA_NONBLOCKING;
 
+  void detach_voice_pool() noexcept;
+  std::atomic<bool> in_block_{false};
   Arena arena_;
+  WorkerPool voice_pool_;  // Story 1.18: joined in the destructor; engines only borrow it
+  bool voice_pool_active_ = false;
   TestToneEngine tone_;
   EngineRegistry registry_;
   VoiceArbiter arbiter_;

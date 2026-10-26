@@ -24,6 +24,7 @@ set(VELORA_CORE_SOURCES
   src/arpeggiator.cpp
   src/fm_engine.cpp
   src/va_engine.cpp
+  src/worker_pool.cpp
   src/block_renderer.cpp)
 add_library(velora_core STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
 add_library(velora::core ALIAS velora_core)
@@ -38,6 +39,25 @@ add_test(NAME core_tests COMMAND core_tests)
 add_executable(sample_engine_tests tests/sample_engine_test.cpp)
 target_link_libraries(sample_engine_tests PRIVATE velora_core)
 add_test(NAME sample_engine_tests COMMAND sample_engine_tests)
+
+# Story 1.18: the lock-free worker pool (fixed 3-way partitions, inline vs threads, clamping, pinning hook, shutdown) and the parallel voice render
+# (1 vs 3 threads bit-identical, parallel vs serial within a tolerance, default off bit-identical). Correctness only: the board timing is dev-board work.
+add_executable(worker_pool_tests tests/worker_pool_test.cpp)
+target_link_libraries(worker_pool_tests PRIVATE velora_core)
+add_test(NAME worker_pool_tests COMMAND worker_pool_tests)
+set_tests_properties(worker_pool_tests PROPERTIES TIMEOUT 120 FAIL_REGULAR_EXPRESSION "FAIL")
+
+add_executable(parallel_render_tests tests/parallel_render_test.cpp)
+target_link_libraries(parallel_render_tests PRIVATE velora_core)
+target_compile_definitions(parallel_render_tests PRIVATE VELORA_ARBITER_TEST_HOOKS)
+add_test(NAME parallel_render_tests COMMAND parallel_render_tests)
+set_tests_properties(parallel_render_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
+
+# The parallel block path under traffic with an allocation counter armed (no sanitizer, so macOS runs it); the RTSan build of the same file is below.
+add_executable(parallel_traffic_test tests/parallel_traffic_test.cpp)
+target_link_libraries(parallel_traffic_test PRIVATE velora_core)
+add_test(NAME parallel_traffic_test COMMAND parallel_traffic_test)
+set_tests_properties(parallel_traffic_test PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
 
 # Story 6.5: content integrity on the real-time side (damage map of a protected sample: fade to silence, content_integrity counter, bit-exact when undamaged).
 add_executable(content_integrity_tests tests/content_integrity_test.cpp)
@@ -272,6 +292,12 @@ if(VELORA_RTSAN)
     target_compile_options(rtsan_sample_engine_test PRIVATE -fsanitize=realtime -g)
     target_link_options(rtsan_sample_engine_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_sample_engine_test COMMAND rtsan_sample_engine_test)
+    add_executable(rtsan_parallel_traffic_test tests/parallel_traffic_test.cpp)
+    target_link_libraries(rtsan_parallel_traffic_test PRIVATE velora_core)
+    target_compile_options(rtsan_parallel_traffic_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_parallel_traffic_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_parallel_traffic_test COMMAND rtsan_parallel_traffic_test)
+    set_tests_properties(rtsan_parallel_traffic_test PROPERTIES TIMEOUT 300)
     add_executable(rtsan_integrity_test tests/rtsan_integrity_test.cpp)
     target_link_libraries(rtsan_integrity_test PRIVATE velora_core)
     target_compile_options(rtsan_integrity_test PRIVATE -fsanitize=realtime -g)

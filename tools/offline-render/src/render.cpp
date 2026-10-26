@@ -293,6 +293,14 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   std::size_t next_arp_switch = 0;
   std::vector<std::unique_ptr<Snapshot>> switch_snapshots;
 
+  // Story 1.18: the parallel voice render (sample engine only; 0 = the serial render, the default). Switched on after every engine is bound, and detached
+  // by this guard BEFORE the engines (declared above) are destroyed: the renderer's pool must never be reached through a dead engine.
+  struct PoolGuard {
+    BlockRenderer& b;
+    ~PoolGuard() { b.set_parallel_voice_render(0); }
+  } pool_guard{*br};
+  if (opt.engine == EngineKind::kSample && opt.parallel_voice_threads != 0) br->set_parallel_voice_render(opt.parallel_voice_threads);
+
   float l[kBlockFrames], r[kBlockFrames], al[kBlockFrames], ar[kBlockFrames];
   std::size_t next = 0;
   for (std::uint64_t b = 0; b < blocks; ++b) {

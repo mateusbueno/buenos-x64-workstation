@@ -83,7 +83,7 @@ static int usage() {
   std::fprintf(stderr,
                "usage: velora-offline-render [--midi in.mid] [--events in.contacts (test only, organ engine)] --out out.wav\n"
                "       [--engine test-tone|sample|organ|fm]   (at least one of --midi / --events)\n"
-               "       [--voices N] [--tail-seconds S] [--detune-cents C (test only)]\n"
+               "       [--voices N] [--voice-threads 0|1|3 (sample engine only)] [--tail-seconds S] [--detune-cents C (test only)]\n"
                "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
                "                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]\n"
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
   std::string syx_path, negative_opt;
   std::uint64_t voice_slot = 1;
   bool voice_slot_given = false;
-  bool voices_given = false, sample_opts = false, drawbars_given = false;
+  bool voice_threads_given = false, voices_given = false, sample_opts = false, drawbars_given = false;
   std::string drawbars, percussion;
   bool percussion_given = false, key_click_given = false, vibrato_given = false, leakage_given = false, rotary_given = false;
   RenderOptions opt;
@@ -157,6 +157,11 @@ int main(int argc, char** argv) {
       if (!parse_uint(v, 4096, n) || n < 1) { std::fprintf(stderr, "error: invalid --voices\n"); return 2; }
       opt.voices = static_cast<std::uint32_t>(n);
       voices_given = true;
+    } else if (a == "--voice-threads" && val(v)) {
+      std::uint64_t n = 0;
+      if (!parse_uint(v, 3, n) || (n != 0 && n != 1 && n != 3)) { std::fprintf(stderr, "error: invalid --voice-threads (0 = serial, 1 or 3)\n"); return 2; }
+      opt.parallel_voice_threads = static_cast<std::uint32_t>(n);
+      voice_threads_given = true;
     } else if (a == "--drawbars" && val(v)) { drawbars = v; drawbars_given = true;
     } else if (a == "--percussion" && val(v)) { percussion = v; percussion_given = true;
     } else if (a == "--key-click" && val(v)) {
@@ -735,6 +740,10 @@ int main(int argc, char** argv) {
   if ((midi.empty() && events_path.empty()) || out.empty()) return usage();
   if (engine != "test-tone" && engine != "sample" && engine != "organ" && engine != "fm") {
     std::fprintf(stderr, "error: unknown engine '%s' (test-tone, sample, organ or fm)\n", engine.c_str());
+    return 2;
+  }
+  if (voice_threads_given && engine != "sample") {
+    std::fprintf(stderr, "error: --voice-threads is for the sample engine only\n");
     return 2;
   }
   if (!events_path.empty() && engine != "organ") {

@@ -22,6 +22,7 @@
 // store + the engine's set_part_param, so smoothing and ramps apply). A part-scope parameter lands on the SELECTED part (RT value, default 0; Stories
 // 4.13 / 4.22 will drive it), a master-scope one on part 0. An empty slot does nothing (counted). A parameter whose engine or part does not exist still
 // updates the live value; the engine ignores it. PART and ALL are Story 4.13: here they only count (steps_unrouted).
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>

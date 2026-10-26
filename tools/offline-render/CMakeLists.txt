@@ -70,6 +70,12 @@ target_link_libraries(live_set_cc_test PRIVATE velora_offline)
 target_compile_definitions(live_set_cc_test PRIVATE OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME live_set_cc_test COMMAND live_set_cc_test)
 
+# --- Story 1.18: parallel voice render, 1 vs 3 worker threads bit-identical in the offline renderer (name matches "parallel") ---
+add_executable(parallel_voices_test tests/parallel_voices_test.cpp)
+target_link_libraries(parallel_voices_test PRIVATE velora_offline)
+add_test(NAME parallel_voices_test COMMAND parallel_voices_test)
+set_tests_properties(parallel_voices_test PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
+
 # --- Seamless switching render suite (Story 4.8, NFR14, FR79..FR82, AR2) ---
 add_executable(seamless_switching_suite tests/seamless_switching_suite_test.cpp)
 target_link_libraries(seamless_switching_suite PRIVATE velora_offline)
@@ -795,6 +801,8 @@ foreach(_neg keyswitch_last keyswitch_down_up keyswitch_previous xfade_power xfa
   add_test(NAME sample_null_neg_strip_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip)
 endforeach()
 add_test(NAME sample_render_cli_errors COMMAND sample_suite_test cli-errors)
+# Story 1.18: --voice-threads 3 equals --voice-threads 1 bit for bit; 2 and a non-sample engine exit 2.
+add_test(NAME sample_render_voice_threads COMMAND sample_suite_test voice-threads)
 
 # Real libraries (Salamander Grand Piano, a VSCO2 instrument) against a locally built sfizz oracle: env-gated.
 # Skipped (exit 77) unless VELORA_SFZ_DEMO_DIR is set and sfizz_render exists; see tests/sample_demo_null_test.cpp.

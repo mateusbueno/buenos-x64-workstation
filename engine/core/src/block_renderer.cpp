@@ -660,6 +660,31 @@ void BlockRenderer::render_segment(float* l, float* r, std::uint32_t from, std::
   for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->render_split(ls, rs, to - from);
 }
 
+void BlockRenderer::detach_voice_pool() noexcept {
+  if (!voice_pool_active_) return;
+  for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->set_parallel_voice_pool(nullptr, 0);
+}
+
+BlockRenderer::~BlockRenderer() {
+  // The pool dies with the renderer: no bound engine may keep a pointer to it. (Only when the parallel render was on: an engine that was
+  // destroyed before the renderer is then never touched; the engines must outlive the renderer while the parallel render is active.)
+  detach_voice_pool();
+  voice_pool_.stop();
+}
+
+WorkerPool::StartResult BlockRenderer::set_parallel_voice_render(std::uint32_t threads, ports::ThreadAffinity* affinity,
+                                                                  const std::uint32_t* cpus) {
+  assert(!in_block_.load(std::memory_order_relaxed) && "set_parallel_voice_render is setup-time only");
+  detach_voice_pool();  // detach before the pool changes
+  voice_pool_.stop();
+  voice_pool_active_ = false;
+  if (threads == 0) return WorkerPool::StartResult::kOk;
+  const WorkerPool::StartResult res = voice_pool_.start(threads, affinity, cpus);
+  voice_pool_active_ = true;
+  for (std::size_t i = 0; i < registry_.size(); ++i) registry_.at(i)->set_parallel_voice_pool(&voice_pool_, kBlockFrames);
+  return res;
+}
+
 float BlockRenderer::tempo_bpm() const noexcept {
   if (clock_source_.load(std::memory_order_acquire) != ClockSource::kInternal) {
     return follower_.tempo_bpm();
@@ -687,6 +712,11 @@ void BlockRenderer::process_block(float* left, float* right) noexcept {
 }
 
 void BlockRenderer::process_block(const OutputBuses& out) noexcept {
+  struct InBlock {  // debug aid for set_parallel_voice_render()'s setup-time-only rule
+    std::atomic<bool>& f;
+    explicit InBlock(std::atomic<bool>& x) : f(x) { f.store(true, std::memory_order_relaxed); }
+    ~InBlock() { f.store(false, std::memory_order_relaxed); }
+  } in_block_guard(in_block_);
   float* const left = out.main_left;
   float* const right = out.main_right;
   if (!left || !right) return;

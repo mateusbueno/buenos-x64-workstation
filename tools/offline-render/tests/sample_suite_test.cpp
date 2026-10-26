@@ -136,6 +136,42 @@ static int cli_errors(const std::string& work) {
   return g_fail ? 1 : 0;
 }
 
+// Story 1.18: --voice-threads at the CLI. 3 worker threads and 1 inline thread render the same file bit for bit; 2 is refused (exit 2); a non-sample
+// engine refuses the flag (exit 2).
+static std::string slurp(const std::string& path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+static int voice_threads(const std::string& work) {
+  std::string out;
+  const std::string exe = q(RENDER_EXE);
+  const std::string name = "velocity_layers";
+  const std::string mid = q(std::string(SUITE_DIR) + "/midi/" + name + ".mid");
+  velora::librarian::ImportOptions opt;
+  opt.sfz_path = std::string(SUITE_DIR) + "/sfz/" + name + ".sfz";
+  opt.base_dir = std::string(SUITE_DIR) + "/sfz";
+  opt.root = work + "/root";
+  mkdirs(opt.root);
+  const auto res = velora::librarian::import_sfz(opt);
+  CHECK(res.ok());
+  if (!res.ok()) return 1;
+  const std::string base = exe + " --midi " + mid + " --engine sample --bundle " + q(res.bundle_dir + "/bundle.vlb") + " --instrument " +
+                           q(name + ".sfz") + " --voices 64 --tail-seconds 0.5";
+  const std::string w0 = work + "/t0.wav", w1 = work + "/t1.wav", w3 = work + "/t3.wav";
+  CHECK(run(base + " --out " + q(w0), out, work + "/r0.log") == 0);
+  CHECK(run(base + " --voice-threads 1 --out " + q(w1), out, work + "/r1.log") == 0);
+  CHECK(run(base + " --voice-threads 3 --out " + q(w3), out, work + "/r3.log") == 0);
+  const std::string a = slurp(w1), b = slurp(w3);
+  CHECK(!a.empty() && a == b);  // bit for bit
+  CHECK(!slurp(w0).empty());
+  CHECK(run(base + " --voice-threads 2 --out " + q(work + "/t2.wav"), out, work + "/r2.log") == 2);
+  CHECK(out.find("invalid --voice-threads") != std::string::npos);
+  CHECK(run(exe + " --midi " + mid + " --engine test-tone --voice-threads 3 --out " + q(work + "/tt.wav"), out, work + "/rt.log") == 2);
+  CHECK(out.find("sample engine only") != std::string::npos);
+  return g_fail ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) return 2;
   const std::string name = argv[1];
@@ -144,6 +180,7 @@ int main(int argc, char** argv) {
   std::system(("rm -rf " + q(work)).c_str());
   mkdirs(work);
   if (name == "cli-errors") return cli_errors(work);
+  if (name == "voice-threads") return voice_threads(work);
   if (argc < 3) return 2;
   const std::string interp = argv[2];
   std::string negative;

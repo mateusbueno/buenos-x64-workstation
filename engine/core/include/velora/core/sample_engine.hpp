@@ -20,6 +20,7 @@
 
 #include "velora/core/engine.hpp"
 #include "velora/core/sample_bank.hpp"
+#include "velora/core/worker_pool.hpp"
 #include "velora/ports/sample_source.hpp"
 
 namespace velora::core {
@@ -110,6 +111,15 @@ class SampleEngine final : public Engine {
   int part_last_keyswitch(std::uint32_t part) const noexcept { return ks_[part & 15u].last; }
   bool part_key_held(std::uint32_t part, std::uint32_t key) const noexcept { return key < 128 && ks_[part & 15u].is_held(static_cast<int>(key)); }
   int part_previous_note(std::uint32_t part) const noexcept { return ks_[part & 15u].prev; }
+
+  // Story 1.18: parallel voice render (opt-in; nullptr = the serial render, bit-identical to before). With a pool the voice slots are split into
+  // WorkerPool::kPartitions fixed partitions (slot % 3); each partition renders its voices into its own scratch buses, the pool's barrier
+  // follows, and the scratch buses are summed into the outputs in partition order 0, 1, 2 (per part in render_split). Voices write only their own
+  // state and their partition's scratch. The result does not depend on how many threads execute the partitions (1 inline or 3), and differs from
+  // the serial render only by float summation order. Setup-time (allocates the scratch for `max_frames` frames per call; a longer call renders
+  // serially); the pool is borrowed and must outlive its use.
+  void set_parallel_voice_pool(WorkerPool* pool, std::uint32_t max_frames) override;
+  bool parallel_voice_render() const noexcept { return pool_ != nullptr; }
 
   // Deterministic RNG for lorand/hirand: one draw per note on and per note off.
   void set_seed(std::uint64_t seed) noexcept;
@@ -216,6 +226,14 @@ class SampleEngine final : public Engine {
   float crossfade_target(const RegionRt& r, std::uint32_t channel) const noexcept;
   float next_random() noexcept;
   void render_voice(Voice& v, float* left, float* right, std::uint32_t frames) noexcept;
+  // Story 1.18 parallel path. render_parallel() runs the partitions on the pool, then sums; render_partition() is one partition's work.
+  bool parallel_applicable(std::uint32_t frames) const noexcept;
+  void render_parallel(float* const* left, float* const* right, std::uint32_t frames, bool split) noexcept;
+  void render_partition(std::uint32_t partition) noexcept;
+  static void partition_task(void* self, std::uint32_t partition) noexcept;
+  float* scratch(std::uint32_t partition, std::uint32_t bus, std::uint32_t channel) noexcept {
+    return scratch_base_ + ((static_cast<std::size_t>(partition) * kSplitChannels + channel) * 2 + bus) * par_stride_;
+  }
 
   Config cfg_;
   std::uint32_t capacity_ = 0;
@@ -239,6 +257,15 @@ class SampleEngine final : public Engine {
   std::atomic<std::uint64_t> integrity_events_{0};
   std::array<KeyState, 16> ks_{};                       // per part (channel) keyswitch state
   std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units
+  // Story 1.18 (parallel voice render).
+  WorkerPool* pool_ = nullptr;
+  std::uint32_t par_max_frames_ = 0;
+  std::uint32_t par_stride_ = 0;
+  float* scratch_base_ = nullptr;                       // cache-line aligned start inside scratch_
+  std::vector<float> scratch_;                          // [partition][channel][L/R][par_max_frames_]
+  std::array<std::uint32_t, WorkerPool::kPartitions> partition_mask_{};  // channels (bit c; bit 0 when not split) each partition rendered into
+  std::uint32_t par_frames_ = 0;
+  bool par_split_ = false;
   std::int32_t xf_frames_ = 240;                        // CC crossfade smoothing time in frames (sfizz xfadeSmoothing = 5 ms)
 };
 

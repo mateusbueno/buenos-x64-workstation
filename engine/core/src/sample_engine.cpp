@@ -590,16 +590,114 @@ void SampleEngine::set_param(std::uint32_t param_id, float value) noexcept {
   else if (param_id == kParamSeed && value >= 0.0f && value < 9.0e18f) set_seed(static_cast<std::uint64_t>(value));
 }
 
+bool SampleEngine::parallel_applicable(std::uint32_t frames) const noexcept {
+  return pool_ != nullptr && frames != 0 && frames <= par_max_frames_;
+}
+
 void SampleEngine::render(float* left, float* right, std::uint32_t frames) noexcept {
-  for (auto& v : voices_)
-    if (v.active) render_voice(v, left, right, frames);
+  if (parallel_applicable(frames)) {
+    float* l[1] = {left};
+    float* r[1] = {right};
+    render_parallel(l, r, frames, false);
+  } else {
+    for (auto& v : voices_)
+      if (v.active) render_voice(v, left, right, frames);
+  }
   clock_ += frames;
 }
 
 void SampleEngine::render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept {
-  for (auto& v : voices_)
-    if (v.active) render_voice(v, left[v.channel & (kSplitChannels - 1)], right[v.channel & (kSplitChannels - 1)], frames);
+  if (parallel_applicable(frames)) {
+    render_parallel(left, right, frames, true);
+  } else {
+    for (auto& v : voices_)
+      if (v.active) render_voice(v, left[v.channel & (kSplitChannels - 1)], right[v.channel & (kSplitChannels - 1)], frames);
+  }
   clock_ += frames;
+}
+
+void SampleEngine::set_parallel_voice_pool(WorkerPool* pool, std::uint32_t max_frames) {
+  pool_ = nullptr;  // never render with a half-built scratch
+  par_max_frames_ = 0;
+  par_stride_ = 0;
+  scratch_base_ = nullptr;
+  scratch_.clear();
+  scratch_.shrink_to_fit();
+  if (pool == nullptr || max_frames == 0) return;
+  // Every (partition, channel, bus) buffer starts on a cache line (buses of different partitions never share a line): the stride is rounded up to
+  // 16 floats and the base is aligned inside a vector over-allocated by one line.
+  par_stride_ = (max_frames + 15u) & ~15u;
+  scratch_.assign(static_cast<std::size_t>(WorkerPool::kPartitions) * kSplitChannels * 2 * par_stride_ + 16u, 0.0f);
+  const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(scratch_.data());
+  scratch_base_ = scratch_.data() + (((64u - (addr & 63u)) & 63u) / sizeof(float));
+  par_max_frames_ = max_frames;
+  pool_ = pool;
+}
+
+void SampleEngine::partition_task(void* self, std::uint32_t partition) noexcept {
+  static_cast<SampleEngine*>(self)->render_partition(partition);
+}
+
+// One partition's work: the voices of slots partition, partition + 3, ... rendered into this partition's own scratch buses.
+//
+// Shared-state audit (Story 1.18; render_partition runs on any pool thread, concurrently for the three partitions):
+//  * Written: only the partition's own Voice objects (every Voice field, including `active = false` when a voice ends or its steal fade completes),
+//    its own scratch buses, and its own partition_mask_[partition] element. Voices of different partitions are different slots (slot % 3).
+//  * integrity_events_: std::atomic, fetch_add relaxed. The only engine-wide write.
+//  * Read only during the phase (nothing writes them until the pool barrier has passed): cfg_, gain_, xf_frames_, tr_release_rate_off_,
+//    pan_table_, cc_ (crossfade_target), clock_ (advanced after the barrier in render()/render_split()), par_frames_/par_split_ (published by the
+//    pool's release/acquire), the banks' regions and PCM (const), and the damage flags (std::atomic, relaxed loads).
+//  * Never touched here: the arbiter / VoiceAllocator (a freed voice only clears its `active` flag; the arbiter reads voice_info() in the serial phase,
+//    after the barrier), the RNG (rng_, drawn only by start_voice/stop_voice), round-robin counters, keyswitch state (ks_), last_vel7_/last_bank_,
+//    the skipped / undeclared counters. start_voice, stop_voice, begin_steal_fade, key_released and set_param all run in the serial phase.
+//  * No end-of-voice notification exists, so nothing has to be deferred to the serial phase: voice end is observed through `active` there.
+// No race was found. Adding any new engine-wide write to render_voice requires deferring it past the barrier.
+void SampleEngine::render_partition(std::uint32_t partition) noexcept {
+  const std::uint32_t frames = par_frames_;
+  std::uint32_t mask = 0;
+  for (std::uint32_t slot = partition; slot < voices_.size(); slot += WorkerPool::kPartitions) {
+    const Voice& v = voices_[slot];
+    if (v.active) mask |= std::uint32_t{1} << (par_split_ ? (v.channel & (kSplitChannels - 1)) : 0u);
+  }
+  partition_mask_[partition] = mask;
+  for (std::uint32_t c = 0; c < kSplitChannels; ++c) {
+    if (!(mask & (std::uint32_t{1} << c))) continue;
+    std::fill_n(scratch(partition, 0, c), frames, 0.0f);
+    std::fill_n(scratch(partition, 1, c), frames, 0.0f);
+  }
+  for (std::uint32_t slot = partition; slot < voices_.size(); slot += WorkerPool::kPartitions) {
+    Voice& v = voices_[slot];
+    if (!v.active) continue;
+    const std::uint32_t c = par_split_ ? (v.channel & (kSplitChannels - 1)) : 0u;
+    render_voice(v, scratch(partition, 0, c), scratch(partition, 1, c), frames);
+  }
+}
+
+void SampleEngine::render_parallel(float* const* left, float* const* right, std::uint32_t frames, bool split) noexcept {
+  bool any = false;
+  for (const auto& v : voices_)
+    if (v.active) {
+      any = true;
+      break;
+    }
+  if (!any) return;  // nothing to render: no need to wake the workers
+  par_frames_ = frames;
+  par_split_ = split;
+  pool_->run(&SampleEngine::partition_task, this);  // fork, render the three partitions, barrier
+  // Summation in the fixed order partition 0, 1, 2 (then ascending part), independent of the executing threads.
+  for (std::uint32_t p = 0; p < WorkerPool::kPartitions; ++p) {
+    for (std::uint32_t c = 0; c < kSplitChannels; ++c) {
+      if (!(partition_mask_[p] & (std::uint32_t{1} << c))) continue;
+      const float* sl = scratch(p, 0, c);
+      const float* sr = scratch(p, 1, c);
+      float* ol = split ? left[c] : left[0];
+      float* orr = split ? right[c] : right[0];
+      for (std::uint32_t f = 0; f < frames; ++f) {
+        ol[f] += sl[f];
+        orr[f] += sr[f];
+      }
+    }
+  }
 }
 
 void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32_t frames) noexcept {

@@ -42,6 +42,7 @@ struct VoiceInfo {
 };
 
 class Engine;
+class WorkerPool;
 struct SampleBank;
 
 // The only way an engine obtains a voice slot once a pool arbiter is attached (AD-7, AD-22).
@@ -175,6 +176,14 @@ class Engine {
   // Story 6.5: how many times a voice of this engine met a damaged block of a protected library (a voice faded to silence for it). Monotone, written by the
   // audio thread, readable from any thread; 0 for an engine that plays no protected content.
   virtual std::uint64_t content_integrity_events() const noexcept { return 0; }
+
+  // Parallel voice render (Story 1.18). Setup-time, never concurrent with render: hands the engine the block loop's worker pool (nullptr = serial,
+  // the default) and the longest `frames` count a single render()/render_split() call will carry. An engine whose voices can render in parallel
+  // (only the sample engine) allocates its per-worker scratch here; the others ignore it and stay on the calling thread. Default: ignored.
+  virtual void set_parallel_voice_pool(WorkerPool* pool, std::uint32_t max_frames) {
+    (void)pool;
+    (void)max_frames;
+  }
 
   // Setup-time: attach the pool arbiter. Without one (standalone use in tests) the engine hands out
   // its first free slot and reports kPoolExhausted when none is left.
