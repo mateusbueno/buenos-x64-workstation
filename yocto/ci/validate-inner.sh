@@ -52,6 +52,20 @@ GRAPH2="$PROJ/.yocto-work/graph-sndfile"; rm -rf "$GRAPH2"; mkdir -p "$GRAPH2"
 $KAS shell yocto/ci/kas-test-layer.yml -c "cd $GRAPH2 && bitbake -g velora-test-sndfile-image" >"$LOGDIR/graph2.log" 2>&1
 if grep -qx libsndfile1 "$GRAPH2/pn-buildlist" 2>/dev/null; then pass "forbidden-package check detects libsndfile1 in a deliberately bad image"; else fail "forbidden-package check did not detect libsndfile1 in the bad image"; tail -n 15 "$LOGDIR/graph2.log"; fi
 
+if grep -qx velora-factory-test "$GRAPH/pn-buildlist" 2>/dev/null; then fail "dev image package set contains the factory test runner"; else pass "dev image package set lacks velora-factory-test (runner is factory-test only)"; fi
+
+echo "== 4b. factory-test image (Story 6.13): resolves from the same sources, no SSH, runner installed"
+if bb kas/velora-factory-test.yml -n velora-image-factory-test; then pass "velora-image-factory-test resolves (task graph resolves, bitbake -g)"; else fail "velora-image-factory-test dry run"; tail_log; fi
+GRAPHF="$PROJ/.yocto-work/graph-factory"; rm -rf "$GRAPHF"; mkdir -p "$GRAPHF"
+if $KAS shell yocto/kas/velora-factory-test.yml -c "cd $GRAPHF && bitbake -g velora-image-factory-test" >"$LOGDIR/graph-factory.log" 2>&1 && [ -s "$GRAPHF/pn-buildlist" ]; then pass "bitbake -g velora-image-factory-test ($(wc -l < "$GRAPHF/pn-buildlist") recipes)"; else fail "bitbake -g velora-image-factory-test"; tail -n 25 "$LOGDIR/graph-factory.log"; fi
+for r in linux-yocto systemd busybox velora-system-config velora-service-users rauc rauc-conf velora-rauc-mark-good velora-rollback-record velora-uboot-ab-script velora-factory-test python3; do
+  if grep -qx "$r" "$GRAPHF/pn-buildlist" 2>/dev/null; then pass "factory-test package set contains $r"; else fail "factory-test package set lacks $r"; fi
+done
+for r in openssh dropbear flac libsndfile1; do
+  if [ ! -s "$GRAPHF/pn-buildlist" ]; then fail "factory-test: no package set to check for $r"
+  elif grep -qx "$r" "$GRAPHF/pn-buildlist"; then fail "factory-test package set contains $r"; else pass "factory-test package set has no $r"; fi
+done
+
 echo "== 5. resolved configuration (bitbake -e)"
 envdump() { $KAS shell yocto/kas/velora-dev.yml -c "bitbake -e $1" > "$LOGDIR/env-$1.txt" 2>&1; }
 envdump velora-image-dev; envdump os-release; envdump linux-yocto; envdump volatile-binds
@@ -90,6 +104,45 @@ chk "IMAGE_FSTYPES has wic" velora-image-dev IMAGE_FSTYPES '(^| )wic( |$)'
 chk "WKS_FILE_DEPENDS covers virtual/bootloader" velora-image-dev WKS_FILE_DEPENDS 'virtual/bootloader'
 chk "image installs velora-service-users" velora-image-dev IMAGE_INSTALL 'velora-service-users'
 chk "VOLATILE_BINDS maps /var/lib to tmpfs" volatile-binds VOLATILE_BINDS 'volatile/lib'
+chk "os-release VARIANT = Development (dev)" os-release VARIANT '^Development$'
+chk "dev image states its variant" velora-image-dev VELORA_IMAGE_VARIANT '^dev$'
+chk "VELORA_VARIANT = dev by default" velora-image-dev VELORA_VARIANT '^dev$'
+chk "dev image keeps the authorized-keys post-processing" velora-image-dev ROOTFS_POSTPROCESS_COMMAND 'velora_dev_authorized_keys'
+echo "  -- factory-test variant (kas/velora-factory-test.yml)"
+envdumpf() { $KAS shell yocto/kas/velora-factory-test.yml -c "bitbake -e $1" > "$LOGDIR/envf-$1.txt" 2>&1; }
+envdumpf velora-image-factory-test; envdumpf os-release; envdumpf velora-bundle-factory-test; envdumpf rauc-conf; envdumpf velora-factory-test
+evf() { grep -E "^$2=" "$LOGDIR/envf-$1.txt" | head -1 | sed -E 's/^[^=]*="(.*)"$/\1/'; }
+chkf() { if evf "$2" "$3" | grep -Eq "$4"; then pass "$1"; else fail "$1 (got: $(evf "$2" "$3" | head -c 200))"; fi; }
+chkf "factory-test: VELORA_VARIANT = factory-test" velora-image-factory-test VELORA_VARIANT '^factory-test$'
+chkf "factory-test: image states its variant" velora-image-factory-test VELORA_IMAGE_VARIANT '^factory-test$'
+chkf "factory-test: os-release VARIANT_ID = factory-test" os-release VARIANT_ID '^factory-test$'
+chkf "factory-test: os-release VARIANT = Factory test" os-release VARIANT '^Factory test$'
+chkf "factory-test: os-release fields include VARIANT_ID" os-release OS_RELEASE_FIELDS 'VARIANT_ID'
+nonempty() { [ -n "$(evf "$1" "$2")" ] || fail "negative check on $2 of $1 would be vacuous: the variable is empty or the bitbake -e dump failed"; }
+nonempty velora-image-factory-test IMAGE_FEATURES; nonempty velora-image-factory-test IMAGE_INSTALL; nonempty velora-image-factory-test ROOTFS_POSTPROCESS_COMMAND
+if evf velora-image-factory-test IMAGE_FEATURES | grep -Eq 'ssh-server|debug-tweaks|empty-root-password|allow-empty-password'; then fail "factory-test IMAGE_FEATURES has ssh or an insecure login feature (got: $(evf velora-image-factory-test IMAGE_FEATURES))"; else pass "factory-test IMAGE_FEATURES: no SSH server, no insecure login"; fi
+chkf "factory-test: IMAGE_FEATURES has read-only-rootfs" velora-image-factory-test IMAGE_FEATURES '(^| )read-only-rootfs( |$)'
+chkf "factory-test: PACKAGE_EXCLUDE has the ssh packages and flac" velora-image-factory-test PACKAGE_EXCLUDE 'openssh-sshd.*dropbear'
+chkf "factory-test: PACKAGE_EXCLUDE keeps the Story 1.4 audio-library exclusions" velora-image-factory-test PACKAGE_EXCLUDE 'flac.*metaflac.*libflac.*libsndfile1'
+for pkg in velora-factory-test rauc rauc-conf velora-rauc-mark-good velora-rollback-record velora-uboot-ab-script velora-system-config velora-service-users; do chkf "factory-test: image installs $pkg" velora-image-factory-test IMAGE_INSTALL "(^| )$pkg( |$)"; done
+if evf velora-image-factory-test IMAGE_INSTALL | grep -Eq 'openssh|dropbear'; then fail "factory-test IMAGE_INSTALL names an SSH package"; else pass "factory-test IMAGE_INSTALL names no SSH package"; fi
+chkf "factory-test: post-processing masks the login getty and asserts no SSH" velora-image-factory-test ROOTFS_POSTPROCESS_COMMAND 'velora_factory_no_login.*velora_factory_assert_no_ssh'
+chkf "factory-test: root account locked assertion in post-processing" velora-image-factory-test ROOTFS_POSTPROCESS_COMMAND 'velora_assert_root_locked'
+chk "dev: root account locked assertion in post-processing" velora-image-dev ROOTFS_POSTPROCESS_COMMAND 'velora_assert_root_locked'
+if evf velora-image-factory-test ROOTFS_POSTPROCESS_COMMAND | grep -q velora_dev_authorized_keys; then fail "factory-test installs authorized keys"; else pass "factory-test has no authorized-keys post-processing"; fi
+chkf "factory-test: same licence policy" velora-image-factory-test INCOMPATIBLE_LICENSE '^GPL-3.0\* LGPL-3.0\* AGPL-3.0\*$'
+chkf "factory-test: same wks" velora-image-factory-test WKS_FILE '^velora-nvme\.wks$'
+chkf "factory-test: ext4 rootfs for the bundle" velora-image-factory-test IMAGE_FSTYPES '(^| )ext4( |$)'
+chkf "factory-test: stock mark-good not wanted" velora-image-factory-test BAD_RECOMMENDATIONS 'rauc-mark-good'
+chkf "factory-test: kernel args carry the isolation placeholder" velora-image-factory-test UBOOT_EXTLINUX_KERNEL_ARGS 'isolcpus='
+chkf "factory-test: bundle is factory-test" velora-bundle-factory-test VELORA_BUNDLE_VARIANT '^factory-test$'
+chkf "factory-test: bundle slot is the factory-test image" velora-bundle-factory-test RAUC_SLOT_rootfs '^velora-image-factory-test$'
+chkf "factory-test: bundle plain format" velora-bundle-factory-test RAUC_BUNDLE_FORMAT '^plain$'
+chkf "factory-test: bundle compatible equals system.conf" velora-bundle-factory-test RAUC_BUNDLE_COMPATIBLE '^Velora RK3588$'
+chkf "factory-test: bundle signing key unset without VELORA_RAUC_SIGN_DIR" velora-bundle-factory-test RAUC_KEY_FILE '^$'
+chkf "factory-test: no keyring by default" rauc-conf VELORA_RAUC_KEYRING_FILE '^$'
+chkf "factory-test runner: unit enabled" velora-factory-test SYSTEMD_SERVICE:velora-factory-test 'velora-factory-test\.service'
+chkf "factory-test runner: needs python3 and json" velora-factory-test RDEPENDS:velora-factory-test 'python3-core.*python3-json'
 echo "  -- generated SSH overlay (dummy key) parses with kas dump"
 echo "ssh-ed25519 AAAAdummykeyfortestsonly validate" > "$PROJ/.yocto-work/dummy_authorized_keys"
 bash "$PROJ/yocto/ci/make-ssh-overlay.sh" "$PROJ" "$PROJ/.yocto-work/dummy_authorized_keys" "$PROJ/.yocto-work/kas-ssh.yml"
@@ -168,9 +221,10 @@ chk "bundle: compatible equals system.conf" velora-bundle-dev RAUC_BUNDLE_COMPAT
 if [ -n "$(ev rauc RRECOMMENDS:rauc)" ] && ! ev rauc RRECOMMENDS:rauc | grep -q 'rauc-mark-good'; then pass "RRECOMMENDS:rauc has no rauc-mark-good (stock mark-good not pulled in): $(ev rauc RRECOMMENDS:rauc | head -c 120)"; else fail "RRECOMMENDS:rauc contains rauc-mark-good or is empty (got: $(ev rauc RRECOMMENDS:rauc | head -c 200))"; fi
 RAUCDIR="$PROJ/.yocto-work/rauc-test"; rm -rf "$RAUCDIR"; mkdir -p "$RAUCDIR"
 # a throw-away PUBLIC certificate (self-signed, generated here, not an image key) and one carrying a private key
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=validate-only dev root (not for production)" -days 2 -keyout "$RAUCDIR/k.pem" -out "$RAUCDIR/ca.pem" >/dev/null 2>&1
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/O=Velora/CN=Velora dev RAUC root (not for production)" -days 2 -keyout "$RAUCDIR/k.pem" -out "$RAUCDIR/ca.pem" >/dev/null 2>&1
 cat "$RAUCDIR/ca.pem" "$RAUCDIR/k.pem" > "$RAUCDIR/ca-with-key.pem"
 cat "$RAUCDIR/ca.pem" "$RAUCDIR/ca.pem" > "$RAUCDIR/two-certs.pem"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/O=Velora/CN=Velora factory-test RAUC root (not for production)" -days 2 -keyout "$RAUCDIR/k3.pem" -out "$RAUCDIR/ft.pem" >/dev/null 2>&1
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=Some Production Root" -days 2 -keyout "$RAUCDIR/k2.pem" -out "$RAUCDIR/prod.pem" >/dev/null 2>&1
 : > "$RAUCDIR/empty.pem"
 printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca.pem" > "$RAUCDIR/good.conf"
@@ -179,6 +233,23 @@ printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/empty.pem" > "$RAUCDIR/empt
 printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/two-certs.pem" > "$RAUCDIR/twocerts.conf"
 printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/prod.pem" > "$RAUCDIR/prod.conf"
 printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/does-not-exist.pem" > "$RAUCDIR/missing.conf"
+# Story 6.13 review: other PEM block types, subject tricks and a non-self-signed certificate (all with the correct dev subject text somewhere)
+cat "$RAUCDIR/ca.pem" > "$RAUCDIR/x509-second.pem"; sed 's/CERTIFICATE/X509 CERTIFICATE/' "$RAUCDIR/ca.pem" >> "$RAUCDIR/x509-second.pem"
+cat "$RAUCDIR/ca.pem" > "$RAUCDIR/trusted-second.pem"; sed 's/CERTIFICATE/TRUSTED CERTIFICATE/' "$RAUCDIR/ca.pem" >> "$RAUCDIR/trusted-second.pem"
+sed 's/CERTIFICATE/X509 CERTIFICATE/' "$RAUCDIR/ca.pem" > "$RAUCDIR/x509-only.pem"
+mkroot_v() { openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "$2" -days 2 -keyout "$RAUCDIR/kk.pem" -out "$RAUCDIR/$1.pem" >/dev/null 2>&1; }
+mkroot_v marker-in-o "/O=Velora dev RAUC root (not for production)/CN=x"
+mkroot_v prefix "/O=Velora/CN=evil Velora dev RAUC root (not for production)"
+mkroot_v suffix "/O=Velora/CN=Velora dev RAUC root (not for production) extra"
+mkroot_v extra-ou "/O=Velora/OU=x/CN=Velora dev RAUC root (not for production)"
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/O=Velora/CN=Velora dev RAUC root (not for production)" -keyout "$RAUCDIR/ns.key" -out "$RAUCDIR/ns.csr" >/dev/null 2>&1
+openssl x509 -req -in "$RAUCDIR/ns.csr" -CA "$RAUCDIR/prod.pem" -CAkey "$RAUCDIR/k2.pem" -CAcreateserial -days 2 -out "$RAUCDIR/not-self-signed.pem" >/dev/null 2>&1
+for n in x509-second trusted-second x509-only marker-in-o prefix suffix extra-ou not-self-signed; do printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/$n.pem" > "$RAUCDIR/$n.conf"; done
+printf 'VELORA_VARIANT = "prod"\nVELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca.pem" > "$RAUCDIR/var-prod.conf"
+printf 'VELORA_VARIANT = "bogus"\nVELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca.pem" > "$RAUCDIR/var-bogus.conf"
+printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ft.pem" > "$RAUCDIR/ft-keyring.conf"
+printf 'VELORA_VARIANT = "factory-test"\nVELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ft.pem" > "$RAUCDIR/ft-good.conf"
+printf 'VELORA_VARIANT = "factory-test"\nVELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca.pem" > "$RAUCDIR/ft-devkeyring.conf"
 printf 'VELORA_RAUC_SIGN_DIR = "/signing"\nVELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca.pem" > "$RAUCDIR/sign.conf"
 rm -rf "$PROJ/.yocto-work/build/tmp"
 rc_install() { # rc_install <postfile or ""> : do_install of rauc-conf, log in $RAUCDIR/inst.log
@@ -187,7 +258,7 @@ rc_install() { # rc_install <postfile or ""> : do_install of rauc-conf, log in $
 }
 if rc_install ""; then fail "rauc-conf do_install passed WITHOUT a keyring"; else
   if grep -q "VELORA_RAUC_KEYRING_FILE is not set" "$RAUCDIR/inst.log"; then pass "no keyring: rauc-conf fails with a clear bbfatal"; else fail "no keyring: failed, but not with the expected message"; tail -n 15 "$RAUCDIR/inst.log"; fi; fi
-for v in withkey:"contains a private key" emptyfile:"is missing or empty" twocerts:"must hold exactly one PEM certificate" prod:"not for production" missing:"does-not-exist.pem: file could not be found"; do
+for v in ft-keyring:"expected exactly 'CN=Velora dev RAUC root" x509-second:"exactly one PEM certificate" trusted-second:"exactly one PEM certificate" x509-only:"exactly one PEM certificate" marker-in-o:"expected exactly" prefix:"expected exactly" suffix:"expected exactly" extra-ou:"expected exactly" not-self-signed:"not a self-signed" var-prod:"Story 6.14" var-bogus:"not one of dev, factory-test, prod" withkey:"contains a private key" emptyfile:"is missing or empty" twocerts:"must hold exactly one PEM certificate" prod:"not for production" missing:"does-not-exist.pem: file could not be found"; do
   n="${v%%:*}"; msg="${v#*:}"
   if rc_install "$RAUCDIR/$n.conf"; then fail "rauc-conf accepted keyring variant '$n'"; elif grep -q "$msg" "$RAUCDIR/inst.log"; then pass "keyring variant '$n' rejected: $msg"; else fail "keyring variant '$n' failed with another message"; tail -n 15 "$RAUCDIR/inst.log"; fi
 done
@@ -196,6 +267,14 @@ RCD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/*/rauc-conf/*/image 2>/dev/null |
 if [ -n "$RCD" ] && cmp -s "$RCD/usr/lib/rauc/ca.cert.pem" "$RAUCDIR/ca.pem" && ! grep -q "PRIVATE KEY" "$RCD/usr/lib/rauc/ca.cert.pem"; then pass "installed keyring is exactly the supplied certificate and holds no private key"; else fail "installed keyring (dir: '$RCD')"; fi
 RCD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/*/rauc-conf/*/image 2>/dev/null | head -1)
 if [ -n "$RCD" ] && cmp -s "$RCD/usr/lib/rauc/system.conf" "$PROJ/yocto/meta-velora/recipes-core/rauc/files/system.conf" && grep -q '^/dev/disk/by-partlabel/uboot_env' "$RCD/etc/fw_env.config"; then pass "installed system.conf is the committed one; fw_env.config targets uboot_env"; else fail "installed system.conf / fw_env.config"; fi
+# Story 6.13: the factory-test build takes only the factory-test keyring and rejects the dev one (and the dev build rejected the factory-test one above)
+rc_install_f() { # rc_install_f <postfile>
+  $KAS shell yocto/kas/velora-factory-test.yml -c "cd $PROJ/.yocto-work/scratch && bitbake -R $1 -c cleansstate rauc-conf >/dev/null 2>&1; bitbake -R $1 rauc-conf -c install" >"$RAUCDIR/inst.log" 2>&1
+}
+if rc_install_f "$RAUCDIR/ft-devkeyring.conf"; then fail "factory-test build accepted the DEV keyring"; elif grep -q "expected exactly 'CN=Velora factory-test RAUC root" "$RAUCDIR/inst.log"; then pass "factory-test build rejects the dev keyring (marker)"; else fail "factory-test build with the dev keyring failed with another message"; tail -n 15 "$RAUCDIR/inst.log"; fi
+if rc_install_f "$RAUCDIR/ft-good.conf"; then pass "factory-test build installs the factory-test keyring"; else fail "factory-test rauc-conf do_install with the factory-test keyring"; tail -n 25 "$RAUCDIR/inst.log"; fi
+RCD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/*/rauc-conf/*/image 2>/dev/null | head -1)
+if [ -n "$RCD" ] && cmp -s "$RCD/usr/lib/rauc/ca.cert.pem" "$RAUCDIR/ft.pem" && ! cmp -s "$RCD/usr/lib/rauc/ca.cert.pem" "$RAUCDIR/ca.pem" && ! grep -q "PRIVATE KEY" "$RCD/usr/lib/rauc/ca.cert.pem" && [ "$(ls "$RCD/usr/lib/rauc")" = "$(printf 'ca.cert.pem\nsystem.conf')" ]; then pass "factory-test image keyring: exactly the factory-test certificate, no other keyring file"; else fail "installed factory-test keyring (dir: '$RCD')"; fi
 # the signing directory variable reaches the bundle recipe's key and certificate paths
 $KAS shell yocto/kas/velora-dev.yml -c "bitbake -R $RAUCDIR/sign.conf -e velora-bundle-dev" > "$LOGDIR/env-bundle-sign.txt" 2>&1
 if grep -q '^RAUC_KEY_FILE="/signing/signing.key.pem"' "$LOGDIR/env-bundle-sign.txt" && grep -q '^RAUC_CERT_FILE="/signing/signing.cert.pem"' "$LOGDIR/env-bundle-sign.txt" && grep -q "^BUNDLE_ARGS=\"--keyring=$RAUCDIR/ca.pem\"" "$LOGDIR/env-bundle-sign.txt"; then pass "VELORA_RAUC_SIGN_DIR / keyring reach RAUC_KEY_FILE, RAUC_CERT_FILE and BUNDLE_ARGS"; else fail "bundle recipe signing variables"; grep -E '^(RAUC_KEY_FILE|RAUC_CERT_FILE|BUNDLE_ARGS)=' "$LOGDIR/env-bundle-sign.txt"; fi
@@ -213,6 +292,13 @@ okm=1; for t in engine ui sysd; do grep -Eq "^Requires=.*velora-$t-ready\.target
 if grep -Eq '^WantedBy=.*default\.target' "$MGU" || ! grep -Eq '^ExecStart=/usr/bin/rauc status mark-good$' "$MGU"; then fail "installed mark-good unit: wanted by default.target or no rauc status mark-good"; else pass "installed mark-good unit: runs rauc status mark-good, not wanted by default.target"; fi
 if [ -n "$RRD" ] && [ -x "$RRD/usr/libexec/velora/velora-rollback-record" ] && python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$RRD/usr/libexec/velora/velora-rollback-record"; then pass "installed rollback recorder is executable and parses"; else fail "installed rollback recorder (dir '$RRD')"; fi
 if [ -n "$UBD" ] && [ -s "$UBD/boot/boot.scr" ] && file "$UBD/boot/boot.scr" | grep -qi "u-boot legacy uImage"; then pass "boot.scr compiled with mkimage (u-boot-tools-native)"; else fail "boot.scr missing or not a U-Boot script image (dir '$UBD')"; fi
+rm -rf "$PROJ/.yocto-work/build/tmp"
+echo "  -- factory test runner (do_install; Story 6.13)"
+if $KAS shell yocto/kas/velora-factory-test.yml -c "cd $PROJ/.yocto-work/scratch && bitbake velora-factory-test -c install" >"$LOGDIR/install-ft.log" 2>&1; then pass "do_install of velora-factory-test"; else fail "do_install of velora-factory-test"; grep -v 'Duplicate inclusion' "$LOGDIR/install-ft.log" | tail -n 25 | sed 's/^/  | /'; fi
+FTD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/all-*/velora-factory-test/*/image 2>/dev/null | head -1)
+FTU="$FTD/usr/lib/systemd/system/velora-factory-test.service"; [ -f "$FTU" ] || FTU="$FTD/lib/systemd/system/velora-factory-test.service"
+if [ -n "$FTD" ] && [ -x "$FTD/usr/libexec/velora/velora-factory-test" ] && python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$FTD/usr/libexec/velora/velora-factory-test"; then pass "installed factory test runner is executable and parses"; else fail "installed runner (dir '$FTD')"; fi
+if grep -q '^ExecStart=/usr/libexec/velora/velora-factory-test$' "$FTU" 2>/dev/null && grep -q '^WantedBy=multi-user.target$' "$FTU" && [ -f "$FTD/etc/tmpfiles.d/20-velora-factory-test.conf" ] && grep -q '^d /data/factory-test ' "$FTD/etc/tmpfiles.d/20-velora-factory-test.conf"; then pass "installed unit runs the runner; /data/factory-test created by tmpfiles.d"; else fail "installed runner unit / tmpfiles (unit '$FTU')"; fi
 rm -rf "$PROJ/.yocto-work/build/tmp" "$RAUCDIR"
 
 echo "== 6. license policy"

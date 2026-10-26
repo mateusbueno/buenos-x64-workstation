@@ -1,0 +1,29 @@
+[Unit]
+Description=Velora factory test runner (factory-test image only)
+# Runs once per boot, after local filesystems, tmpfiles (/data/factory-test), the udev trigger (device nodes, input and DRM devices exist) and the
+# sound card. Not part of the RAUC mark-good gating.
+After=local-fs.target systemd-tmpfiles-setup.service systemd-udev-trigger.service sound.target data.mount
+# Wants (not RequiresMountsFor): a /data that fails to mount must not stop the runner, which then writes its report to the /run fallback below.
+Wants=data.mount
+
+[Service]
+Type=oneshot
+# worst case is 5 x 30 s + 60 s for NVMe, plus margin
+TimeoutStartSec=300
+ExecStart=/usr/libexec/velora/velora-factory-test
+# 0 = all pass, 1 = a test failed, 2 = a subsystem is not present (the report says which): results, not unit failures. 3 = the report could not be
+# written to /data (a /run fallback copy was attempted): left as a unit failure so it shows in the journal and systemctl.
+SuccessExitStatus=1 2
+# Hardware access needs root; everything else is closed: the root filesystem is read-only anyway, the report goes to /data/factory-test (when /data is
+# there; the leading "-" tolerates a missing directory) and to the fallback RuntimeDirectory /run/velora-factory-test.
+ProtectSystem=strict
+ReadWritePaths=-/data/factory-test
+RuntimeDirectory=velora-factory-test
+RuntimeDirectoryPreserve=yes
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

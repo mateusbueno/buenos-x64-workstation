@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+"""Velora factory test runner (Story 6.13). Installed in the factory-test image only (/usr/libexec/velora/velora-factory-test).
+
+One test per subsystem that exists today: MCU links, keybed scan, panel controls and LEDs, codec loopback, display and touch, NVMe read/write
+speed. Every test ends in exactly one of three states:
+  pass         the hardware answered and the value is good
+  fail         the hardware answered with a bad value, or the probe crashed, or it hung past the per-test timeout
+  not present  the hardware (or the interface to it) is absent: the runner continues, the report says so
+A missing device never crashes the runner: each test runs isolated (exception caught, hang cut off by a timeout).
+
+Hardware access goes through a `Hardware` object (the probe layer). Its methods return None for "absent" and a plain dict of measured values
+otherwise; they raise (or hang) on a probe fault. `SysfsHardware` is the real layer (best-effort: where the hardware interface does not exist
+yet it says so in a TODO); tests drive the runner with a mock `Hardware`. The runner decides pass/fail from the values, not the probe.
+
+Output: a human-readable summary (plain text, for the on-screen display; rendering is out of scope here) and a JSON report for the factory
+station link, schema "velora-factory-test-report/2":
+  {schema, variant, version, timestamp (UTC ISO 8601), boot_id (this boot), unit: {serial?, machine_id?, ...},
+   tests: [{name, status, detail, duration_ms}], summary: {pass, fail, not_present, total, overall}}
+Files: the previous report and summary are deleted at the start of a run (a stale report must never be mistaken for this run's), the summary and the
+report are written independently (a failure of one does not skip the other), and if the primary directory cannot be written both are written to a
+fallback directory under /run. overall is "fail" when any test failed, else "incomplete" when any test was not present, else "pass". Exit code 0 / 1 / 2 respectively
+(3: the report file could not be written).
+Python 3 standard library only.
+"""
+import argparse
+import datetime
+import glob
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+
+SCHEMA = "velora-factory-test-report/2"
+PASS, FAIL, NOT_PRESENT = "pass", "fail", "not present"
+DEFAULT_TIMEOUT_S = 30.0
+
+# Acceptance limits. TODO(Story 6.13 follow-up, prototype): the numbers are placeholders until measured on the prototype hardware.
+KEYBED_KEYS_EXPECTED = 88
+PANEL_CONTROLS_EXPECTED = 40
+PANEL_LEDS_EXPECTED = 64
+EXPECTED_LINKS = ("velora-mcu-keybed", "velora-mcu-panel")  # device nodes /dev/<name>; TODO(Stories 3.x): real names come with the MCU link library
+CODEC_MIN_SNR_DB = 60.0
+CODEC_MAX_LEVEL_ERROR_DB = 1.0
+NVME_MIN_WRITE_MB_S = 200.0
+NVME_MIN_READ_MB_S = 400.0
+NVME_TEST_MIB = 64
+CHUNK = 1024 * 1024
+
+
+class Hardware:
+    """Probe layer. Return None when the subsystem is absent, a dict of measurements otherwise. Raise on a probe fault."""
+
+    def unit_identifiers(self):
+        return {}
+
+    def mcu_links(self):          # -> {"links": {name: alive(bool)}} or None
+        raise NotImplementedError
+
+    def keybed_scan(self):        # -> {"keys_expected": int, "keys_seen": int, "stuck": [int, ...]} or None
+        raise NotImplementedError
+
+    def panel_status(self):       # -> {"controls_expected": int, "controls_responding": int, "leds_ok": int, "leds_total": int} or None
+        raise NotImplementedError
+
+    def codec_loopback(self):     # -> {"snr_db": float, "level_error_db": float} or None
+        raise NotImplementedError
+
+    def display_touch(self):      # -> {"display_connected": bool, "touch_devices": int} or None
+        raise NotImplementedError
+
+    def nvme_speed(self):         # -> {"write_mb_s": float, "read_mb_s": float} or None
+        raise NotImplementedError
+
+
+def _read(path, default=None):
+    try:
+        with open(path, "r", errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+class SysfsHardware(Hardware):
+    """Real probes over /sys, /dev and /proc. Best-effort stubs: see the TODOs. Paths are overridable for tests of this layer."""
+
+    def __init__(self, root="/", data_dir="/data/factory-test", clock=time.monotonic):
+        self.root = root
+        self.data_dir = data_dir
+        self.clock = clock
+
+    def p(self, path):
+        return os.path.join(self.root, path.lstrip("/"))
+
+    def unit_identifiers(self):
+        ids = {}
+        serial = _read(self.p("/proc/device-tree/serial-number"))
+        if serial:
+            ids["serial"] = serial.strip("\x00")
+        mid = _read(self.p("/etc/machine-id"))
+        if mid:
+            ids["machine_id"] = mid
+        model = _read(self.p("/proc/device-tree/model"))
+        if model:
+            ids["model"] = model.strip("\x00")
+        return ids
+
+    def mcu_links(self):
+        # TODO(Stories 3.x): the MCU link library (framing, ping) lives on the engine side and is not available on the image yet. Until then
+        # a link is "alive" when its device node opens; no protocol is spoken, so this is a presence check, not a link test. No expected node
+        # at all means the interface is absent (None); some present and some missing means the missing ones are down.
+        paths = {n: self.p("/dev/" + n) for n in EXPECTED_LINKS}
+        if not any(os.path.exists(p) for p in paths.values()):
+            return None
+        links = {}
+        for n, path in paths.items():
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                os.close(fd)
+                links[n] = True
+            except OSError:
+                links[n] = False
+        return {"links": links}
+
+    def keybed_scan(self):
+        # TODO(Stories 3.x): scan through the keybed MCU link (all keys released, then press-state sweep). No such interface exists yet.
+        if not glob.glob(self.p("/dev/velora-mcu-keybed*")):
+            return None
+        raise NotImplementedError("keybed scan needs the MCU link library (TODO Stories 3.x)")
+
+    def panel_status(self):
+        # TODO(Stories 3.x): query panel MCU for control count and drive the LED self-test pattern. No such interface exists yet.
+        if not glob.glob(self.p("/dev/velora-mcu-panel*")):
+            return None
+        raise NotImplementedError("panel/LED test needs the MCU link library (TODO Stories 3.x)")
+
+    def codec_loopback(self):
+        # TODO(Story 1.2): play a tone on the PCM3168A outputs and measure it on the inputs (looped cable/fixture). Needs the audio configuration.
+        cards = _read(self.p("/proc/asound/cards"), "")
+        if "PCM3168A" not in cards.upper() and "PCM3168" not in cards.upper():
+            return None
+        raise NotImplementedError("codec loopback measurement is not implemented (TODO Story 1.2)")
+
+    def display_touch(self):
+        # No DRM card at all = no display subsystem = None (not present). A card with no connector reporting "connected" is a unit that should
+        # show something and does not: reported as display_connected False (the runner fails it).
+        cards = [c for c in glob.glob(self.p("/sys/class/drm/card*")) if os.path.basename(c)[4:].isdigit()]
+        if not cards:
+            return None
+        connected = any(_read(st, "") == "connected" for st in glob.glob(self.p("/sys/class/drm/card*-*/status")))
+        touch = 0
+        for nm in glob.glob(self.p("/sys/class/input/input*/name")):
+            if "touch" in (_read(nm, "") or "").lower():
+                touch += 1
+        return {"display_connected": connected, "touch_devices": touch}
+
+    def _chunk(self, i):
+        """Chunk i of the test pattern: distinct per index (a swapped, stale or zeroed chunk is detected), cheap to generate."""
+        return hashlib.sha256(b"velora-nvme-%d" % i).digest() * (CHUNK // 32)
+
+    def _read_exact(self, fd, n):
+        buf = b""
+        while len(buf) < n:
+            b = os.read(fd, n - len(buf))
+            if not b:
+                break
+            buf += b
+        return buf
+
+    def nvme_speed(self):
+        if not glob.glob(self.p("/sys/class/nvme/nvme*")) and not glob.glob(self.p("/dev/nvme0n1")):
+            return None
+        os.makedirs(self.data_dir, exist_ok=True)
+        path = os.path.join(self.data_dir, ".nvme-speed.tmp")
+        corrupt = 0
+        try:
+            t0 = self.clock()
+            with open(path, "wb") as f:
+                for i in range(NVME_TEST_MIB):
+                    f.write(self._chunk(i))
+                f.flush()
+                os.fsync(f.fileno())
+            tw = self.clock() - t0
+            fd = os.open(path, os.O_RDONLY)
+            try:
+                if hasattr(os, "posix_fadvise"):
+                    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)  # best effort: read from the device, not the page cache
+                t0 = self.clock()
+                for i in range(NVME_TEST_MIB):
+                    if self._read_exact(fd, CHUNK) != self._chunk(i):
+                        corrupt += 1
+                tr = self.clock() - t0
+            finally:
+                os.close(fd)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        mb = NVME_TEST_MIB * 1.048576
+        return {"write_mb_s": round(mb / max(tw, 1e-6), 1), "read_mb_s": round(mb / max(tr, 1e-6), 1), "corrupt_chunks": corrupt}
+
+
+# --- evaluators: probe data (never None here) -> (status, detail) -------------------------------------------------------------------------
+
+def _eval_mcu(d):
+    links = d.get("links") or {}
+    down = sorted(n for n in EXPECTED_LINKS if not links.get(n))
+    note = "presence only, no protocol (TODO Stories 3.x)"
+    if down:
+        return FAIL, "link down or missing: %s (%d of %d expected up; %s)" % (", ".join(down), len(EXPECTED_LINKS) - len(down), len(EXPECTED_LINKS), note)
+    return PASS, "%d of %d expected links up (%s)" % (len(EXPECTED_LINKS), len(EXPECTED_LINKS), note)
+
+
+def _eval_keybed(d):
+    exp, seen, stuck = d["keys_expected"], d["keys_seen"], d.get("stuck") or []
+    if exp != KEYBED_KEYS_EXPECTED:
+        return FAIL, "probe expects %s keys, the keybed has %d" % (exp, KEYBED_KEYS_EXPECTED)
+    if seen != exp or stuck:
+        return FAIL, "%d of %d keys seen%s" % (seen, exp, ("; stuck: %s" % ", ".join(str(k) for k in stuck)) if stuck else "")
+    return PASS, "%d of %d keys seen, none stuck" % (seen, exp)
+
+
+def _eval_panel(d):
+    ce, cr, lo, lt = d["controls_expected"], d["controls_responding"], d["leds_ok"], d["leds_total"]
+    if ce != PANEL_CONTROLS_EXPECTED or lt != PANEL_LEDS_EXPECTED:
+        return FAIL, "probe expects %s controls and %s LEDs, the panel has %d and %d" % (ce, lt, PANEL_CONTROLS_EXPECTED, PANEL_LEDS_EXPECTED)
+    detail = "controls %d of %d responding, LEDs %d of %d ok" % (cr, ce, lo, lt)
+    return (PASS if cr == ce and lo == lt else FAIL), detail
+
+
+def _eval_codec(d):
+    snr, err = d["snr_db"], d["level_error_db"]
+    detail = "SNR %.1f dB (min %.1f), level error %.2f dB (max %.2f)" % (snr, CODEC_MIN_SNR_DB, err, CODEC_MAX_LEVEL_ERROR_DB)
+    return (PASS if snr >= CODEC_MIN_SNR_DB and abs(err) <= CODEC_MAX_LEVEL_ERROR_DB else FAIL), detail
+
+
+def _eval_display(d):
+    if not d["display_connected"]:
+        return FAIL, "display subsystem present, no display connected"
+    if d["touch_devices"] < 1:
+        return FAIL, "display connected, no touch device (presence only, no pixel or touch-event test)"
+    return PASS, "display connected, %d touch device(s) (presence only, no pixel or touch-event test)" % d["touch_devices"]
+
+
+def _eval_nvme(d):
+    w, r, bad = d["write_mb_s"], d["read_mb_s"], d["corrupt_chunks"]
+    detail = "write %.0f MB/s (min %.0f), read %.0f MB/s (min %.0f), %d corrupt chunk(s)" % (w, NVME_MIN_WRITE_MB_S, r, NVME_MIN_READ_MB_S, bad)
+    if bad:
+        return FAIL, "data corruption: " + detail
+    return (PASS if w >= NVME_MIN_WRITE_MB_S and r >= NVME_MIN_READ_MB_S else FAIL), detail
+
+
+# (report name, Hardware method, evaluator, absent detail, timeout multiplier)
+TESTS = [
+    ("MCU links", "mcu_links", _eval_mcu, "no MCU link interface", 1),
+    ("Keybed scan", "keybed_scan", _eval_keybed, "no keybed interface", 1),
+    ("Panel controls and LEDs", "panel_status", _eval_panel, "no panel interface", 1),
+    ("Codec loopback", "codec_loopback", _eval_codec, "no codec found", 1),
+    ("Display and touch", "display_touch", _eval_display, "no display connector", 1),
+    ("NVMe read/write speed", "nvme_speed", _eval_nvme, "no NVMe device", 2),
+]
+
+
+def _run_isolated(fn, timeout):
+    """Run fn() in a daemon thread. Returns ("ok", value) | ("error", exception) | ("timeout", None). A hung probe is abandoned (daemon)."""
+    box = {}
+
+    def target():
+        try:
+            box["v"] = fn()
+        except BaseException as e:  # a probe may raise anything, including SystemExit
+            box["e"] = e
+
+    t = threading.Thread(target=target, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return "timeout", None
+    if "e" in box:
+        return "error", box["e"]
+    return "ok", box.get("v")
+
+
+def run_test(name, method, evaluator, absent_detail, hw, timeout, clock=time.monotonic):
+    t0 = clock()
+    outcome, val = _run_isolated(getattr(hw, method), timeout)
+    if outcome == "timeout":
+        status, detail = FAIL, "timeout after %gs (probe hung)" % timeout
+    elif outcome == "error":
+        status, detail = FAIL, "crash: %s: %s" % (type(val).__name__, val)
+    elif val is None:
+        status, detail = NOT_PRESENT, absent_detail
+    else:
+        try:
+            status, detail = evaluator(val)
+        except Exception as e:  # malformed probe data counts as a failed test, never as a runner crash
+            status, detail = FAIL, "bad probe data (%s: %s): %r" % (type(e).__name__, e, val)
+    return {"name": name, "status": status, "detail": detail, "duration_ms": int(round((clock() - t0) * 1000))}
+
+
+def os_release(path="/etc/os-release"):
+    out = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.rstrip("\n").split("=", 1)
+                    out[k] = v.strip().strip('"')
+    except OSError:
+        pass
+    return out
+
+
+def run_all(hw, timeout=DEFAULT_TIMEOUT_S, variant=None, version=None, now=None, clock=time.monotonic, boot_id=None):
+    results = []
+    for name, method, ev, absent, mult in TESTS:
+        try:
+            results.append(run_test(name, method, ev, absent, hw, timeout * mult, clock))
+        except BaseException as e:  # belt and braces: nothing may stop the remaining tests
+            results.append({"name": name, "status": FAIL, "detail": "runner error: %s: %s" % (type(e).__name__, e), "duration_ms": 0})
+    try:
+        unit = dict(hw.unit_identifiers() or {})
+    except Exception:
+        unit = {}
+    counts = {PASS: 0, FAIL: 0, NOT_PRESENT: 0}
+    for r in results:
+        counts[r["status"]] += 1
+    overall = "fail" if counts[FAIL] else ("incomplete" if counts[NOT_PRESENT] else "pass")
+    ts = (now or datetime.datetime.now(datetime.timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "schema": SCHEMA,
+        "variant": variant or "unknown",
+        "version": version or "unknown",
+        "timestamp": ts,
+        "boot_id": boot_id or "unknown",
+        "unit": unit,
+        "tests": results,
+        "summary": {"pass": counts[PASS], "fail": counts[FAIL], "not_present": counts[NOT_PRESENT], "total": len(results), "overall": overall},
+    }
+
+
+def summary_text(report):
+    lines = ["VELORA FACTORY TEST  variant %s  version %s  %s" % (report["variant"], report["version"], report["timestamp"])]
+    if report["unit"]:
+        lines.append("unit: " + ", ".join("%s=%s" % kv for kv in sorted(report["unit"].items())))
+    width = max(len(t["name"]) for t in report["tests"])
+    tag = {PASS: "PASS", FAIL: "FAIL", NOT_PRESENT: "N/P "}
+    for t in report["tests"]:
+        lines.append("[%s] %-*s  %s" % (tag[t["status"]], width, t["name"], t["detail"]))
+    s = report["summary"]
+    lines.append("%d pass, %d fail, %d not present of %d: %s" % (s["pass"], s["fail"], s["not_present"], s["total"], s["overall"].upper()))
+    return "\n".join(lines) + "\n"
+
+
+def write_atomic(path, text):
+    """temp file in the same directory, fsync, rename, fsync the directory; the result is 0644 (mkstemp would leave 0600)."""
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".report-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            os.fchmod(f.fileno(), 0o644)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        dfd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _remove(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def main(argv=None, hw=None, out=None):
+    ap = argparse.ArgumentParser(description="Velora factory test runner")
+    ap.add_argument("--report", default="/data/factory-test/report.json", help="JSON report for the factory station link")
+    ap.add_argument("--summary", default="/data/factory-test/summary.txt", help="plain-text summary for the on-screen display ('' to skip)")
+    ap.add_argument("--fallback-dir", default="/run/velora-factory-test", help="where report.json and summary.txt go when the primary location cannot be written ('' to disable)")
+    ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="per-test timeout in seconds (NVMe gets twice)")
+    ap.add_argument("--os-release", default="/etc/os-release")
+    ap.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id")
+    a = ap.parse_args(argv)
+    out = out or sys.stdout
+    fallback = {}
+    if a.fallback_dir:
+        fallback = {"report": os.path.join(a.fallback_dir, "report.json"), "summary": os.path.join(a.fallback_dir, "summary.txt")}
+    # a stale report from an earlier run (or boot) must never be mistaken for this run's
+    for p in [a.report, a.summary] + list(fallback.values()):
+        if p:
+            _remove(p)
+    osr = os_release(a.os_release)
+    report = run_all(hw or SysfsHardware(), a.timeout, osr.get("VARIANT_ID"), osr.get("VERSION_ID") or osr.get("VERSION"),
+                     boot_id=_read(a.boot_id_file))
+    text = summary_text(report)
+    out.write(text)
+    rc = {"pass": 0, "fail": 1, "incomplete": 2}[report["summary"]["overall"]]
+    wrote_all = True
+    for kind, primary, body in (("summary", a.summary, text), ("report", a.report, json.dumps(report, indent=2, sort_keys=True) + "\n")):
+        if not primary:
+            continue
+        try:
+            write_atomic(primary, body)
+        except OSError as e:
+            wrote_all = False
+            out.write("cannot write the %s to %s: %s\n" % (kind, primary, e))
+            if fallback:
+                try:
+                    write_atomic(fallback[kind], body)
+                    out.write("wrote the %s to %s instead\n" % (kind, fallback[kind]))
+                except OSError as e2:
+                    out.write("cannot write the %s to %s either: %s\n" % (kind, fallback[kind], e2))
+    if not wrote_all:
+        rc = 3
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

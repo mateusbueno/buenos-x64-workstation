@@ -16,7 +16,7 @@ is shared between roots, and an image variant trusts the public keys of exactly 
 | Root | Purpose | Where its private halves may exist |
 |---|---|---|
 | dev | developer boards (unfused or fused with the dev root), host tests, the dev image variant | developer machines, outside the repository, via `velora_keys.py`; CI never holds them |
-| factory-test | the factory-test image variant that runs the line tests (ports, MCU, keybed, codec loopback, display, touch, NVMe) | a vendor-controlled signing host for the factory-test image; not an HSM, not a developer laptop; created in Story 6.13 |
+| factory-test | the factory-test image variant that runs the line tests (ports, MCU, keybed, codec loopback, display, touch, NVMe) | a vendor-controlled signing host for the factory-test image; not an HSM, not a developer laptop; RAUC root created in Story 6.13 (done) with `yocto/ci/rauc/gen-dev-root.sh --variant factory-test --out <dir>` |
 | production | the production image variant, fused units, the shipped factory library | **only inside an offline HSM**, generated there at the Story 6.10 ceremony (non-exportable, or exported only as an encrypted backup to the second token); only public keys and their hashes ever leave |
 
 Production private keys never exist on a developer machine, in CI, in the repository, in Yocto build inputs or in backups outside the second HSM
@@ -57,10 +57,12 @@ Key kind and root in the first two columns. Production incident handling (compro
 | Content-key vault KEK | production | nobody: HSM only; unwrap happens only inside the HSM-backed vault service | generated in the HSM; the vault stores content keys only wrapped under it | re-wrap every vault entry under the new KEK, keeping the old KEK on the second token until the vault is verified |
 
 **What Story 6.1 generates.** `velora_keys.py` generates only the dev content-manifest key, the dev KEK and the dev device key pair. The dev boot-image
-signing key is created by Story 1.6 (secure-boot chain) and the dev and factory-test RAUC keys and keyrings by Story 6.13 (image variants); this story
+signing key is created by Story 1.6 (secure-boot chain) and the dev and factory-test RAUC keys and keyrings by Story 6.13 (image variants, done: `yocto/ci/rauc/gen-dev-root.sh --variant dev|factory-test`); this story
 defines their place in the hierarchy but does not create them.
 
-**Dev RAUC root (Story 6.12).** `yocto/ci/rauc/gen-dev-root.sh` creates the dev RAUC root outside the repository; the dev image's `system.conf` sets `use-bundle-signing-time=true`, so a bundle's certificate chain is judged at the time written into the bundle rather than the device clock (devices have no trustworthy clock yet). This is a DEV-ONLY trade-off: it also means an expired or later-revoked signing certificate keeps validating old bundles. Story 6.13 must revisit it before the factory-test and production keyrings are defined.
+**Dev RAUC root (Story 6.12).** `yocto/ci/rauc/gen-dev-root.sh` creates the dev RAUC root outside the repository; the dev image's `system.conf` sets `use-bundle-signing-time=true`, so a bundle's certificate chain is judged at the time written into the bundle rather than the device clock (devices have no trustworthy clock yet). This is a DEV-ONLY trade-off: it also means an expired or later-revoked signing certificate keeps validating old bundles.
+
+**Factory-test RAUC root (Story 6.13, done).** The factory-test RAUC root is created on the factory-test signing host with `bash yocto/ci/rauc/gen-dev-root.sh --variant factory-test --out <dir>`: `--out` is mandatory (no default directory, never inside the repository), the root and signing certificates are valid for 365 days (the dev root: 3650), and the subject is exactly `CN=Velora factory-test RAUC root (not for production),O=Velora`, which the image and bundle recipes require. The factory-test image ships only this root's `ca.cert.pem`; a dev-signed bundle and a factory-test-signed bundle are each rejected by the other variant's keyring (Docker-tested). Story 6.13 revisited `use-bundle-signing-time=true` and kept it for dev and factory-test as a documented decision to revisit: the 365-day validity does **not** bound it (expiry is judged at the self-asserted signing time, so a stolen factory-test key can backdate a bundle against units already flashed; only newly built images drop an old keyring); see `yocto/README.md`, "Image variants". The production keyring rule is Story 6.14's.
 
 A trust list may hold several public keys of its root so a rotation overlap needs no code change.
 
@@ -225,4 +227,4 @@ signature `92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac
 * Boot-key algorithm and the RAUC certificate profile: Stories 1.6, 6.11.
 * Fusing the production root hash and anti-rollback: Story 6.9.
 * HSM generation, backups and the written ceremony: Story 6.10.
-* Factory-test root creation and the factory-test image: Stories 6.12, 6.13.
+* Factory-test RAUC root creation and the factory-test image: done in Stories 6.12, 6.13 (the factory-test boot-image, content-manifest and KEK keys remain with their own stories).

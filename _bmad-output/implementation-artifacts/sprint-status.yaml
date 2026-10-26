@@ -186,7 +186,7 @@ development_status:
   6-10-production-signing-root-ceremony-in-an-offline-hsm: backlog
   6-11-read-only-root-filesystem-and-journaled-data-partition: in-progress
   6-12-rauc-a-b-slots-with-rollback-on-failed-boot: in-progress
-  6-13-dev-and-factory-test-image-variants-with-per-root-keyrings: backlog
+  6-13-dev-and-factory-test-image-variants-with-per-root-keyrings: in-progress
   6-14-production-image-with-secure-boot-and-debug-lockdown: backlog
   6-15-otp-anti-rollback-counter-for-security-releases: backlog
   6-16-factory-provisioning-station: backlog

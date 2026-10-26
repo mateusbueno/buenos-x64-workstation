@@ -1,0 +1,18 @@
+# Story 6.13: kas project file for the Velora factory-test image (same sources, layers and pins as the dev image; only variant, target and
+# keyring differ). Run from the repository root, with the factory-test root's PUBLIC keyring (and, for the bundle, its signing directory):
+#   KAS_WORK_DIR=$PWD kas build yocto/kas/velora-factory-test.yml
+# with an overlay (kas file or local.conf) that sets, from outside the repository:
+#   VELORA_RAUC_KEYRING_FILE = "/path/to/factory-test/ca.cert.pem"
+#   VELORA_RAUC_SIGN_DIR     = "/path/to/factory-test"       (only for velora-bundle-factory-test, on the factory-test signing host)
+# The image carries no SSH and no authorized keys: do NOT combine this file with the SSH overlay (the image recipe fails the build if it is).
+header:
+  version: 14
+  includes:
+    - velora-dev.yml
+
+target: velora-image-factory-test
+
+local_conf_header:
+  velora-variant: |
+    # Selects the factory-test variant: os-release VARIANT_ID, the keyring marker checked by rauc-conf and the bundle recipe.
+    VELORA_VARIANT = "factory-test"

@@ -29,11 +29,14 @@ def forbid(desc, rel, pattern, flags=re.M):
 M = "meta-velora"
 D = f"{M}/conf/distro/velora.conf"
 CFG = f"{M}/recipes-core/velora-system-config/files"
-IMG = f"{M}/recipes-core/images/velora-image-dev.bb"
+IMG = f"{M}/recipes-core/images/velora-image-dev.bb"           # dev variant
+IMGB = f"{M}/recipes-core/images/velora-image-base.inc"         # shared base of every variant (Story 6.13)
+IMGF = f"{M}/recipes-core/images/velora-image-factory-test.bb"  # factory-test variant
 
 # os-release dev marker
 need("os-release dev marker", D, r'^VARIANT_ID = "\$\{VELORA_VARIANT\}"')
 need("os-release dev default", D, r'^VELORA_VARIANT \?= "dev"')
+need("os-release VARIANT names dev, factory-test and the prod placeholder", D, r"^VARIANT = .*'dev': 'Development'.*'factory-test': 'Factory test'.*'prod': 'Production'")
 need("os-release fields", D, r'^OS_RELEASE_FIELDS:append = ".*VARIANT_ID')
 # no swap
 need("swappiness 0", f"{CFG}/50-velora-sysctl.conf", r"^vm\.swappiness\s*=\s*0\s*$")
@@ -67,9 +70,9 @@ need("journal RuntimeMaxFileSize", f"{CFG}/10-velora-journal.conf", r"^RuntimeMa
 need("networkd DHCP", f"{CFG}/20-velora-wired.network", r"^DHCP=yes$")
 # Story 6.11: read-only root, tmpfs runtime paths, /data layout, service users, data directories
 WKS = f"{M}/files/wic/velora-nvme.wks"
-need("image uses the committed wks", IMG, r'^WKS_FILE = "velora-nvme\.wks"')
-need("read-only-rootfs in the dev image", IMG, r'^IMAGE_FEATURES = ".*\bread-only-rootfs\b')
-need("service users in the image", IMG, r"^\s+velora-service-users \\$")
+need("image uses the committed wks", IMGB, r'^WKS_FILE = "velora-nvme\.wks"')
+need("read-only-rootfs in the shared image base", IMGB, r'^IMAGE_FEATURES = ".*\bread-only-rootfs\b')
+need("service users in the image", IMGB, r"^\s+velora-service-users \\$")
 BF = f"{M}/recipes-core/base-files/base-files_%.bbappend"
 need("tmpfs /tmp in fstab", BF, r"tmpfs\s+/tmp\s+tmpfs\s+mode=1777,nodev,nosuid")
 need("/data mount point in the rootfs", BF, r"install -d \$\{D\}/data")
@@ -101,10 +104,14 @@ need("README: boot/EROFS/fsck not done", "README.md", r"(?is)NOT done.*power")
 imgs = list((root / M).rglob("velora-image-*.bb"))
 if not imgs:
     errors.append("no velora-image-*.bb found")
+need("licence policy in the shared image base", IMGB, r'^INCOMPATIBLE_LICENSE = "\$\{VELORA_INCOMPATIBLE_LICENSE\}"')
+need("licence exceptions in the shared image base", IMGB, r'^INCOMPATIBLE_LICENSE_EXCEPTIONS = "\$\{VELORA_INCOMPATIBLE_LICENSE_EXCEPTIONS\}"')
 for img in imgs:
     rel = str(img.relative_to(root))
-    need("image applies licence policy", rel, r'^INCOMPATIBLE_LICENSE = "\$\{VELORA_INCOMPATIBLE_LICENSE\}"')
-    need("image applies licence exceptions", rel, r'^INCOMPATIBLE_LICENSE_EXCEPTIONS = "\$\{VELORA_INCOMPATIBLE_LICENSE_EXCEPTIONS\}"')
+    need("every image recipe requires the shared base", rel, r"^require velora-image-base\.inc$")
+    need("every image recipe states its variant", rel, r'^VELORA_IMAGE_VARIANT = "(dev|factory-test)"$')
+    need("image applies licence policy", IMGB, r'^INCOMPATIBLE_LICENSE = "\$\{VELORA_INCOMPATIBLE_LICENSE\}"')
+    need("image applies licence exceptions", IMGB, r'^INCOMPATIBLE_LICENSE_EXCEPTIONS = "\$\{VELORA_INCOMPATIBLE_LICENSE_EXCEPTIONS\}"')
 need("authorized keys bbfatal when missing", IMG, r"bbfatal .*VELORA_DEV_AUTHORIZED_KEYS_FILE")
 need("authorized keys file-checksums", IMG, r"^do_rootfs\[file-checksums\]")
 # core dumps disabled
@@ -114,8 +121,10 @@ need("coredump Storage=none", f"{CFG}/10-velora-coredump.conf", r"^Storage=none$
 need("DefaultLimitCORE=0", f"{CFG}/10-velora-limits.conf", r"^DefaultLimitCORE=0$")
 # ssh + debug uart, dev image only
 IMG = f"{M}/recipes-core/images/velora-image-dev.bb"
-need("ssh server", IMG, r'^IMAGE_FEATURES = "ssh-server-openssh[ "]')
-forbid("insecure root login in image features", IMG, r'^IMAGE_FEATURES(\s*\+?=|:append)[^\n]*(debug-tweaks|empty-root-password|allow-empty-password)')
+need("ssh server (dev variant only)", IMG, r'^IMAGE_FEATURES \+= "ssh-server-openssh"$')
+forbid("no ssh feature in the shared base", IMGB, r"^[^#\n]*ssh-server")
+forbid("no authorized keys in the shared base", IMGB, r"^[^#\n]*authorized_keys")
+forbid("insecure root login in image features", IMGB, r'^IMAGE_FEATURES(\s*\+?=|:append)[^\n]*(debug-tweaks|empty-root-password|allow-empty-password)')
 need("debug uart getty", D, r'^SERIAL_CONSOLES = "\d+;ttyS\d+"')
 # distro
 need("systemd init manager", D, r'^INIT_MANAGER = "systemd"')
@@ -123,7 +132,7 @@ need("licence policy", D, r'^VELORA_INCOMPATIBLE_LICENSE = "GPL-3\.0\* LGPL-3\.0
 forbid("no licence exceptions expected", D, r'^VELORA_INCOMPATIBLE_LICENSE_EXCEPTIONS = "[^"]+"')
 need("kernel 6.18", D, r'^PREFERRED_VERSION_linux-yocto = "6\.18%"')
 need("layer compat", f"{M}/conf/layer.conf", r'LAYERSERIES_COMPAT_velora = "wrynose"')
-need("forbidden packages excluded", IMG, r'^PACKAGE_EXCLUDE = ".*\bflac\b.*\bmetaflac\b.*\blibflac\b.*libflac\+\+.*\blibsndfile1\b')
+need("forbidden packages excluded", IMGB, r'^PACKAGE_EXCLUDE = ".*\bflac\b.*\bmetaflac\b.*\blibflac\b.*libflac\+\+.*\blibsndfile1\b')
 # placeholders are marked
 need("1.1 placeholder: rt fragment", f"{M}/recipes-kernel/linux/files/preempt-rt.cfg", r"TODO\(Story 1\.1\)")
 need("PREEMPT_RT in fragment", f"{M}/recipes-kernel/linux/files/preempt-rt.cfg", r"^CONFIG_PREEMPT_RT=y$")
@@ -171,18 +180,18 @@ for p in root.rglob("*"):
 need("rauc target packageconfig", f"{RA}/rauc_%.bbappend", r'^PACKAGECONFIG = "service json nocreate gpt"$')
 need("rauc: libubootenv provides fw_setenv", f"{RA}/rauc_%.bbappend", r'^RAUC_BOOTLOADER_RDEPENDS = "libubootenv-bin"$')
 need("stock mark-good recommendation removed", f"{RA}/rauc_%.bbappend", r'^RRECOMMENDS:\$\{PN\}:remove = "\$\{PN\}-mark-good"$')
-need("image: stock mark-good not installed", IMG, r'^BAD_RECOMMENDATIONS \+= "rauc-mark-good"$')
+need("image: stock mark-good not installed", IMGB, r'^BAD_RECOMMENDATIONS \+= "rauc-mark-good"$')
 for pkg in ("rauc", "rauc-conf", "velora-rauc-mark-good", "velora-rollback-record", "velora-uboot-ab-script"):
-    need(f"image installs {pkg}", IMG, rf"^\s+{re.escape(pkg)} \\$")
-need("image produces the ext4 rootfs the bundle ships", IMG, r'^IMAGE_FSTYPES \+= "ext4"$')
+    need(f"image installs {pkg}", IMGB, rf"^\s+{re.escape(pkg)} \\$")
+need("image produces the ext4 rootfs the bundle ships", IMGB, r'^IMAGE_FSTYPES \+= "ext4"$')
 need("rauc distro feature", D, r'^DISTRO_FEATURES:append = ".* rauc"')
 need("layer depends on meta-rauc", f"{M}/conf/layer.conf", r'^LAYERDEPENDS_velora = "core rockchip rauc"$')
 need("kas pins meta-rauc on wrynose", "kas/velora-dev.yml", r"meta-rauc:\n\s+url: https://github\.com/rauc/meta-rauc\n\s+path: \S+\n\s+branch: wrynose\n\s+commit: [0-9a-f]{40}\n", re.M)
-BUN = f"{M}/recipes-core/bundles/velora-bundle-dev.bb"
+BUN = f"{M}/recipes-core/bundles/velora-bundle-base.inc"   # shared by the dev and factory-test bundle recipes (Story 6.13)
 need("bundle recipe uses the bundle class", BUN, r"^inherit bundle$")
 need("bundle recipe: plain", BUN, r'^RAUC_BUNDLE_FORMAT = "plain"$')
 need("bundle recipe: compatible equals system.conf", BUN, r'^RAUC_BUNDLE_COMPATIBLE = "Velora RK3588"$')
-need("bundle recipe: rootfs slot from the dev image", BUN, r'^RAUC_SLOT_rootfs = "velora-image-dev"$')
+need("bundle recipe: rootfs slot from the dev image", f"{M}/recipes-core/bundles/velora-bundle-dev.bb", r'^RAUC_SLOT_rootfs = "velora-image-dev"$')
 need("bundle recipe: signing dir variable empty by default", BUN, r'^VELORA_RAUC_SIGN_DIR \?= ""$')
 need("bundle recipe: bbfatal without signing files", BUN, r"bbfatal \"VELORA_RAUC_SIGN_DIR is not set")
 need("bundle recipe: keyring verifies at creation", BUN, r"--keyring=")
@@ -211,6 +220,80 @@ need("u-boot script: root by partition name per slot", f"{M}/files/uboot/velora-
 need("kernel fragment for verity installs", f"{M}/recipes-kernel/linux/files/velora-rauc.cfg", r"^CONFIG_DM_VERITY=y$")
 need("README: RAUC section", "README.md", r"(?m)^## RAUC")
 need("README: install/boot counter/rollback not done", "README.md", r"(?is)RAUC.*NOT done.*(install|rollback)")
+# Story 6.13: image variants (shared base + dev + factory-test), per-variant keyring and bundle, factory test runner
+FT = f"{M}/recipes-core/velora-factory-test"
+need("dev variant states VELORA_IMAGE_VARIANT", IMG, r'^VELORA_IMAGE_VARIANT = "dev"$')
+need("factory-test variant states VELORA_IMAGE_VARIANT", IMGF, r'^VELORA_IMAGE_VARIANT = "factory-test"$')
+need("image base checks the variant before the rootfs", IMGB, r'^do_rootfs\[prefuncs\] \+= "velora_check_image_variant"$')
+need("factory-test: no ssh feature", IMGF, r'^IMAGE_FEATURES:remove \+= "ssh-server-openssh ssh-server-dropbear"$')
+need("factory-test: ssh packages excluded", IMGF, r'^PACKAGE_EXCLUDE \+= ".*\bopenssh-sshd\b.*\bdropbear\b')
+forbid("factory-test: no ssh feature added", IMGF, r'^IMAGE_FEATURES \+= ')
+forbid("factory-test: no authorized keys installed", IMGF, r"install .*authorized_keys")
+need("factory-test: runner installed", IMGF, r'^IMAGE_INSTALL \+= "velora-factory-test"$')
+forbid("dev: no factory-test runner", IMG, r"velora-factory-test")
+forbid("shared base: no factory-test runner", IMGB, r"velora-factory-test")
+need("factory-test: serial getty masked", IMGF, r"ln -sf /dev/null \$\{IMAGE_ROOTFS\}\$\{sysconfdir\}/systemd/system/serial-getty@\$tty\.service")
+need("factory-test: rootfs asserted free of SSH", IMGF, r"ROOTFS_POSTPROCESS_COMMAND \+= \"velora_factory_no_login; velora_factory_assert_no_ssh;\"")
+need("factory-test: authorized keys fatal", IMGF, r'bbfatal "VELORA_DEV_AUTHORIZED_KEYS_FILE is set')
+need("factory-test: debug UART policy documented", "README.md", r"(?is)debug UART.*factory-test.*getty")
+KASF = "kas/velora-factory-test.yml"
+need("kas factory-test: includes the dev file (same pins)", KASF, r"^\s+- velora-dev\.yml$")
+need("kas factory-test: target", KASF, r"^target: velora-image-factory-test$")
+need("kas factory-test: VELORA_VARIANT", KASF, r'^\s+VELORA_VARIANT = "factory-test"$')
+forbid("kas factory-test: no repos of its own (nothing to pin)", KASF, r"^\s+url:")
+BF_ = f"{M}/recipes-core/bundles"
+need("bundle dev variant", f"{BF_}/velora-bundle-dev.bb", r'^VELORA_BUNDLE_VARIANT = "dev"$')
+need("bundle factory-test variant", f"{BF_}/velora-bundle-factory-test.bb", r'^VELORA_BUNDLE_VARIANT = "factory-test"$')
+need("bundle factory-test: slot from the factory-test image", f"{BF_}/velora-bundle-factory-test.bb", r'^RAUC_SLOT_rootfs = "velora-image-factory-test"$')
+for b in ("velora-bundle-dev.bb", "velora-bundle-factory-test.bb"):
+    need(f"{b} requires the shared bundle base", f"{BF_}/{b}", r"^require velora-bundle-base\.inc$")
+need("bundle base: variant must equal VELORA_VARIANT", BUN, r'bbfatal "bundle \$\{PN\} is for variant')
+need("bundle base: keyring marker per variant", BUN, r"Velora \$variant RAUC root")
+need("keyring: exact RFC 2253 subject per variant", RC, r'want="CN=Velora \$\{VELORA_VARIANT\} RAUC root \(not for production\),O=Velora"')
+need("keyring: subject compared with !=", RC, r'if \[ "\$subject" != "\$want" \]')
+need("keyring: exactly one PEM block, a CERTIFICATE", RC, r"grep -c '\^-----BEGIN ' \"\$keyring\"")
+need("keyring: block type must be CERTIFICATE", RC, r'\[ "\$firstblock" != "CERTIFICATE" \]')
+need("keyring: self-signed root required", RC, r'openssl verify -CAfile "\$keyring" "\$keyring"')
+need("keyring: VELORA_VARIANT validated", RC, r"dev\|factory-test\) ;;")
+need("keyring: prod rule left to Story 6.14", RC, r"prod\) bbfatal .*Story 6\.14")
+need("bundle base: exact RFC 2253 subject", BUN, r'want="CN=Velora \$variant RAUC root \(not for production\),O=Velora"')
+need("bundle base: one PEM block, a CERTIFICATE", BUN, r'\[ "\$firstblock" != "CERTIFICATE" \]')
+need("bundle base: self-signed root required", BUN, r'openssl verify -CAfile "\$keyring" "\$keyring"')
+need("bundle base: VELORA_VARIANT validated", BUN, r"dev\|factory-test\) ;;")
+need("image base: root account must be locked", IMGB, r'^ROOTFS_POSTPROCESS_COMMAND \+= "velora_assert_root_locked;"$')
+need("image base: root lock accepts only * or !", IMGB, r"'\*'\|'!'\*\) ;;")
+need("factory-test: find pass for ssh material", IMGF, r"find \$\{IMAGE_ROOTFS\} .*-name 'authorized_keys\*' -o -name 'sshd\*' -o -name 'dropbear\*' -o -name 'ssh\*\.socket' -o -name 'ssh\*\.service'")
+need("gen script: --variant with --name refused", "ci/rauc/gen-dev-root.sh", r"--variant and --name cannot be combined")
+need("gen script: reserved --name refused", "ci/rauc/gen-dev-root.sh", r"dev\|factory-test\|prod\|production\) echo \"refusing --name")
+need("keyring: still exactly one variant keyring file", RC, r'^VELORA_RAUC_KEYRING_FILE \?= ""$')
+need("system.conf: one keyring path for every variant", SYSCONF, r"^path=/usr/lib/rauc/ca\.cert\.pem$")
+need("gen script supports --variant dev and factory-test", "ci/rauc/gen-dev-root.sh", r"^\s+dev\|factory-test\) NAME=")
+need("gen script refuses other variants (production)", "ci/rauc/gen-dev-root.sh", r"refusing variant")
+need("runner: schema string", f"{FT}/files/velora-factory-test", r'^SCHEMA = "velora-factory-test-report/2"$')
+for name in ("MCU links", "Keybed scan", "Panel controls and LEDs", "Codec loopback", "Display and touch", "NVMe read/write speed"):
+    need(f"runner covers {name}", f"{FT}/files/velora-factory-test", rf'^\s+\("{re.escape(name)}", ')
+need("runner: three statuses", f"{FT}/files/velora-factory-test", r'^PASS, FAIL, NOT_PRESENT = "pass", "fail", "not present"$')
+need("runner: probe timeout isolation", f"{FT}/files/velora-factory-test", r"t\.join\(timeout\)")
+need("runner: TODO where the hardware interface is missing", f"{FT}/files/velora-factory-test", r"TODO\(Stories? 3\.x\)")
+need("runner recipe installs runner and unit", f"{FT}/velora-factory-test_1.0.bb", r"install -m 0755 \$\{UNPACKDIR\}/velora-factory-test \$\{D\}\$\{libexecdir\}/velora/velora-factory-test")
+need("runner recipe enables the unit", f"{FT}/velora-factory-test_1.0.bb", r'^SYSTEMD_SERVICE:\$\{PN\} = "velora-factory-test\.service"$')
+UNIT = f"{FT}/files/velora-factory-test.service"
+need("runner unit writes /data/factory-test only (tolerates its absence)", UNIT, r"^ReadWritePaths=-/data/factory-test$")
+need("runner unit: fallback RuntimeDirectory", UNIT, r"^RuntimeDirectory=velora-factory-test$")
+need("runner unit: ordered after udev trigger, sound, tmpfiles, local-fs", UNIT, r"^After=.*\blocal-fs\.target\b.*\bsystemd-tmpfiles-setup\.service\b.*\bsystemd-udev-trigger\.service\b.*\bsound\.target\b")
+need("runner unit: waits for the /data mount without requiring it", UNIT, r"(?s)^After=[^\n]*\bdata\.mount\b.*^Wants=data\.mount$")
+forbid("runner unit: no always-true ConditionPathExists=/data", UNIT, r"^ConditionPathExists=")
+need("runner unit: TimeoutStartSec", UNIT, r"^TimeoutStartSec=\d+$")
+need("runner: expected links defined", f"{FT}/files/velora-factory-test", r'^EXPECTED_LINKS = \("velora-mcu-keybed", "velora-mcu-panel"\)')
+need("runner: panel constants", f"{FT}/files/velora-factory-test", r"^PANEL_CONTROLS_EXPECTED = \d+\nPANEL_LEDS_EXPECTED = \d+$")
+need("runner: report carries boot_id", f"{FT}/files/velora-factory-test", r'"boot_id": boot_id or "unknown"')
+need("runner: stale report removed first", f"{FT}/files/velora-factory-test", r"a stale report from an earlier run")
+need("runner: report files 0644", f"{FT}/files/velora-factory-test", r"os\.fchmod\(f\.fileno\(\), 0o644\)")
+need("runner unit: exit 1 and 2 are test results", UNIT, r"^SuccessExitStatus=1 2$")
+need("README: image variants section", "README.md", r"(?m)^## Image variants")
+need("README: variants verified vs not", "README.md", r"(?is)factory-test.*NOT done.*(boot|hardware)")
+need("README: production variant structure only", "README.md", r"(?is)production.*NOT (built|defined)")
+
 # CI workflow: manual only
 wf = (root.parent / ".github/workflows/yocto.yml")
 if wf.is_file():
