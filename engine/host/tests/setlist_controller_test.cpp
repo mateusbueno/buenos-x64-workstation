@@ -117,6 +117,11 @@ class FakePort final : public SwitchPort {
         return;
       }
   }
+  void set_preload_target(const std::string& cur, const std::string& next) override {
+    pre_cur = cur;
+    pre_next = next;
+  }
+  std::string pre_cur, pre_next;  // Story 4.7: the last pair the controller named
   // Test controls.
   void play(const std::string& id) { sounding = effective = id; loading = false; }
 
@@ -352,6 +357,62 @@ void test_commands_and_errors() {
   CHECK(sl::SetlistStore::open(so, w.store) == sl::Status::kOk);
   CHECK(w.store->library().setlists_size() == 2 && w.store->library().tags_size() == 1);
   CHECK(w.store->find_setlist(s2)->live_set_ids_size() == 1);
+}
+
+// Story 4.7: which Live Set the controller names for preloading, against a fake port.
+void test_preload_target_naming() {
+  World w;
+  const std::string a = w.live_set("A"), b = w.live_set("B"), c = w.live_set("C"), x = w.live_set("X");
+  const std::string s = w.setlist("Show", {a, b, c});
+  auto named = [&](const char* cur, const char* next) { return w.port.pre_cur == cur && w.port.pre_next == next; };
+  w.ctl->tick();
+  CHECK(named("", ""));  // no setlist loaded
+  CHECK(w.load(s).has_load_setlist_reply());
+  w.ctl->tick();
+  CHECK(named("", ""));  // nothing sounds yet
+  w.port.play(a);
+  w.ctl->tick();
+  CHECK(w.port.pre_cur == a && w.port.pre_next == b);
+  w.port.play(b);
+  w.ctl->tick();
+  CHECK(w.port.pre_cur == b && w.port.pre_next == c);
+  // A reorder that moves the next entry names another Live Set at once (the command ends with the update, no tick needed).
+  auto m = msg();
+  m.mutable_reorder_live_sets_in_setlist()->set_setlist_id(s);
+  for (const std::string& id : {a, c, b}) m.mutable_reorder_live_sets_in_setlist()->add_live_set_ids(id);
+  CHECK(w.send(m).has_ack());
+  CHECK(w.port.pre_next.empty());  // b is now last
+  // Removing the Live Set that follows: the entry after it.
+  m = msg();
+  m.mutable_reorder_live_sets_in_setlist()->set_setlist_id(s);
+  for (const std::string& id : {a, b, c}) m.mutable_reorder_live_sets_in_setlist()->add_live_set_ids(id);
+  CHECK(w.send(m).has_ack());
+  CHECK(w.port.pre_cur == b && w.port.pre_next == c);
+  m = msg();
+  m.mutable_remove_live_set_from_setlist()->set_setlist_id(s);
+  m.mutable_remove_live_set_from_setlist()->set_live_set_id(c);
+  CHECK(w.send(m).has_ack());
+  CHECK(w.port.pre_next.empty());  // the end of the list: none
+  m = msg();
+  m.mutable_add_live_set_to_setlist()->set_setlist_id(s);
+  m.mutable_add_live_set_to_setlist()->set_live_set_id(c);
+  CHECK(w.send(m).has_ack());
+  CHECK(w.port.pre_cur == b && w.port.pre_next == c);
+  // The last Live Set: none.
+  w.port.play(c);
+  w.ctl->tick();
+  CHECK(named("", ""));
+  // Off-script: X sounds outside the setlist; stepping returns relative to the last position (b, index 1 -> c).
+  w.port.play(b);
+  w.ctl->tick();
+  w.port.play(x);
+  w.ctl->tick();
+  CHECK(w.port.pre_cur == x && w.port.pre_next == c);
+  // Unload: none.
+  m = msg();
+  m.mutable_unload_setlist();
+  CHECK(w.send(m).has_ack());
+  CHECK(named("", ""));
 }
 
 void test_plane_without_setlists() {
@@ -1119,6 +1180,7 @@ int main() {
   test_cascades_and_anchor();
   test_slow_load_follows_request();
   test_status_and_tick();
+  test_preload_target_naming();
   test_limit_and_storage_mapping();
   test_injected_store_faults();
   test_reanchor_on_insert();

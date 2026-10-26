@@ -129,6 +129,36 @@ message State {
   EncoderStatus encoders = 13;           // Story 4.10: the encoder mode, the selected part, the ASSIGN maps; additive
   ContentStatus content = 14;            // Story 6.5: protected-library integrity (counter and damaged libraries); additive
   FaderStatus faders = 15;               // Story 4.12: fader bindings, modes and pickup state; additive
+  PreloadStatus preload = 16;            // Story 4.7: the next Live Set of the loaded setlist, preloaded within the head budget; additive
+}
+
+// Story 4.7: the preload of the NEXT Live Set of the loaded setlist. `next_live_set_id` / `next_live_set_name` name the Live Set being (or to be) preloaded
+// ("" = none: no setlist loaded, last Live Set of the setlist, or nothing sounds yet). `ready` is true only in READY: the next Live Set is fully resident and
+// "next Live Set" swaps to it at the next block with no load wait. SKIPPED_BUDGET: the current and the next Live Set do not fit the head budget together (heads
+// they share counted once); stepping then uses the ordinary background load. FAILED: the preload could not be staged (`detail` is the reason, e.g. read_failed,
+// invalid_live_set, instrument_load_failed); stepping falls back to the ordinary load and reports its own typed error. `head_bytes_held` is the PCM the preload
+// holds in addition to the sounding generation (shared heads are held once and not counted here; while LOADING the part loaded so far); 0 otherwise.
+// `detail` carries a reason word only; the numbers of a verdict are in head_bytes_current (the sounding generation it was made against), head_bytes_needed and
+// head_budget_bytes (the whole tier budget, shared by both generations).
+enum PreloadState {
+  PRELOAD_STATE_UNSPECIFIED = 0;
+  PRELOAD_STATE_NONE = 1;
+  PRELOAD_STATE_LOADING = 2;
+  PRELOAD_STATE_READY = 3;
+  PRELOAD_STATE_SKIPPED_BUDGET = 4;
+  PRELOAD_STATE_FAILED = 5;
+}
+message PreloadStatus {
+  PreloadState state = 1;
+  bool ready = 2;                        // state == READY
+  string next_live_set_id = 3;
+  string next_live_set_name = 4;
+  uint64 head_bytes_held = 5;
+  uint64 head_budget_bytes = 6;          // the tier head budget the current and the preloaded generation share (0 = unlimited)
+  uint64 head_bytes_current = 7;         // PCM of the sounding generation
+  string detail = 8;
+  uint64 status_seq = 9;                 // increases with every change of this status
+  uint64 head_bytes_needed = 10;         // SKIPPED_BUDGET: PCM the next Live Set needs beyond the heads it shares with the current one
 }
 
 // Story 6.5: the integrity of protected (factory) libraries. `content_integrity` counts, since the engine started, the voices that faded to silence because

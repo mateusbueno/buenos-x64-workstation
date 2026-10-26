@@ -1502,6 +1502,48 @@ void test_diff_reports_list_size_changes() {
 
 }  // namespace
 
+// Story 4.7: every Write that touches a Live Set file tells the switch port (a preload of that Live Set is stale).
+struct RecordingPort final : host::SwitchPort {
+  explicit RecordingPort(host::SwitchPort& in) : in_(in) {}
+  host::SwitchOutcome jump_to(const std::string& id) override { return in_.jump_to(id); }
+  const std::string& effective_id() const override { return in_.effective_id(); }
+  const std::string& sounding_id() const override { return in_.sounding_id(); }
+  const std::vector<host::CatalogEntry>& catalog() const override { return in_.catalog(); }
+  void add_to_catalog(host::CatalogEntry e) override { in_.add_to_catalog(std::move(e)); }
+  void remove_from_catalog(const std::string& id) override { in_.remove_from_catalog(id); }
+  void set_preload_target(const std::string& c, const std::string& n) override { in_.set_preload_target(c, n); }
+  void live_set_written(const std::string& id) override {
+    written.push_back(id);
+    in_.live_set_written(id);
+  }
+  host::SwitchPort& in_;
+  std::vector<std::string> written;
+};
+
+void test_write_tells_the_port() {
+  Rig rig;
+  const lsp::LiveSet a = perfect(rig.lib);
+  rig.start({a});
+  RecordingPort rec(*rig.port);
+  rig.edits.reset();
+  host::EditSessionOptions eo;
+  host::LiveSetSwitcher* swp = rig.sw.get();
+  eo.load_in_progress = [swp] { return swp->loading(); };
+  eo.reload_current = [swp] { return swp->reload_current(); };
+  eo.fence_idle = [&rig] { rig.render(1); };
+  eo.rng = &rig.rng;
+  rig.edits = std::make_unique<host::EditSession>(rig.plane, rig.scenes, *rig.live, rig.store.get(), rig.ctl.get(), &rec, eo);
+  rig.edits->attach(rig.loader);
+  rig.edits->attach(*rig.sw);
+  CHECK(rig.volume(0, 0.35f).has_ack());
+  CHECK(rig.write(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET).has_write_reply());
+  CHECK(rec.written.size() == 1 && rec.written[0] == a.id());  // the Scene / Whole branch
+  CHECK(rig.volume(0, 0.4f).has_ack());
+  const auto rep = rig.write(ws::v1::WRITE_SCOPE_SAVE_AS_NEW, "Copy for preload");
+  CHECK(rep.has_write_reply() && rec.written.size() == 2 && rec.written[1] == rep.write_reply().written_live_set_id());  // the Save as new branch
+  rig.edits.reset();
+}
+
 int main() {
   test_fence_orders_after_earlier_events();
   test_fence_lane_full_and_timeout();
@@ -1511,6 +1553,7 @@ int main() {
   test_unapplied_generation_is_not_an_edit();
   test_edits_kept_across_live_set_changes();
   test_write_whole_live_set();
+  test_write_tells_the_port();
   test_factory_live_set_is_read_only();
   test_write_moves_a_non_canonical_file();
   test_write_scene_scope();

@@ -39,8 +39,41 @@
 // `hold_ticks` N delays the commit to the (N+1)-th tick() after the jump, i.e. N ticks of simulated load time (blocks, offline), so a render is a pure function of its
 // inputs. The code path is the same as with the worker.
 //
-// Head budget. `head_budget_bytes` bounds the TARGET's heads (decoded PCM). The generation that keeps playing during the load stays resident
-// as well; counting both against one tier budget is Story 4.7 (preload within the head budget, board-accepted).
+// Head budget. `head_budget_bytes` bounds the TARGET's heads (decoded PCM) of a user-initiated load (a jump): the generation that keeps playing during
+// that load stays resident as well, and counting both is not asked of it (Story 4.5). The PRELOAD below shares the budget between both generations.
+//
+// Next Live Set preload (Story 4.7, FR80, AR21; the <10 ms command-to-swap figure is a dev-board measurement, deferred). The setlist controller names the
+// NEXT Live Set of the loaded setlist with set_preload_target(current, next). Once `current` sounds and no user load is running, tick() STAGES `next`
+// on the same worker (LiveSetLoader::stage(): heads resident, generation built; NOT published) and the status goes LOADING -> READY. Budget: the preload
+// may hold budget - (heads of the sounding generation) bytes on top of it; an instrument both generations use (same library, bundle and instrument key)
+// is NOT loaded again: the staged generation takes the resident instrument, so it is held once and counted once (StageControl::reuse). When current +
+// next (deduped) do not fit, stage() refuses from the bundle indexes before any sample is read: SKIPPED_BUDGET, not ready, and a later "next" is the
+// ordinary Story 4.5 background load, unchanged. Any other stage failure is FAILED (the same fallback; the 4.5 path then reports its own typed error).
+// Nothing is published and the arbiter is not touched while the preload waits: the voice-pool reservation is PREPARED AT COMMIT by commit_seamless()
+// (the same refusal path as 4.5), never reserved at preload, so the sounding Live Set can never be starved by a preload. A READY preload holds its
+// heads (and so the bundle leases) until it is committed or discarded; discarding destroys the staged generation, which frees them.
+//   * jump_to(next) with a READY preload commits it inside the call: no instrument is loaded at command time (only commit_seamless(): prepare the
+//     reservation, publish), RT adopts it at the next block, and the old generation drains as in 4.5. The following preload starts once the setlist
+//     controller names the new pair (it does so right after the step, and on every tick).
+//   * jump_to(next) while the preload is still LOADING cancels it and runs the ordinary 4.5 load for that target (simplest cancel semantics: one
+//     job at a time per kind, the worker stops at its next cancellation check).
+//   * jump_to(anything else), reload_current(): the preload is discarded (cancelled/released) first; it is restaged for the (possibly new) pair once
+//     the new current sounds. cancel_load() while LOADING drops the preload and does not restart it for the same pair.
+//   * Invalidation: set_preload_target() with another pair, live_set_changed(id) (the target's file was written), invalidate_preload() (a library
+//     change made heads stale), a catalog replacement/removal of the target, and a changed file signature (size, mtime) seen by the throttled check.
+// Staleness. A verdict is made against the sounding generation's head bytes; when that changes (an edit or library commit, a reload) the preload is
+// discarded and restaged, so READY / SKIPPED_BUDGET never describe a generation that no longer sounds. The staged Live Set's overlay (unsaved edits)
+// is compared by LiveSetEditPort::overlay_revision() (a full compare only when the revisions differ or are unknown); its file by size + mtime of the
+// Live Set file ONLY; its heads by the library's `current` link (LiveSetLoader::heads_still_current), at the status cadence and again at the jump. A
+// mismatch at the jump falls back to the 4.5 load. engine-host has no library-change event yet, so these checks are how a replaced or removed library
+// is noticed; invalidate_preload() is the call for one when it exists.
+// A commit that is refused at the jump (arbiter, FX budget) leaves the preload READY and is reported as the ordinary typed failure; a busy ledger is
+// retried like 4.5 (the preload is consumed then).
+// Known limits. Generations that still drain (voices pinned on an old generation) are not counted in the budget: the real resident bytes can exceed it by
+// up to the pinned-generation limit. FAILED and SKIPPED_BUDGET are terminal until the pair or the sounding Live Set changes (no retry or backoff yet). A
+// cancelled preload can delay a user load until the worker's next cancellation check. LOADING's head_bytes_held counts only what the stage loads itself
+// (shared heads are not in it), as does READY's.
+// Deterministic mode: the preload stage runs inside tick() and READY is declared at the (hold_ticks+1)-th tick after it started; the clock is injectable.
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -79,6 +112,20 @@ struct SwitcherOptions {
   bool background_thread = true;                  // false: deterministic mode, stage() runs inside jump_to()
   std::uint32_t hold_ticks = 0;                   // simulated load time: the commit happens at the (N+1)-th tick() after the jump at the earliest
   double busy_retry_s = 5.0;                      // a commit refused with kBusy (ledger full) is retried on each tick for this long
+};
+
+enum class PreloadState : std::uint8_t { kNone = 0, kLoading, kReady, kSkippedBudget, kFailed };
+const char* to_string(PreloadState s);
+
+struct PreloadStatus {
+  PreloadState state = PreloadState::kNone;
+  std::string target_id, target_name;     // the next Live Set ("" = none)
+  std::uint64_t head_bytes_held = 0;      // PCM the preload holds on top of the sounding generation (partial while loading)
+  std::uint64_t head_bytes_current = 0;   // PCM of the sounding generation the verdict (LOADING / READY / SKIPPED_BUDGET / FAILED) was made against; 0 with NONE
+  std::uint64_t head_bytes_needed = 0;    // SKIPPED_BUDGET: the PCM the next Live Set needs beyond the heads it shares with the current one
+  std::string detail;                     // FAILED / SKIPPED_BUDGET: the reason, no numbers (they are in the typed fields)
+  std::uint64_t seq = 0;
+  bool ready() const { return state == PreloadState::kReady; }
 };
 
 enum class SwitchState : std::uint8_t { kIdle = 0, kLoading, kReady, kFailed };
@@ -126,6 +173,13 @@ class LiveSetSwitcher final : public SwitchHandler {
   SwitchOutcome reload_current();
   // Story 4.9: with a port, a jump to a Live Set that has unsaved edits builds its generation from the edited state, not from the file. Control thread.
   void set_edit_port(LiveSetEditPort* port) { edits_ = port; }
+  // Story 4.7. Control thread. `current_id` is the Live Set that must sound for the preload to start (the one `next_id` follows); `next_id` "" = nothing to
+  // preload. Naming the pair that is already set changes nothing; a different pair discards the preload (see the header comment).
+  void set_preload_target(const std::string& current_id, const std::string& next_id);
+  void invalidate_preload();                       // discards the preload and lets it restage (library change, ...)
+  void live_set_changed(const std::string& id);    // the Live Set's file was written: a preload of it is invalidated
+  const PreloadStatus& preload_status() const { return pre_status_; }
+  std::uint32_t preload_commits() const { return preload_commits_; }  // jumps served from a READY preload
   // Cancels the load in progress (informational LOAD_CANCELLED, state IDLE); the current Live Set is untouched.
   SwitchOutcome cancel_load();
   // Control thread, periodically (the server poll loop, or once per block offline). Returns true when the status or the generation changed.
@@ -154,6 +208,10 @@ class LiveSetSwitcher final : public SwitchHandler {
     std::shared_ptr<const ::velora::liveset::v1::LiveSet> overlay;  // Story 4.9: the edited state to build from instead of the file
     std::shared_ptr<std::atomic<bool>> cancel;
     std::shared_ptr<Progress> progress;
+    // Story 4.7 (preload jobs only)
+    bool preload = false;
+    std::vector<HeadUse> reuse;       // the sounding generation's heads, taken over instead of loaded again
+    std::uint64_t head_budget = 0;    // what the preload may add to them (0 = unlimited)
   };
   struct JobResult {
     std::uint64_t token = 0;
@@ -169,9 +227,21 @@ class LiveSetSwitcher final : public SwitchHandler {
   void cancel_active(bool count_as_cancelled);
   void finish_failure(const LiveSetLoadResult& r);
   bool try_commit();
+  void commit_succeeded();
+  bool commit_refused(const LiveSetLoadResult& r);
   void refresh_progress(double now_s);
 
   SwitchOutcome jump_impl(const std::string& id, bool reload);
+
+  // Story 4.7
+  void pre_publish();
+  void pre_set_target_fields();
+  void discard_preload();
+  void maybe_start_preload();
+  void harvest_preload();
+  void check_preload_file();
+  bool overlay_unchanged(const ::velora::liveset::v1::LiveSet* now_overlay, std::uint64_t now_revision) const;
+  bool take_preload(const CatalogEntry& entry, const ::velora::liveset::v1::LiveSet* overlay, SwitchOutcome& o);
 
   LiveSetLoader& loader_;
   ControlPlane& plane_;
@@ -193,12 +263,35 @@ class LiveSetSwitcher final : public SwitchHandler {
   double rate_ = 0;  // smoothed bytes per second, 0 = not measured yet
   std::uint64_t published_ = 0;
 
+  // Story 4.7: control-thread state of the preload.
+  struct FileSig {
+    bool valid = false;
+    std::uintmax_t size = 0;
+    std::int64_t mtime = 0;
+    bool operator==(const FileSig& o) const { return valid == o.valid && size == o.size && mtime == o.mtime; }
+  };
+  static FileSig sig_of(const std::string& path);
+  PreloadStatus pre_status_;
+  std::string pre_for_, pre_next_;      // the requested pair
+  bool pre_blocked_ = false;            // cancelled by cancel_load(): not restarted for this pair
+  bool pre_running_ = false;            // LOADING: a stage job is in flight (or finished and held for the simulated load time)
+  Job pre_job_;
+  CatalogEntry pre_entry_;
+  std::unique_ptr<JobResult> pre_held_;  // the finished stage: LOADING (waiting) or READY
+  std::uint32_t pre_ticks_ = 0;
+  std::uint64_t pre_overlay_rev_ = 0;   // LiveSetEditPort::overlay_revision() when it was staged
+  FileSig pre_sig_;
+  double pre_check_s_ = 0, pre_pub_s_ = 0;
+  std::uint32_t preload_commits_ = 0;
+
   // Worker.
   std::thread worker_;
   std::mutex m_;
   std::condition_variable cv_;
   std::optional<Job> pending_;
+  std::optional<Job> pending_pre_;       // Story 4.7: a preload stage, run when no user job is waiting
   std::unique_ptr<JobResult> done_;
+  std::unique_ptr<JobResult> done_pre_;
   bool stop_ = false;
 };
 

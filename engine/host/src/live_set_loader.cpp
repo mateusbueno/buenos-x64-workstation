@@ -156,6 +156,8 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
     std::uint32_t first_part = 0;
     std::uint64_t estimate = 0;
     std::shared_ptr<const BundleInstrument> instrument;
+    std::string identity;   // Story 4.7: library + bundle + instrument key
+    bool shared = false;    // Story 4.7: taken over from StageControl::reuse, not loaded here
   };
   std::vector<Unique> uniques;
   std::map<std::string, std::size_t> unique_of;               // key -> index into `uniques`
@@ -209,6 +211,14 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
       if (it == unique_of.end()) {
         it = unique_of.emplace(key, uniques.size()).first;
         Unique u;
+        u.identity = rr.library_id + '\n' + rr.bundle_dir + '\n' + lp.timbre().instrument_key();
+        if (ctl.reuse)
+          for (const HeadUse& h : *ctl.reuse)
+            if (h.key == u.identity)
+              if (std::shared_ptr<const BundleInstrument> live = h.instrument.lock()) {
+                u.instrument = std::move(live);
+                u.shared = true;
+              }
         u.resolved = std::move(rr);
         u.first_part = pi;
         uniques.push_back(std::move(u));
@@ -234,6 +244,7 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   // budget is refused early; the same budget guards the loading itself (a provider that was off by a few samples still cannot overshoot).
   std::uint64_t total_bytes = 0;
   for (Unique& u : uniques) {
+    if (u.shared) continue;  // already resident for the generation that sounds: held once, not part of what this stage must fit
     u.estimate = heads_.estimate_bytes(u.resolved);
     total_bytes += u.estimate;
   }
@@ -272,6 +283,14 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   report_progress();
   for (Unique& u : uniques) {
     if (cancelled()) return failure(LiveSetLoadStatus::kCancelled);
+    if (u.shared) {
+      ++instruments_done;
+      res.parts[u.first_part].resident_bytes = u.instrument->resident_bytes();
+      res.resident_bytes += u.instrument->resident_bytes();
+      res.shared_head_bytes += u.instrument->resident_bytes();
+      report_progress();
+      continue;
+    }
     const LoadStatus st = heads_.load_controlled(u.resolved, u.instrument, hooks);
     if (st == LoadStatus::kCancelled || (st == LoadStatus::kOk && budget_tripped)) {
       if (budget_tripped) {
@@ -294,8 +313,10 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
     ++instruments_done;
     res.parts[u.first_part].resident_bytes = u.instrument->resident_bytes();  // shared instruments count once, for the first part
     res.resident_bytes += u.instrument->resident_bytes();
+    res.loaded_head_bytes += u.instrument->resident_bytes();
     report_progress();
   }
+  for (const Unique& u : uniques) staged->heads.push_back(HeadUse{u.identity, u.instrument->resident_bytes(), u.instrument});
 
   // Phase C: each sample part gets its own bank over the shared resident instrument.
   if (cancelled()) return failure(LiveSetLoadStatus::kCancelled);
@@ -369,6 +390,31 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   return ret;
 }
 
+std::uint64_t LiveSetLoader::current_head_bytes() const {
+  std::uint64_t n = 0;
+  for (const HeadUse& h : current_heads_)
+    if (!h.instrument.expired()) n += h.bytes;
+  return n;
+}
+
+bool LiveSetLoader::heads_still_current(const std::vector<HeadUse>& heads) const {
+  namespace fsys = std::filesystem;
+  for (const HeadUse& h : heads) {
+    const std::size_t a = h.key.find('\n');
+    const std::size_t b = a == std::string::npos ? a : h.key.find('\n', a + 1);
+    if (b == std::string::npos) return false;
+    const std::string bundle_dir = h.key.substr(a + 1, b - a - 1);
+    if (bundle_dir == "builtin") continue;
+    std::error_code ec;
+    const fsys::path dir(bundle_dir);
+    if (!fsys::is_directory(dir, ec) || ec) return false;
+    const fsys::path link = dir.parent_path() / "current";
+    const fsys::path target = fsys::read_symlink(link, ec);
+    if (ec || target.filename() != dir.filename()) return false;
+  }
+  return true;
+}
+
 namespace {
 
 LiveSetLoadResult publish_failure(ControlPlane::PublishStatus ps, std::string detail, std::vector<PartLoadReport> parts) {
@@ -410,6 +456,7 @@ LiveSetLoadResult LiveSetLoader::commit_quiesced(StagedLiveSet& staged, SceneCon
   scope.commit(staged.live_set, snap);
   loaded_id_ = staged.live_set.id();
   loaded_name_ = staged.live_set.name();
+  current_heads_ = staged.heads;
   if (edits_) edits_->on_published(staged.live_set, snap);
   LiveSetLoadResult res = std::move(staged.result);
   res.status = LiveSetLoadStatus::kOk;
@@ -441,6 +488,7 @@ LiveSetLoadResult LiveSetLoader::commit_seamless(StagedLiveSet& staged) {
   scope.commit(staged.live_set, snap);
   loaded_id_ = staged.live_set.id();
   loaded_name_ = staged.live_set.name();
+  current_heads_ = staged.heads;
   if (edits_) edits_->on_published(staged.live_set, snap);
   LiveSetLoadResult res = staged.result;
   res.status = LiveSetLoadStatus::kOk;

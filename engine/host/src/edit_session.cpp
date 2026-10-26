@@ -539,6 +539,11 @@ const lsp::LiveSet* EditSession::overlay_for(const std::string& id) const {
   return &d->working;
 }
 
+std::uint64_t EditSession::overlay_revision(const std::string& id) const {
+  const Doc* d = find_doc(id);
+  return (!d || items_of(*d).empty()) ? 0 : d->version;
+}
+
 double EditSession::now() const {
   return opt_.clock ? opt_.clock() : std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -982,7 +987,10 @@ bool EditSession::do_write(const ws::v1::WriteLiveSet& m, ws::v1::ServerMessage&
     const liveset::Status st = live_.write(ns);
     if (!(st == liveset::Status::kOk || st == liveset::Status::kCommittedNotDurable)) return store_failure(err, st);
     bool not_durable = st == liveset::Status::kCommittedNotDurable;
-    if (port_) port_->add_to_catalog(CatalogEntry{id, new_name, live_.path_for(id)});
+    if (port_) {
+      port_->add_to_catalog(CatalogEntry{id, new_name, live_.path_for(id)});
+      port_->live_set_written(id);
+    }
     if (!loaded_setlist.empty() && setlists_) {
       const ::velora::setlist::v1::Setlist* s = setlists_->find_setlist(loaded_setlist);
       int base = -1;
@@ -1034,6 +1042,7 @@ bool EditSession::do_write(const ws::v1::WriteLiveSet& m, ws::v1::ServerMessage&
   const liveset::Status st = live_.write(out);
   if (!(st == liveset::Status::kOk || st == liveset::Status::kCommittedNotDurable)) return store_failure(err, st);
   r->set_not_durable(st == liveset::Status::kCommittedNotDurable);
+  if (port_) port_->live_set_written(live_id);  // Story 4.7: a preload of this Live Set (when it is the next one) is stale
   if (port_) {
     // A Live Set whose file is not named <id>.liveset (a file copied into the directory) now has its canonical file: the catalog points to it and the old
     // file, directly in the Live Set directory, is removed so the id exists once (best effort: a leftover is still a valid, older copy).

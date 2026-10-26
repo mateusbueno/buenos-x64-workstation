@@ -166,8 +166,29 @@ bool SetlistController::start_of_setlist() const {
   return start_;
 }
 
+// The Live Set "next" steps to, relative to the Live Set that SOUNDS (a load in progress is not counted: the preload waits for it to finish).
+void SetlistController::update_preload() {
+  std::string current, next;
+  const std::string& sounding = port_.sounding_id();
+  if (!loaded_.empty() && !sounding.empty()) {
+    if (const slp::Setlist* s = store_.find_setlist(loaded_)) {
+      int base = -1;
+      for (int i = 0; i < s->live_set_ids_size(); ++i)
+        if (s->live_set_ids(i) == sounding) base = i;
+      if (position_ >= 0 && position_ < s->live_set_ids_size() && s->live_set_ids(position_) == sounding) base = position_;  // (a repeated id: the position wins)
+      if (base < 0) base = position_;  // an off-script Live Set sounds: stepping returns into the setlist relative to the last position
+      if (base + 1 < s->live_set_ids_size()) {
+        current = sounding;
+        next = s->live_set_ids(base + 1);
+      }
+    }
+  }
+  port_.set_preload_target(current, next);
+}
+
 bool SetlistController::tick() {
   sync();
+  update_preload();
   const bool changed = seq_ != reported_seq_;
   reported_seq_ = seq_;
   return changed;
@@ -183,6 +204,10 @@ sl::Status SetlistController::load_setlist(const std::string& id) {
   anchor_.clear();
   end_ = start_ = false;
   ++seq_;
+  struct Preload {  // names the preload target of the new setlist when this function returns
+    SetlistController* c;
+    ~Preload() { c->update_preload(); }
+  } preload{this};
   // Nothing is loaded into the engine. If the Live Set that sounds happens to be in the new setlist, the position is its index.
   const std::string cur = port_.effective_id();
   for (int i = 0; i < s->live_set_ids_size(); ++i)
@@ -201,6 +226,7 @@ void SetlistController::unload_setlist() {
   anchor_.clear();
   end_ = start_ = false;
   ++seq_;
+  update_preload();
 }
 
 StepOutcome SetlistController::jump_target(const std::string& id, StepOutcome o) {
@@ -312,11 +338,19 @@ StepOutcome SetlistController::step_all(bool forward) {
 
 StepOutcome SetlistController::step(bool forward) {
   sync();
+  StepOutcome o;
+  bool done = false;
   if (!loaded_.empty()) {
-    if (const slp::Setlist* s = store_.find_setlist(loaded_)) return step_in(forward, *s);
-    unload_setlist();  // the loaded setlist no longer exists
+    if (const slp::Setlist* s = store_.find_setlist(loaded_)) {
+      o = step_in(forward, *s);
+      done = true;
+    } else {
+      unload_setlist();  // the loaded setlist no longer exists
+    }
   }
-  return step_all(forward);
+  if (!done) o = step_all(forward);
+  update_preload();  // a preloaded step has committed: the following Live Set is named now
+  return o;
 }
 
 void SetlistController::fill_status_into(ws::v1::SetlistStatus* s) const {
@@ -621,6 +655,7 @@ bool SetlistController::run(const ClientMessage& msg, ws::v1::ServerMessage& rep
   }
   // A visible change that does not move the revision (the end / start flags latching on a refused step) still reaches subscribers.
   push_state = seq_ != seq_before;
+  update_preload();  // the setlist, its order or the loaded one may have changed: the next entry may be another Live Set
   return ok;
 }
 

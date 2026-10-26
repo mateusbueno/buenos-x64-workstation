@@ -28,6 +28,7 @@
 // sample_bundle_loader. A head-and-stream provider will implement the same interface and return the instrument with its heads resident;
 // the loader never looks past "resident or not".
 #include <array>
+#include <filesystem>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -114,6 +115,9 @@ struct LiveSetLoadResult {
   std::size_t resident_bytes = 0;                    // kOk: total PCM resident
   std::uint64_t head_bytes = 0;                      // kHeadBudgetExceeded: the bytes the target needs (the estimate, or what was loaded when the guard tripped)
   std::uint64_t head_budget = 0;                     // kHeadBudgetExceeded: the budget
+  // Story 4.7, kOk from stage(): the PCM this stage made resident itself, and the PCM of instruments it took over from `StageControl::reuse` (held once,
+  // shared with the generation that sounds). `resident_bytes` is their sum.
+  std::uint64_t loaded_head_bytes = 0, shared_head_bytes = 0;
   std::string detail;
   bool ok() const { return status == LiveSetLoadStatus::kOk; }
 };
@@ -141,10 +145,21 @@ struct StageProgress {
   std::uint64_t bytes_done = 0, bytes_total = 0;  // decoded PCM made resident so far / the target's total (shared instruments once)
   std::uint32_t instruments_done = 0, instruments_total = 0;
 };
+// Story 4.7: one resident instrument of a generation, by BUNDLE identity (library id, bundle directory = bundle id, instrument key), so a library that was
+// replaced by a new bundle is never taken for the old one. The instrument is held weakly: a generation's heads live exactly as long as the generation.
+struct HeadUse {
+  std::string key;
+  std::uint64_t bytes = 0;
+  std::weak_ptr<const BundleInstrument> instrument;
+};
+
 struct StageControl {
   const std::atomic<bool>* cancel = nullptr;  // set from any thread: the stage stops (kCancelled) at the next check and frees what it loaded
   std::uint64_t head_budget_bytes = 0;        // 0 = unlimited; else a target needing more is refused early (kHeadBudgetExceeded) and guarded while loading
   std::function<void(const StageProgress&)> progress;  // on the staging thread, after the sizes are known and then after every chunk of samples
+  // Story 4.7: instruments already resident for the generation that sounds. An instrument of the target with the same bundle identity is NOT loaded again:
+  // the staged generation takes the resident one (counted and held once); only the rest is sized against head_budget_bytes and loaded.
+  const std::vector<HeadUse>* reuse = nullptr;
 };
 
 // A Live Set made ready for publication: every instrument resident, the generation built, the reservation config computed. Produced by
@@ -154,6 +169,7 @@ struct StagedLiveSet {
   core::Snapshot snapshot;                        // complete except scene_source, reservation, ledger index and revision (set at commit)
   core::VoiceArbiter::LiveSetConfig reservation;  // the Live Set's voice-pool configuration
   LiveSetLoadResult result;                       // status kOk, the per-part reports and resident_bytes
+  std::vector<HeadUse> heads;                     // Story 4.7: the distinct instruments this generation holds resident (loaded here or shared)
 };
 
 class LiveSetLoader {
@@ -184,6 +200,13 @@ class LiveSetLoader {
   // Id and name of the Live Set whose generation was published last (by load() or commit_seamless()); empty before the first.
   const std::string& loaded_id() const { return loaded_id_; }
   const std::string& loaded_name() const { return loaded_name_; }
+  // Story 4.7: the heads the published generation holds (control thread) and their PCM bytes, counting only those still resident.
+  const std::vector<HeadUse>& current_heads() const { return current_heads_; }
+  std::uint64_t current_head_bytes() const;
+  // Story 4.7: true when every head of `heads` is still the bundle its library currently points at (the library's `current` link names the same bundle
+  // directory, which still exists). Directory reads only (no sample data). engine-host has no library-change event yet: this is how a replaced or removed
+  // bundle is noticed. Built-in instruments are always current. Damage found later by the I/O threads is not seen here (the damage registry reports it).
+  bool heads_still_current(const std::vector<HeadUse>& heads) const;
 
   const LiveSetLoaderOptions& options() const { return options_; }
   // Story 4.9: the edit session hears about every published generation (and about to-be-published switches). Control thread; null = none.
@@ -199,6 +222,7 @@ class LiveSetLoader {
   LiveSetLoaderOptions options_;
   LiveSetEditPort* edits_ = nullptr;
   std::string loaded_id_, loaded_name_;
+  std::vector<HeadUse> current_heads_;
 };
 
 }  // namespace velora::host

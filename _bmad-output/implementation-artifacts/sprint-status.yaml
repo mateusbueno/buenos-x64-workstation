@@ -115,7 +115,7 @@ development_status:
   4-4-scene-recall-as-a-parameter-only-snapshot-swap: done
   4-5-seamless-live-set-switching-with-background-load: done
   4-6-setlists-setlist-tags-and-live-set-stepping: done
-  4-7-next-live-set-preload-within-the-head-budget: backlog
+  4-7-next-live-set-preload-within-the-head-budget: done
   4-8-seamless-switching-render-suite: done
   4-9-edits-in-memory-and-write-scopes: done
   4-10-assign-maps-with-a-global-default: done

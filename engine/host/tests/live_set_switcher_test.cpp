@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -179,6 +180,7 @@ class Heads final : public host::HeadProvider {
     {
       std::lock_guard<std::mutex> lk(m);
       leases.push_back(r.bundle);
+      keyed_leases.emplace_back(r.instrument_info().key, r.bundle);
     }
     if (before_load) before_load(n, hooks);
     if (hooks.cancel && hooks.cancel->load(std::memory_order_acquire)) return host::LoadStatus::kCancelled;
@@ -212,6 +214,13 @@ class Heads final : public host::HeadProvider {
     for (auto& kv : loaded)
       if (kv.first == key && !kv.second.expired()) return false;
     return true;
+  }
+  // Story 4.7: true while a bundle lease taken for an instrument loaded under `key` is still held by someone.
+  bool lease_alive(const std::string& key) {
+    std::lock_guard<std::mutex> lk(m);
+    for (auto& kv : keyed_leases)
+      if (kv.first == key && !kv.second.expired()) return true;
+    return false;
   }
   bool leases_alive() {
     std::lock_guard<std::mutex> lk(m);
@@ -248,6 +257,7 @@ class Heads final : public host::HeadProvider {
   }
   std::mutex m;
   std::vector<std::weak_ptr<const format::BundleReader>> leases;
+  std::vector<std::pair<std::string, std::weak_ptr<const format::BundleReader>>> keyed_leases;
   std::vector<std::pair<std::string, std::weak_ptr<const host::BundleInstrument>>> loaded;
 };
 
@@ -1616,6 +1626,761 @@ void test_setlist_stepping_through_the_real_switcher() {
   CHECK(rig.sw->sounding_id() == rig.loader.loaded_id() && rig.sw->effective_id() == rig.loader.loaded_id());
 }
 
+
+// --- Story 4.7: next Live Set preload within the head budget ----------------------------------------------------------------------------------
+// Everything runs in the deterministic mode (the stage runs inside tick(); `hold_ticks` is simulated load time in ticks), so "no load work at command time"
+// is asserted structurally: the provider's load and estimate counters do not move when "next" commits a READY preload.
+
+host::SwitcherOptions preload_opts(std::uint32_t hold, std::uint64_t budget) {
+  host::SwitcherOptions o = inline_opts(hold);
+  o.head_budget_bytes = budget;
+  return o;
+}
+
+std::uint64_t one_head(Rig& rig) { return rig.loader.current_head_bytes(); }  // after the initial load of a one-instrument Live Set
+
+void ticks(Rig& rig, int n) {
+  for (int i = 0; i < n; ++i) rig.step();
+}
+
+lsp::LiveSet shared_set(const World& w, std::uint64_t seed, const char* name, bool both) {  // uses A's instrument (a.sfz), optionally B's too
+  lsp::LiveSet s = ls::make_default_live_set(uuid_n(seed), name, 8);
+  fixtures::timbre(s.mutable_parts(0), w.lib.a, "a.sfz");
+  if (both) fixtures::timbre(s.mutable_parts(1), w.lib.b, "b.sfz");
+  return s;
+}
+
+// Given a current Live Set, when it sounds, then the next one is staged (LOADING, then READY after the simulated load time); "next" then commits it
+// with no instrument load or size estimate at command time, at the next block, and the old Live Set's notes finish on the old generation.
+void test_preload_ready_then_next_commits_without_load() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(preload_opts(2, 1ull << 30), w.dir);
+  rig.run(2);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.sw->preload_status().target_name == "Song B");  // nothing starts before a tick
+  rig.sw->tick();  // T0: staging starts (inline)
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kLoading && rig.heads.loads.load() == 1);
+  ws::v1::State st;
+  rig.plane.fill_state(&st);
+  CHECK(st.preload().state() == ws::v1::PRELOAD_STATE_LOADING && !st.preload().ready() && st.preload().next_live_set_id() == w.B.id());
+  rig.sw->tick();
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kLoading);
+  rig.sw->tick();
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kLoading);
+  rig.sw->tick();  // hold_ticks + 1 ticks after the start: READY
+  CHECK(rig.sw->preload_status().ready() && rig.sw->preload_status().head_bytes_held == one_head(rig));
+  rig.plane.fill_state(&st);
+  CHECK(st.preload().ready() && st.preload().state() == ws::v1::PRELOAD_STATE_READY && st.preload().head_bytes_held() == one_head(rig) &&
+        st.preload().head_bytes_current() == one_head(rig) && st.preload().head_budget_bytes() == (1ull << 30) && st.preload().next_live_set_name() == "Song B");
+  CHECK(!rig.sw->loading() && rig.loader.loaded_id() == w.A.id());  // staged, not published: A still sounds
+  const std::uint64_t rev = rig.plane.revision();
+  rig.note_on(60);
+  rig.run(6);
+  CHECK_NEAR(rig.level(), 0.1, 2e-3);  // Song A, held across the swap below
+
+  const int loads = rig.heads.loads.load(), estimates = rig.heads.estimates.load();
+  const host::SwitchOutcome o = rig.sw->jump_to(w.B.id());
+  CHECK(o.result == host::SwitchOutcome::Result::kAccepted && o.target_name == "Song B");
+  CHECK(rig.heads.loads.load() == loads && rig.heads.estimates.load() == estimates);  // no load work at command time
+  CHECK(rig.plane.revision() == rev + 1 && rig.loader.loaded_id() == w.B.id() && rig.sw->switches_published() == 1 && rig.sw->preload_commits() == 1);
+  CHECK(!rig.sw->loading() && rig.sw->status().state == host::SwitchState::kReady && rig.sw->preload_status().state == host::PreloadState::kNone);
+  rig.run(2);  // RT adopts it at the next block
+  CHECK_NEAR(rig.level(), 0.1, 2e-3);  // the held note on the old generation is not cut
+  rig.note_on(62);
+  rig.run(6);
+  CHECK_NEAR(rig.level(), 0.11, 3e-3);  // the old note plus the new note on Song B
+  rig.note_off(60);
+  rig.note_off(62);
+  rig.run(400);
+  CHECK_NEAR(rig.level(), 0.0, 1e-3);
+  rig.plane.reclaim();
+  CHECK(rig.plane.live_generations() == 1);
+  CHECK(rig.heads.freed("a.sfz") && rig.heads.lease_alive("b.sfz") && !rig.heads.lease_alive("a.sfz"));  // A's heads and lease went with its generation
+}
+
+// The state machine of the setlist: a real controller names the next entry; each step commits the READY preload and the following one starts; the last
+// Live Set of the setlist has none.
+void test_preload_chains_along_the_setlist() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(preload_opts(1, 1ull << 30), w.dir);
+  const std::string sdir = w.tmp.path + "/setlists";
+  fs::create_directories(sdir);
+  ls::StoreOptions lo;
+  lo.dir = w.dir;
+  std::unique_ptr<ls::LiveSetStore> live;
+  CHECK(ls::LiveSetStore::open(lo, live) == ls::Status::kOk);
+  host::setlist::StoreOptions so;
+  so.dir = sdir;
+  std::unique_ptr<host::setlist::SetlistStore> store;
+  CHECK(host::setlist::SetlistStore::open(so, store) == host::setlist::Status::kOk);
+  host::LiveSetSwitcherPort port(*rig.sw);
+  host::SetlistController ctl(rig.plane, *store, *live, port);
+  std::string sid;
+  CHECK(store->create_setlist("Show", sid) == host::setlist::Status::kOk);
+  for (const lsp::LiveSet* s : {&w.B, &w.C, &w.Y}) CHECK(store->add_live_set(sid, s->id(), std::nullopt) == host::setlist::Status::kOk);
+  auto settle = [&] {
+    for (int i = 0; i < 6; ++i) {
+      ctl.tick();
+      rig.step();
+    }
+  };
+  // No setlist: nothing to preload.
+  settle();
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.sw->preload_status().target_id.empty() && rig.heads.loads.load() == 0);
+  // Loading the setlist (A sounds, outside it): the first entry is the next Live Set.
+  CHECK(ctl.load_setlist(sid) == host::setlist::Status::kOk);
+  settle();
+  CHECK(rig.sw->preload_status().ready() && rig.sw->preload_status().target_id == w.B.id() && rig.heads.loads.load() == 1);
+  for (int k = 0; k < 3; ++k) {
+    const lsp::LiveSet& want = k == 0 ? w.B : k == 1 ? w.C : w.Y;
+    const int loads = rig.heads.loads.load(), est = rig.heads.estimates.load();
+    const host::StepOutcome o = ctl.step(true);
+    CHECK(o.result == host::StepResult::kMoved && o.live_set_id == want.id() && o.jump.result == host::SwitchOutcome::Result::kAccepted);
+    CHECK(rig.heads.loads.load() == loads && rig.heads.estimates.load() == est);  // served by the preload: no load work at command time
+    CHECK(rig.loader.loaded_id() == want.id() && !rig.sw->loading() && ctl.last_setlist_position() == k);
+    rig.run(1);
+    if (k < 2) {  // the following preload starts as soon as the new pair is named
+      CHECK(rig.sw->preload_status().target_id == (k == 0 ? w.C.id() : w.Y.id()));
+      settle();
+      CHECK(rig.sw->preload_status().ready() && rig.heads.loads.load() == loads + 1);
+    } else {  // the last Live Set: none
+      settle();
+      CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.sw->preload_status().target_id.empty() && rig.heads.loads.load() == loads);
+    }
+  }
+  CHECK(rig.sw->preload_commits() == 3);
+  const host::StepOutcome end = ctl.step(true);
+  CHECK(end.result == host::StepResult::kEndOfList);
+  rig.run(400);
+  rig.plane.reclaim();
+  CHECK(rig.plane.live_generations() == 1);
+  ws::v1::State st;
+  rig.plane.fill_state(&st);
+  CHECK(st.preload().state() == ws::v1::PRELOAD_STATE_NONE && st.preload().next_live_set_id().empty() && st.live_set_id() == w.Y.id());
+}
+
+// Heads that current and next share are counted once and held once; the budget decides READY or SKIPPED_BUDGET after that arithmetic.
+void test_preload_budget_counts_shared_heads_once() {
+  World w;
+  const lsp::LiveSet D = shared_set(w, 77, "Song D", false);   // a.sfz only: all shared with A
+  const lsp::LiveSet E = shared_set(w, 78, "Song E", true);    // a.sfz (shared) + b.sfz (new)
+  write_set(w.dir, D);
+  write_set(w.dir, E);
+  std::uint64_t head = 0;
+  {
+    Rig probe(w.tmp.path);
+    CHECK(probe.load_initial(w.A));
+    head = one_head(probe);
+    CHECK(head > 0);
+  }
+  struct Row {
+    std::string next;
+    std::uint64_t budget;
+    host::PreloadState want;
+    int loads;           // instruments the preload had to load
+    std::uint64_t held;  // bytes it holds on top of A's
+    int alive;           // instruments resident afterwards
+  };
+  const std::vector<Row> rows = {
+      {D.id(), head, host::PreloadState::kReady, 0, 0, 1},               // everything shared: fits a budget of exactly A's heads, and holds nothing more
+      {w.B.id(), head, host::PreloadState::kSkippedBudget, 0, 0, 1},     // 2 heads > 1 head
+      {w.B.id(), 2 * head - 1, host::PreloadState::kSkippedBudget, 0, 0, 1},
+      {w.B.id(), 2 * head, host::PreloadState::kReady, 1, head, 2},
+      {E.id(), 2 * head, host::PreloadState::kReady, 1, head, 2},        // a.sfz once + b.sfz: 2 heads (unshared it would be 3 and refused)
+      {E.id(), 2 * head - 1, host::PreloadState::kSkippedBudget, 0, 0, 1},
+  };
+  for (const Row& row : rows) {
+    Rig rig(w.tmp.path);
+    CHECK(rig.load_initial(w.A));
+    rig.make_switcher(preload_opts(0, row.budget), w.dir);
+    rig.run(2);
+    rig.sw->set_preload_target(w.A.id(), row.next);
+    ticks(rig, 3);
+    CHECK(rig.sw->preload_status().state == row.want);
+    CHECK(rig.heads.loads.load() == row.loads);
+    CHECK(rig.sw->preload_status().head_bytes_held == row.held);
+    CHECK(rig.heads.alive.load() == row.alive);
+    ws::v1::State st;
+    rig.plane.fill_state(&st);
+    CHECK(st.preload().ready() == (row.want == host::PreloadState::kReady) && st.preload().head_bytes_held() == row.held);
+    if (row.want == host::PreloadState::kSkippedBudget) {
+      CHECK(st.preload().state() == ws::v1::PRELOAD_STATE_SKIPPED_BUDGET && !st.preload().detail().empty());
+      // Not ready: "next" is the ordinary Story 4.5 background load, unchanged (the budget there bounds the target alone: one head fits).
+      const int loads = rig.heads.loads.load();
+      CHECK(rig.sw->jump_to(row.next).result == host::SwitchOutcome::Result::kAccepted);
+      CHECK(rig.sw->preload_commits() == 0);
+      ticks(rig, 3);
+      if (row.next == E.id() && row.budget < 2 * head) {  // E alone is over the budget: the 4.5 path refuses it with its own typed error
+        CHECK(rig.sw->status().state == host::SwitchState::kFailed && rig.sw->status().last_error == host::SwitchError::kHeadBudgetExceeded);
+        CHECK(rig.loader.loaded_id() == w.A.id());
+      } else {
+        CHECK(rig.heads.loads.load() > loads);
+        CHECK(rig.loader.loaded_id() == row.next && rig.sw->status().state == host::SwitchState::kReady);
+      }
+    } else {
+      const int loads = rig.heads.loads.load();
+      CHECK(rig.sw->jump_to(row.next).result == host::SwitchOutcome::Result::kAccepted);
+      CHECK(rig.heads.loads.load() == loads && rig.loader.loaded_id() == row.next && rig.sw->preload_commits() == 1);
+      // The shared instrument is one object in both generations: still one a.sfz resident after the swap.
+      rig.run(2);
+      CHECK(rig.cur()->parts[0].sample_bank != nullptr);
+      rig.run(400);
+      rig.plane.reclaim();  // A's generation drains: what stays resident is exactly the new Live Set's heads, the shared a.sfz once
+      CHECK(rig.plane.live_generations() == 1);
+      CHECK(rig.heads.alive.load() == (row.next == E.id() ? 2 : 1));
+      if (row.next == D.id() || row.next == E.id()) CHECK(!rig.heads.freed("a.sfz") && rig.heads.loads.load() == loads + 0);
+    }
+  }
+}
+
+// A READY preload holds its heads and leases until committed or discarded; discarding (a jump elsewhere, a setlist change, a cancel, an edit) frees them.
+void test_preload_discard_releases_heads_and_leases() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(preload_opts(0, 1ull << 30), w.dir);
+  rig.run(2);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready() && rig.heads.alive.load() == 2 && rig.heads.lease_alive("b.sfz") && !rig.heads.freed("b.sfz"));
+
+  // Jump elsewhere (not the next one): discarded, released before the new target loads; the preload of the new current's next follows.
+  const int loads = rig.heads.loads.load();
+  CHECK(rig.sw->jump_to(w.C.id()).result == host::SwitchOutcome::Result::kAccepted);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.sw->preload_status().head_bytes_held == 0);
+  CHECK(rig.heads.freed("b.sfz") && !rig.heads.lease_alive("b.sfz"));  // no leaked leases
+  CHECK(rig.sw->loading() && rig.sw->preload_commits() == 0 && rig.heads.loads.load() == loads + 1);  // C is the ordinary load
+  ticks(rig, 2);
+  CHECK(rig.loader.loaded_id() == w.C.id());
+  rig.sw->set_preload_target(w.C.id(), w.Y.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready() && rig.sw->preload_status().target_id == w.Y.id());
+
+  // The pair changes (setlist reordered or unloaded): discarded.
+  rig.sw->set_preload_target(w.C.id(), w.B.id());
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.heads.freed("y.sfz") && !rig.heads.lease_alive("y.sfz"));
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready() && rig.sw->preload_status().target_id == w.B.id());
+  rig.sw->set_preload_target("", "");
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.sw->preload_status().target_id.empty() && !rig.heads.lease_alive("b.sfz"));
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone);  // unloaded: nothing restarts
+
+  // Jumping to the Live Set that sounds changes nothing; reloading the current one discards a preload (its generation is rebuilt).
+  rig.sw->set_preload_target(w.C.id(), w.Y.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready());
+  CHECK(rig.sw->jump_to(w.C.id()).result == host::SwitchOutcome::Result::kAlreadyLoaded && rig.sw->preload_status().ready());
+  rig.run(400);
+  rig.plane.reclaim();
+  CHECK(rig.plane.live_generations() == 1);
+  // The switcher's destructor frees what it still holds.
+  rig.sw.reset();
+  CHECK(rig.heads.freed("y.sfz") && !rig.heads.lease_alive("y.sfz"));
+}
+
+// The next Live Set's file is written (the hook), or its file changes under the switcher (signature check at the status cadence): the preload is
+// invalidated and restaged from the new file.
+void test_preload_invalidated_by_edit() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  double clk = 100.0;
+  host::SwitcherOptions o = preload_opts(0, 1ull << 30);
+  o.clock = [&clk] { return clk; };
+  rig.make_switcher(o, w.dir);
+  rig.run(2);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready() && rig.heads.loads.load() == 1);
+  // 1. the hook (Write of that file)
+  rig.sw->live_set_changed(w.B.id());
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.heads.freed("b.sfz"));
+  rig.sw->live_set_changed(w.C.id());  // another Live Set: nothing
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready() && rig.heads.loads.load() == 2);  // restaged
+  // 2. a file written behind the switcher's back: noticed at the next check
+  lsp::LiveSet b2 = w.B;
+  b2.set_name("Song B edited");
+  const std::string path = write_set(w.dir, b2);
+  std::error_code ec;
+  fs::last_write_time(path, fs::file_time_type::clock::now() + std::chrono::hours(1), ec);
+  rig.sw->tick();  // within the check interval: not looked at yet
+  CHECK(rig.sw->preload_status().ready() && rig.heads.loads.load() == 2);
+  clk += 1.0;
+  rig.sw->tick();  // changed signature: invalidated (and restaged on the same tick)
+  CHECK(rig.heads.loads.load() == 3);
+  ticks(rig, 2);
+  CHECK(rig.sw->preload_status().ready());
+  // A jump to a file that changed since it was staged does not use the stale generation.
+  b2.set_name("Song B edited again with a longer name");
+  fs::last_write_time(write_set(w.dir, b2), fs::file_time_type::clock::now() + std::chrono::hours(2), ec);  // the signature differs by mtime too, not by chance
+  const int loads = rig.heads.loads.load();
+  CHECK(rig.sw->jump_to(w.B.id()).result == host::SwitchOutcome::Result::kAccepted);
+  CHECK(rig.sw->preload_commits() == 0 && rig.sw->loading() && rig.heads.loads.load() == loads + 1);
+  ticks(rig, 2);
+  CHECK(rig.loader.loaded_id() == w.B.id() && rig.loader.loaded_name() == "Song B edited again with a longer name");
+}
+
+// "Next" while the preload is still LOADING cancels it and runs the ordinary load for that target; a cancel_load() while it preloads drops it and the
+// current Live Set is untouched.
+void test_preload_next_while_loading_and_cancel() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(preload_opts(4, 1ull << 30), w.dir);
+  rig.run(2);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 2);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kLoading);
+  const int loads = rig.heads.loads.load();
+  CHECK(rig.sw->jump_to(w.B.id()).result == host::SwitchOutcome::Result::kAccepted);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.sw->preload_commits() == 0);
+  CHECK(rig.sw->loading() && rig.heads.loads.load() == loads + 1);  // the 4.5 load for B
+  ticks(rig, 6);
+  CHECK(rig.loader.loaded_id() == w.B.id() && rig.sw->status().state == host::SwitchState::kReady && !rig.sw->loading());
+  rig.run(400);
+  rig.plane.reclaim();
+  CHECK(rig.plane.live_generations() == 1);
+
+  // Cancel while preloading.
+  rig.sw->set_preload_target(w.B.id(), w.C.id());
+  ticks(rig, 2);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kLoading);
+  const std::uint64_t rev = rig.plane.revision();
+  const host::SwitchOutcome c = rig.sw->cancel_load();
+  CHECK(!c.cancelled);  // no user load was cancelled
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.heads.freed("c.sfz") && !rig.heads.lease_alive("c.sfz"));
+  ticks(rig, 8);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.plane.revision() == rev && rig.loader.loaded_id() == w.B.id());  // not restarted
+  rig.note_on(60);
+  rig.run(6);
+  CHECK_NEAR(rig.level(), 0.01, 1e-3);  // B keeps playing
+  // A new pair restarts it.
+  rig.sw->set_preload_target(w.B.id(), w.Y.id());
+  ticks(rig, 8);
+  CHECK(rig.sw->preload_status().ready() && rig.sw->preload_status().target_id == w.Y.id());
+}
+
+// A next Live Set that cannot be staged: FAILED, no effect on the sound, and "next" falls back to the 4.5 load, which reports its own typed error.
+void test_preload_failure_falls_back() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(preload_opts(0, 1ull << 30), w.dir);
+  // A catalog entry whose file is not a Live Set.
+  const std::string bad_id = uuid_n(90);
+  const std::string bad_path = w.dir + "/bad.liveset";
+  {
+    std::ofstream f(bad_path, std::ios::binary | std::ios::trunc);
+    f << "not a live set";
+  }
+  rig.sw->add_to_catalog(host::CatalogEntry{bad_id, "Bad", bad_path});
+  rig.run(2);
+  rig.note_on(60);
+  rig.run(6);
+  const std::uint64_t rev = rig.plane.revision();
+
+  rig.sw->set_preload_target(w.A.id(), bad_id);
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kFailed && rig.sw->preload_status().detail == "read_failed");
+  ws::v1::State st;
+  rig.plane.fill_state(&st);
+  CHECK(st.preload().state() == ws::v1::PRELOAD_STATE_FAILED && !st.preload().ready() && st.preload().detail() == "read_failed");
+  CHECK(rig.plane.revision() == rev && rig.loader.loaded_id() == w.A.id());
+  CHECK_NEAR(rig.level(), 0.1, 2e-3);  // no effect on the sound
+  ticks(rig, 4);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kFailed);  // terminal for this pair: no retry loop
+  CHECK(rig.sw->jump_to(bad_id).result == host::SwitchOutcome::Result::kAccepted);
+  ticks(rig, 2);
+  CHECK(rig.sw->status().state == host::SwitchState::kFailed && rig.sw->status().last_error == host::SwitchError::kLoadFailed &&
+        rig.sw->status().last_error_detail == "read_failed" && rig.loader.loaded_id() == w.A.id());  // the normal typed error
+
+  // An instrument that cannot be made resident.
+  rig.heads.fail_on = rig.heads.loads.load() + 1;
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kFailed && rig.sw->preload_status().detail == "instrument_load_failed");
+  CHECK(rig.heads.freed("b.sfz") && rig.heads.alive.load() == 1);
+  CHECK(rig.sw->jump_to(w.B.id()).result == host::SwitchOutcome::Result::kAccepted && rig.sw->loading());  // falls back to the ordinary load (which succeeds)
+  ticks(rig, 2);
+  CHECK(rig.loader.loaded_id() == w.B.id() && rig.sw->status().state == host::SwitchState::kReady);
+  // A missing catalog entry for the next Live Set.
+  rig.sw->set_preload_target(w.B.id(), uuid_n(91));
+  ticks(rig, 2);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kFailed && rig.sw->preload_status().detail == "missing");
+}
+
+// A commit that the arbiter refuses at "next" is the Story 4.5 refusal path: the reservation is prepared at commit, never taken at preload.
+void test_preload_does_not_touch_the_reservation() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(preload_opts(0, 1ull << 30), w.dir);
+  rig.run(2);
+  const auto before = rig.br->arbiter().reservation();
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready());
+  const auto during = rig.br->arbiter().reservation();
+  CHECK(during.organ_rotary == before.organ_rotary && during.floors == before.floors);  // A's reservation, untouched
+  CHECK(rig.plane.live_generations() == 1);  // nothing was published
+  CHECK(rig.sw->jump_to(w.B.id()).result == host::SwitchOutcome::Result::kAccepted);
+  rig.run(2);
+  CHECK(rig.br->arbiter().reservation().organ_rotary == 0);  // B has no organ part: RT applied B's reservation when it adopted the generation
+}
+
+// The same on the real worker thread: a preload in flight is cancelled by a jump elsewhere, the user's load goes first, and a READY preload commits with no load.
+void test_preload_on_the_worker_thread() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  host::SwitcherOptions o = thread_opts();
+  rig.make_switcher(o, w.dir);
+  rig.run(2);
+  auto gate_p = std::make_shared<Gate>();
+  gate_p->close();
+  rig.heads.before_load = [gate_p](int, const host::LoadHooks& h) { gate_p->wait(h.cancel); };
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  rig.sw->tick();
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kLoading);
+  CHECK(wait_until([&] { return rig.heads.loads.load() == 1; }));  // the worker is inside the preload's load
+  CHECK(rig.sw->jump_to(w.C.id()).result == host::SwitchOutcome::Result::kAccepted);  // cancels it; the worker stops, then loads C
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone);
+  gate_p->open();
+  CHECK(pump(rig) > 0 && rig.loader.loaded_id() == w.C.id());
+  CHECK(rig.heads.freed("b.sfz"));
+  rig.sw->set_preload_target(w.C.id(), w.Y.id());
+  CHECK(wait_until([&] {
+    rig.step();
+    return rig.sw->preload_status().ready();
+  }));
+  const int loads = rig.heads.loads.load();
+  CHECK(rig.sw->jump_to(w.Y.id()).result == host::SwitchOutcome::Result::kAccepted && rig.heads.loads.load() == loads && rig.loader.loaded_id() == w.Y.id());
+  rig.run(2);
+  rig.note_on(60);
+  rig.run(6);
+  CHECK_NEAR(rig.level(), 0.04, 1e-3);  // Song Y
+}
+
+
+// Story 4.7 review follow-ups ----------------------------------------------------------------------------------------------------------------
+
+struct FakeEdits final : host::LiveSetEditPort {
+  std::map<std::string, lsp::LiveSet> ov;
+  std::map<std::string, std::uint64_t> rev;
+  bool known_rev = true;
+  const lsp::LiveSet* overlay_for(const std::string& id) const override {
+    const auto it = ov.find(id);
+    return it == ov.end() ? nullptr : &it->second;
+  }
+  std::uint64_t overlay_revision(const std::string& id) const override {
+    if (!known_rev) return host::LiveSetEditPort::kUnknownRevision;
+    const auto it = rev.find(id);
+    return it == rev.end() ? 0 : it->second;
+  }
+  void before_switch() override {}
+  void on_published(const lsp::LiveSet&, const core::Snapshot&) override {}
+  void set(const std::string& id, lsp::LiveSet s, std::uint64_t r) {
+    ov[id] = std::move(s);
+    rev[id] = r;
+  }
+  void clear(const std::string& id) {
+    ov.erase(id);
+    rev.erase(id);
+  }
+};
+
+// The preload of a Live Set with unsaved edits is built from them and is only used while they are unchanged (revision compare first, content compare as the
+// fallback); an overlay that appears, goes away or changes after staging sends "next" to the ordinary load, and the status cadence notices it too.
+void test_preload_overlay_path() {
+  for (int variant = 0; variant < 7; ++variant) {
+    World w;
+    Rig rig(w.tmp.path);
+    CHECK(rig.load_initial(w.A));
+    double clk = 10.0;
+    host::SwitcherOptions o = preload_opts(0, 1ull << 30);
+    o.clock = [&clk] { return clk; };
+    rig.make_switcher(o, w.dir);
+    FakeEdits fe;
+    fe.known_rev = variant != 3 && variant != 4;
+    rig.sw->set_edit_port(&fe);
+    rig.run(2);
+    lsp::LiveSet edited = w.B;
+    edited.set_name("Song B (edited)");
+    const bool staged_with_overlay = variant != 5 && variant != 6;
+    if (staged_with_overlay) fe.set(w.B.id(), edited, 1);
+    rig.sw->set_preload_target(w.A.id(), w.B.id());
+    ticks(rig, 3);
+    CHECK(rig.sw->preload_status().ready());
+    const int loads = rig.heads.loads.load();
+    bool expect_commit = true;
+    switch (variant) {
+      case 0: break;                                                         // unchanged, revision known
+      case 1: fe.set(w.B.id(), edited, 1); break;                            // same revision rewritten: trusted, cheap path
+      case 2: {                                                              // edited again, revision known
+        lsp::LiveSet e2 = edited;
+        e2.set_name("Song B (edited more)");
+        fe.set(w.B.id(), e2, 2);
+        expect_commit = false;
+        break;
+      }
+      case 3: break;                                                         // no revisions: full compare, equal
+      case 4: {                                                              // no revisions: full compare, different
+        lsp::LiveSet e2 = edited;
+        e2.set_name("Song B (edited more)");
+        fe.set(w.B.id(), e2, 1);
+        expect_commit = false;
+        break;
+      }
+      case 5: fe.set(w.B.id(), edited, 1); expect_commit = false; break;     // appears after staging
+      case 6: break;                                                         // none, none
+    }
+    if (variant == 6) {  // disappears: staged from an overlay, then it goes away
+      fe.set(w.B.id(), edited, 1);
+      rig.sw->invalidate_preload();
+      ticks(rig, 3);
+      CHECK(rig.sw->preload_status().ready());
+      fe.clear(w.B.id());
+      expect_commit = false;
+    }
+    const int pre_loads = rig.heads.loads.load();
+    const host::SwitchOutcome r = rig.sw->jump_to(w.B.id());
+    CHECK(r.result == host::SwitchOutcome::Result::kAccepted);
+    if (expect_commit) {
+      CHECK(rig.sw->preload_commits() == 1 && rig.heads.loads.load() == pre_loads && rig.loader.loaded_id() == w.B.id());
+      CHECK(rig.loader.loaded_name() == (staged_with_overlay ? "Song B (edited)" : "Song B"));
+    } else {
+      CHECK(rig.sw->preload_commits() == 0 && rig.heads.loads.load() == pre_loads + 1 && rig.sw->loading());
+      ticks(rig, 2);
+      const std::string want = variant == 2 || variant == 4 ? "Song B (edited more)" : variant == 5 ? "Song B (edited)" : "Song B";
+      CHECK(rig.loader.loaded_id() == w.B.id() && rig.loader.loaded_name() == want);
+    }
+    (void)loads;
+  }
+  // The cadence: an edit made after staging invalidates the READY preload within the status interval, and it is restaged from the new edits.
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  double clk = 10.0;
+  host::SwitcherOptions o = preload_opts(0, 1ull << 30);
+  o.clock = [&clk] { return clk; };
+  rig.make_switcher(o, w.dir);
+  FakeEdits fe;
+  rig.sw->set_edit_port(&fe);
+  rig.run(2);
+  lsp::LiveSet e1 = w.B;
+  e1.set_name("Song B (edited)");
+  fe.set(w.B.id(), e1, 1);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready() && rig.heads.loads.load() == 1);
+  lsp::LiveSet e2 = e1;
+  e2.set_name("Song B (edited more)");
+  fe.set(w.B.id(), e2, 2);
+  rig.sw->tick();
+  CHECK(rig.sw->preload_status().ready() && rig.heads.loads.load() == 1);  // inside the interval: not looked at
+  clk += 1.0;
+  rig.sw->tick();
+  CHECK(rig.heads.loads.load() == 2 && rig.heads.freed("b.sfz") == false);  // invalidated and restaged on the same tick
+  ticks(rig, 2);
+  CHECK(rig.sw->preload_status().ready());
+  const int loads = rig.heads.loads.load();
+  CHECK(rig.sw->jump_to(w.B.id()).result == host::SwitchOutcome::Result::kAccepted && rig.heads.loads.load() == loads && rig.loader.loaded_name() == "Song B (edited more)");
+}
+
+// The same instrument key in another library is another head: loaded again, counted unshared.
+void test_preload_identity_is_the_bundle() {
+  World w;
+  const std::string lib8 = install_library(w.tmp.path, 8, "a.sfz", 0.3f);
+  lsp::LiveSet F = ls::make_default_live_set(uuid_n(79), "Song F", 8);
+  fixtures::timbre(F.mutable_parts(0), lib8, "a.sfz");
+  write_set(w.dir, F);
+  std::uint64_t head = 0;
+  {
+    Rig probe(w.tmp.path);
+    CHECK(probe.load_initial(w.A));
+    head = one_head(probe);
+  }
+  for (const std::uint64_t budget : {head, 2 * head}) {
+    Rig rig(w.tmp.path);
+    CHECK(rig.load_initial(w.A));
+    rig.make_switcher(preload_opts(0, budget), w.dir);
+    rig.run(2);
+    rig.sw->set_preload_target(w.A.id(), F.id());
+    ticks(rig, 3);
+    if (budget == head) {
+      CHECK(rig.sw->preload_status().state == host::PreloadState::kSkippedBudget && rig.heads.loads.load() == 0);
+      ws::v1::State st;
+      rig.plane.fill_state(&st);
+      CHECK(st.preload().head_bytes_needed() == head && st.preload().head_bytes_current() == head && st.preload().head_budget_bytes() == head &&
+            st.preload().detail() == "head_budget_exceeded");
+    } else {
+      CHECK(rig.sw->preload_status().ready() && rig.heads.loads.load() == 1 && rig.heads.alive.load() == 2 && rig.sw->preload_status().head_bytes_held == head);
+    }
+  }
+}
+
+// A library replaced or removed under the staged heads: caught at the jump (falls back to the 4.5 load) and at the status cadence.
+void test_preload_library_replaced() {
+  World w;
+  const fs::path link = fs::path(w.tmp.path) / "lib" / w.lib.b / "current";
+  const auto repoint = [&] {
+    fs::remove(link);
+    fs::create_directories(fs::path(w.tmp.path) / "lib" / w.lib.b / "moved");
+    fs::create_symlink("moved", link);
+  };
+  {  // at the jump
+    Rig rig(w.tmp.path);
+    CHECK(rig.load_initial(w.A));
+    rig.make_switcher(preload_opts(0, 1ull << 30), w.dir);
+    rig.run(2);
+    rig.sw->set_preload_target(w.A.id(), w.B.id());
+    ticks(rig, 3);
+    CHECK(rig.sw->preload_status().ready());
+    repoint();
+    CHECK(rig.sw->jump_to(w.B.id()).result == host::SwitchOutcome::Result::kAccepted);
+    CHECK(rig.sw->preload_commits() == 0 && rig.sw->preload_status().state == host::PreloadState::kNone && rig.heads.freed("b.sfz"));
+  }
+  {  // at the cadence
+    const fs::path original = fs::path(w.tmp.path) / "lib" / w.lib.b;
+    (void)original;
+    World w2;
+    Rig rig(w2.tmp.path);
+    CHECK(rig.load_initial(w2.A));
+    double clk = 5.0;
+    host::SwitcherOptions o = preload_opts(0, 1ull << 30);
+    o.clock = [&clk] { return clk; };
+    rig.make_switcher(o, w2.dir);
+    rig.run(2);
+    rig.sw->set_preload_target(w2.A.id(), w2.B.id());
+    ticks(rig, 3);
+    CHECK(rig.sw->preload_status().ready() && !rig.heads.freed("b.sfz"));
+    const fs::path l2 = fs::path(w2.tmp.path) / "lib" / w2.lib.b / "current";
+    fs::remove(l2);
+    fs::create_directories(fs::path(w2.tmp.path) / "lib" / w2.lib.b / "moved");
+    fs::create_symlink("moved", l2);
+    rig.sw->tick();
+    CHECK(rig.sw->preload_status().ready() && !rig.heads.freed("b.sfz"));  // inside the interval
+    clk += 1.0;
+    rig.sw->tick();
+    CHECK(rig.heads.freed("b.sfz"));  // discarded (and restaged without the vanished library: nothing of B is resident any more)
+  }
+}
+
+// reload_current() (the one case where the target is the Live Set that sounds) discards the preload; the catalog paths invalidate it; the live port hook too.
+void test_preload_invalidation_paths() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(preload_opts(0, 1ull << 30), w.dir);
+  FakeEdits fe;
+  rig.sw->set_edit_port(&fe);
+  rig.run(2);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready());
+  // reload_current: needs an overlay of the current Live Set.
+  fe.set(w.A.id(), w.A, 1);
+  CHECK(rig.sw->reload_current().result == host::SwitchOutcome::Result::kAccepted);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.heads.freed("b.sfz"));
+  ticks(rig, 2);
+  CHECK(rig.loader.loaded_id() == w.A.id() && !rig.sw->loading());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready());  // restaged against the rebuilt generation
+  fe.clear(w.A.id());
+  // Catalog replacement of the target.
+  host::CatalogEntry e = rig.sw->catalog()[0];
+  for (const host::CatalogEntry& c : rig.sw->catalog())
+    if (c.id == w.B.id()) e = c;
+  e.name = "Song B renamed";
+  rig.sw->add_to_catalog(e);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone);
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready() && rig.sw->preload_status().target_name == "Song B renamed");
+  // A catalog entry of another Live Set: nothing.
+  rig.sw->remove_from_catalog(w.C.id());
+  CHECK(rig.sw->preload_status().ready());
+  // Removal of the target.
+  rig.sw->remove_from_catalog(w.B.id());
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone && rig.heads.freed("b.sfz"));
+  ticks(rig, 2);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kFailed && rig.sw->preload_status().detail == "missing");
+  rig.sw->add_to_catalog(e);  // it exists again: restaged
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone);
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready());
+  // The port seam the edit session writes through.
+  host::LiveSetSwitcherPort port(*rig.sw);
+  port.live_set_written(w.C.id());
+  CHECK(rig.sw->preload_status().ready());
+  port.live_set_written(w.B.id());
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kNone);
+}
+
+// The sounding generation changes while a verdict stands (here a reload with edits that changed its heads): the verdict is recomputed.
+void test_preload_verdict_follows_the_sounding_generation() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  const std::uint64_t head = one_head(rig);  // A holds one head; the budget fits A + B exactly
+  rig.make_switcher(preload_opts(0, 2 * head), w.dir);
+  FakeEdits fe;
+  rig.sw->set_edit_port(&fe);
+  rig.run(2);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready());
+  // A is edited to use a second instrument (c.sfz): its heads are 2 now, so B no longer fits.
+  lsp::LiveSet a2 = w.A;
+  fixtures::timbre(a2.mutable_parts(1), w.lib.c, "c.sfz");
+  fe.set(w.A.id(), a2, 1);
+  CHECK(rig.sw->reload_current().result == host::SwitchOutcome::Result::kAccepted);
+  ticks(rig, 6);
+  CHECK(rig.loader.current_head_bytes() == 2 * head);
+  CHECK(rig.sw->preload_status().state == host::PreloadState::kSkippedBudget);
+  // And back: the verdict is recomputed when the generation shrinks again.
+  fe.clear(w.A.id());
+  CHECK(rig.sw->reload_current().result == host::SwitchOutcome::Result::kUnknownLiveSet);  // nothing to rebuild from: use a jump away and back instead
+  CHECK(rig.sw->jump_to(w.C.id()).result == host::SwitchOutcome::Result::kAccepted);
+  ticks(rig, 3);
+  rig.sw->set_preload_target(w.C.id(), w.B.id());
+  ticks(rig, 3);
+  CHECK(rig.sw->preload_status().ready());
+}
+
+// A READY preload on the threaded path when the switcher is destroyed: no hang, heads and leases released.
+void test_preload_destructor_with_ready_preload() {
+  World w;
+  Rig rig(w.tmp.path);
+  CHECK(rig.load_initial(w.A));
+  rig.make_switcher(thread_opts(), w.dir);
+  rig.run(2);
+  rig.sw->set_preload_target(w.A.id(), w.B.id());
+  CHECK(wait_until([&] {
+    rig.sw->tick();
+    return rig.sw->preload_status().ready();
+  }));
+  CHECK(!rig.heads.freed("b.sfz") && rig.heads.lease_alive("b.sfz"));
+  rig.sw.reset();
+  CHECK(rig.heads.freed("b.sfz") && !rig.heads.lease_alive("b.sfz"));
+  // And one destroyed while the stage is still running.
+  rig.make_switcher(thread_opts(), w.dir);
+  auto gate_p = std::make_shared<Gate>();
+  gate_p->close();
+  rig.heads.before_load = [gate_p](int, const host::LoadHooks& h) { gate_p->wait(h.cancel); };
+  rig.sw->set_preload_target(w.A.id(), w.C.id());
+  rig.sw->tick();
+  CHECK(wait_until([&] { return rig.heads.loads.load() >= 2; }));
+  rig.sw.reset();
+  CHECK(rig.heads.freed("c.sfz"));
+}
+
 int main(int argc, char** argv) {
   const char* only = argc > 1 ? argv[1] : nullptr;  // run the tests whose name contains this text
 #define RUN(t) \
@@ -1645,6 +2410,21 @@ int main(int argc, char** argv) {
   RUN(test_provider_cancel_and_sizes);
   RUN(test_rapid_jumps_last_wins);
   RUN(test_setlist_stepping_through_the_real_switcher);
+  RUN(test_preload_ready_then_next_commits_without_load);
+  RUN(test_preload_chains_along_the_setlist);
+  RUN(test_preload_budget_counts_shared_heads_once);
+  RUN(test_preload_discard_releases_heads_and_leases);
+  RUN(test_preload_invalidated_by_edit);
+  RUN(test_preload_next_while_loading_and_cancel);
+  RUN(test_preload_failure_falls_back);
+  RUN(test_preload_does_not_touch_the_reservation);
+  RUN(test_preload_on_the_worker_thread);
+  RUN(test_preload_overlay_path);
+  RUN(test_preload_identity_is_the_bundle);
+  RUN(test_preload_library_replaced);
+  RUN(test_preload_invalidation_paths);
+  RUN(test_preload_verdict_follows_the_sounding_generation);
+  RUN(test_preload_destructor_with_ready_preload);
   if (g_fail) {
     std::printf("live_set_switcher_tests: %d FAILED\n", g_fail);
     return 1;

@@ -152,6 +152,7 @@ class EditSession final : public EditHandler, public LiveSetEditPort {
 
   // LiveSetEditPort (loader / switcher seam).
   const ::velora::liveset::v1::LiveSet* overlay_for(const std::string& id) const override;
+  std::uint64_t overlay_revision(const std::string& id) const override;
   void before_switch() override;
   void on_published(const ::velora::liveset::v1::LiveSet& built_from, const core::Snapshot& published) override;
 

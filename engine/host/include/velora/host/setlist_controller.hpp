@@ -27,6 +27,10 @@
 //     "invalid_live_set", "read_failed") and the position does NOT move; nothing is skipped silently (the player can choose a later Live Set).
 //     Failures that only show while the heads load (an instrument that cannot be made resident) are reported by the switcher in
 //     State.loading, as for any jump; the position then stays on the requested Live Set (it follows the request).
+// Next Live Set preload (Story 4.7). After every command and every tick the controller names to the port the Live Set that "next" would step to (the entry
+// after the sounding Live Set in the loaded setlist, or after the last position when the sounding one is outside it; none with no setlist or at the end of
+// it), together with the Live Set that must sound for the preload to start. The switcher stages it within the head budget and uses it when that step is made.
+// A setlist change that moves the next entry simply names another pair: the switcher discards the old preload and restages.
 // A Live Set removed from the loaded setlist re-anchors the position on its predecessor; reorders keep the position on the same Live Set.
 //
 // Threading: control thread only (the ControlServer's thread in engine-host; the test thread otherwise).
@@ -52,6 +56,9 @@ class SwitchPort {
   virtual const std::vector<CatalogEntry>& catalog() const = 0;
   virtual void add_to_catalog(CatalogEntry e) = 0;
   virtual void remove_from_catalog(const std::string& id) = 0;
+  // Story 4.7 (optional: a port without a preload ignores both). The Live Set to preload once `current_id` sounds ("" = none), and a Live Set file that was written.
+  virtual void set_preload_target(const std::string& /*current_id*/, const std::string& /*next_id*/) {}
+  virtual void live_set_written(const std::string& /*id*/) {}
 };
 
 class LiveSetSwitcherPort final : public SwitchPort {
@@ -63,6 +70,8 @@ class LiveSetSwitcherPort final : public SwitchPort {
   const std::vector<CatalogEntry>& catalog() const override { return sw_.catalog(); }
   void add_to_catalog(CatalogEntry e) override { sw_.add_to_catalog(std::move(e)); }
   void remove_from_catalog(const std::string& id) override { sw_.remove_from_catalog(id); }
+  void set_preload_target(const std::string& current_id, const std::string& next_id) override { sw_.set_preload_target(current_id, next_id); }
+  void live_set_written(const std::string& id) override { sw_.live_set_changed(id); }
 
  private:
   LiveSetSwitcher& sw_;
@@ -116,6 +125,7 @@ class SetlistController final : public SetlistHandler {
  private:
   void sync() const;           // follow the current Live Set (mutable cache: also called from const readers)
   void reanchor();             // after a change of the loaded setlist's contents
+  void update_preload();       // Story 4.7: tell the port which Live Set to preload
   void fill_status_into(ws::v1::SetlistStatus* s) const;
   const CatalogEntry* find_catalog(const std::string& id) const;
   bool known_live_set(const std::string& id, CatalogEntry* out);   // in the catalog, or a valid file (then added to the catalog)

@@ -19,6 +19,17 @@ const char* to_string(SwitchState s) {
   return "?";
 }
 
+const char* to_string(PreloadState s) {
+  switch (s) {
+    case PreloadState::kNone: return "none";
+    case PreloadState::kLoading: return "loading";
+    case PreloadState::kReady: return "ready";
+    case PreloadState::kSkippedBudget: return "skipped_budget";
+    case PreloadState::kFailed: return "failed";
+  }
+  return "?";
+}
+
 const char* to_string(SwitchError e) {
   switch (e) {
     case SwitchError::kNone: return "none";
@@ -92,10 +103,12 @@ LiveSetSwitcher::LiveSetSwitcher(LiveSetLoader& loader, ControlPlane& plane, Swi
 LiveSetSwitcher::~LiveSetSwitcher() {
   plane_.set_switch_handler(nullptr);
   if (active_job_.cancel) active_job_.cancel->store(true, std::memory_order_release);
+  if (pre_job_.cancel) pre_job_.cancel->store(true, std::memory_order_release);
   {
     std::lock_guard<std::mutex> lk(m_);
     stop_ = true;
     if (pending_) pending_->cancel->store(true, std::memory_order_release);
+    if (pending_pre_) pending_pre_->cancel->store(true, std::memory_order_release);
   }
   cv_.notify_all();
   if (worker_.joinable()) worker_.join();
@@ -109,16 +122,21 @@ double LiveSetSwitcher::now() const {
 void LiveSetSwitcher::set_catalog(std::vector<CatalogEntry> entries) { catalog_ = std::move(entries); }
 
 void LiveSetSwitcher::add_to_catalog(CatalogEntry entry) {
+  const bool is_target = !pre_next_.empty() && entry.id == pre_next_;
   for (CatalogEntry& e : catalog_)
     if (e.id == entry.id) {
+      const bool changed = e.path != entry.path || e.name != entry.name;
       e = std::move(entry);
+      if (is_target && changed) invalidate_preload();  // the target's file or name moved
       return;
     }
+  if (is_target) invalidate_preload();  // the target was missing from the catalog (FAILED): it can be staged now
   catalog_.push_back(std::move(entry));
 }
 
 void LiveSetSwitcher::remove_from_catalog(const std::string& id) {
   catalog_.erase(std::remove_if(catalog_.begin(), catalog_.end(), [&](const CatalogEntry& e) { return e.id == id; }), catalog_.end());
+  if (!pre_next_.empty() && id == pre_next_) invalidate_preload();  // the staged Live Set no longer exists as a jump target
 }
 
 void LiveSetSwitcher::publish() {
@@ -218,6 +236,9 @@ SwitchOutcome LiveSetSwitcher::jump_impl(const std::string& id, bool reload) {
     o.result = SwitchOutcome::Result::kUnknownLiveSet;
     return o;
   }
+  // Story 4.7: the next Live Set is already staged: commit it now, no load work (see the header comment).
+  if (!reload && take_preload(entry, overlay.get(), o)) return o;
+  discard_preload();  // any other jump (or a reload) supersedes the preload: its heads are released before the new target loads
   o.superseded_previous = active_;
   cancel_active(true);
 
@@ -253,7 +274,13 @@ SwitchOutcome LiveSetSwitcher::cancel_load() {
   o.result = SwitchOutcome::Result::kAlreadyLoaded;
   o.target_id = status_.target_id;
   o.target_name = status_.target_name;
-  if (!active_) return o;
+  if (!active_) {
+    if (pre_running_) {  // Story 4.7: a preload in flight is dropped (the current Live Set is untouched) and not restarted for this pair
+      discard_preload();
+      pre_blocked_ = true;
+    }
+    return o;
+  }
   cancel_active(true);
   status_.state = SwitchState::kIdle;
   status_.estimated_remaining_s = 0;
@@ -297,7 +324,8 @@ std::unique_ptr<LiveSetSwitcher::JobResult> LiveSetSwitcher::run_job(const Job& 
   }
   StageControl ctl;
   ctl.cancel = job.cancel.get();
-  ctl.head_budget_bytes = opt_.head_budget_bytes;
+  ctl.head_budget_bytes = job.preload ? job.head_budget : opt_.head_budget_bytes;
+  if (job.preload) ctl.reuse = &job.reuse;
   Progress* prog = job.progress.get();
   ctl.progress = [prog](const StageProgress& p) {
     prog->total.store(p.bytes_total, std::memory_order_relaxed);
@@ -314,16 +342,21 @@ void LiveSetSwitcher::worker_main() {
     Job job;
     {
       std::unique_lock<std::mutex> lk(m_);
-      cv_.wait(lk, [this] { return stop_ || pending_.has_value(); });
+      cv_.wait(lk, [this] { return stop_ || pending_.has_value() || pending_pre_.has_value(); });
       if (stop_) return;
-      job = std::move(*pending_);
-      pending_.reset();
+      if (pending_) {  // a user-initiated load always goes before a preload
+        job = std::move(*pending_);
+        pending_.reset();
+      } else {
+        job = std::move(*pending_pre_);
+        pending_pre_.reset();
+      }
     }
     std::unique_ptr<JobResult> r;
     if (!job.cancel->load(std::memory_order_acquire)) r = run_job(job);
     if (!r) continue;
     std::lock_guard<std::mutex> lk(m_);
-    if (!job.cancel->load(std::memory_order_acquire)) done_ = std::move(r);
+    if (!job.cancel->load(std::memory_order_acquire)) (job.preload ? done_pre_ : done_) = std::move(r);
     // else: cancelled while running; `r` (and any heads it still held) is destroyed here, on the worker, when the lock scope ends
   }
 }
@@ -354,6 +387,14 @@ void LiveSetSwitcher::finish_failure(const LiveSetLoadResult& r) {
 bool LiveSetSwitcher::try_commit() {
   const LiveSetLoadResult r = loader_.commit_seamless(*held_->staged);
   if (r.status == LiveSetLoadStatus::kOk) {
+    commit_succeeded();
+    return true;
+  }
+  return commit_refused(r);
+}
+
+void LiveSetSwitcher::commit_succeeded() {
+  {
     held_.reset();
     active_ = false;
     busy_since_ = -1;
@@ -365,8 +406,16 @@ bool LiveSetSwitcher::try_commit() {
     status_.last_error_detail.clear();
     ++published_;
     publish();
-    return true;
+    if (pre_status_.state == PreloadState::kSkippedBudget || pre_status_.state == PreloadState::kFailed) {
+      pre_status_.state = PreloadState::kNone;
+      pre_status_.head_bytes_current = pre_status_.head_bytes_needed = 0;  // the current Live Set changed: the verdict on its successor no longer holds
+      pre_status_.detail.clear();
+      pre_publish();
+    }
   }
+}
+
+bool LiveSetSwitcher::commit_refused(const LiveSetLoadResult& r) {
   if (r.status == LiveSetLoadStatus::kBusy) {  // 32 generations pinned by sounding notes: wait for some to end
     const double t = now();
     if (busy_since_ < 0) busy_since_ = t;
@@ -423,9 +472,266 @@ bool LiveSetSwitcher::tick() {
     // Still loading, held for the simulated load time, or retrying a busy commit: the status keeps its cadence (at least once per second).
     if (active_) refresh_progress(now());
   }
+  harvest_preload();
+  check_preload_file();
+  maybe_start_preload();
   const bool changed = dirty_ || generation;
   dirty_ = false;
   return changed;
+}
+
+// ---- Story 4.7: next Live Set preload ------------------------------------------------------------------------------------------------------
+
+LiveSetSwitcher::FileSig LiveSetSwitcher::sig_of(const std::string& path) {
+  FileSig s;
+  std::error_code ec;
+  const std::uintmax_t size = fs::file_size(path, ec);
+  if (ec) return s;
+  const auto mt = fs::last_write_time(path, ec);
+  if (ec) return s;
+  s.valid = true;
+  s.size = size;
+  s.mtime = static_cast<std::int64_t>(mt.time_since_epoch().count());
+  return s;
+}
+
+void LiveSetSwitcher::pre_publish() {
+  ++pre_status_.seq;
+  dirty_ = true;
+}
+
+void LiveSetSwitcher::pre_set_target_fields() {
+  std::string name;
+  for (const CatalogEntry& e : catalog_)
+    if (e.id == pre_next_) name = e.name;
+  if (pre_status_.target_id == pre_next_ && pre_status_.target_name == name) return;
+  pre_status_.target_id = pre_next_;
+  pre_status_.target_name = name;
+  pre_publish();
+}
+
+// Cancels the stage in flight and frees everything the preload holds (a finished stage is destroyed here: its heads and bundle leases go with it).
+void LiveSetSwitcher::discard_preload() {
+  if (pre_job_.cancel) pre_job_.cancel->store(true, std::memory_order_release);
+  std::unique_ptr<JobResult> trash;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    pending_pre_.reset();
+    trash = std::move(done_pre_);
+  }
+  trash.reset();
+  pre_held_.reset();
+  pre_running_ = false;
+  pre_job_ = Job{};
+  if (pre_status_.state != PreloadState::kNone || pre_status_.head_bytes_held != 0 || pre_status_.head_bytes_current != 0 || pre_status_.head_bytes_needed != 0 ||
+      !pre_status_.detail.empty()) {
+    pre_status_.state = PreloadState::kNone;
+    pre_status_.head_bytes_held = 0;
+    pre_status_.head_bytes_current = 0;
+    pre_status_.head_bytes_needed = 0;
+    pre_status_.detail.clear();
+    pre_publish();
+  }
+}
+
+void LiveSetSwitcher::set_preload_target(const std::string& current_id, const std::string& next_id) {
+  if (current_id == pre_for_ && next_id == pre_next_) return;
+  pre_for_ = current_id;
+  pre_next_ = next_id;
+  pre_blocked_ = false;
+  discard_preload();
+  pre_set_target_fields();
+}
+
+void LiveSetSwitcher::invalidate_preload() {
+  pre_blocked_ = false;
+  discard_preload();  // the state is NONE again: the next tick() restages it
+}
+
+void LiveSetSwitcher::live_set_changed(const std::string& id) {
+  if (!pre_next_.empty() && id == pre_next_) invalidate_preload();
+}
+
+void LiveSetSwitcher::maybe_start_preload() {
+  if (pre_running_ || pre_held_ || pre_blocked_ || pre_next_.empty() || active_) return;
+  if (pre_status_.state != PreloadState::kNone) return;  // READY / SKIPPED_BUDGET / FAILED stand until the pair or the current Live Set changes
+  const std::string& cur = loader_.loaded_id();
+  if (cur.empty() || cur != pre_for_ || pre_next_ == cur) return;  // wait until the current Live Set sounds; its heads are what the budget is shared with
+  const CatalogEntry* t = nullptr;
+  for (const CatalogEntry& e : catalog_)
+    if (e.id == pre_next_) t = &e;
+  pre_set_target_fields();
+  if (!t) {
+    pre_status_.state = PreloadState::kFailed;
+    pre_status_.detail = "missing";
+    pre_status_.head_bytes_held = 0;
+    pre_publish();
+    return;
+  }
+  pre_entry_ = *t;
+  Job job;
+  job.token = ++next_token_;
+  job.target = pre_entry_;
+  if (edits_)
+    if (const ::velora::liveset::v1::LiveSet* ov = edits_->overlay_for(pre_entry_.id)) job.overlay = std::make_shared<const ::velora::liveset::v1::LiveSet>(*ov);
+  job.cancel = std::make_shared<std::atomic<bool>>(false);
+  job.progress = std::make_shared<Progress>();
+  job.preload = true;
+  job.reuse = loader_.current_heads();
+  const std::uint64_t cur_bytes = loader_.current_head_bytes();
+  const std::uint64_t budget = opt_.head_budget_bytes;
+  job.head_budget = budget == 0 ? 0 : (cur_bytes >= budget ? 1 : budget - cur_bytes);  // 0 would mean "unlimited": with nothing left, 1 byte admits only shared heads
+  pre_sig_ = job.overlay ? FileSig{} : sig_of(pre_entry_.path);
+  pre_overlay_rev_ = edits_ ? edits_->overlay_revision(pre_entry_.id) : 0;
+  pre_check_s_ = pre_pub_s_ = now();
+  pre_job_ = job;
+  pre_ticks_ = 0;
+  pre_running_ = true;
+  pre_status_.state = PreloadState::kLoading;
+  pre_status_.head_bytes_held = 0;
+  pre_status_.head_bytes_current = cur_bytes;
+  pre_status_.head_bytes_needed = 0;
+  pre_status_.detail.clear();
+  pre_publish();
+  if (opt_.background_thread) {
+    {
+      std::lock_guard<std::mutex> lk(m_);
+      pending_pre_ = std::move(job);
+    }
+    cv_.notify_one();
+  } else {
+    std::unique_ptr<JobResult> r = run_job(job);  // deterministic mode: staged here, declared READY after hold_ticks
+    std::lock_guard<std::mutex> lk(m_);
+    done_pre_ = std::move(r);
+  }
+}
+
+void LiveSetSwitcher::harvest_preload() {
+  if (!pre_running_) return;
+  ++pre_ticks_;
+  if (!pre_held_) {
+    std::unique_ptr<JobResult> stale;
+    std::lock_guard<std::mutex> lk(m_);
+    if (done_pre_ && done_pre_->token == pre_job_.token) pre_held_ = std::move(done_pre_);
+    else stale = std::move(done_pre_);
+  }
+  if (!pre_held_) {  // still staging: the bytes held so far, at the status cadence
+    const double t = now();
+    if (t - pre_pub_s_ >= opt_.publish_interval_s) {
+      pre_pub_s_ = t;
+      const std::uint64_t done = pre_job_.progress->done.load(std::memory_order_acquire);
+      if (done != pre_status_.head_bytes_held) {
+        pre_status_.head_bytes_held = done;
+        pre_publish();
+      }
+    }
+    return;
+  }
+  const LiveSetLoadResult& r = pre_held_->result;
+  if (r.status != LiveSetLoadStatus::kOk) {  // a refusal is reported at once
+    pre_running_ = false;
+    pre_status_.head_bytes_held = 0;
+    if (r.status == LiveSetLoadStatus::kHeadBudgetExceeded) {
+      pre_status_.state = PreloadState::kSkippedBudget;
+      pre_status_.detail = "head_budget_exceeded";  // the numbers are in head_bytes_needed / head_bytes_current / the budget
+      pre_status_.head_bytes_needed = r.head_bytes;
+    } else if (r.status == LiveSetLoadStatus::kCancelled) {
+      pre_status_.state = PreloadState::kNone;
+      pre_status_.detail.clear();
+    } else {
+      pre_status_.state = PreloadState::kFailed;
+      pre_status_.detail = reason_of(r.status);
+    }
+    pre_held_.reset();
+    pre_job_ = Job{};
+    pre_publish();
+    return;
+  }
+  if (pre_ticks_ > opt_.hold_ticks) {
+    pre_running_ = false;
+    pre_job_.reuse.clear();
+    pre_status_.state = PreloadState::kReady;
+    pre_status_.head_bytes_held = r.loaded_head_bytes;
+    pre_status_.detail.clear();
+    pre_publish();
+  }
+}
+
+// True when the unsaved edits the preload was staged from are still the ones the session holds (none, none; or the same revision, or equal content).
+bool LiveSetSwitcher::overlay_unchanged(const ::velora::liveset::v1::LiveSet* now_overlay, std::uint64_t now_revision) const {
+  const bool had = pre_job_.overlay != nullptr;
+  if (had != (now_overlay != nullptr)) return false;
+  if (!had) return true;
+  if (now_revision != LiveSetEditPort::kUnknownRevision && now_revision == pre_overlay_rev_) return true;  // cheap path: nothing was edited since
+  return pre_job_.overlay->SerializeAsString() == now_overlay->SerializeAsString();                       // safe fallback: the revisions differ or are unknown
+}
+
+// What makes a staged or skipped preload stale: the sounding generation's head bytes (every tick, cheap), then at the status cadence the unsaved edits of the
+// next Live Set, its file (size + mtime) and the library bundles of its heads.
+void LiveSetSwitcher::check_preload_file() {
+  if (pre_status_.state == PreloadState::kNone) return;
+  if (loader_.current_head_bytes() != pre_status_.head_bytes_current && pre_status_.state != PreloadState::kFailed) {
+    invalidate_preload();  // the budget verdict was made against another generation: restage against the one that sounds
+    return;
+  }
+  if (!(pre_running_ || pre_held_)) return;
+  const double t = now();
+  if (t - pre_check_s_ < opt_.publish_interval_s) return;
+  pre_check_s_ = t;
+  if (edits_) {
+    const std::uint64_t rev = edits_->overlay_revision(pre_entry_.id);
+    const bool stale = rev != LiveSetEditPort::kUnknownRevision ? rev != pre_overlay_rev_ : !overlay_unchanged(edits_->overlay_for(pre_entry_.id), rev);
+    if (stale) {
+      invalidate_preload();
+      return;
+    }
+  }
+  if (!pre_job_.overlay && !(sig_of(pre_entry_.path) == pre_sig_)) {
+    invalidate_preload();
+    return;
+  }
+  if (pre_held_ && pre_held_->staged && !loader_.heads_still_current(pre_held_->staged->heads)) invalidate_preload();
+}
+
+bool LiveSetSwitcher::take_preload(const CatalogEntry& entry, const ::velora::liveset::v1::LiveSet* overlay, SwitchOutcome& o) {
+  if (pre_status_.state != PreloadState::kReady || !pre_held_ || pre_running_ || active_ || pre_entry_.id != entry.id) return false;
+  // Unsaved edits appeared, went away or changed since it was staged: the caller discards and loads. (Revision compare first; no serialization when equal.)
+  if (!overlay_unchanged(overlay, edits_ ? edits_->overlay_revision(entry.id) : 0)) return false;
+  if (!pre_job_.overlay && !(sig_of(entry.path) == pre_sig_)) return false;  // the file changed since it was staged
+  if (!pre_held_->staged || !loader_.heads_still_current(pre_held_->staged->heads)) return false;  // a library was replaced or removed under the heads
+  Job job;
+  job.token = next_token_ + 1;
+  job.target = entry;
+  job.cancel = std::make_shared<std::atomic<bool>>(false);
+  job.progress = std::make_shared<Progress>();
+  // commit_seamless() only: the reservation is prepared and the generation published; no instrument is loaded here. The preload is consumed only by a
+  // commit that went through (or is retried for a busy ledger); a refusal leaves it READY and is reported like any 4.5 failure.
+  const LiveSetLoadResult r = loader_.commit_seamless(*pre_held_->staged);
+  ++next_token_;
+  active_job_ = job;
+  ticks_since_jump_ = opt_.hold_ticks;
+  busy_since_ = -1;
+  start_status(entry);
+  status_.bytes_total = status_.bytes_loaded = pre_held_->result.resident_bytes;
+  o.result = SwitchOutcome::Result::kAccepted;
+  o.token = job.token;
+  const bool ok = r.status == LiveSetLoadStatus::kOk;
+  if (!ok && r.status != LiveSetLoadStatus::kBusy) {
+    finish_failure(r);  // typed refusal in the status; the READY preload stays
+    return true;
+  }
+  active_ = true;
+  held_ = std::move(pre_held_);
+  pre_job_ = Job{};
+  pre_status_.state = PreloadState::kNone;
+  pre_status_.head_bytes_held = 0;
+  pre_status_.head_bytes_current = 0;
+  pre_status_.detail.clear();
+  pre_publish();
+  ++preload_commits_;
+  if (ok) commit_succeeded();
+  else (void)commit_refused(r);  // busy: held and retried on the following ticks like 4.5
+  return true;
 }
 
 void LiveSetSwitcher::fill_status(ws::v1::State* out) const {
@@ -456,6 +762,23 @@ void LiveSetSwitcher::fill_status(ws::v1::State* out) const {
   l->set_bytes_total(status_.bytes_total);
   out->set_live_set_id(loader_.loaded_id());
   out->set_live_set_name(loader_.loaded_name());
+  ws::v1::PreloadStatus* pl = out->mutable_preload();
+  switch (pre_status_.state) {
+    case PreloadState::kNone: pl->set_state(ws::v1::PRELOAD_STATE_NONE); break;
+    case PreloadState::kLoading: pl->set_state(ws::v1::PRELOAD_STATE_LOADING); break;
+    case PreloadState::kReady: pl->set_state(ws::v1::PRELOAD_STATE_READY); break;
+    case PreloadState::kSkippedBudget: pl->set_state(ws::v1::PRELOAD_STATE_SKIPPED_BUDGET); break;
+    case PreloadState::kFailed: pl->set_state(ws::v1::PRELOAD_STATE_FAILED); break;
+  }
+  pl->set_ready(pre_status_.ready());
+  pl->set_next_live_set_id(pre_status_.target_id);
+  pl->set_next_live_set_name(pre_status_.target_name);
+  pl->set_head_bytes_held(pre_status_.head_bytes_held);
+  pl->set_head_budget_bytes(opt_.head_budget_bytes);
+  pl->set_head_bytes_current(pre_status_.head_bytes_current);
+  pl->set_head_bytes_needed(pre_status_.head_bytes_needed);
+  pl->set_detail(pre_status_.detail);
+  pl->set_status_seq(pre_status_.seq);
 }
 
 }  // namespace velora::host
