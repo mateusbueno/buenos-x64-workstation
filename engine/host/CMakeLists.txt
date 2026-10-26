@@ -13,6 +13,8 @@ add_library(velora_host STATIC
   src/trust_list.cpp
   src/mcu_frame.cpp
   src/keybed_calibration.cpp
+  src/velocity_curve.cpp
+  src/velocity_curve_holder.cpp
   src/drift_clock.cpp
   src/keybed_reader.cpp
   src/panel_reader.cpp
@@ -326,6 +328,12 @@ add_executable(keybed_reader_test tests/keybed_reader_test.cpp)
 target_link_libraries(keybed_reader_test PRIVATE velora_host)
 add_test(NAME keybed_reader_test COMMAND keybed_reader_test)
 set_tests_properties(keybed_reader_test PROPERTIES TIMEOUT 300)
+
+# Velocity curves, the calibration chain, release velocity and release-trigger layers (Story 3.6).
+add_executable(velocity_curve_test tests/velocity_curve_test.cpp)
+target_link_libraries(velocity_curve_test PRIVATE velora_host velora_core)
+add_test(NAME velocity_curve_test COMMAND velocity_curve_test)
+set_tests_properties(velocity_curve_test PROPERTIES TIMEOUT 300)
 
 # Panel reader (Story 3.10): wheels -> pitch bend / modulation for every keyboard-on part, raw panel controls, BUTTON sink, bad frames, drift-tracked time,
 # an offline BlockRenderer render; the Mac virtual panel mapping file, its frames and the UMP sink. (The PanelEvent push over the UDS is in control_tests.)

@@ -22,12 +22,15 @@ KeybedReaderConfig sanitize(KeybedReaderConfig c) {
 
 KeybedReader::KeybedReader(HostEventQueue& out, KeybedCalibration table, KeybedReaderConfig cfg)
     : out_(out), table_(std::move(table)), cfg_(sanitize(cfg)), link_(TimeSyncConfig{cfg_.tick_hz, cfg_.sync_interval_ns, cfg_.sync_fast_interval_ns, cfg_.sync_fast_samples, cfg_.sync_timeout_ns}),
-      keys_(table_.key_count()) {}
+      attack_mapper_(table_.velocity_range()), release_mapper_(table_.release_range()), keys_(table_.key_count()) {}
 
 void KeybedReader::set_calibration(KeybedCalibration table, std::uint64_t now_ns) {
   release_all(now_ns);
   table_ = std::move(table);
   keys_.assign(table_.key_count(), KeyState{});
+  rel_pending_count_ = 0;
+  attack_mapper_.set_range(table_.velocity_range());
+  release_mapper_.set_range(table_.release_range());
 }
 
 KeybedReaderCounters KeybedReader::counters() const {
@@ -50,10 +53,11 @@ KeybedReaderCounters KeybedReader::counters() const {
   return c;
 }
 
-void KeybedReader::emit(const core::Ump& u, std::uint64_t t) {
+void KeybedReader::emit(const core::Ump& u, std::uint64_t t, bool release_stamp) {
   if (t < last_out_ns_) {  // never reverse event order
     t = last_out_ns_;
-    ++c_.clock_clamps;
+    if (release_stamp) ++c_.release_stamp_clamps;  // a deferred Note Off is stamped in the past by design: its own counter
+    else ++c_.clock_clamps;
   }
   last_out_ns_ = t;
   if (!out_.push(StampedUmp{u, t})) ++c_.queue_full;
@@ -114,11 +118,34 @@ void KeybedReader::on_time_sync(const mcu::TimeSync& ts, std::uint64_t rx_ns) {
   link_.on_reply(ts, rx_ns);
 }
 
-void KeybedReader::poll(std::uint64_t now_ns) { link_.poll(now_ns); }
+void KeybedReader::poll(std::uint64_t now_ns) {
+  link_.poll(now_ns);
+  flush_slow_releases(now_ns);
+}
 
-void KeybedReader::do_open(std::uint8_t key, std::uint8_t contact, std::uint64_t t) {
+// A release measurement that has waited the table's slowest release time ends at the slowest release velocity.
+void KeybedReader::flush_slow_releases(std::uint64_t now_ns) {
+  if (rel_pending_count_ == 0) return;
+  const std::uint64_t slow = table_.release_range().slow_ns;
+  for (std::size_t k = 0; k < keys_.size(); ++k) {
+    KeyState& ks = keys_[k];
+    if (!ks.rel_pending || now_ns < ks.rel_start_ns || now_ns - ks.rel_start_ns < slow) continue;
+    ++c_.release_timeouts;
+    finish_release(static_cast<std::uint8_t>(k), ks.rel_start_ns, release_mapper_.velocity16(slow));
+  }
+}
+
+void KeybedReader::do_open(std::uint8_t key, std::uint8_t contact, std::uint64_t t, bool synthetic) {
   KeyState& ks = keys_[key];
   const int note = table_.note_of(key);
+  // The release pair completes: the Note Off goes out first (stamped with the release contact's own time), so the order of the stream is kept.
+  if (ks.sounding && ks.rel_pending && contact <= table_.rel_to()) {
+    if (synthetic || contact < table_.rel_to()) {
+      release_key(key, t);  // the second contact's own open was lost: no timing
+    } else {
+      finish_release(key, ks.rel_start_ns, release_mapper_.velocity16(t - std::min(t, ks.rel_start_ns)));
+    }
+  }
   ks.mask = static_cast<std::uint8_t>(ks.mask & ~(1u << contact));
   if (contact == table_.vel_from()) ks.vel_start_valid = false;
   if (contact == table_.vel_to()) {  // a re-strike after a partial release is timed from this open, while the pair's first contact is still closed
@@ -127,15 +154,34 @@ void KeybedReader::do_open(std::uint8_t key, std::uint8_t contact, std::uint64_t
   }
   emit(core::make_contact_event(cfg_.group, cfg_.channel, static_cast<std::uint32_t>(note), contact + 1u, false), t);
   ++c_.contact_events;
-  if (ks.sounding && contact <= table_.release_contact()) release_key(key, t);
+  if (ks.sounding && !ks.rel_pending && contact <= table_.release_contact()) {
+    if (!synthetic && table_.release_pair() && contact == table_.release_contact() && (ks.mask & (1u << table_.rel_to())) != 0) {
+      ks.rel_pending = true;  // wait for the pair's second contact: its opening time gives the release velocity
+      ks.rel_start_ns = t;
+      ++rel_pending_count_;
+    } else {
+      release_key(key, t);
+    }
+  }
+}
+
+void KeybedReader::finish_release(std::uint8_t key, std::uint64_t stamp_ns, std::uint16_t velocity16) {
+  KeyState& ks = keys_[key];
+  if (!ks.sounding) return;
+  if (ks.rel_pending) {
+    ks.rel_pending = false;
+    if (rel_pending_count_ > 0) --rel_pending_count_;
+  }
+  ks.sounding = false;
+  emit(core::make_note_off(cfg_.group, cfg_.channel, static_cast<std::uint32_t>(table_.note_of(key)), velocity16), stamp_ns, true);
+  ++c_.note_offs;
 }
 
 void KeybedReader::release_key(std::uint8_t key, std::uint64_t t) {
   KeyState& ks = keys_[key];
   if (!ks.sounding) return;
-  ks.sounding = false;
-  emit(core::make_note_off(cfg_.group, cfg_.channel, static_cast<std::uint32_t>(table_.note_of(key)), cfg_.release_velocity16), t);
-  ++c_.note_offs;
+  ++c_.release_velocity_defaults;
+  finish_release(key, ks.rel_pending ? ks.rel_start_ns : t, cfg_.release_velocity16);
 }
 
 void KeybedReader::on_key_contact(const mcu::KeyContact& kc, std::uint64_t t) {
@@ -151,18 +197,28 @@ void KeybedReader::on_key_contact(const mcu::KeyContact& kc, std::uint64_t t) {
   const std::uint8_t key = kc.key, c = kc.contact;
   KeyState& ks = keys_[key];
   const int note = table_.note_of(key);
+  flush_slow_releases(t);
   if (kc.closed) {
     // A repeat of a close already recorded (same contact, nothing above it closed, within 5 ms) is a duplicate frame, not a new strike.
     // A contact still marked closed with higher ones closed, or long ago, lost its open frame: handled as stale below.
-    if ((ks.mask & (1u << c)) && (ks.mask >> (c + 1)) == 0 && t - std::min(t, ks.last_close_ns[c]) < 5'000'000) {
+    // While a release measurement waits, a close of a contact below the release contact that is still marked closed is a bounce of that contact: ignored,
+    // so it does not end the measurement early (a real re-strike closes the release contact itself).
+    const bool bounce = ks.rel_pending && c < table_.release_contact() && (ks.mask & (1u << c)) != 0;
+    if (bounce || ((ks.mask & (1u << c)) && (ks.mask >> (c + 1)) == 0 && t - std::min(t, ks.last_close_ns[c]) < 5'000'000)) {
       ++c_.duplicate_closes;
       return;
+    }
+    // A real re-strike (the release contact closes again) before the release measurement completed: the Note Off goes out first, with the release
+    // velocity measured so far. A close of a lower contact (a bounce) does not end the measurement.
+    if (ks.rel_pending && c >= table_.release_contact()) {
+      ++c_.release_restrikes;
+      finish_release(key, ks.rel_start_ns, release_mapper_.velocity16(t - std::min(t, ks.rel_start_ns)));
     }
     // Contacts close in order, so any contact at or above this one still marked closed missed its open: release it first.
     for (int b = table_.contacts() - 1; b >= c; --b)
       if (ks.mask & (1u << b)) {
         ++c_.recovered_opens;
-        do_open(key, static_cast<std::uint8_t>(b), t);
+        do_open(key, static_cast<std::uint8_t>(b), t, true);
       }
     ks.mask = static_cast<std::uint8_t>(ks.mask | (1u << c));
     ks.last_close_ns[c] = t;
@@ -189,13 +245,13 @@ void KeybedReader::on_key_contact(const mcu::KeyContact& kc, std::uint64_t t) {
     for (int b = table_.contacts() - 1; b > c; --b)
       if (ks.mask & (1u << b)) {
         ++c_.recovered_opens;
-        do_open(key, static_cast<std::uint8_t>(b), t);
+        do_open(key, static_cast<std::uint8_t>(b), t, true);
       }
     if (ks.mask & (1u << c)) {
       do_open(key, c, t);
     } else {
       ++c_.spurious_opens;
-      if (ks.sounding && c <= table_.release_contact()) release_key(key, t);
+      if (ks.sounding && !ks.rel_pending && c <= table_.release_contact()) release_key(key, t);
     }
   }
 }
@@ -209,7 +265,7 @@ void KeybedReader::report_key_state(std::uint8_t key, std::uint8_t closed_mask, 
   for (int b = table_.contacts() - 1; b >= 0; --b)
     if ((ks.mask & (1u << b)) && !(closed_mask & (1u << b))) {
       ++c_.recovered_opens;
-      do_open(key, static_cast<std::uint8_t>(b), std::max(now_ns, last_out_ns_));
+      do_open(key, static_cast<std::uint8_t>(b), std::max(now_ns, last_out_ns_), true);
     }
   if (closed_mask == 0 && ks.sounding) release_key(key, std::max(now_ns, last_out_ns_));
   recovery_pending_ = false;

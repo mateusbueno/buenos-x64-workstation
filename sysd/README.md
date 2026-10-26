@@ -93,6 +93,23 @@ HEAVY / FIXED; sustain and expression `{min, max, polarity}` on the 12-bit pedal
   while sysd is hung.
 - **Persistence**: the value lives in `sysd_config.pb`, so it is restored on restart (tests: `sysd_sender_test`, `engine_host_sysd_smoke`).
 
+## Velocity curve (Story 3.6): how `velocity_curve` flows
+
+`velocity_curve` (NORMAL default / LIGHT / HEAVY / FIXED) is set from the dev CLI and takes effect for the next note, without restarting the engine:
+
+```
+velora-sysdctl --socket /run/velora/sysd.sock set velocity_curve light     # normal | light | heavy | fixed
+velora-sysdctl --socket /run/velora/sysd.sock get
+```
+
+- **sysd -> engine**: the `SysdConfigClient` callback (control thread) calls `host::apply_velocity_curve`, which stores the curve in a `VelocityCurveHolder`; the holder pushes it to
+  every attached `KeybedReader` (`set_velocity_curve`, an atomic store, safe against the reader running on its own thread). The reader applies it once, after the keybed calibration
+  table, when it computes the next Note On velocity; a sounding note is untouched. An unknown value is not applied (the last curve is kept). `engine-host` has no keybed link yet: it
+  owns the holder, and the link wiring will attach its reader (the Settings UI row is Story 10.2).
+- **Persistence**: the value lives in `sysd_config.pb`, so after a reboot sysd serves it again and the engine re-applies it on connect (test: `sysd_socket_tests`, `test_velocity_curve_via_sysd`,
+  real sysd on a temp dir, restarted). Without sysd the engine runs on Normal.
+- Details of the curves, the calibration and the release velocity: `engine/host/README.md`.
+
 ## Deployment and limits (read before relying on it)
 
 - The socket is created **0600**: `engine` and `ui` must run as the sysd user, or the deployment must decide a group arrangement (not done here).
@@ -107,7 +124,7 @@ HEAVY / FIXED; sustain and expression `{min, max, polarity}` on the 12-bit pedal
 
 ## Not covered here
 
-- No behaviour for any of the four settings (the stories above do that); the engine wiring only logs the received config.
+- Behaviour exists for clock source (7.7) and velocity curve (3.6); pedals (3.11) and Boot into (8.9) are only logged by the engine wiring.
 - The ui `SystemConfig` JSON (`ui/src/system_config.cpp`: theme, language, brightness, ...) is **not migrated**: it stays in the ui for now. Moving it into
   `SysdConfig` (and the ui reading it from sysd) is a follow-up.
 - The `ui` as a client of sysd (this foundation delivers the engine client and the CLI).

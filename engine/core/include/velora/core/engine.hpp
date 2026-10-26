@@ -73,6 +73,12 @@ class Engine {
                                    std::uint32_t velocity16) noexcept VELORA_NONBLOCKING = 0;
   // Begins release of every held voice for (channel, note).
   virtual EngineStatus stop_voice(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING = 0;
+  // Story 3.6: the physical note off with the MIDI 2.0 16-bit release velocity of the Note Off UMP (0 = none was measured). An engine that does not use
+  // the release velocity keeps this default, which is stop_voice(); the sample engine uses it to pick / scale release-trigger regions. No curve is applied here.
+  virtual EngineStatus release_voice(std::uint32_t channel, std::uint32_t note, std::uint32_t release_velocity16) noexcept VELORA_NONBLOCKING {
+    (void)release_velocity16;
+    return stop_voice(channel, note);
+  }
   // Sound parameters are addressed by param_id.
   virtual void set_param(std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING = 0;
   // Adds `frames` frames of output into left/right.

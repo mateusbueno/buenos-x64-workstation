@@ -26,7 +26,7 @@ Dependency rule: may depend on `engine/core`, `engine/ports` and OS libraries; `
   never reversed), runs a per-key state machine driven by a data-driven `KeybedCalibration` (2 or 3 contacts, velocity pair,
   release contact, key -> note map; built-ins `two_contact_73` / `three_contact_73`, or `KeybedCalibration::make(spec)`), and pushes
   `contact_k` per-note controllers plus Note On (at the velocity pair's completing contact) / Note Off into the `HostEventQueue`
-  as `StampedUmp`. Velocity is a provisional linear time mapping behind `VelocityMapper` (the curve is Story 3.6). All times are
+  as `StampedUmp`. Velocity goes through the Story 3.6 chain behind `VelocityMapper` (below; `LinearVelocityMapper` is only a test helper). All times are
   injected (`rx_ns`, `now_ns`), so tests are deterministic. A lost open is repaired by the next frame of the key or by
   `report_key_state`; CRC errors, seq gaps, unknown keys and missed syncs are counted in `counters()`. Input thread only (allocates).
 - `library_resolver` (+ `fs_port`, `posix_fs`) -- Story 1.14. Resolves `(library_id, instrument_key)` to an opened bundle
@@ -283,6 +283,45 @@ API through the same Library API over the same socket (Epic 5 surfaces); nothing
 sysd's Unix socket (`SubscribeConfig`). All I/O is on its own thread (reconnect with backoff while sysd is absent); the control thread calls `tick()` and the callback runs there once per
 revision, with a revision guard. Without sysd the engine runs on `default_config()`; the last-known config is kept when sysd goes away. `engine-host --sysd-socket PATH` wires it (default off);
 the engine's own control server does not serve the config messages (`ERROR_CODE_INVALID_COMMAND`). See `sysd/README.md`.
+
+### Velocity curves and release velocity (Story 3.6: FR70, FR71, AR39, NFR44)
+
+`velora/host/velocity_curve.hpp`, applied **once, in the keybed reader** (`CalibratedVelocityMapper`); the MCU, the engine core and the sample engine never apply a curve.
+
+- Chain: key travel time -> keybed calibration (`KeybedCalibration` data: `vel_fast_ns` .. `vel_slow_ns`, a logarithmic time axis `s = ln(slow / dt) / ln(slow / fast)`) -> the selected curve
+  `Normal c = s`, `Light c = s^0.7`, `Heavy c = s^1.4`, `Fixed` = a constant (`kFixedVelocity7` = 100, sysd has no field for it) -> 16-bit velocity `512 + round(65023 * c)`.
+  Times faster than `fast_ns` / slower than `slow_ns` clamp to 127 (65535) / 1 (512). Every non-Fixed curve reaches 1 and 127 and, over the range, produces exactly the 7-bit values
+  1..127 with no gap and no plateau for **ideal times** (`velocity_curve_test` sweeps every 1 us strictly inside the range, the MCU tick resolution, and requires every bin non-empty
+  and at least 3 us wide, cross-checked against the sample engine's own 16 -> 7 bit formula); Fixed is excluded from that spread. The default is Normal. Real times are quantised to
+  the 1 us tick plus jitter, so the thinnest bins are the extremes: bin 127 (the fastest keys) is about 31 us of travel time wide for Normal, 44 us for Light and 22 us for Heavy
+  (measured by that test); a keybed that cannot resolve those times will skip the thin bins in practice. 7 -> 16 bit conversion is linear, `(v * 65535 + 63) / 127`, not the MIDI 2.0
+  bit-repeat upscaling.
+- Curve setter: `KeybedReader::set_velocity_curve()` is an atomic store, callable from the control thread while the reader runs on its own; it applies to the next Note On only.
+  `VelocityCurveHolder` keeps the selected curve and the attached readers: the sysd callback calls `apply_velocity_curve(config, holder)` (an unknown value keeps the last curve).
+  **engine-host has no keybed link yet**, so it creates the holder only; the future link wiring creates its `KeybedReader` and calls `holder.attach(reader)`.
+- Release velocity: for a table with a release pair (`release_pair`, default false; true in `three_contact_73()`: contact 3 opens first, contact 2 next) the release velocity is the 3 -> 2
+  opening time over `rel_fast_ns` .. `rel_slow_ns` (same log axis, **no player curve**), carried on the Note Off UMP. **The Note Off is therefore delayed** until the pair completes, by the
+  measured time (typically a few ms) and at most `rel_slow_ns` (80 ms). Its stamp is the release contact's own opening time, so it is **up to 80 ms in the past** when pushed; when
+  that is behind an event already pushed (another key) the stamp is raised, counted in `release_stamp_clamps` (not in `clock_clamps`). If contact 2 never opens (partial release, or its
+  close/open frame was lost) the Note Off goes out after `rel_slow_ns` at the slowest release velocity (`release_timeouts`). **`KeybedReader::poll()` must run about every 5-10 ms** (the
+  link loop owner calls it, as for TIME_SYNC): it is what ends a timed-out measurement when no frame arrives; without it the Note Off waits for the next frame of any key. A re-strike
+  (the release contact closes again) before the pair completes sends the Note Off first with the release velocity measured so far (`release_restrikes`, not a timeout); a close of a
+  lower contact that is still marked closed is a bounce and is ignored. **Rule for 2-contact keybeds:** no release pair (nothing below the contact that ends the note), so the Note Off
+  is immediate and carries `KeybedReaderConfig::release_velocity16` (0x4000), counted in `release_velocity_defaults`; a lost open frame or a link-loss snapshot gives the same default
+  and counter.
+- Sample engine: `SampleEngine::Config::release_velocity_triggers` (default off = sfizz behaviour; engine-host turns it on) makes `trigger=release` regions use the Note Off's release
+  velocity (when not 0) to pick the velocity layer and to scale the gain (velocity squared), so a fast release plays a louder release sample. It enters through the additive
+  `Engine::release_voice()` (default: `stop_voice()`), called by `BlockRenderer` for a physical note off; a pedal-deferred release has no velocity and uses the note-on one.
+  **External MIDI:** the host turns the option on, so `normalise_packet` (`MidiIngest`) zeroes the release velocity of every external note off (MIDI 1.0 note off, note on with velocity 0,
+  and for now MIDI 2.0 note off too; a policy to revisit): only the keybed reader's Note Off carries a real release velocity, and external keyboards keep the note-on velocity layer.
+- All calibration numbers are placeholders (`TODO(measure on prototype)`): the real keybed measurement is **deferred**.
+- Tests: `velocity_curve_test` (curves, chain, release velocity, end to end through `BlockRenderer` + `SampleEngine`, release-trigger layer render), `keybed_reader_test`,
+  `sysd_socket_tests` (`test_velocity_curve_via_sysd`: real sysd, curve change without restart, restored after a sysd + engine restart).
+- Changed 3.5 expectations (`keybed_reader_test`): (1) Note On velocities follow the chain (log axis, Normal curve) instead of the linear mapper (three-contact press and both re-strike
+  checks); (2) a partial release (only contact 3 opened) no longer sends the Note Off at once: it waits for the release pair; (3) the re-strike scenario (contact 3 opens, closes again 30 ms
+  later) is unchanged in time but now produces Note Off, contact 3 closed, Note On (3 events, was 2; the Note Off used to come at the open), with a new test beside it for a timeout (poll
+  after the slowest release time, then re-strike 90 ms after the open: velocity timed from the open); (4) a custom spec with a release contact below the top no longer needs
+  `release_pair = false` (the default is false). `host_unit_test`: an external note off normalises to release velocity 0.
 
 ### Clock source and DIN / USB clock inputs (Story 7.7: FR76, AR39, AR17)
 

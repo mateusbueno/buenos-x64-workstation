@@ -7,6 +7,8 @@ std::optional<KeybedCalibration> KeybedCalibration::make(const KeybedCalibration
   if (!(s.vel_from < s.vel_to) || s.vel_to >= s.contacts || s.release_contact >= s.contacts ||
       s.release_contact < s.vel_to)
     return std::nullopt;
+  if (s.vel_fast_ns == 0 || s.vel_fast_ns >= s.vel_slow_ns) return std::nullopt;
+  if (s.release_pair && (s.rel_to >= s.release_contact || s.rel_fast_ns == 0 || s.rel_fast_ns >= s.rel_slow_ns)) return std::nullopt;
   KeybedCalibration c;
   c.spec_ = s;
   if (!s.key_notes.empty()) {
@@ -28,6 +30,7 @@ std::optional<KeybedCalibration> KeybedCalibration::make(const KeybedCalibration
 
 KeybedCalibration KeybedCalibration::three_contact_73() {
   KeybedCalibrationSpec s;  // defaults describe the 3-contact 73-key keybed
+  s.release_pair = true;    // release velocity from the 3 -> 2 opening time
   return *make(s);
 }
 
@@ -37,6 +40,7 @@ KeybedCalibration KeybedCalibration::two_contact_73() {
   s.vel_from = 0;
   s.vel_to = 1;
   s.release_contact = 1;
+  s.release_pair = false;  // nothing below the contact that ends the note: the default release velocity, counted
   return *make(s);
 }
 

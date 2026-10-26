@@ -284,6 +284,7 @@ int main(int argc, char** argv) {
   core::SampleEngine::Config sample_cfg;
   sample_cfg.max_voices = 340;  // the 256 voice floor plus the 64 voice fade headroom, with slack
   sample_cfg.extended_voices = true;  // Story 5.2: any imported instrument may use filters and CC crossfades, so every voice is budgeted for them
+  sample_cfg.release_velocity_triggers = true;  // Story 3.6: release-trigger samples follow the key's release velocity (the Note Off the keybed reader sends)
   core::SampleEngine sample(sample_cfg);
   core::OrganEngine organ;
   core::FmEngine fm;
@@ -523,12 +524,15 @@ int main(int argc, char** argv) {
   // Foundation: the sysd config client. Its worker thread owns all I/O (reconnect with backoff while sysd is absent); the callback runs on the control
   // thread, from the control tick, once per revision. The stories that give a setting its behaviour (clock source 7.7, velocity curve 3.6, pedals 3.11,
   // Boot into 8.9) consume the Config here; this wiring only logs it.
+  // Story 3.6: the velocity curve holder. The keybed link is not wired into engine-host yet; when it is, it creates its KeybedReader and calls
+  // velocity_curves.attach(reader) (the reader then takes the current curve and every later change from sysd, for the next note, without a restart).
+  host::VelocityCurveHolder velocity_curves;
   std::unique_ptr<host::SysdConfigClient> sysd_client;
   if (!sysd_socket.empty()) {
     host::SysdConfigClientOptions so;
     so.socket_path = sysd_socket;
     sysd_client = std::make_unique<host::SysdConfigClient>(so);
-    sysd_client->set_callback([ing = &ingest, rend = renderer.get(), first = true](const ws::v1::Config& c, std::uint64_t revision) mutable {
+    sysd_client->set_callback([ing = &ingest, rend = renderer.get(), vc = &velocity_curves, first = true](const ws::v1::Config& c, std::uint64_t revision) mutable {
       // Story 7.7: the clock source takes effect at the next block, without touching a voice. An unknown value keeps the last applied one.
       const core::ClockSource before = ing->clock_source();
       if (host::apply_clock_source(c, *ing, *rend)) {
@@ -537,6 +541,8 @@ int main(int argc, char** argv) {
         first = false;
       } else
         std::printf("sysd config: clock_source %d not applied (kept %d)\n", static_cast<int>(c.clock_source()), static_cast<int>(ing->clock_source()));
+      // Story 3.6: the velocity curve applies to the next Note On of every attached keybed reader. An unknown value keeps the last curve.
+      if (!host::apply_velocity_curve(c, *vc)) std::printf("sysd config: velocity_curve %d not applied\n", static_cast<int>(c.velocity_curve()));
       std::printf("sysd config: revision %llu clock_source=%s velocity_curve=%s boot_into=%s\n", (unsigned long long)revision,
                   ws::v1::ClockSource_Name(c.clock_source()).c_str(), ws::v1::VelocityCurve_Name(c.velocity_curve()).c_str(),
                   ws::v1::BootIntoMode_Name(c.boot_into().mode()).c_str());

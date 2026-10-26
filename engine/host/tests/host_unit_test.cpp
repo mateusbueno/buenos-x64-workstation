@@ -71,7 +71,12 @@ static void test_normalise() {
   const std::uint32_t on0[] = {0x2090'3C00u};
   CHECK(normalise_packet(on0, 1, used, u) && u.is_note_off());
   const std::uint32_t off1[] = {0x2080'3C40u};
-  CHECK(normalise_packet(off1, 1, used, u) && u.is_note_off() && u.velocity16() > 0);
+  // Story 3.6 policy: an external note off carries no release velocity (MIDI 1.0 default 64 included), MIDI 2.0 too; a note on keeps its velocity
+  CHECK(normalise_packet(off1, 1, used, u) && u.is_note_off() && u.velocity16() == 0);
+  CHECK(normalise_packet(on0, 1, used, u) && u.is_note_off() && u.velocity16() == 0);
+  const core::Ump off2 = core::make_note_off(0, 5, 72, 0x8102);
+  const std::uint32_t wo2[] = {off2.word0, off2.word1};
+  CHECK(normalise_packet(wo2, 2, used, u) && u.is_note_off() && u.velocity16() == 0 && u.note() == 72 && u.channel() == 5);
   // MIDI 2.0 pass-through
   const core::Ump n2 = core::make_note_on(0, 5, 72, 40000);
   const std::uint32_t w2[] = {n2.word0, n2.word1};

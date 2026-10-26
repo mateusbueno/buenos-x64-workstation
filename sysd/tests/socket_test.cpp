@@ -21,7 +21,9 @@
 #include <vector>
 
 #include "sysdctl_client.hpp"
+#include "velora/host/keybed_reader.hpp"
 #include "velora/host/sysd_config_client.hpp"
+#include "velora/host/velocity_curve_holder.hpp"
 #include "velora/sysd/config_server.hpp"
 
 namespace fs = std::filesystem;
@@ -415,6 +417,77 @@ void test_client_sysd_absent_then_appears() {
   CHECK(client.config().clock_source() == ws::v1::CLOCK_SOURCE_USB);  // still readable after stop
 }
 
+// Story 3.6: the velocity curve set through sysd (what `velora-sysdctl set velocity_curve light` sends) reaches a keybed reader through the client callback
+// and the holder, for the next note, with no restart; a sysd + engine restart on the same data dir restores it from sysd's persisted file.
+void test_velocity_curve_via_sysd() {
+  TmpDir t;
+  const std::string sock = t.path + "/s.sock";
+  auto curve_patch = [](ws::v1::VelocityCurve c) {
+    ws::v1::ConfigPatch p;
+    p.set_velocity_curve(c);
+    return p;
+  };
+  // one "engine": client + callback (the engine-host's: apply_velocity_curve to the holder) + a reader attached to the holder
+  struct Engine {
+    hc::VelocityCurveHolder holder;
+    hc::HostEventQueue q;
+    hc::KeybedReader reader{q, hc::KeybedCalibration::three_contact_73()};
+    std::unique_ptr<hc::SysdConfigClient> client;
+    int applied = 0;
+    void start(const std::string& sock) {
+      hc::SysdConfigClientOptions o;
+      o.socket_path = sock;
+      o.backoff_min_ms = 5;
+      o.backoff_max_ms = 40;
+      client = std::make_unique<hc::SysdConfigClient>(o);
+      client->set_callback([this](const ws::v1::Config& c, std::uint64_t) { applied += hc::apply_velocity_curve(c, holder) ? 1 : 0; });
+      holder.attach(reader);
+      client->start();
+    }
+    ~Engine() {
+      if (client) client->stop();
+      holder.detach(reader);
+    }
+  };
+  Sysd s;
+  CHECK(s.start(t.path, sock));
+  {
+    Engine e;
+    e.start(sock);
+    CHECK(e.reader.velocity_curve() == hc::VelocityCurve::kNormal);  // default Normal: before sysd answers, and as sysd's default
+    CHECK(tick_until(*e.client, [&] { return e.applied >= 1; }));
+    CHECK(e.reader.velocity_curve() == hc::VelocityCurve::kNormal);
+    velora::sysdctl::Connection ctl;
+    std::string err;
+    ws::v1::ConfigReply r;
+    CHECK(ctl.open(sock, err) && ctl.set(curve_patch(ws::v1::VELOCITY_CURVE_LIGHT), r, err));
+    CHECK(tick_until(*e.client, [&] { return e.applied >= 2; }));
+    CHECK(e.reader.velocity_curve() == hc::VelocityCurve::kLight && e.holder.curve() == hc::VelocityCurve::kLight);  // next note, no restart
+    CHECK(ctl.set(curve_patch(ws::v1::VELOCITY_CURVE_FIXED), r, err));
+    CHECK(tick_until(*e.client, [&] { return e.applied >= 3; }));
+    CHECK(e.reader.velocity_curve() == hc::VelocityCurve::kFixed);
+    CHECK(ctl.set(curve_patch(ws::v1::VELOCITY_CURVE_HEAVY), r, err));
+    CHECK(tick_until(*e.client, [&] { return e.applied >= 4; }));
+    CHECK(e.reader.velocity_curve() == hc::VelocityCurve::kHeavy);
+    // an unknown / unspecified value is not applied (the last curve is kept)
+    ws::v1::Config bad;
+    bad.set_velocity_curve(static_cast<ws::v1::VelocityCurve>(99));
+    CHECK(!hc::apply_velocity_curve(bad, e.holder) && e.reader.velocity_curve() == hc::VelocityCurve::kHeavy);
+    CHECK(ctl.set(curve_patch(ws::v1::VELOCITY_CURVE_LIGHT), r, err));
+    CHECK(tick_until(*e.client, [&] { return e.applied >= 5; }));
+    CHECK(e.reader.velocity_curve() == hc::VelocityCurve::kLight);
+  }
+  // reboot: sysd and the engine restart on the same data dir; the persisted curve is restored
+  s.stop();
+  CHECK(s.start(t.path, sock));
+  {
+    Engine e;
+    e.start(sock);
+    CHECK(tick_until(*e.client, [&] { return e.applied >= 1; }));
+    CHECK(e.reader.velocity_curve() == hc::VelocityCurve::kLight && e.holder.curve() == hc::VelocityCurve::kLight);
+  }
+}
+
 // A scripted server: after the handshake and the subscription it sends the given (revision, clock) pushes, then holds the connection open until the test
 // closes it. Used for the revision guard (stale, duplicate, out of order) and for a sysd that restarted with a lower revision.
 struct FakeSysd {
@@ -593,6 +666,7 @@ int main() {
   test_client_sysd_absent_then_appears();
   test_client_revision_guard();
   test_client_never_blocks();
+  test_velocity_curve_via_sysd();
   if (g_fail) {
     std::printf("sysd_socket_tests: %d FAILED\n", g_fail);
     return 1;

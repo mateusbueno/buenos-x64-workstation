@@ -24,6 +24,7 @@
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/clock_follower.hpp"
 #include "velora/host/midi_ingest.hpp"
+#include "velora/host/velocity_curve_holder.hpp"
 #include "ws_v1.pb.h"
 
 namespace velora::host {
@@ -39,6 +40,13 @@ bool clock_source_from_config(ws::v1::ClockSource s, core::ClockSource& out) noe
 // Story 7.7: applies the config's clock source without interrupting sound: the ingest's port filter first (the input edge thread stops forwarding the old
 // port's clock), then the renderer (an atomic; the RT plane resets the follower at its next block, no voice is touched). Control thread. True when it applied.
 bool apply_clock_source(const ws::v1::Config& c, MidiIngest& ingest, core::BlockRenderer& renderer) noexcept;
+
+// Story 3.6: the keybed velocity curve for a sysd value (NORMAL / LIGHT / HEAVY / FIXED). False (and `out` untouched) for UNSPECIFIED or a value this build does not know.
+bool velocity_curve_from_config(ws::v1::VelocityCurve c, VelocityCurve& out) noexcept;
+
+// Story 3.6: applies the config's velocity curve to the holder (and so to every attached keybed reader): effective for the next Note On, no restart, sounding notes
+// unchanged. Control thread. True when it applied (an unknown value keeps the last curve).
+bool apply_velocity_curve(const ws::v1::Config& c, VelocityCurveHolder& holder);
 
 struct SysdConfigClientOptions {
   std::string socket_path;

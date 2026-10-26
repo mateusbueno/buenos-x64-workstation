@@ -71,6 +71,10 @@ class SampleEngine final : public Engine {
     // cost; instruments that use filters or CC crossfades still play, and every such voice that starts on an undeclared engine is
     // counted in undeclared_extended_voices() so the under-budgeting is visible.
     bool extended_voices = false;
+    // Story 3.6: release-trigger regions use the Note Off's release velocity (when it is not 0) instead of the note-on velocity, to select the velocity layer
+    // and to scale the gain (velocity squared, as for attacks): a fast key release plays a louder release sample. Off = sfizz behaviour (note-on velocity),
+    // which the null tests need. The host turns it on. No curve is applied here: the keybed reader's velocity chain is the only place that shapes velocity.
+    bool release_velocity_triggers = false;
   };
 
   explicit SampleEngine(const Config& cfg);
@@ -136,6 +140,8 @@ class SampleEngine final : public Engine {
   // had no voice that was still held and no release region fired; kPoolExhausted when a release
   // region found no free voice. Release bookkeeping (velocity, attack voices) is per (channel, note).
   EngineStatus stop_voice(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING override;
+  // Story 3.6: stop_voice() with the Note Off's 16-bit release velocity (see Config::release_velocity_triggers).
+  EngineStatus release_voice(std::uint32_t channel, std::uint32_t note, std::uint32_t release_velocity16) noexcept VELORA_NONBLOCKING override;
   void set_param(std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
   void render(float* left, float* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
   void render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING override;
@@ -219,7 +225,7 @@ class SampleEngine final : public Engine {
   SampleBank* bank_for(std::uint32_t channel) const noexcept {
     return part_bound_[channel & 15u] ? part_bank_[channel & 15u] : default_bank_.get();
   }
-  bool playing_attack_voice(const RegionRt& r, std::uint32_t channel) const noexcept;
+  bool playing_attack_voice(const RegionRt& r, std::uint32_t channel, bool match_velocity = true) const noexcept;
   // Story 5.2 helpers.
   void reset_part_keys(std::uint32_t channel) noexcept;
   bool region_switched(const RegionRt& r, const KeyState& ks) const noexcept;
@@ -247,6 +253,7 @@ class SampleEngine final : public Engine {
   std::array<std::uint64_t, 16 * 128> last_bank_{};  // SampleBank::id (0 = none)
   std::array<std::uint8_t, 16 * 128> last_vel7_{};  // note-on velocity per (channel, note)
   std::array<float, 4096> pan_table_{};
+  EngineStatus stop_voice_impl(std::uint32_t channel, std::uint32_t note, std::uint32_t release_velocity16) noexcept;
   float tr_release_rate_off_ = 0.0f;  // exp rate of the 6 ms fast release
   std::uint64_t rng_ = 1;
   std::uint64_t clock_ = 0;

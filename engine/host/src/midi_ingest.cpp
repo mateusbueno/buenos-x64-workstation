@@ -23,7 +23,7 @@ bool normalise_packet(const std::uint32_t* words, std::size_t count, std::size_t
     if (status == core::Ump::kStatusNoteOn && vel != 0)
       out = core::make_note_on(group, channel, note, scale_velocity_7_to_16(vel));
     else
-      out = core::make_note_off(group, channel, note, scale_velocity_7_to_16(vel));
+      out = core::make_note_off(group, channel, note, 0);  // Story 3.6 policy: an external MIDI 1.0 note off carries no release velocity (see below)
     return true;
   }
   // Channel-mode messages (CC 120-127: all sound off, reset all controllers, local control, all notes off, omni, mono, poly) are not controllers:
@@ -58,7 +58,10 @@ bool normalise_packet(const std::uint32_t* words, std::size_t count, std::size_t
   }
   if (mt == core::Ump::kMessageTypeChannelVoice2 &&
       (status == core::Ump::kStatusNoteOn || status == core::Ump::kStatusNoteOff)) {
-    out = core::Ump{w0, words[1]};
+    // Story 3.6 policy (to revisit): the release velocity of an external note off is dropped (0 = "none measured"), whether MIDI 1.0 (the common default 64,
+    // or a note on with velocity 0) or MIDI 2.0, so the sample engine's release-velocity option (SampleEngine::Config::release_velocity_triggers) only reacts to the
+    // keybed reader's Note Off, which does not pass through here.
+    out = core::Ump{w0, status == core::Ump::kStatusNoteOff ? (words[1] & 0xFFFFu) : words[1]};
     return true;
   }
   return false;

@@ -495,7 +495,7 @@ void BlockRenderer::apply_part_note(std::uint32_t channel, std::uint32_t note, s
     // In a Live Set the voices hold their bank by raw pointer, so any voice that started (even if a later region found no slot) binds the generation.
     if (st == EngineStatus::kOk || router_.active()) bind_generation(channel, note);
   } else if (stop_now) {
-    const EngineStatus st = engine->stop_voice(channel, note);
+    const EngineStatus st = engine->release_voice(channel, note, velocity16);
     const bool was_stolen = arbiter_.take_stolen_flag(channel, note);
     if (st == EngineStatus::kVoiceNotFound && was_stolen) ++stolen_note_offs_;
     else record(st);

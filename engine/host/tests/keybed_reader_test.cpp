@@ -134,9 +134,9 @@ void test_three_contact() {
     CHECK(v[1].kind == Kind::kContactClosed && v[1].k == 2);
     CHECK(v[2].kind == Kind::kContactClosed && v[2].k == 3);
     CHECK(v[3].kind == Kind::kNoteOn && v[3].note == 38 && v[3].ns == v[2].ns);
-    // travel time contact 1 -> 3 = 40 ms: linear velocity between 2 ms (65535) and 100 ms (512)
-    LinearVelocityMapper m;
-    CHECK(std::llabs(static_cast<long long>(v[3].vel) - static_cast<long long>(m.velocity16(40 * kMs))) < 40);
+    // travel time contact 1 -> 3 = 40 ms: Story 3.6 chain (the table's 2..100 ms log axis, Normal curve), no longer the linear 3.5 mapper
+    const VelocityRange vr = t3.velocity_range();
+    CHECK(std::llabs(static_cast<long long>(v[3].vel) - static_cast<long long>(chain_velocity16(vr, VelocityCurve::kNormal, kFixedVelocity7, 40 * kMs))) < 40);
     CHECK(v[3].vel < 65535 && v[3].vel > 512);
     CHECK(v[4].kind == Kind::kContactOpen && v[4].k == 3);
     CHECK(v[5].kind == Kind::kNoteOff && v[5].note == 38);
@@ -616,18 +616,23 @@ void test_duplicate_close_and_retrigger() {
     r.key(8, 0, true, t + 10 * kMs);
     r.key(8, 1, true, t + 20 * kMs);
     r.key(8, 2, true, t + 30 * kMs);
-    r.key(8, 2, false, t + 2 * kSec);  // Note Off, contacts 1 and 2 still closed
-    CHECK(!r.reader->key_sounding(8) && r.reader->key_mask(8) == 3);
+    r.key(8, 2, false, t + 2 * kSec);  // contacts 1 and 2 still closed: Story 3.6 waits for the release pair (3 -> 2), the Note Off is not out yet
+    CHECK(r.reader->key_sounding(8) && r.reader->key_mask(8) == 3);
     r.out.ev.clear();
-    r.key(8, 2, true, t + 2 * kSec + 30 * kMs);
+    r.key(8, 2, true, t + 2 * kSec + 30 * kMs);  // the original 3.5 scenario: re-strike 30 ms after the open, inside the release window
     const auto v = decode_all(r.out);
-    CHECK(v.size() == 2 && v[0].kind == Kind::kContactClosed && v[1].kind == Kind::kNoteOn);
-    LinearVelocityMapper m;
-    if (v.size() == 2) CHECK(std::llabs(static_cast<long long>(v[1].vel) - static_cast<long long>(m.velocity16(30 * kMs))) < 40);
+    // changed in 3.6: the Note Off now goes out first (release velocity from the 30 ms so far), then contact 3 closing, then the Note On
+    CHECK(v.size() == 3 && v[0].kind == Kind::kNoteOff && v[1].kind == Kind::kContactClosed && v[2].kind == Kind::kNoteOn);
+    CHECK(r.reader->counters().release_restrikes == 1 && r.reader->counters().release_timeouts == 0 && r.reader->counters().clock_clamps == 0);
+    CHECK(!r.out.ev.empty() && std::llabs(static_cast<long long>(r.out.ev[0].ump.velocity16()) -
+                                          static_cast<long long>(chain_velocity16(t3.release_range(), VelocityCurve::kNormal, kFixedVelocity7, 30 * kMs))) < 40);  // release velocity from 30 ms
+    const VelocityRange vr = t3.velocity_range();
+    auto chain = [&](std::uint64_t dt) { return chain_velocity16(vr, VelocityCurve::kNormal, kFixedVelocity7, dt); };
+    if (v.size() == 3) CHECK(std::llabs(static_cast<long long>(v[2].vel) - static_cast<long long>(chain(30 * kMs))) < 40);
     CHECK(r.reader->counters().velocity_fallbacks == 0);
     // a re-strike after a full release is timed from the new first-contact closing
     r.key(8, 2, false, t + 3 * kSec);
-    r.key(8, 1, false, t + 3 * kSec + 5 * kMs);
+    r.key(8, 1, false, t + 3 * kSec + 5 * kMs);  // the pair completes: Note Off with a fast release velocity
     r.key(8, 0, false, t + 3 * kSec + 10 * kMs);
     r.out.ev.clear();
     r.key(8, 0, true, t + 4 * kSec);
@@ -635,7 +640,25 @@ void test_duplicate_close_and_retrigger() {
     r.key(8, 2, true, t + 4 * kSec + 20 * kMs);
     const auto w = decode_all(r.out);
     CHECK(w.size() == 4 && w[3].kind == Kind::kNoteOn);
-    if (w.size() == 4) CHECK(std::llabs(static_cast<long long>(w[3].vel) - static_cast<long long>(m.velocity16(20 * kMs))) < 40);
+    if (w.size() == 4) CHECK(std::llabs(static_cast<long long>(w[3].vel) - static_cast<long long>(chain(20 * kMs))) < 40);
+  }
+  {  // partial release left alone past the slowest release time (poll), then a re-strike 90 ms after the open: timed from that open
+    Rig r(t3);
+    const std::uint64_t t = r.host0;
+    r.key(8, 0, true, t + 10 * kMs);
+    r.key(8, 1, true, t + 20 * kMs);
+    r.key(8, 2, true, t + 30 * kMs);
+    r.key(8, 2, false, t + 2 * kSec);
+    r.reader->poll(t + 2 * kSec + 85 * kMs);  // the slowest release time has passed: the Note Off goes out at the slowest release velocity
+    drain(r.q, r.out);
+    CHECK(!r.reader->key_sounding(8) && r.reader->counters().release_timeouts == 1 && r.reader->counters().release_restrikes == 0);
+    r.out.ev.clear();
+    r.key(8, 2, true, t + 2 * kSec + 90 * kMs);
+    const auto v = decode_all(r.out);
+    CHECK(v.size() == 2 && v[0].kind == Kind::kContactClosed && v[1].kind == Kind::kNoteOn);
+    const VelocityRange vr = t3.velocity_range();
+    if (v.size() == 2) CHECK(std::llabs(static_cast<long long>(v[1].vel) - static_cast<long long>(chain_velocity16(vr, VelocityCurve::kNormal, kFixedVelocity7, 90 * kMs))) < 40);
+    CHECK(v.size() == 2 && v[1].vel > 512 && v[1].vel < 6000);
   }
   {  // only the velocity-completing contact is seen (the first one's frame was lost): slowest velocity, counted
     Rig r(t3);

@@ -31,6 +31,22 @@ bool apply_clock_source(const ws::v1::Config& c, MidiIngest& ingest, core::Block
   return true;
 }
 
+bool velocity_curve_from_config(ws::v1::VelocityCurve c, VelocityCurve& out) noexcept {
+  switch (c) {
+    case ws::v1::VELOCITY_CURVE_NORMAL: out = VelocityCurve::kNormal; return true;
+    case ws::v1::VELOCITY_CURVE_LIGHT: out = VelocityCurve::kLight; return true;
+    case ws::v1::VELOCITY_CURVE_HEAVY: out = VelocityCurve::kHeavy; return true;
+    case ws::v1::VELOCITY_CURVE_FIXED: out = VelocityCurve::kFixed; return true;
+    default: return false;
+  }
+}
+
+bool apply_velocity_curve(const ws::v1::Config& c, VelocityCurveHolder& holder) {
+  VelocityCurve vc;
+  if (!velocity_curve_from_config(c.velocity_curve(), vc)) return false;
+  if (holder.curve() != vc) holder.set(vc);
+  return true;
+}
 
 namespace {
 

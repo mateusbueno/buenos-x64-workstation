@@ -485,11 +485,11 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   return true;
 }
 
-bool SampleEngine::playing_attack_voice(const RegionRt& r, std::uint32_t channel) const noexcept {
+bool SampleEngine::playing_attack_voice(const RegionRt& r, std::uint32_t channel, bool match_velocity) const noexcept {
   // sfizz rule: a release region only fires while an attack voice of a compatible note is alive.
   for (const auto& v : voices_) {
     if (v.active && !v.stolen && !v.release_trigger && v.channel == channel && v.note >= r.d.key_lo && v.note <= r.d.key_hi &&
-        v.vel7 >= r.d.vel_lo && v.vel7 <= r.d.vel_hi)
+        (!match_velocity || (v.vel7 >= r.d.vel_lo && v.vel7 <= r.d.vel_hi)))
       return true;
   }
   return false;
@@ -539,7 +539,13 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
   return exhausted ? EngineStatus::kPoolExhausted : EngineStatus::kOk;
 }
 
-EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note) noexcept {
+EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note) noexcept { return stop_voice_impl(channel, note, 0); }
+
+EngineStatus SampleEngine::release_voice(std::uint32_t channel, std::uint32_t note, std::uint32_t release_velocity16) noexcept {
+  return stop_voice_impl(channel, note, release_velocity16);
+}
+
+EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t note, std::uint32_t release_velocity16) noexcept {
   if (note > 127) return EngineStatus::kVoiceNotFound;
   channel &= 15u;
   // Only a physical note off clears a held key (key_released()): this call also comes from the sustain pedal's deferred release, when the key
@@ -559,7 +565,13 @@ EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note)
 
   // Release-trigger regions: the note-on velocity, a fresh random draw.
   const float rnd = next_random();
-  const std::uint8_t vel7 = last_vel7_[(channel & 15u) * 128u + note];
+  std::uint8_t vel7 = last_vel7_[(channel & 15u) * 128u + note];
+  const bool by_release_velocity = cfg_.release_velocity_triggers && release_velocity16 != 0;
+  if (by_release_velocity) {  // Story 3.6: the measured release velocity (same 16 -> 7 bit rounding as the note on)
+    const std::uint32_t rv = std::min<std::uint32_t>(release_velocity16, 65535u);
+    vel7 = static_cast<std::uint8_t>((rv * 127u + 32767u) / 65535u);
+    if (vel7 == 0) vel7 = 1;
+  }
   bool exhausted = false;
   SampleBank* bank = bank_for(channel);
   const std::uint64_t started_on = last_bank_[(channel & 15u) * 128u + note];
@@ -572,7 +584,7 @@ EngineStatus SampleEngine::stop_voice(std::uint32_t channel, std::uint32_t note)
     if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
-    if (!playing_attack_voice(r, channel)) continue;
+    if (!playing_attack_voice(r, channel, !by_release_velocity)) continue;  // by release velocity: the layer is chosen by it, the attack voice only has to be alive
     if (!r.playable) {
       ++skipped_unplayable_;
       continue;
