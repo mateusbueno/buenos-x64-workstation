@@ -1,0 +1,72 @@
+name: yocto
+# Story 1.4. Manual-only, like ci.yml (Actions minutes are limited): Actions tab > Run workflow.
+# The image build needs a Linux runner with >= 100 GB free disk (GitHub-hosted ubuntu-latest does NOT have that) and the
+# Yocto host packages. The build job therefore runs INSIDE the validation Docker image (yocto/docker/Dockerfile), which has
+# them, so the runner only needs Docker. This workflow has not been run yet.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner for the build job with >= 100 GB free disk and Docker: a label, or a JSON array like ["self-hosted","linux"]'
+        required: true
+      ssh_public_key:
+        description: 'Optional PUBLIC key installed for root SSH in the dev image (never a private key)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse and licence-policy validation (Docker, no image build)
+        run: bash yocto/ci/validate.sh
+
+  build:
+    needs: validate
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    timeout-minutes: 600
+    env:
+      KAS_WORK_DIR: /work
+      KAS_BUILD_DIR: /work/.yocto-work/build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check free disk
+        run: |
+          df -h .
+          avail=$(df --output=avail -BG . | tail -1 | tr -dc 0-9)
+          [ "$avail" -ge 100 ] || { echo "need >= 100 GB free, have ${avail} GB"; exit 1; }
+      - name: Build dev image (in the Yocto host Docker image)
+        env:
+          SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key }}
+        run: |
+          docker build -t velora-yocto-build yocto/docker
+          mkdir -p .yocto-work && chmod 777 .yocto-work
+          CFG=yocto/kas/velora-dev.yml
+          if [ -n "$SSH_PUBLIC_KEY" ]; then
+            printf '%s\n' "$SSH_PUBLIC_KEY" > .yocto-work/authorized_keys
+            bash yocto/ci/make-ssh-overlay.sh /work /work/.yocto-work/authorized_keys .yocto-work/kas-ssh.yml
+            CFG=.yocto-work/kas-ssh.yml
+          fi
+          # repo mounted at /work; clones and build output land in .yocto-work (git-ignored)
+          docker run --rm -u root -e KAS_WORK_DIR -e KAS_BUILD_DIR -v "$PWD":/work -w /work velora-yocto-build \
+            bash -c "chown -R builder:builder /work/.yocto-work && su builder -c 'cd /work && kas build $CFG'"
+      - name: Collect image and licence manifest
+        run: |
+          B=.yocto-work/build/tmp/deploy
+          mkdir -p out
+          wic=$(ls "$B"/images/rock-5b/velora-image-dev-rock-5b.rootfs-*.wic* 2>/dev/null | grep -v '\.bmap$' | head -1)
+          [ -n "$wic" ] || { echo "no resolved .wic image under $B/images/rock-5b"; ls -l "$B"/images/rock-5b || true; exit 1; }
+          cp "$wic" out/
+          lic=$(find "$B/licenses" -name license.manifest -path '*velora-image-dev*' | head -1)
+          [ -n "$lic" ] || { echo "no license.manifest for velora-image-dev"; exit 1; }
+          cp "$lic" out/license.manifest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velora-image-dev
+          path: out/
+          if-no-files-found: error
+          retention-days: 14

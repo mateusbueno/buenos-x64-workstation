@@ -1,0 +1,6 @@
+# Dev image only: DHCP on wired ethernet so the board is reachable over SSH.
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes

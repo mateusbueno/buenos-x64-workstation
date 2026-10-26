@@ -13,3 +13,7 @@ __pycache__/
 /desktop/src-tauri/gen/
 node_modules/
 
+# Story 1.4: Yocto layer clones and build output (KAS_BUILD_DIR=$PWD/.yocto-work/build), kas venv, CI artifact staging
+/.yocto-work/
+/.kas-venv/
+/out/

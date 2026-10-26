@@ -1,0 +1,8 @@
+# Overlay used only by yocto/ci/validate.sh: adds the policy-test layer (GPL-3.0/LGPL-3.0/AGPL-3.0/GPL-2.0 recipes and test images).
+header:
+  version: 14
+  includes:
+    - ../kas/velora-dev.yml
+repos:
+  meta-velora-test:
+    path: yocto/ci/test-layer/meta-velora-test

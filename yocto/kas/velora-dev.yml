@@ -1,0 +1,65 @@
+# Story 1.4: kas project file for the Velora dev image. Run from the repository root:
+#   KAS_WORK_DIR=$PWD kas build yocto/kas/velora-dev.yml     (real build: Linux host, >=100 GB disk)
+# Every layer is pinned to a commit that was verified on its Wrynose branch (see yocto/README.md for how to update).
+header:
+  version: 14
+
+machine: rock-5b          # TODO: closest mainline RK3588 board in meta-rockchip to the ROCK 5B+ class dev board; see README
+distro: velora
+target: velora-image-dev
+
+# Clones and build output stay in a git-ignored directory.
+build_system: openembedded
+
+repos:
+  bitbake:
+    url: https://git.openembedded.org/bitbake
+    path: .yocto-work/layers/bitbake
+    branch: "2.18"
+    commit: 6e260eb6ab1631607ea414d9ff8ede1155faa5d9
+    layers:
+      .: excluded
+
+  openembedded-core:
+    url: https://git.openembedded.org/openembedded-core
+    path: .yocto-work/layers/openembedded-core
+    branch: wrynose
+    commit: 884a91e689d545238cfabd7926c93663950ca286
+    layers:
+      meta:
+
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    path: .yocto-work/layers/meta-openembedded
+    branch: wrynose
+    commit: f28a144aa0a0ae05ca2ee91e1aef6aa05f6a12db
+    layers:
+      meta-oe:
+
+  meta-arm:
+    url: https://git.yoctoproject.org/meta-arm
+    path: .yocto-work/layers/meta-arm
+    branch: wrynose
+    commit: 673e8d7c5dcd14de58092eb73e6ecc5eee5c1735
+    layers:
+      meta-arm:
+      meta-arm-toolchain:
+
+  meta-rockchip:
+    url: https://git.yoctoproject.org/meta-rockchip
+    path: .yocto-work/layers/meta-rockchip
+    branch: wrynose
+    commit: 9d02575bfd9ca5e87c394f593f2bbdbdee914d4e
+
+  meta-velora:
+    path: yocto/meta-velora
+
+local_conf_header:
+  velora-dev: |
+    # Dev image only. Provide a public key for SSH access: VELORA_DEV_AUTHORIZED_KEYS_FILE = "/path/to/id_ed25519.pub"
+    BB_NUMBER_THREADS ?= "${@oe.utils.cpu_count()}"
+    PARALLEL_MAKE ?= "-j ${@oe.utils.cpu_count()}"
+    # image + license manifest are published by .github/workflows/yocto.yml
+    COPY_LIC_MANIFEST = "1"
+    COPY_LIC_DIRS = "1"
+    INHERIT += "rm_work"
