@@ -1614,7 +1614,34 @@ static void test_slow_subscriber_is_dropped() {
   CHECK(eof);
 }
 
+// Story 9.9: ClientMessage.base_revision is accepted on edit commands, recorded and IGNORED (no stale-revision rejection before Story 9.10); 0 = not provided.
+static void test_base_revision_is_recorded_and_ignored() {
+  Rig rig;
+  CHECK(rig.load("{}"));
+  bool changed = false;
+  CHECK(rig.plane.last_base_revision() == 0 && rig.plane.base_revision_edits() == 0);
+  ws::v1::ClientMessage m;
+  m.set_request_id(++g_rid);
+  m.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_SEND_REVERB_MASTER);
+  m.mutable_set_performance_param()->set_value(0.25f);
+  CHECK(rig.plane.handle(m, changed).has_ack());  // not provided: accepted as before
+  CHECK(rig.plane.base_revision_edits() == 0);
+  m.set_request_id(++g_rid);
+  m.set_base_revision(7);  // far below the plane's current revision: still accepted (ignored until 9.10)
+  const ws::v1::ServerMessage r = rig.plane.handle(m, changed);
+  CHECK(r.has_ack() && r.request_id() == m.request_id());
+  CHECK(rig.plane.last_base_revision() == 7 && rig.plane.base_revision_edits() == 1);
+  m.set_base_revision(1ull << 40);  // a revision from the future: accepted too
+  CHECK(rig.plane.handle(m, changed).has_ack() && rig.plane.base_revision_edits() == 2);
+  ws::v1::ClientMessage g;
+  g.set_request_id(++g_rid);
+  g.set_base_revision(9);  // a read does not count as an edit
+  g.mutable_get_state();
+  CHECK(rig.plane.handle(g, changed).has_state() && rig.plane.base_revision_edits() == 2);
+}
+
 int main() {
+  test_base_revision_is_recorded_and_ignored();
   test_dev_config();
   test_handshake();
   test_structural_commands();

@@ -28,7 +28,9 @@ Role: the single owner of parameter ids and of the `ws.v1` wire schema (Story 2.
 - `category.proto` -- the 17 instrument categories plus the explicit `CATEGORY_NONE` sentinel (Story 5.5; package `velora.library.v1`; ids 1..17 stable, grow by addition only,
   none is never stored on an instrument). Hand maintained next to its C++ twin `formatlib/include/velora/format/category.hpp`; see `formatlib/README.md` ("Categories and locale catalog").
 - `library_api.proto` -- the Library API of the `librarian` service (Story 4.11; package `ws.v1`, same conventions as `ws_v1.proto`). Messages whose name exists in `ws_v1.proto` carry a `Library` prefix (`LibraryHello`, `LibraryHelloAck`, `LibraryError`, `LibrarySubscribe`, `LibraryState`, `LibraryAck`) so both files link into one program; the envelope is `LibraryClientMessage` / `LibraryServerMessage`. Built as `velora_library_api` (protobuf only). Semantics: `librarian/README.md`. Story 5.6 adds, additively, the libraries catalog and import API: `ImportRequest` / `ImportAccepted` / `ImportProgress` (push) / `CancelImport` / `ImportStatusRequest`, `ListLibraries` / `LibraryList`, `ListInstruments` / `InstrumentList`, the enums `ImportState`, `ImportItemStatus`, `ImportReason`, and the error codes `CATEGORY_REQUIRED` (10), `INVALID_SOURCE` (11), `QUEUE_FULL` (12), `UNKNOWN_JOB` (13), `UNKNOWN_LIBRARY` (14), `SHUTTING_DOWN` (15); `category` in `ImportItem` / `ImportInstrumentOverride` is `optional` so that a missing category (reason `missing`) and an explicit 0 (reason `none`) are told apart; the handshake features gain `import.v1` and `catalog.v2`. Category fields are the numeric ids of `category.proto` (1..17; 0 is never accepted for an import).
-- `tests/test_gen_params.py` -- ctest `params_generator_tests`: runs the generator on bad definitions and checks determinism.
+- `gen_params.py --desktop desktop/src/params_registry.js` (Story 9.9) -- the registry as an ES module for Velora Studio's Part Editor. Unlike the other outputs it IS committed (the webview has no build step): `tests/test_gen_params.py`
+  (ctest `params_generator_tests`) regenerates it and fails when `desktop/src/params_registry.js` differs ("stale: regenerate it"). See "Part Editor grouping" below.
+- `tests/test_gen_params.py` -- ctest `params_generator_tests`: runs the generator on bad definitions and checks determinism and the desktop registry drift.
 
 ## Parameter classes
 
@@ -46,6 +48,39 @@ reverb send 91, delay send 94); the CC's channel is the part (0..7).
 `ERROR_CODE_NO_SUCH_SCENE` (16) and `ERROR_CODE_NO_LIVE_SET` (17, Story 4.4): `RecallScene` for a scene the loaded Live Set does not have, and any scene command with no Live Set loaded (`NextScene` / `PreviousScene` at the ends are not errors: `SceneReply` carries `AT_LAST` / `AT_FIRST`). Story 4.4 also adds the commands `RecallScene`, `NextScene`, `PreviousScene`, the reply `SceneReply` and the read fields `State.live_set_loaded`, `State.current_scene`, `State.scene_count`, `PerformanceValues.current_scene` (all additive).
 
 `ERROR_CODE_FX_BUDGET_EXCEEDED` (15, Story 2.7): a structural command whose insert chains, sends and master would cost more than the FX budget reserved by the arbiter.
+
+## Part Editor grouping (Story 9.9)
+
+Velora Studio's Part Editor draws every parameter of the selected part from `desktop/src/params_registry.js`, so a parameter added to `params.json` shows up with no UI code. Where it shows is DERIVED
+from the registry data by `derive_ui(p)` in `gen_params.py` (no per-parameter UI table), as three fields on each emitted entry:
+
+| field | values | rule (first match wins; names are the registry's) |
+|---|---|---|
+| `section` | `sound` `amp_eq` `effects` `zone` `master` `hidden` | master scope -> `master` (not in the part editor); insert scope, `part_output`, `send_*` -> `effects`; `arp_*` -> `zone`; `part_attack`, `part_release`, `part_eq_*` -> `amp_eq`; `timbre_ref` -> `hidden`; everything else -> `sound` |
+| `engine` | `any` `organ` `fm` `va` | `drawbar_*`, `percussion_*`, `vibrato_chorus_*`, `key_click`, `leakage`, `rotary_*` -> `organ`; `fm_*` -> `fm`; `va_*` -> `va`; the rest `any` (a sample part and an unknown engine show only `any`) |
+| `group` | dotted id | the card: `organ.drawbars` / `.percussion` / `.vibrato` / `.tone` / `.rotary`, `fm.algorithm` / `fm.lfo` / `fm.pitch_env` / `fm.op1`..`fm.op6`, `va.osc` / `.mixer` / `.filter` / `.envelopes` / `.lfo` / `.voice`, `amp.env`, `amp.eq`, `fx.sends`, `fx.output`, `fx.insert`, `zone.arp`, `sound.main`; its title is the locale key `studio.group.<group>` |
+
+`hideEngines` (list) names engines whose editor does not show the parameter (`part_attack` / `part_release` for `va`, which has `va_amp_*`; those sit in `amp_eq` / `amp.env`). The VA oscillators are `va.osc1`, `va.osc2`, `va.sub`, `va.noise`; `fm_algorithm` / `fm_feedback` are `fm.algorithm`, the other FM globals `fm.global`. A parameter no rule knows lands in `sound` / `any` / `other`. An optional `"ui": {"section", "engine", "group"}` on a `params.json` entry overrides any of the three (the generator validates it: bad section / engine,
+a group that is not a dotted lowercase id, or an unknown key fails with the parameter named). The labels are locale keys: `studio.param.<name>` (operator / oscillator numbers are folded: `studio.param.fm_op_freq_fine`),
+else the entry's `locale_key` (the FM / VA strings of Story 12.13), else the name; enum values are `studio.enum.<enum>.<value>` (all in `locale/*.json`, embedded in `desktop/src/catalogs.js`).
+
+### Edits from Studio (Story 9.9)
+
+`ClientMessage.base_revision = 2` (additive, `uint64`, 0 = not provided): the State revision the client's view was built on when it made an edit. The engine records it for edit commands (`ControlPlane::last_base_revision()` /
+`base_revision_edits()`) and IGNORES it: the `STALE_REVISION` rejection and the live-edit banner are Story 9.10. The bridge forwards it untouched. Which command a Studio knob sends (the code is `desktop/src/part_editor.js`, `commandKind`
+and `requests`; the bridge's message table already allows every one for a paired client, feature `params.v1` / `liveset.v1`):
+
+| registry class / scope or control | command | notes |
+|---|---|---|
+| performance / part (all but the two sends) | `SetPerformanceParam {param_id, part, value}` | queued as a timestamped UMP (applied at the next block when audio runs; only the organ engine consumes part parameters today), not saved; read back with `GetPerformanceValues` |
+| `send_reverb_level`, `send_delay_level` | `SetPerformanceParam` (the live value, shown) AND `SetSendLevels {part, reverb, delay}` | the second is structural (a generation; persists, marks the Live Set dirty); both levels are sent |
+| `part_output` | `SetPartOutput {part, output}` | |
+| insert type / bypass / `insert_param_N`, add / remove / reorder | `SetInsertChain {part, slots}` | always the FULL chain |
+| part volume (not a registry parameter) | `SetPartVolume {part, volume}` | |
+| ASSIGN K1..K8 | `SetAssignSlot {target: CURRENT_LIVE_SET, slot, param_id}` / `ClearAssignSlot {target, slot}` | only `assignable` performance parameters |
+| master scope (not shown in the part editor) | `SetMasterParams` (structural) / `SetPerformanceParam` (performance) | mapped in `commandKind`, no UI yet |
+| `arp_*`, low / high key, keyboard on/off, octave, transpose | **none** | no engine command: shown read-only with a reason, DEFERRED. Minimal additive commands: `SetPartZone {part, optional low_key, high_key, octave, transpose, keyboard_on}` and `SetPartArp {part, arp_*}` (structural), with `PartState` fields for octave, transpose and the arp |
+| `timbre_ref` | none here | the timbre picker is Story 9.11 |
 
 ## Key contact events (`contact_k`, Story 2.5)
 

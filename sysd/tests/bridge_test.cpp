@@ -277,9 +277,16 @@ struct FakeUds {
 };
 
 // The engine fake: GetState -> State(revision 7, current_scene 3); Subscribe -> Ack + State push; anything else -> Ack.
+std::atomic<std::uint64_t> g_seen_base_revision{0};  // Story 9.9: the base_revision of the last edit the fake engine saw
+std::atomic<int> g_seen_base_count{0};
+
 void engine_handler(const std::string& payload, std::vector<std::string>& replies) {
   ws::v1::ClientMessage m;
   m.ParseFromString(payload);
+  if (m.base_revision() != 0) {
+    g_seen_base_revision = m.base_revision();
+    ++g_seen_base_count;
+  }
   ws::v1::ServerMessage r;
   r.set_request_id(m.request_id());
   r.set_revision(7);
@@ -1218,6 +1225,61 @@ void test_live_set_view_is_a_paired_read() {
   CHECK(eng.received.load() == 1);  // nothing more reached the engine
 }
 
+// Story 9.9: every edit command the Part Editor sends passes the bridge for a paired client with ClientMessage.base_revision intact (the envelope field the engine records
+// and ignores until Story 9.10), and a message without it reaches the engine with 0 as before.
+void test_part_editor_edits_carry_base_revision() {
+  Rig r;
+  FakeUds eng;
+  eng.start(r.tmp.path + "/e.sock", false);
+  eng.handler = engine_handler;
+  r.window->open("515151");
+  CHECK(r.start([&](sd::BridgeOptions& o) { o.engine_socket = eng.path; }));
+  Client c;
+  CHECK(c.connect_to(r.port()));
+  c.hello(kAll, "mac-edit");
+  CHECK(!pair_with(c, "515151").empty());
+  g_seen_base_count = 0;
+  auto edit = [&](ws::v1::ClientMessage m, std::uint64_t base) {
+    m.set_request_id(900 + static_cast<std::uint64_t>(g_seen_base_count.load()));
+    m.set_base_revision(base);
+    const int before = g_seen_base_count.load();
+    c.send(m);
+    ws::v1::ServerMessage rep;
+    CHECK(c.recv(rep) == 1 && rep.has_ack());
+    CHECK(g_seen_base_count.load() == before + 1 && g_seen_base_revision.load() == base);
+  };
+  ws::v1::ClientMessage m;
+  m.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_DRAWBAR_8);
+  edit(m, 11);
+  m.Clear();
+  m.mutable_set_send_levels()->set_part(1);
+  edit(m, 12);
+  m.Clear();
+  m.mutable_set_part_output()->set_part(1);
+  edit(m, 13);
+  m.Clear();
+  m.mutable_set_insert_chain()->add_slots()->set_type(ws::v1::INSERT_TYPE_ROTARY);
+  edit(m, 14);
+  m.Clear();
+  m.mutable_set_part_volume()->set_volume(0.5f);
+  edit(m, 15);
+  m.Clear();
+  m.mutable_set_master_params();
+  edit(m, 16);
+  m.Clear();
+  m.mutable_set_assign_slot()->set_slot(1);
+  edit(m, 17);
+  m.Clear();
+  m.mutable_clear_assign_slot()->set_slot(1);
+  edit(m, (1ull << 40) + 5);  // a big revision survives the 64-bit field
+  m.Clear();
+  m.mutable_get_state();
+  c.send(m);  // a message without base_revision: not counted
+  ws::v1::ServerMessage rep;
+  CHECK(c.recv(rep) == 1 && rep.has_state());
+  CHECK(g_seen_base_count.load() == 8);
+}
+
 int main() {
   ::signal(SIGPIPE, SIG_IGN);
   test_pairing_window_unit();
@@ -1235,6 +1297,7 @@ int main() {
   test_config_in_process_and_shared_service();
   test_message_tables_are_total();
   test_live_set_view_is_a_paired_read();
+  test_part_editor_edits_carry_base_revision();
   test_unpaired_cap_and_pending_timeout();
   std::printf(g_fail ? "sysd_bridge_tests: FAILED (%d)\n" : "sysd_bridge_tests: ok\n", g_fail);
   return g_fail ? 1 : 0;

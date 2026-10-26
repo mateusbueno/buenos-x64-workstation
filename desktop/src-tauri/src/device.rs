@@ -251,6 +251,7 @@ impl DeviceClient {
         let msg = ClientMessage {
             request_id: 0,
             body: Some(CBody::PairRequest(crate::ws_v1::PairRequest { code: code.to_string(), computer_name: computer_name.to_string() })),
+            ..Default::default()
         };
         let reply = self.request(msg, Duration::from_secs(5))?;
         match reply.body {
@@ -524,6 +525,7 @@ fn hello_message(shared: &Shared, request_id: u64, token: &str) -> ClientMessage
             client_id: shared.client_id.lock().unwrap().clone(),
             pairing_token: token.to_string(),
         })),
+        ..Default::default()
     }
 }
 
@@ -594,7 +596,7 @@ fn run_session(shared: &Arc<Shared>, stop: &Arc<AtomicBool>, rx: &mpsc::Receiver
         let id = *next_id;
         *next_id += 1;
         pending.insert(id, None);
-        write_frame(stream, &ClientMessage { request_id: id, body: Some(body) })
+        write_frame(stream, &ClientMessage { request_id: id, body: Some(body), ..Default::default() })
     };
     if paired {
         if let Err(e) = send_internal(&mut stream, &mut pending, &mut next_id, CBody::Subscribe(crate::ws_v1::Subscribe { enable: true })) {
@@ -940,7 +942,7 @@ mod tests {
     }
 
     fn get_state() -> ClientMessage {
-        ClientMessage { request_id: 0, body: Some(CBody::GetState(crate::ws_v1::GetState {})) }
+        ClientMessage { request_id: 0, body: Some(CBody::GetState(crate::ws_v1::GetState {})), ..Default::default() }
     }
 
     #[test]
@@ -1244,6 +1246,41 @@ mod tests {
         assert_eq!(serde_json::to_value(&e).unwrap()["body"]["Error"]["code"], ErrorCode::NoSuchLiveSet as i32);
     }
 
+    /// Story 9.9: every edit the Part Editor sends, as the JSON the page builds (part_editor.js `requests`, plus `base_revision` on the envelope), maps onto the real
+    /// ClientMessage (the enum fields are numbers, `part` of a master ParamValue is absent), and a message without `base_revision` still parses (0 = not provided).
+    #[test]
+    fn part_editor_edits_map_to_json() {
+        let parse = |v: serde_json::Value| -> ClientMessage { serde_json::from_value(v).expect("the page's JSON must map onto a ClientMessage") };
+        let m = parse(serde_json::json!({"base_revision": 42, "body": {"SetPerformanceParam": {"param_id": 102, "part": 3, "value": 5.0}}}));
+        assert_eq!(m.base_revision, 42);
+        assert!(matches!(m.body, Some(CBody::SetPerformanceParam(ref p)) if p.param_id == 102 && p.part == 3 && p.value == 5.0));
+        assert_eq!(parse(serde_json::json!({"body": {"GetState": {}}})).base_revision, 0);
+        assert!(matches!(parse(serde_json::json!({"body": {"SetSendLevels": {"part": 2, "reverb": 0.5, "delay": 0.25}}})).body, Some(CBody::SetSendLevels(ref s)) if s.part == 2 && s.reverb == 0.5 && s.delay == 0.25));
+        assert!(matches!(parse(serde_json::json!({"body": {"SetPartOutput": {"part": 1, "output": 1}}})).body, Some(CBody::SetPartOutput(ref s)) if s.part == 1 && s.output == 1));
+        assert!(matches!(parse(serde_json::json!({"body": {"SetPartVolume": {"part": 0, "volume": 0.4}}})).body, Some(CBody::SetPartVolume(ref s)) if s.volume == 0.4));
+        assert!(matches!(parse(serde_json::json!({"body": {"SetMasterParams": {"values": [{"param_id": 530, "value": 1.0}]}}})).body, Some(CBody::SetMasterParams(ref s)) if s.values.len() == 1 && s.values[0].part.is_none()));
+        let chain = parse(serde_json::json!({"body": {"SetInsertChain": {"part": 0, "slots": [{"type": 2, "bypass": true, "params": [0.1, 0.2, 0.3, 0.4, 0.5]}, {"type": 4, "bypass": false, "params": [0.5, 0.5, 0.5, 0.5, 0.0]}]}}}));
+        assert!(matches!(chain.body, Some(CBody::SetInsertChain(ref s)) if s.slots.len() == 2 && s.slots[0].r#type == 2 && s.slots[0].bypass && s.slots[0].params.len() == 5 && s.slots[1].r#type == 4));
+        assert!(matches!(parse(serde_json::json!({"body": {"SetAssignSlot": {"target": 1, "slot": 3, "param_id": 100}}})).body, Some(CBody::SetAssignSlot(ref s)) if s.target == 1 && s.slot == 3 && s.param_id == 100));
+        assert!(matches!(parse(serde_json::json!({"body": {"ClearAssignSlot": {"target": 1, "slot": 3}}})).body, Some(CBody::ClearAssignSlot(ref s)) if s.target == 1 && s.slot == 3));
+        assert!(matches!(parse(serde_json::json!({"body": {"GetPerformanceValues": {}}})).body, Some(CBody::GetPerformanceValues(_))));
+        // the live values come back as JSON the page reads: param_id and part numbers, value a float
+        let reply = ServerMessage {
+            request_id: 4,
+            revision: 12,
+            body: Some(SBody::PerformanceValues(crate::ws_v1::PerformanceValues { values: vec![crate::ws_v1::ParamValue { param_id: 102, part: Some(3), value: 5.0 }], ..Default::default() })),
+        };
+        let j = serde_json::to_value(&reply).unwrap();
+        assert_eq!(j["body"]["PerformanceValues"]["values"][0]["param_id"], 102);
+        assert_eq!(j["body"]["PerformanceValues"]["values"][0]["part"], 3);
+        assert_eq!(j["body"]["PerformanceValues"]["values"][0]["value"], 5.0);
+        assert_eq!(j["revision"], 12);
+        // the edit error codes part_editor.js / fake_unit.js use
+        for (c, n) in [(ErrorCode::UnknownParam, 6), (ErrorCode::OutOfRange, 7), (ErrorCode::InvalidPart, 8), (ErrorCode::WrongClass, 9), (ErrorCode::InvalidSlot, 11), (ErrorCode::Busy, 13), (ErrorCode::FxBudgetExceeded, 15), (ErrorCode::NotAssignable, 37)] {
+            assert_eq!(c as i32, n);
+        }
+    }
+
     /// Story 9.13: every setlist command Studio's Setlists view sends, as the JSON the page builds (setlists_view.js `req`), maps onto the real ClientMessage (absent `index`
     /// = append), and the replies it reads (SetlistsReply with tag ids and missing counts, CreatedReply, a typed Error with details) come back as the JSON it parses.
     #[test]
@@ -1336,7 +1373,7 @@ mod tests {
         // Story 9.8: the read-only Live Set view from a real engine: list the Live Sets (GetSetlists with All Live Sets), then read each back. Zero Live Sets or an Error
         // body fails the test (the C++ smoke creates one first, and an engine with a data directory makes its own).
         let lists = c
-            .request(ClientMessage { request_id: 0, body: Some(CBody::GetSetlists(crate::ws_v1::GetSetlists { setlist_id: String::new(), include_all_live_sets: true })) }, Duration::from_secs(5))
+            .request(ClientMessage { request_id: 0, body: Some(CBody::GetSetlists(crate::ws_v1::GetSetlists { setlist_id: String::new(), include_all_live_sets: true })), ..Default::default() }, Duration::from_secs(5))
             .unwrap();
         let l = match lists.body {
             Some(SBody::SetlistsReply(ref l)) => l,
@@ -1347,7 +1384,7 @@ mod tests {
             for first in l.all_live_sets.iter() {
                 let rev_before = c.latest_state().map(|s| s["revision"].clone());
                 let r = c
-                    .request(ClientMessage { request_id: 0, body: Some(CBody::GetLiveSetView(crate::ws_v1::GetLiveSetView { live_set_id: first.live_set_id.clone() })) }, Duration::from_secs(5))
+                    .request(ClientMessage { request_id: 0, body: Some(CBody::GetLiveSetView(crate::ws_v1::GetLiveSetView { live_set_id: first.live_set_id.clone() })), ..Default::default() }, Duration::from_secs(5))
                     .unwrap();
                 match r.body {
                     Some(SBody::LiveSetViewReply(ref v)) => {
@@ -1365,10 +1402,59 @@ mod tests {
             }
         }
         real_setlists_flow(&c);
+        real_part_edit_flow(&c);
         eprintln!("real_bridge_round_trip: status {:?}", c.status());
         c.disconnect();
         let _ = std::fs::remove_dir_all(&dir);
     }
+    /// Story 9.9 against a REAL bridge and engine (called by real_bridge_round_trip with its paired client): the edits the Part Editor sends, as the page's JSON with
+    /// `base_revision` (the engine records and ignores it until Story 9.10). A performance edit is acked (queued for the RT plane) and the live values are readable; the structural
+    /// edits (sends, volume, insert chain) publish a State that shows them; a bad value is a typed error. The ASSIGN slot commands answer an Ack, or NO_LIVE_SET when the smoke
+    /// engine has no Live Set loaded.
+    fn real_part_edit_flow(c: &DeviceClient) {
+        let call = |v: serde_json::Value| -> serde_json::Value {
+            let m: ClientMessage = serde_json::from_value(v).expect("page JSON maps onto a ClientMessage");
+            serde_json::to_value(c.request(m, Duration::from_secs(5)).expect("a reply")).unwrap()
+        };
+        let rev = || c.latest_state().and_then(|s| s["revision"].as_u64()).unwrap_or(0);
+        let live = |param: u64, part: u64| -> Option<f64> {
+            let r = call(serde_json::json!({"body": {"GetPerformanceValues": {}}}));
+            r["body"]["PerformanceValues"]["values"].as_array()?.iter().find(|v| v["param_id"] == param && v["part"] == part).and_then(|v| v["value"].as_f64())
+        };
+        // a performance edit: acked, then the live value is the one sent (the RT plane applies it a block later)
+        let r = call(serde_json::json!({"base_revision": rev(), "body": {"SetPerformanceParam": {"param_id": 102, "part": 0, "value": 5.0}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        // The smoke engine runs --no-audio: no render thread applies the queued event, so the live value stays what it was (the C++ control tests cover RT applying it). What is
+        // checked here is the read-back path the Part Editor uses to confirm a knob: GetPerformanceValues lists the parameter for the part.
+        let before = live(102, 0);
+        assert!(before.is_some(), "GetPerformanceValues does not list drawbar_8 for part 0");
+        // a value outside the registry range, an unknown parameter and a bad part are typed errors (the knob reverts and shows the message)
+        assert_eq!(call(serde_json::json!({"base_revision": rev(), "body": {"SetPerformanceParam": {"param_id": 102, "part": 0, "value": 9.0}}}))["body"]["Error"]["code"], 7);
+        assert_eq!(call(serde_json::json!({"body": {"SetPerformanceParam": {"param_id": 99999, "part": 0, "value": 1.0}}}))["body"]["Error"]["code"], 6);
+        assert_eq!(call(serde_json::json!({"body": {"SetPerformanceParam": {"param_id": 102, "part": 99, "value": 1.0}}}))["body"]["Error"]["code"], 8);
+        assert_eq!(live(102, 0), before, "a refused edit changed nothing");
+        // the structural edits: each publishes a generation and the State shows it
+        let part0 = |field: &str| c.latest_state().map(|s| s["parts"][0][field].clone());
+        let r = call(serde_json::json!({"base_revision": rev(), "body": {"SetSendLevels": {"part": 0, "reverb": 0.5, "delay": 0.25}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert!(wait_for(|| part0("send_reverb") == Some(serde_json::json!(0.5)) && part0("send_delay") == Some(serde_json::json!(0.25))), "the State does not show the sends");
+        let r = call(serde_json::json!({"base_revision": rev(), "body": {"SetPartVolume": {"part": 0, "volume": 0.5}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert!(wait_for(|| part0("volume") == Some(serde_json::json!(0.5))), "the State does not show the volume");
+        let chain = serde_json::json!([{"type": 1, "bypass": false, "params": [0.5, 0.5, 0.5, 0.5, 0.0]}]);
+        let r = call(serde_json::json!({"base_revision": rev(), "body": {"SetInsertChain": {"part": 0, "slots": chain}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert!(wait_for(|| part0("inserts").map(|i| i.as_array().map(|a| a.len()) == Some(1)).unwrap_or(false)), "the State does not show the insert chain");
+        let r = call(serde_json::json!({"body": {"SetInsertChain": {"part": 0, "slots": []}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert_eq!(call(serde_json::json!({"body": {"SetPartVolume": {"part": 0, "volume": 1.5}}}))["body"]["Error"]["code"], 7);
+        // ASSIGN: SetAssignSlot / ClearAssignSlot target the current Live Set
+        let r = call(serde_json::json!({"base_revision": rev(), "body": {"SetAssignSlot": {"target": 1, "slot": 1, "param_id": 102}}}));
+        assert!(r["body"].get("Ack").is_some() || r["body"]["Error"]["code"] == 17, "expected Ack or NO_LIVE_SET, got {}", r);
+        assert_eq!(call(serde_json::json!({"body": {"SetAssignSlot": {"target": 1, "slot": 9, "param_id": 102}}}))["body"]["Error"]["code"].as_u64().map(|c| c == 11 || c == 17), Some(true));
+        eprintln!("real_part_edit_flow: ok");
+    }
+
     /// Story 9.13 against a REAL bridge and engine (called by real_bridge_round_trip with its paired client: the bridge's pairing window closes at the first pairing, so
     /// there is one client): the commands of the Setlists view, sent as the page's JSON, then read back. The setlist it leaves behind ("Studio Smoke Setlist": Studio
     /// Smoke B then Studio Smoke A, tagged "Studio Smoke Tag") is what the C++ smoke checks after restarting the engine.

@@ -554,6 +554,16 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   f.part_cap = part_cap();
   bool ok = false;
   using B = ws::v1::ClientMessage;
+  {
+    // Story 9.9: an edit carries the revision the client's view was built on. Recorded for diagnostics and for Story 9.10, IGNORED here (no stale-revision rejection yet).
+    const auto bc = msg.body_case();
+    const bool is_edit = (bc >= B::kSetInsertChain && bc <= B::kSetPerformanceParam) || bc == B::kSetPartTimbre || bc == B::kSetPartVolume ||
+                         bc == B::kSetAssignSlot || bc == B::kClearAssignSlot;
+    if (is_edit && msg.base_revision() != 0) {
+      last_base_revision_.store(msg.base_revision(), std::memory_order_relaxed);
+      base_revision_edits_.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
   const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;
   const bool switch_cmd = msg.body_case() == B::kJumpToLiveSet || msg.body_case() == B::kCancelLoad;
   const bool setlist_cmd = msg.body_case() >= B::kCreateSetlist && msg.body_case() <= B::kGetSetlists;

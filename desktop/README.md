@@ -125,3 +125,64 @@ Smoke-viewed (not a full visual check) in the browser pane at about 800 px wide,
   empty list (with the error) until the next refresh; `inert` / `aria-hidden` on the page behind a dialog or menu (focus is trapped, screen-reader virtual cursors are not); the `dragleave`
   flicker of the drop indicator in WebKit; a right-click context menu (the keyboard has Alt+M / the context-menu key); bidirectional and zero-width characters in names (the store accepts them,
   the view draws them as given); two announcements in one tick (the live region keeps only the last).
+
+
+## Part Editor with Studio Knobs (Story 9.9)
+
+> **MOST KNOBS ARE STORED BUT NOT AUDIBLE YET (the main deferred engine gap).** The engine stores every registry part parameter (`BlockRenderer::apply_param`) and calls
+> `Engine::set_part_param`, but only `OrganEngine` overrides it: `FmEngine`, `VaEngine` and `SampleEngine` ignore it, and ids 402..408 (`part_brightness`, `part_attack`, `part_release`,
+> `part_eq_*`) are consumed by **no** engine. So edits to FM / VA / sample knobs and the whole **Amp envelope + EQ** section change the *stored* value, and what the read-back
+> (`GetPerformanceValues`) confirms is that stored value, **not the sound**. What takes effect: **organ parameters, the sends, the output, the part volume, the insert chain and ASSIGN.**
+> Each inert knob carries a tooltip / `aria-description` ("No audible effect on this engine yet") driven by `INERT_BY_ENGINE` in `src/part_editor.js` (a small table: remove a row when an
+> engine starts consuming those parameters), and the Amp envelope + EQ section says so in a note. Which engine owns which parameters is for the engine stories to decide.
+
+While the unit is **paired** and a part is selected in the Live Set view, the area below the strips is the real Part Editor (offline / unpaired, the simulated editor of Stories 9.5 / 12.13 is unchanged). Four hairline-divided
+sections, no menus, no tabs: **Sound** (the part volume, then the engine's cards: organ drawbars / percussion / vibrato / tone / rotary, FM algorithm / global / LFO / pitch env / OP 1..6, VA oscillator 1 / oscillator 2 / sub / noise /
+mixer / filter / filter envelope / LFO / voice), **Amp envelope + EQ** (the envelope polyline drawn from attack / decay / sustain / release, then the EQ; a VA part shows its own `va_amp_*` envelope here and not the generic
+attack / release, which are hidden for VA), **Effects inserts + sends** (the insert chain with bypass, reorder, remove and "+ Add insert"; reverb / delay sends; output), **Zone & keyboard · Arpeggiator · Assign** (the zone, the
+arpeggiator, and ASSIGN · KNOBS (THIS LIVE SET): K1..K8 each a select of the assignable parameters). The parameters come from the generated registry: `src/params_registry.js` is generated from `proto/params.json`
+(`python3 proto/gen_params.py --defs proto/params.json --desktop desktop/src/params_registry.js`; `ctest -R params_generator_tests` fails when it is stale) and `proto/README.md` ("Part Editor grouping") says where each parameter
+shows. A parameter added to the registry **is displayed** with no UI code (`tests/part_editor.test.js` adds one to a registry fixture); whether the unit *consumes* it is a separate matter (see the box above).
+
+- **Studio Knobs.** Every parameter is an ARIA `slider` (name, `aria-valuemin` / `max` / `now`, `aria-valuetext` with the unit: "+3.5 dB", "300 ms", "62 %", "On", "Hall"; the visible label and value text are `aria-hidden`
+  so a screen reader says each once). Keys on a focused knob (not with Ctrl / Cmd / Alt): Up / Right +1 step, Down / Left -1, **Shift = 10 steps**, PageUp / PageDown the large step, Home / End min / max, Space toggles a switch,
+  **Enter opens a value entry** (Enter applies, Escape cancels; a value out of range or not a number is told in the editor's polite live region and next to the knob, and the knob keeps its value; units, a decimal comma,
+  "1.5 s", "2k" and enum labels are understood). Pointer: press and drag (up / right raises; the full range is 200 px, Shift makes it 5 times finer, and pressing or releasing Shift mid-drag carries on from the current value;
+  switches, enums and small ranges take 24 px a step). **The wheel changes the knob that has the focus** (scrolling the page over other knobs never changes a value) and accumulates `deltaY` (one step per 100 px, so a trackpad's
+  momentum does not sweep the range). Steps: integers 1, floats about 1 % of the range on a 1-2-5 grid, enums 1, and **time / frequency knobs with a wide range (1..5000 ms, 20..20000 Hz, 200..8000 Hz) a logarithmic grid of 100
+  points** so a 5 ms attack and a 100 Hz cutoff are reachable by keys and drag. **Deviation from the spec:** Tab visits every knob (one tab stop per knob, in the order drawn) instead of a roving order, because the arrow
+  keys change values. Read-only controls are `aria-readonly` with a tooltip reason; a pending value is `aria-busy` with a dashed track (not by colour alone).
+- **Sending.** Every change is a ws.v1 edit carrying `base_revision` (the revision of the State the view shows; the engine records it and ignores it until Story 9.10), mapped to the command table in `proto/README.md` ("Edits from
+  Studio"). A performance edit is **queued** for the RT plane (Ack = queued; it is applied at the next audio block when audio runs). Sends are coalesced per knob: at most one request in flight per knob, at least 30 ms between two (**140 ms for
+  structural edits**: volume, sends, output, insert chain, ASSIGN, each of which publishes a generation and a State push, so a drag cannot fill the 32-slot generation ledger), the latest value wins, and switching part or Live Set
+  drops what is still queued. A send knob sends **both** `SetPerformanceParam` (the live value) and `SetSendLevels` (persists the initial level and marks the Live Set dirty) and **shows the live value** (so a CC or encoder move shows).
+  The knob shows the new value at once (pending) and then **what the unit holds**: a performance edit is confirmed by reading the live values back (`GetPerformanceValues`, float32 noise rounded); a read-back that differs is read
+  again after about 150 ms and 500 ms before it is believed, and the knob then shows what the unit holds with a notice ("did not apply the change"); a structural edit is confirmed by the next State (if none arrives in 0.8 s the State's value is shown, with a notice when it differs). **Under `engine-host --no-audio` there is no render thread, so every performance edit is
+  queued and never applied: the knob snaps back after the re-reads and says so.** A typed error from the unit (or a transport failure) puts the knob back, reads the live values again, and shows the unit's message next to the knob
+  and in the live region. Performance edits are not saved: the Write flow is Story 9.12 (Write to Velora stays disabled, with its text updated); stale-revision enforcement and the live-edit banner are Story 9.10.
+  Frame headroom: a `State` or `PerformanceValues` at 16 parts carries about 190 part parameters x 16 parts of `ParamValue` (about 30-35 KB estimated, not measured) against the 64 KiB ws.v1 frame, so the margin is
+  real but not large; measure it before adding per-part fields.
+- **Only the Live Set that sounds is editable.** The engine has one live graph, so a Live Set that is shown but not playing (or an engine this firmware does not have) is read-only with a banner and a reason on every knob.
+  A Pro unit's 16 parts: the editor edits whichever part is selected, the strips show the first 8 (the existing 16-part note). **ASSIGN (A4):** a part-scope parameter assigned to K1..K8 lands on `State.encoders.selected_part` (the unit's
+  selected part; `SelectPart` is denied over the bridge), not necessarily on the part being edited here.
+- **Deferred (no engine command yet; shown read-only with the reason "The Velora cannot take this edit from Studio yet", listed in `model.deferred`):** the arpeggiator (`arp_on` .. `arp_latch`; the State does not carry
+  their values, so they read "—"), low key, high key, keyboard on/off, octave and transpose (low / high key and keyboard on/off are shown from `PartState`; octave and transpose are not in the State, placeholders use the unit's
+  ranges: transpose -12..12, octave -3..3). The minimal additive commands that would make them editable: `SetPartZone { part, optional low_key, high_key, octave, transpose, keyboard_on }` and `SetPartArp { part, arp_* }` as
+  structural commands, with `PartState` gaining `octave`, `transpose` and the arpeggiator fields. The timbre (`timbre_ref`) is hidden (Story 9.11). Master-scope parameters (global reverb, delay, EQ, compressor, tempo) are not part
+  parameters and are not in this editor.
+- **Layout.** Sizes in rem, token colours only, the global 2 px focus ring. The sections are a CSS grid `repeat(auto-fit, minmax(min(100%, 15.1rem), 1fr))` (rem: it grows with the text size) plus one column when the editor is at most
+  45em of its own font wide; `columnsFor` mirrors it and `tests/part_editor.test.js` computes it for several widths. Nothing relies on `overflow-x: hidden` (the knob grids are `auto-fill` columns of 7.5 rem and every grid item is
+  `min-width: 0`). Measured in the browser pane (1400 px window, editor 1129 px wide, FM and organ parts) with the root font at 16 / 24 / 32 px: 4 / 2 / 1 columns and no element past the editor's right edge (`scrollWidth == clientWidth`); the 1280 px window (editor about 1024 px) was computed by `columnsFor`, not measured. Every string is a locale key in
+  en / es / pt-BR (`studio.part_editor.*`, `studio.knob.*`, `studio.group.*`, `studio.param.*`, `studio.enum.*`; labels the registry already points at are the existing `fm.*` / `va.*` keys, now embedded in `src/catalogs.js`);
+  `tests/part_editor_dom.test.js` checks that every key the modules use exists in all three and that no two sliders share an accessible name. Text that came from the unit (part names, error messages) is only ever `textContent`.
+- **Code.** `src/part_editor.js` (pure: registry views, knob rules, value text and entry, the command table `commandKind` / `requests`, `INERT_BY_ENGINE`, `EditSender` (coalescing), `PartEditorController` (optimistic values,
+  confirm, revert), `buildPartEditorModel`, `envelopePolyline`, `columnsFor`), `src/part_editor_dom.js` (`PartEditorView`: the DOM, in-place updates that keep focus, focus restored by stable id after a rebuild, no rebuild under a drag),
+  wired in `src/app.js` (`partEditorCtl`, `renderRealPartDetails`). Tests: `cd desktop && node --test tests` (`part_editor.test.js` against `tests/support/fake_unit.js`, a stand-in for the engine's edit commands with typed errors,
+  RT latency / no-render modelling (`rtDelay`, `noRender`), initial vs live send levels and per-engine audibility (`consumes`); `part_editor_dom.test.js` with a DOM shim with real focus loss on removal and pointer capture: ARIA,
+  every key, drag, wheel, value entry, read-only, hostile strings, focus after rebuilds); `cargo test part_editor` (the page's JSON for every edit, with `base_revision`, maps onto the real `ClientMessage`);
+  `ctest -R "control|sysd_bridge"` (the engine records `base_revision` and ignores it; the bridge forwards it); `ctest -R engine_host_bridge_studio_smoke` (the real engine through the real bridge with the Rust client).
+- **What the smoke does and does not prove.** It proves the commands the editor sends are accepted over the real bridge (a performance edit is acked and `GetPerformanceValues` lists the parameter; bad values are typed errors; the
+  sends, volume and insert chain edits show up in the State). It does **not** prove an effect on the sound: the smoke engine runs `--no-audio` (no render thread), and the engines consume few parameters anyway (box above).
+  That the RT plane applies a queued edit is covered only by the C++ control tests (`control_test`, `test_performance_path`).
+- **Not verified.** The real Tauri webview, the light theme, a screen reader, a real unit, and the 1280 px window. Browser check without a unit: `python3 desktop/tests/support/serve_mock.py` serves `desktop/` with a paired fake unit
+  (`tests/support/mock_device.js`) and `http://127.0.0.1:8765/src/index.html` shows the real Part Editor (select a part strip; `window.__mockUnit.log` lists what was sent).

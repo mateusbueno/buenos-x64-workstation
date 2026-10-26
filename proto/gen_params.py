@@ -5,12 +5,13 @@ Reads proto/params.json and emits, deterministically (same input -> same bytes):
   core  : a C++ header for engine/core (numeric tables, no names)
   host  : a C++ header for engine/host (names, enum value names)
   proto : ws_v1_params.proto, the `ws.v1` enums (ParamId and one enum per registry enum)
+  desktop : desktop/src/params_registry.js, the ES module Velora Studio's Part Editor renders from (Story 9.9; committed, checked for drift by proto/tests)
 
 Validation (any failure exits non-zero, names the offending ids/params, and writes nothing):
   duplicate id / duplicate name, missing or unknown class, reused reserved id, bad type/scope,
   range/default consistency, enum references, CC number clashes.
 
-Usage: gen_params.py --defs params.json [--core PATH] [--host PATH] [--proto PATH]
+Usage: gen_params.py --defs params.json [--core PATH] [--host PATH] [--proto PATH] [--desktop PATH]
 Python 3 standard library only.
 """
 import argparse
@@ -28,6 +29,9 @@ RESERVED_EVENT_FIRST = 0x3FE0  # ids 0x3FE0..0x3FFF are reserved for the control
 REQUIRED = ("id", "name", "class", "type", "scope", "unit", "default")
 
 
+UI_SECTIONS = ("sound", "amp_eq", "effects", "zone", "master", "hidden")
+UI_ENGINES = ("any", "organ", "fm", "va")
+UI_GROUP_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
 class RegistryError(Exception):
     pass
 
@@ -165,6 +169,20 @@ def load_and_validate(path):
         if asg and p.get("class") in CLASSES and p.get("class") != "performance":
             err(f"{label}: only a performance parameter can be assignable")
         q["assignable"] = bool(p.get("class") == "performance" and asg is not False)
+        ui = p.get("ui")
+        if ui is not None:
+            if not isinstance(ui, dict) or not set(ui) <= {"section", "engine", "group", "hideEngines"}:
+                err(f"{label}: ui must be an object with only section / engine / group / hideEngines")
+            else:
+                if ui.get("section", "sound") not in UI_SECTIONS:
+                    err(f"{label}: ui.section must be one of {UI_SECTIONS}")
+                if ui.get("engine", "any") not in UI_ENGINES:
+                    err(f"{label}: ui.engine must be one of {UI_ENGINES}")
+                he = ui.get("hideEngines", [])
+                if not isinstance(he, list) or any(x not in UI_ENGINES for x in he):
+                    err(f"{label}: ui.hideEngines must be a list of engines {UI_ENGINES}")
+                if not isinstance(ui.get("group", "other"), str) or not UI_GROUP_RE.match(ui.get("group", "other")):
+                    err(f"{label}: ui.group must be a dotted lowercase id")
         t = p["type"]
         if t == "enum":
             en = p.get("enum")
@@ -264,6 +282,107 @@ def load_and_validate(path):
     return {"parts": parts, "slots": slots, "enums": enums, "params": params,
             "perf_part": perf_part, "perf_master": perf_master, "master": master,
             "reserved": sorted(reserved.items())}
+
+
+def derive_ui(p):
+    """Story 9.9: where Studio's Part Editor shows a parameter, from DATA (the rule is documented in proto/README.md "Part Editor grouping"):
+      section  sound | amp_eq | effects | zone | master | hidden
+      engine   any | organ | fm | va      (the engine whose part shows it; `any` = every engine)
+      hideEngines  engines whose editor does NOT show it (part_attack / part_release for va: the VA amp envelope replaces them)
+      group    dotted id of the card it sits in (`organ.drawbars`, `fm.op3`, `va.filter`, `fx.insert`, `zone.arp`, ...), also the stem of its locale key `studio.group.<group>`
+    An explicit `"ui": {"section", "engine", "group"}` in params.json wins (validated in load_and_validate); otherwise the rule below applies. A parameter that no rule
+    knows (a new one) lands in section `sound`, engine `any`, group `other`: it appears in the editor without any hand-written UI."""
+    n, scope = p["name"], p["scope"]
+    ui = {"section": "sound", "engine": "any", "group": "other"}
+    if scope == "master":
+        ui["section"], ui["group"] = "master", "master"
+    elif scope == "insert":
+        ui["section"], ui["group"] = "effects", "fx.insert"
+    elif n == "timbre_ref":
+        ui["section"], ui["group"] = "hidden", "timbre"
+    elif n == "part_output":
+        ui["section"], ui["group"] = "effects", "fx.output"
+    elif n.startswith("send_"):
+        ui["section"], ui["group"] = "effects", "fx.sends"
+    elif n.startswith("arp_"):
+        ui["section"], ui["group"] = "zone", "zone.arp"
+    elif n in ("part_attack", "part_release"):
+        ui["section"], ui["group"] = "amp_eq", "amp.env"
+        ui["hideEngines"] = ["va"]  # the VA part has its own amp envelope (va_amp_*): the generic one is not shown for it
+    elif n.startswith("part_eq_"):
+        ui["section"], ui["group"] = "amp_eq", "amp.eq"
+    elif n.startswith("drawbar_"):
+        ui["engine"], ui["group"] = "organ", "organ.drawbars"
+    elif n.startswith("percussion_"):
+        ui["engine"], ui["group"] = "organ", "organ.percussion"
+    elif n.startswith("vibrato_chorus_"):
+        ui["engine"], ui["group"] = "organ", "organ.vibrato"
+    elif n in ("key_click", "leakage"):
+        ui["engine"], ui["group"] = "organ", "organ.tone"
+    elif n.startswith("rotary_"):
+        ui["engine"], ui["group"] = "organ", "organ.rotary"
+    elif n.startswith("fm_"):
+        ui["engine"] = "fm"
+        m = re.match(r"fm_op([1-6])_", n)
+        if m:
+            ui["group"] = "fm.op" + m.group(1)
+        elif n.startswith("fm_lfo_"):
+            ui["group"] = "fm.lfo"
+        elif n.startswith("fm_pitch_env_"):
+            ui["group"] = "fm.pitch_env"
+        elif n in ("fm_algorithm", "fm_feedback"):
+            ui["group"] = "fm.algorithm"
+        else:
+            ui["group"] = "fm.global"
+    elif n.startswith("va_"):
+        ui["engine"] = "va"
+        m = re.match(r"va_osc([12])_", n)
+        if m:
+            ui["group"] = "va.osc" + m.group(1)
+        elif n.startswith("va_sub_"):
+            ui["group"] = "va.sub"
+        elif n.startswith("va_noise_"):
+            ui["group"] = "va.noise"
+        elif n.startswith("va_mix_"):
+            ui["group"] = "va.mixer"
+        elif n.startswith("va_amp_"):
+            ui["section"], ui["group"] = "amp_eq", "amp.env"  # next to the envelope polyline
+        elif re.match(r"va_filter_(attack|decay|sustain|release)$", n):
+            ui["group"] = "va.envelopes"
+        elif n.startswith("va_filter_") or n == "va_brightness":
+            ui["group"] = "va.filter"
+        elif n.startswith("va_lfo_"):
+            ui["group"] = "va.lfo"
+        else:
+            ui["group"] = "va.voice"
+    elif n == "part_brightness":
+        ui["group"] = "sound.main"
+    ui.setdefault("hideEngines", [])
+    ov = p.get("ui")
+    if isinstance(ov, dict):
+        ui.update(ov)
+    return ui
+
+
+def emit_desktop(r):
+    """The registry as an ES module for Velora Studio (Story 9.9). Pure data, no logic: desktop/src/part_editor.js builds the Part Editor from it."""
+    en_names = list(r["enums"].keys())
+    out = []
+    for p in r["params"]:
+        ui = derive_ui(p)
+        o = {"id": p["id"], "name": p["name"], "class": p["class"], "type": p["type"], "scope": p["scope"], "unit": p["unit"],
+             "min": p["min"], "max": p["max"], "default": p["default"],
+             "enum": p.get("enum") if p["type"] == "enum" else None,
+             "cc": p.get("cc", -1), "assignable": p["assignable"], "localeKey": p.get("locale_key", ""),
+             "section": ui["section"], "engine": ui["engine"], "group": ui["group"], "hideEngines": ui["hideEngines"]}
+        out.append(o)
+    lines = ['export const REGISTRY = {', ' "schema": 1,', ' "parts": %d,' % r["parts"], ' "insertSlots": %d,' % r["slots"], ' "enums": {']
+    lines += [' %s: %s%s' % (json.dumps(en), json.dumps(list(vals)), "," if i + 1 < len(en_names) else "") for i, (en, vals) in enumerate(r["enums"].items())]
+    lines += [' },', ' "params": [']
+    lines += [' ' + json.dumps(o, ensure_ascii=False) + ("," if i + 1 < len(out) else "") for i, o in enumerate(out)]
+    lines += [' ]', '};', '']
+    return ("// GENERATED by proto/gen_params.py from proto/params.json. Do not edit. (Story 9.9: the parameter registry Studio's Part Editor renders from.)\n"
+            + "\n".join(lines))
 
 
 def fnum(v):
@@ -421,13 +540,14 @@ def main(argv=None):
     ap.add_argument("--core")
     ap.add_argument("--host")
     ap.add_argument("--proto")
+    ap.add_argument("--desktop")
     a = ap.parse_args(argv)
     try:
         reg = load_and_validate(a.defs)
     except RegistryError as e:
         print(f"gen_params: error in {a.defs}:\n{e}", file=sys.stderr)
         return 1
-    outs = ((a.core, emit_core), (a.host, emit_host), (a.proto, emit_proto))
+    outs = ((a.core, emit_core), (a.host, emit_host), (a.proto, emit_proto), (a.desktop, emit_desktop))
     for path, fn in outs:
         if path:
             write_atomic(path, fn(reg))

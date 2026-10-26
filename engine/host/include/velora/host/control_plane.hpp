@@ -251,6 +251,9 @@ class ControlPlane {
   void fill_diagnostics(ws::v1::DiagnosticsReply* out) const;   // Story 1.21: RT counters / histograms, read lock-free; uptime from the clock
 
   std::uint64_t revision() const noexcept { return revision_.load(std::memory_order_acquire); }
+  // Story 9.9: the base_revision of the last edit command that carried one (0 = none yet) and how many did. Recorded, never enforced (Story 9.10 does).
+  std::uint64_t last_base_revision() const noexcept { return last_base_revision_.load(std::memory_order_relaxed); }
+  std::uint64_t base_revision_edits() const noexcept { return base_revision_edits_.load(std::memory_order_relaxed); }
   std::size_t live_generations() const noexcept { return live_count_.load(std::memory_order_acquire); }
   std::uint64_t freed_generations() const noexcept { return freed_.load(std::memory_order_acquire); }
   std::uint64_t commands_rejected() const noexcept { return rejected_.load(std::memory_order_relaxed); }
@@ -306,6 +309,7 @@ class ControlPlane {
   std::vector<core::Snapshot*> generations_;  // everything not yet freed, oldest first
   std::uint32_t ledger_used_ = 0;             // bit i = ledger slot i in use
   std::atomic<std::uint64_t> revision_{0};
+  std::atomic<std::uint64_t> last_base_revision_{0}, base_revision_edits_{0};
   std::atomic<std::size_t> live_count_{0};
   std::atomic<std::uint64_t> freed_{0}, rejected_{0};
   const TierProfile* tier_ = &v1_profile();

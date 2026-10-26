@@ -1494,3 +1494,304 @@ nav.jump a:hover {
 .sidebar-item.manage {
   font-weight: 600;
 }
+
+/* ---- Story 9.9: the real Part Editor (part_editor_dom.js). Four hairline-divided sections, every parameter a Studio Knob (an ARIA slider). Sizes in rem so they follow the
+   text size; the sections reflow 4 -> 2 -> 1 columns with container queries in em of the container font (rem-based auto-fit columns of at least 15.1 rem, one column at 45em or less: part_editor.js REFLOW), so 150 % and 200 % text
+   take a column count down instead of scrolling sideways. Tokens only; focus is the global 2px ring. ---- */
+.pe-host {
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
+  padding: var(--spacing-2) 0 1.5rem;
+}
+
+.pe {
+  display: grid;
+  gap: var(--spacing-2);
+  min-width: 0;
+}
+
+.pe-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--spacing-3);
+  font-size: var(--font-desktop-body);
+}
+
+.pe-head b {
+  font-size: var(--font-desktop-part-name);
+}
+
+.pe-head small, .pe-banner {
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.pe-banner {
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-desktop-sm);
+  letter-spacing: 0;
+  font-size: var(--font-desktop-body);
+  font-weight: 400;
+  color: var(--text);
+}
+
+.pe-msg, .pe-err {
+  color: var(--warn);
+  font-size: var(--font-desktop-body);
+}
+
+.pe-msg {
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-desktop-sm);
+}
+
+.pe-err::before, .pe-msg::before {
+  content: "! ";
+  font-weight: 600;
+}
+
+.pe-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15.1rem), 1fr));
+  gap: 1rem;
+  min-width: 0;
+}
+
+.pe-sec {
+  border-top: 1px solid var(--line);
+  padding-top: var(--spacing-3);
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--spacing-3);
+}
+
+.pe-sec > h3, .pe-group > h4 {
+  margin: 0;
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pe-group > h4 {
+  letter-spacing: 0.1em;
+  margin-bottom: var(--spacing-1);
+}
+
+.pe-group {
+  min-width: 0;
+}
+
+/* One column when the editor is at most 45em (of its own font) wide: at 200 % text this is every window up to about 1170 px of editor width. */
+@container (max-width: 45em) {
+  .pe-sections {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.pe-knobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: var(--spacing-2) var(--spacing-3);
+  min-width: 0;
+}
+
+.pe-knob {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  align-content: start;
+}
+
+.pe-knob-label {
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.pe-slider {
+  padding: 0.4rem 0;
+  min-height: 1.5rem;
+  cursor: ns-resize;
+  touch-action: none;
+  border-radius: var(--radius-desktop-sm);
+}
+
+.pe-slider[aria-readonly="true"] {
+  cursor: default;
+}
+
+.pe-track {
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background-color: var(--raised);
+  border: 1px solid var(--line-strong);
+  overflow: hidden;
+}
+
+.pe-slider[aria-readonly="true"] .pe-track {
+  border-style: dashed;
+}
+
+.pe-fill {
+  height: 100%;
+  width: 0;
+  background-color: var(--accent);
+}
+
+.pe-slider[aria-readonly="true"] .pe-fill {
+  background-color: var(--muted);
+}
+
+.pe-slider[data-pending="true"] .pe-fill {
+  background-color: var(--warn);
+}
+
+.pe-slider[data-dragging="true"] .pe-track {
+  border-color: var(--accent);
+}
+
+.pe-value {
+  font-size: var(--font-desktop-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.pe-entry {
+  width: 100%;
+  min-width: 0;
+  background-color: var(--raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-desktop-sm);
+  padding: 0.3rem 0.5rem;
+  min-height: 2rem;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-desktop-body);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.pe-entry[aria-invalid="true"] {
+  border-color: var(--warn);
+}
+
+.pe-env {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  background-color: var(--surface);
+}
+
+.pe-env-svg {
+  display: block;
+  width: 100%;
+  height: 4.5rem;
+}
+
+.pe-env-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.pe-env-dot {
+  fill: var(--text);
+}
+
+.pe-chain {
+  display: grid;
+  gap: var(--spacing-2);
+}
+
+.pe-insert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--surface);
+  min-width: 0;
+}
+
+.pe-insert-n {
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  color: var(--muted);
+  padding-top: 0.2rem;
+}
+
+.pe-insert-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+
+.pe-add {
+  margin-top: var(--spacing-2);
+}
+
+.pe-assign {
+  display: grid;
+  gap: var(--spacing-1);
+}
+
+.pe-assign-slot {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: var(--spacing-2);
+  font-size: var(--font-desktop-body);
+}
+
+.pe-assign-k {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+}
+
+.pe-assign-select {
+  width: 100%;
+  min-width: 0;
+  background-color: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-desktop-sm);
+  padding: 0.3rem 0.5rem;
+  min-height: 2rem;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-desktop-body);
+}
+
+.pe-assign-select[data-pending="true"] {
+  border-style: dashed;
+}
+
+.pe-note {
+  color: var(--muted);
+  font-size: var(--font-desktop-body);
+  border-left: 2px dashed var(--line-strong);
+  padding-left: var(--spacing-2);
+}
+
+/* Not by colour alone: a pending value has a dashed track, a stored-but-not-audible knob a dotted fill edge. */
+.pe-slider[data-pending="true"] .pe-track {
+  border-style: dashed;
+}
+
+.pe-slider[data-inert="true"] .pe-fill {
+  opacity: 0.55;
+  border-right: 2px dotted var(--text);
+}

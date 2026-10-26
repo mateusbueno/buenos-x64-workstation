@@ -72,8 +72,8 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn('"drawbar_8"', read(paths["host"]))
 
     def test_deterministic(self):
-        _, pa = run(GOOD)
-        _, pb = run(GOOD)
+        _, pa = run(GOOD, outs=("core", "host", "proto", "desktop"))
+        _, pb = run(GOOD, outs=("core", "host", "proto", "desktop"))
         for k in pa:
             self.assertEqual(read(pa[k]), read(pb[k]))
 
@@ -253,6 +253,61 @@ class GeneratorTests(unittest.TestCase):
             def f(d, rid=rid):
                 d["params"][0]["id"] = rid
             self.fails(mutate(f), "reserved for control events")
+
+    def test_desktop_registry_is_in_sync_with_params_json(self):
+        """Story 9.9: desktop/src/params_registry.js is committed; this is the drift check (regenerate with
+        `python3 proto/gen_params.py --defs proto/params.json --desktop desktop/src/params_registry.js`)."""
+        _, paths = run(GOOD, outs=("desktop",))
+        committed = os.path.join(os.path.dirname(PROTO), "desktop", "src", "params_registry.js")
+        self.assertEqual(read(paths["desktop"]), read(committed), "desktop/src/params_registry.js is stale: regenerate it")
+
+    def test_desktop_registry_grouping_is_derived_and_every_param_has_a_place(self):
+        _, paths = run(GOOD, outs=("desktop",))
+        txt = read(paths["desktop"])
+        self.assertTrue(txt.startswith("// GENERATED"))
+        doc = json.loads(txt.split("export const REGISTRY = ", 1)[1].rsplit(";", 1)[0])
+        by = {p["name"]: p for p in doc["params"]}
+        self.assertEqual(len(doc["params"]), len(GOOD["params"]))
+        self.assertEqual((by["drawbar_8"]["section"], by["drawbar_8"]["engine"], by["drawbar_8"]["group"]), ("sound", "organ", "organ.drawbars"))
+        self.assertEqual(by["fm_op3_detune"]["group"], "fm.op3")
+        self.assertEqual((by["va_amp_attack"]["section"], by["va_amp_attack"]["group"]), ("amp_eq", "amp.env"))
+        self.assertEqual(by["va_osc1_wave"]["group"], "va.osc1")
+        self.assertEqual(by["va_osc2_hard_sync"]["group"], "va.osc2")
+        self.assertEqual(by["va_sub_square"]["group"], "va.sub")
+        self.assertEqual(by["va_noise_pink"]["group"], "va.noise")
+        self.assertEqual(by["fm_transpose"]["group"], "fm.global")
+        self.assertEqual(by["fm_feedback"]["group"], "fm.algorithm")
+        self.assertEqual(by["part_attack"]["hideEngines"], ["va"])
+        self.assertEqual(by["va_filter_decay"]["group"], "va.envelopes")
+        self.assertEqual(by["part_attack"]["section"], "amp_eq")
+        self.assertEqual(by["part_eq_mid"]["group"], "amp.eq")
+        self.assertEqual(by["send_reverb_level"]["section"], "effects")
+        self.assertEqual(by["arp_mode"]["section"], "zone")
+        self.assertEqual(by["reverb_time"]["section"], "master")
+        self.assertEqual(by["timbre_ref"]["section"], "hidden")
+        self.assertEqual(by["insert_param_2"]["section"], "effects")
+        self.assertEqual(by["arp_mode"]["enum"], "arp_mode")
+        self.assertIsNone(by["drawbar_8"]["enum"])
+        self.assertEqual(doc["insertSlots"], GOOD["limits"]["insert_slots"])
+
+    def test_a_new_parameter_without_a_rule_lands_in_sound_other(self):
+        def f(d):
+            d["params"].append({"id": 4000, "name": "brand_new_knob", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0, "max": 1, "default": 0.5})
+        _, paths = run(mutate(f), outs=("desktop",))
+        doc = json.loads(read(paths["desktop"]).split("export const REGISTRY = ", 1)[1].rsplit(";", 1)[0])
+        q = [p for p in doc["params"] if p["name"] == "brand_new_knob"][0]
+        self.assertEqual((q["section"], q["engine"], q["group"]), ("sound", "any", "other"))
+
+    def test_explicit_ui_override_wins_and_is_validated(self):
+        def good(d):
+            d["params"][0]["ui"] = {"section": "effects", "group": "custom.card"}
+        _, paths = run(mutate(good), outs=("desktop",))
+        doc = json.loads(read(paths["desktop"]).split("export const REGISTRY = ", 1)[1].rsplit(";", 1)[0])
+        self.assertEqual((doc["params"][0]["section"], doc["params"][0]["group"], doc["params"][0]["engine"]), ("effects", "custom.card", "organ"))
+        for bad in ({"section": "menus"}, {"hideEngines": ["guitar"]}, {"engine": "guitar"}, {"group": "Bad Group"}, {"colour": "red"}, "x"):
+            def f(d, bad=bad):
+                d["params"][0]["ui"] = bad
+            self.fails(mutate(f), "ui")
 
     def test_unreadable_file(self):
         r = subprocess.run([sys.executable, "-I", GEN, "--defs", "/nonexistent/params.json"],

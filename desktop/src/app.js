@@ -1,4 +1,4 @@
-// Velora Studio App Shell, Part Editor for FM & VA, Backup & Restore (Stories 9.5, 9.16, 9.17, 12.13), Live Set view (Story 9.8)
+// Velora Studio App Shell, Part Editor for FM & VA, Backup & Restore (Stories 9.5, 9.16, 9.17, 12.13), Live Set view (Story 9.8), Part Editor with Studio Knobs (Story 9.9)
 
 import { CATALOGS } from "./catalogs.js";
 import {
@@ -17,6 +17,8 @@ import {
   setlistRows,
   setlistsRequest,
 } from "./live_set_view.js";
+import { PartEditorController } from "./part_editor.js";
+import { PartEditorView } from "./part_editor_dom.js";
 import { SetlistsController } from "./setlists_view.js";
 import { SetlistsView } from "./setlists_dom.js";
 
@@ -583,7 +585,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // Render Full Studio Part Editor
   function renderEditor() {
     if (pairedReal()) {
-      renderPairedEditor(); // Story 9.8: the real Live Set view; the part editor below it stays simulated until Story 9.9
+      renderPairedEditor(); // Story 9.8 / 9.9: the real Live Set view and the real Part Editor (the simulated editor stays for offline)
       return;
     }
     hideRealView();
@@ -849,7 +851,7 @@ window.addEventListener("DOMContentLoaded", () => {
     changes.scenes.forEach((i) => updateSceneCell(g.sceneCells[i], m.scenes[i], tr));
     changes.parts.forEach((i) => updatePartCell(g.partCells[i], m.parts[i], { tr, selected: liveCtl.selectedPart === i }));
     if (changes.header) markLiveEdit(isDirty); // the footer follows the real unsaved flag
-    if (changes.parts.includes(liveCtl.selectedPart)) renderRealPartDetails();
+    if (changes.parts.includes(liveCtl.selectedPart)) renderRealPartDetails(m); // the controller assigns its model after this callback: use the one passed in
     if (changes.header) updateSidebarMarkers();
   }
 
@@ -869,6 +871,8 @@ window.addEventListener("DOMContentLoaded", () => {
     [liveEls.error, liveEls.scenes, liveEls.note, liveEls.parts, liveEls.dirty, liveEls.meta].forEach((el) => { el.hidden = true; });
     liveEls.simStrips.style.display = "";
     liveEls.subtitle.textContent = "VELORA STUDIO";
+    peEls.host.hidden = true; // Story 9.9: the real Part Editor is paired-only; the simulated editor below the strips comes back
+    peEls.sim.style.display = "";
   }
 
   function renderPairedEditor() {
@@ -891,19 +895,54 @@ window.addEventListener("DOMContentLoaded", () => {
       liveEls.note.hidden = true;
       liveEls.scenes.hidden = true;
       liveEls.parts.hidden = true;
+      peEls.host.hidden = true;
+      peEls.sim.style.display = "none";
     }
     markLiveEdit(isDirty);
   }
 
-  // The Part Editor header and cards for the real selection: the engine and the names are the real ones, the parameter cards are still the simulated editor.
-  function renderRealPartDetails() {
-    const m = liveCtl.model;
+  // ---- Part Editor (Story 9.9) ---------------------------------------------------------------------------------------------------------------------
+  // The selected real part is edited with Studio Knobs built from the generated registry (part_editor.js is the model and the controller, part_editor_dom.js the DOM). Each
+  // change is a ws.v1 edit with base_revision (the engine records it and ignores it until Story 9.10); the unit plays it at once and the knob shows what the unit confirms.
+  const peEls = { host: document.getElementById("real-part-editor"), sim: document.getElementById("studio-part-editor") };
+  const pe = { view: null, lang: "" };
+
+  function ensurePartEditorView() {
+    const lang = localeMgr.getActiveLocale();
+    if (pe.view && pe.lang !== lang) {
+      pe.view.clear(); // another language: the labels are rebuilt
+      pe.view = null;
+    }
+    if (!pe.view) {
+      pe.lang = lang;
+      peEls.host.setAttribute("aria-label", tr("studio.part_editor.region"));
+      pe.view = new PartEditorView({ doc: document, host: peEls.host, tr: (key) => localeMgr.tr(key), controller: partEditorCtl, announce: quietAnnounce }); // the view fills the %d / %s itself
+    }
+    return pe.view;
+  }
+
+  function renderPartEditor() {
+    if (!pairedReal() || setlistsUi.open || peEls.host.hidden || partEditorCtl.partIndex < 0) return;
+    ensurePartEditorView().render(partEditorCtl.model());
+  }
+
+  const partEditorCtl = new PartEditorController({
+    request: (r) => window.veloraDevice.request(r),
+    onChange: renderPartEditor,
+    onError: (e) => { if (!e.render && pe.view) pe.view.showError(e); },
+  });
+
+  // The Part Editor for the real selection: the engine and the names are the real ones, the parameters come from the registry.
+  function renderRealPartDetails(m = liveCtl.model) {
     const i = liveCtl.selectedPart;
     if (!m || i < 0) return;
     const p = m.parts[i];
     selectedPartIndex = i;
-    const engineId = p.engine === "fm" ? 3 : p.engine === "va" ? 4 : p.engine === "organ" ? 2 : 1;
-    renderPartDetails(categoryLabel(p, tr), partName(p, tr), engineId);
+    peEls.sim.style.display = "none";
+    peEls.host.hidden = false;
+    const view = ensurePartEditorView();
+    view.setHeader({ number: i + 1, name: partName(p, tr), category: categoryLabel(p, tr) });
+    partEditorCtl.select({ liveSetId: liveCtl.liveSetId, part: i, engine: p.engine, available: p.status !== "unavailable" });
   }
 
   // The polite live region: cleared first and set on a microtask, so the same text twice in a row is announced twice.
@@ -1176,6 +1215,7 @@ window.addEventListener("DOMContentLoaded", () => {
   function onDeviceState(st) {
     if (!st || !pairedReal()) return;
     liveCtl.onState(st);
+    partEditorCtl.onState(st);
     if (setlistsUi.open) setlistsCtl.onState(st);
     const setlists = st.setlists || {};
     const key = `${setlists.library_revision || 0}/${setlists.loaded_setlist_id || ""}`;
@@ -1340,6 +1380,8 @@ window.addEventListener("DOMContentLoaded", () => {
       currentDeviceState = null;
       deviceStore.state = null; // a State from before the outage is never shown again
       liveCtl.reset();
+      partEditorCtl.reset();
+      if (pe.view) { pe.view.clear(); pe.view = null; }
       hideSetlistsView(); // the Setlists view is disabled without a paired device
       setlistsCtl.reset();
       sidebar.setlists = [];

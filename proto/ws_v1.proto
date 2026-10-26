@@ -840,6 +840,9 @@ message PedalCalibrationReply {
 
 message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
+  // Story 9.9 (additive): the State revision the client's view was built on when it made this edit (0 = not provided, accepted exactly as before). The engine
+  // records it for edit commands and IGNORES it: the STALE_REVISION rejection and the live-edit banner are Story 9.10.
+  uint64 base_revision = 2;
   oneof body {
     Hello hello = 10;
     SetInsertChain set_insert_chain = 11;
