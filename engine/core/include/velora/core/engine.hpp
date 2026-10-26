@@ -182,6 +182,9 @@ class Engine {
   // Story 6.5: how many times a voice of this engine met a damaged block of a protected library (a voice faded to silence for it). Monotone, written by the
   // audio thread, readable from any thread; 0 for an engine that plays no protected content.
   virtual std::uint64_t content_integrity_events() const noexcept { return 0; }
+  // Story 1.16: how many times a voice of this engine reached the end of the resident head of a sample that has a tail (a stream underrun placeholder until
+  // Story 1.17 streams the tail). Monotone, written by the audio thread, readable anywhere; 0 for an engine that plays no heads.
+  virtual std::uint64_t stream_underrun_events() const noexcept { return 0; }
 
   // Parallel voice render (Story 1.18). Setup-time, never concurrent with render: hands the engine the block loop's worker pool (nullptr = serial,
   // the default) and the longest `frames` count a single render()/render_split() call will carry. An engine whose voices can render in parallel

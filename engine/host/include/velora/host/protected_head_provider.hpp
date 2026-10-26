@@ -47,7 +47,7 @@ struct ProtectedInstrumentContext {
 class ProtectedHeadProvider : public RamHeadProvider {
  public:
   // `fs` reads wrapped-key.bin (the same FsPort the resolver uses). `keys` and `damage` must outlive the provider and every instrument it loaded.
-  ProtectedHeadProvider(std::shared_ptr<FsPort> fs, velora::ports::KeyProvider& keys, DamageRegistry* damage = nullptr);
+  ProtectedHeadProvider(std::shared_ptr<FsPort> fs, velora::ports::KeyProvider& keys, DamageRegistry* damage = nullptr, SampleLoadOptions options = {});
 
   LoadStatus load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) override;
   LoadStatus load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) override;

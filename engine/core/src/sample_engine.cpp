@@ -146,6 +146,8 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
       r.frames = pcm.frames;
       r.left = pcm.left;
       r.right = pcm.right;
+      r.has_tail = pcm.total_frames > pcm.frames;
+      r.total_frames = r.has_tail ? pcm.total_frames : pcm.frames;
       r.damage = pcm.damaged_blocks;
       r.damage_block_frames = pcm.damaged_block_frames;
       r.damage_block_count = pcm.damaged_block_count;
@@ -179,12 +181,13 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
     // Loops: only the two looping modes, with the range inside the sample (otherwise no loop, as sfizz).
     if (d.loop_mode == velora::ports::SampleLoopMode::kLoopContinuous ||
         d.loop_mode == velora::ports::SampleLoopMode::kLoopSustain) {
-      std::int64_t ls = 0, le = static_cast<std::int64_t>(r.frames) - 1;
+      const std::uint64_t loop_frames = r.has_tail ? r.total_frames : r.frames;  // a loop may lie beyond the head; the voice then underruns at the head end
+      std::int64_t ls = 0, le = static_cast<std::int64_t>(loop_frames) - 1;
       if (d.has_loop_points) {
         ls = static_cast<std::int64_t>(std::min<std::uint64_t>(d.loop_start, INT64_MAX));
         le = static_cast<std::int64_t>(std::min<std::uint64_t>(d.loop_end, INT64_MAX));
       }
-      if (r.frames > 0 && ls <= le && le < static_cast<std::int64_t>(r.frames)) {
+      if (loop_frames > 0 && ls <= le && le < static_cast<std::int64_t>(loop_frames)) {
         r.loops = true;
         r.loop_start = ls;
         r.loop_end = le;
@@ -755,7 +758,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       }
     }
     // Loop wrap: continuous loops always, sustain loops until the envelope is released.
-    const bool looping = r.loops && !v.release_trigger && (!sustain_loop || v.env.s < EnvState::kRelease);
+    const bool looping = r.loops && !v.release_trigger && !v.ended && (!sustain_loop || v.env.s < EnvState::kRelease);
     std::int64_t idx = static_cast<std::int64_t>(std::floor(v.pos));
     if (looping) {
       if (idx > r.loop_end) {  // same as subtracting the loop size repeatedly, in bounded time
@@ -768,6 +771,12 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       // the frame where the position reaches the end) while the last frame is held below.
       v.ended = true;
       env_fast_release(v.env);
+      if (r.has_tail) underrun_events_.fetch_add(1, std::memory_order_relaxed);  // Story 1.16: the head of a sample with a tail ran out (1.17 streams it)
+    }
+    if (looping && r.has_tail && idx >= end_idx) {  // a loop that reaches beyond the resident head: same ending, same count (once ended, the voice no longer loops)
+      v.ended = true;
+      env_fast_release(v.env);
+      underrun_events_.fetch_add(1, std::memory_order_relaxed);
     }
 
     const float env = env_next(v.env, r);
@@ -777,7 +786,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
     }
 
     float sl, sr_;
-    if (!looping && idx >= end_idx) {
+    if (idx >= end_idx && (!looping || r.has_tail)) {  // past the end (or, for a looping voice with a tail, past the resident head): hold the last frame
       sl = r.left[nframes - 1];
       sr_ = r.stereo ? r.right[nframes - 1] : sl;
     } else {

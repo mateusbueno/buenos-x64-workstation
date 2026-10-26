@@ -119,3 +119,9 @@ set_tests_properties(engine_host_bridge_smoke PROPERTIES TIMEOUT 120)
 # with a clear message when cargo is not installed; it needs the crates already in desktop/src-tauri/Cargo.lock (cargo test --offline).
 add_test(NAME engine_host_bridge_studio_smoke COMMAND engine_host_bridge_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-sysd>)
 set_tests_properties(engine_host_bridge_studio_smoke PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77 ENVIRONMENT "VELORA_STUDIO_CARGO_TEST=${CMAKE_SOURCE_DIR}")
+
+# Story 1.16: head tuning flags without --head-mode, and absurd microsecond values, are refused at start (exit 2, before anything is opened).
+add_test(NAME engine_host_head_flags_need_head_mode COMMAND engine-host --allow-unlocked-heads --no-audio)
+set_tests_properties(engine_host_head_flags_need_head_mode PROPERTIES PASS_REGULAR_EXPRESSION "need --head-mode")
+add_test(NAME engine_host_head_flag_absurd_value COMMAND engine-host --head-mode --head-p9999-us 99999999999999999999 --no-audio)
+set_tests_properties(engine_host_head_flag_absurd_value PROPERTIES PASS_REGULAR_EXPRESSION "expects whole microseconds")

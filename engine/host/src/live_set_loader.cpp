@@ -64,10 +64,10 @@ std::uint64_t HeadProvider::estimate_bytes(const ResolveResult& resolved) const 
 
 namespace {
 // The instrument keeps the opened bundle (the BundleLease: its file descriptor) until the last generation holding it is freed.
-LoadStatus ram_load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks* hooks) {
-  if (resolved.ok() && resolved.protected_view) return LoadStatus::kProtectedUnsupported;  // Story 6.5: this provider has no key provider (see ProtectedHeadProvider)
+LoadStatus ram_load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks* hooks, const SampleLoadOptions& options) {
+  if (resolved.ok() && resolved.protected_view) return options.head.enabled ? LoadStatus::kHeadProtectedUnsupported : LoadStatus::kProtectedUnsupported;  // Story 6.5: this provider has no key provider (see ProtectedHeadProvider)
   if (!resolved.ok() || !resolved.bundle) return LoadStatus::kInstrumentNotFound;
-  LoadResult r = load_instrument_by_index(*resolved.bundle, resolved.instrument, hooks);
+  LoadResult r = load_instrument_by_index(*resolved.bundle, resolved.instrument, hooks, options);
   if (!r.ok()) return r.status;
   if (r.instrument->failed_samples() != 0) return LoadStatus::kBundleInconsistent;  // holes in the instrument: not resident
   std::shared_ptr<const format::BundleReader> lease = resolved.bundle;
@@ -77,10 +77,17 @@ LoadStatus ram_load(const ResolveResult& resolved, std::shared_ptr<const BundleI
 }
 }  // namespace
 
-LoadStatus RamHeadProvider::load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) { return ram_load(resolved, out, nullptr); }
+LoadStatus RamHeadProvider::load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) { return ram_load(resolved, out, nullptr, options_); }
+
+std::uint64_t RamHeadProvider::estimate_bytes(const ResolveResult& resolved) const {
+  if (!options_.head.enabled) return HeadProvider::estimate_bytes(resolved);
+  if (!resolved.ok()) return 0;
+  if (resolved.protected_view) return instrument_head_bytes(resolved.protected_view->instruments(), resolved.protected_view->samples(), resolved.instrument, options_.head);
+  return resolved.bundle ? instrument_head_bytes(resolved.bundle->instruments(), resolved.bundle->samples(), resolved.instrument, options_.head) : 0;
+}
 
 LoadStatus RamHeadProvider::load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) {
-  return ram_load(resolved, out, &hooks);
+  return ram_load(resolved, out, &hooks, options_);
 }
 
 LiveSetLoader::LiveSetLoader(core::BlockRenderer& renderer, ControlPlane& plane, const LibraryResolver& resolver, HeadProvider& heads,

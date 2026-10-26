@@ -24,6 +24,8 @@ const char* to_string(LoadStatus s) {
     case LoadStatus::kKeyUnavailable: return "key_unavailable";
     case LoadStatus::kProtectedUnsupported: return "protected_unsupported";
     case LoadStatus::kProtectedDowngrade: return "protected_downgrade";
+    case LoadStatus::kHeadLockFailed: return "head_lock_failed";
+    case LoadStatus::kHeadProtectedUnsupported: return "head_protected_unsupported";
   }
   return "?";
 }
@@ -151,7 +153,7 @@ bool pcm_to_float(const fmt::PcmFormat& f, std::span<const std::int32_t> in, std
 }
 
 struct BundleInstrumentLoader {
-  static LoadResult load(const InstrumentSource& bundle, std::size_t index, const LoadHooks* hooks) {
+  static LoadResult load(const InstrumentSource& bundle, std::size_t index, const LoadHooks* hooks, const SampleLoadOptions& options) {
     LoadResult res;
     const auto instruments = bundle.instruments();
     if (index >= instruments.size()) return res;
@@ -161,7 +163,36 @@ struct BundleInstrumentLoader {
       return res;
     }
 
+    const bool head_mode = options.head.enabled;
+    if (head_mode && bundle.protected_source()) {  // heads are for unprotected bundles only (deferred): refuse, typed
+      res.status = LoadStatus::kHeadProtectedUnsupported;
+      return res;
+    }
+    std::vector<HeadLength> plan;
+    if (head_mode) plan = plan_heads(instruments, bundle.samples(), index, options.head.sizing);
+
     auto out = std::make_unique<BundleInstrument>();
+    out->head_mode_ = head_mode;
+    std::vector<std::size_t> head_offset;  // floats, per sample, inside the arena
+    if (head_mode) {
+      // One arena for the whole instrument: heads at 64 byte aligned offsets, the arena page rounded and mlocked once (the budget counts exactly this).
+      head_offset.assign(info.sample_count, 0);
+      std::size_t payload = 0;
+      for (std::size_t s = 0; s < plan.size(); ++s) {
+        head_offset[s] = payload / sizeof(float);
+        payload += head_align(static_cast<std::size_t>(plan[s].frames) * bundle.samples()[info.first_sample + s].format.channels * sizeof(float));
+      }
+      if (payload != 0) {
+        HeadBuffer::Status hs = HeadBuffer::Status::kOk;
+        out->head_arena_ = HeadBuffer::allocate(head_arena_bytes(payload), options.head.memory, hs);
+        if (!out->head_arena_) {
+          res.status = hs == HeadBuffer::Status::kLockFailed ? LoadStatus::kHeadLockFailed : LoadStatus::kBundleInconsistent;  // no memory: the heads are not resident
+          return res;
+        }
+        out->heads_locked_ = out->head_arena_->locked();
+        out->resident_bytes_ = out->head_arena_->mapped_bytes();
+      }
+    }
     out->regions_.reserve(info.regions.size());
     for (const fmt::Region& r : info.regions) out->regions_.push_back(to_port_region(r));
     out->pcm_.resize(info.sample_count);
@@ -192,8 +223,9 @@ struct BundleInstrumentLoader {
       const fmt::SampleInfo& si = samples[info.first_sample + s];
       ports::SamplePcm& pcm = out->pcm_[s];  // stays empty (frames == 0) on failure
       const std::size_t ch = si.format.channels;
-      const std::uint64_t frames = si.frame_count;
-      if (frames == 0 || (ch != 1 && ch != 2) || frames > (std::uint64_t{1} << 31)) {
+      const std::uint64_t total_frames = si.frame_count;
+      const std::uint64_t frames = head_mode && s < plan.size() ? plan[s].frames : total_frames;  // the frames made resident: the head, or the whole sample
+      if (frames == 0 || total_frames == 0 || (ch != 1 && ch != 2) || total_frames > (std::uint64_t{1} << 31)) {
         ++out->failed_samples_;  // empty or unusable: the engine skips and counts its regions
         continue;
       }
@@ -231,9 +263,20 @@ struct BundleInstrumentLoader {
       std::vector<float>& buf = out->data_[s];
       float* left = buf.data();
       float* right = ch == 2 ? buf.data() + frames : nullptr;
+      if (head_mode) {
+        // The head goes into the arena (planar, left then right) on this (loading) thread.
+        float* base = out->head_arena_->floats() + head_offset[s];
+        std::memcpy(base, buf.data(), buf.size() * sizeof(float));
+        left = base;
+        right = ch == 2 ? base + frames : nullptr;
+        out->data_[s] = std::vector<float>();  // the temporary decode buffer is released; the head lives in locked memory
+        if (frames < total_frames) ++out->tail_samples_;
+      }
       pcm.sample_rate = si.format.sample_rate;
       pcm.channels = static_cast<std::uint8_t>(ch);
       pcm.frames = frames;
+      pcm.total_frames = head_mode ? total_frames : 0;
+      pcm.has_tail = head_mode && frames < total_frames;
       pcm.left = left;
       pcm.right = right;
       if (!out->damage_.empty() && out->damage_count_[s] != 0) {
@@ -241,7 +284,7 @@ struct BundleInstrumentLoader {
         pcm.damaged_block_frames = fmt::kBlockFrames;
         pcm.damaged_block_count = out->damage_count_[s];
       }
-      out->resident_bytes_ += buf.size() * sizeof(float);
+      if (!head_mode) out->resident_bytes_ += static_cast<std::size_t>(frames) * ch * sizeof(float);
     }
     res.status = LoadStatus::kOk;
     res.instrument = std::move(out);
@@ -251,11 +294,20 @@ struct BundleInstrumentLoader {
 
 LoadResult load_instrument_by_index(const fmt::BundleReader& bundle, std::size_t index, const LoadHooks* hooks) {
   const PlainSource src(bundle);
-  return BundleInstrumentLoader::load(src, index, hooks);
+  return BundleInstrumentLoader::load(src, index, hooks, SampleLoadOptions{});
 }
 
 LoadResult load_instrument_by_index(const InstrumentSource& source, std::size_t index, const LoadHooks* hooks) {
-  return BundleInstrumentLoader::load(source, index, hooks);
+  return BundleInstrumentLoader::load(source, index, hooks, SampleLoadOptions{});
+}
+
+LoadResult load_instrument_by_index(const fmt::BundleReader& bundle, std::size_t index, const LoadHooks* hooks, const SampleLoadOptions& options) {
+  const PlainSource src(bundle);
+  return BundleInstrumentLoader::load(src, index, hooks, options);
+}
+
+LoadResult load_instrument_by_index(const InstrumentSource& source, std::size_t index, const LoadHooks* hooks, const SampleLoadOptions& options) {
+  return BundleInstrumentLoader::load(source, index, hooks, options);
 }
 
 std::uint64_t instrument_head_bytes(const fmt::BundleReader& bundle, std::size_t index) {
@@ -274,6 +326,48 @@ std::uint64_t instrument_head_bytes(std::span<const fmt::InstrumentInfo> instrum
     bytes += si.frame_count * ch * sizeof(float);
   }
   return bytes;
+}
+
+std::vector<HeadLength> plan_heads(std::span<const fmt::InstrumentInfo> instruments, std::span<const fmt::SampleInfo> samples, std::size_t index, const HeadSizing& sizing) {
+  std::vector<HeadLength> plan;
+  if (index >= instruments.size()) return plan;
+  const fmt::InstrumentInfo& info = instruments[index];
+  if (info.first_sample > samples.size() || info.sample_count > samples.size() - info.first_sample) return plan;
+  // Per sample: the highest pitch ratio and the largest start offset over the regions that use it (a sample no region uses keeps ratio 1, offset 0).
+  std::vector<double> ratio(info.sample_count, 0.0);
+  std::vector<std::uint64_t> offset(info.sample_count, 0);
+  std::vector<std::uint64_t> loop_need(info.sample_count, 0);  // frames a loop with explicit points needs resident, so wrapping never meets the head end
+  for (const fmt::Region& r : info.regions) {
+    if (r.sample >= info.sample_count) continue;
+    if ((r.loop_mode == fmt::LoopMode::kLoopContinuous || r.loop_mode == fmt::LoopMode::kLoopSustain) && r.has_loop_points)
+      loop_need[r.sample] = std::max<std::uint64_t>(loop_need[r.sample], r.loop_end + 1 + sizing.guard_frames);
+    ratio[r.sample] = std::max(ratio[r.sample], region_max_pitch_ratio(r.key_hi, r.key_center, r.transpose, r.tune_cents));
+    offset[r.sample] = std::max<std::uint64_t>(offset[r.sample], r.offset);
+  }
+  plan.resize(info.sample_count);
+  for (std::size_t s = 0; s < info.sample_count; ++s) {
+    const fmt::SampleInfo& si = samples[info.first_sample + s];
+    const std::size_t ch = si.format.channels;
+    if (si.frame_count == 0 || (ch != 1 && ch != 2) || si.frame_count > (std::uint64_t{1} << 31)) continue;  // the loader leaves these empty
+    plan[s] = head_length(sizing, si.format.sample_rate, ratio[s] > 0.0 ? ratio[s] : 1.0, si.frame_count, offset[s]);
+    // A loop that lies inside the head but ends in its last guard frames would hit the end-of-head check (its interpolation taps run past the head) before it
+    // wraps: cover its end plus the guard. A loop that reaches past the natural head is left alone: it really needs the tail (stream underrun, Story 1.17).
+    if (loop_need[s] > plan[s].frames && loop_need[s] - sizing.guard_frames <= plan[s].frames) {
+      plan[s].frames = std::min<std::uint64_t>(loop_need[s], si.frame_count);
+      plan[s].has_tail = plan[s].frames < si.frame_count;
+    }
+  }
+  return plan;
+}
+
+std::uint64_t instrument_head_bytes(std::span<const fmt::InstrumentInfo> instruments, std::span<const fmt::SampleInfo> samples, std::size_t index, const HeadOptions& head) {
+  if (!head.enabled) return instrument_head_bytes(instruments, samples, index);
+  const std::vector<HeadLength> plan = plan_heads(instruments, samples, index, head.sizing);
+  if (plan.empty()) return 0;
+  const fmt::InstrumentInfo& info = instruments[index];
+  std::size_t payload = 0;
+  for (std::size_t s = 0; s < plan.size(); ++s) payload += head_align(static_cast<std::size_t>(plan[s].frames) * samples[info.first_sample + s].format.channels * sizeof(float));
+  return head_arena_bytes(payload);
 }
 
 LoadResult load_instrument(const fmt::BundleReader& bundle, std::string_view key) {

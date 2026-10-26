@@ -58,6 +58,7 @@ class Diagnostics {
   // --- RT / host render path (atomic ops only) ---
   void record_xrun() noexcept VELORA_NONBLOCKING { xruns_.fetch_add(1, std::memory_order_relaxed); }
   void record_stream_underrun() noexcept VELORA_NONBLOCKING { stream_underruns_.fetch_add(1, std::memory_order_relaxed); }
+  void record_stream_underruns(std::uint64_t n) noexcept VELORA_NONBLOCKING { stream_underruns_.fetch_add(n, std::memory_order_relaxed); }
   // A block render took `render_ns`; over `deadline_ns` it also counts an xrun.
   void record_render(std::uint64_t render_ns, std::uint64_t deadline_ns) noexcept VELORA_NONBLOCKING {
     render_.record_ns(render_ns);

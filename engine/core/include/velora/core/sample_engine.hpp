@@ -159,6 +159,7 @@ class SampleEngine final : public Engine {
   std::uint64_t undeclared_extended_voices() const noexcept { return undeclared_extended_; }
   // Story 6.5: times a voice met a damaged block (a rising edge per voice: it faded out for that block). Written by the audio thread, readable anywhere.
   std::uint64_t content_integrity_events() const noexcept override { return integrity_events_.load(std::memory_order_relaxed); }
+  std::uint64_t stream_underrun_events() const noexcept override { return underrun_events_.load(std::memory_order_relaxed); }
   std::uint32_t region_count() const noexcept { return default_bank_ ? static_cast<std::uint32_t>(default_bank_->regions.size()) : 0u; }
 
   // Story 3.11, half-pedal damping. The "half-pedal zone" is the pedal in (0, hold threshold): below half travel. At exactly half the note switches from the
@@ -278,6 +279,7 @@ class SampleEngine final : public Engine {
   std::uint64_t skipped_unplayable_ = 0;
   std::uint64_t undeclared_extended_ = 0;
   std::atomic<std::uint64_t> integrity_events_{0};
+  std::atomic<std::uint64_t> underrun_events_{0};  // Story 1.16: voices that reached the head end of a sample with a tail
   std::array<KeyState, 16> ks_{};                       // per part (channel) keyswitch state
   std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units
   // Story 1.18 (parallel voice render).

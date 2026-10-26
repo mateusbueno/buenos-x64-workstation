@@ -6,8 +6,7 @@
 //
 // Ownership: the source owns the memory; spans and pointers handed out by instrument() stay valid
 // until the source is destroyed. The engine borrows them (it copies nothing), so the source must
-// outlive the engine's use of it. Streaming and locked/partial residency are later stories
-// (1.16, 1.17) and will extend this port, not change these structs.
+// outlive the engine's use of it. Story 1.16 extended SamplePcm additively with heads (total_frames, has_tail); streaming of the tail is Story 1.17.
 #include <atomic>
 #include <cstdint>
 #include <span>
@@ -101,6 +100,12 @@ struct SamplePcm {
   const std::atomic<std::uint8_t>* damaged_blocks = nullptr;  // one byte per block, nonzero = damaged; nullptr = none
   std::uint32_t damaged_block_frames = 0;                     // frames per block of the map (formatlib kBlockFrames = 4096)
   std::uint32_t damaged_block_count = 0;                      // entries in the map
+  // Story 1.16 (instrument heads). `frames` / `left` / `right` are what is RESIDENT: the whole sample, or only its head. `total_frames` is the length of the
+  // sample as stored; 0 (the default, every fully resident source) means "the same as `frames`". `has_tail` is true when total_frames > frames: the rest of the
+  // sample is not in memory (Story 1.17 streams it). Until then a voice whose playhead reaches the head end of a sample with a tail ends with a short fade and
+  // is counted as a stream underrun; a source that is fully resident never produces one, and its render is bit for bit the Story 1.15 one.
+  std::uint64_t total_frames = 0;
+  bool has_tail = false;
 };
 
 struct InstrumentView {

@@ -2,8 +2,8 @@
 // Bundle loader for the sample engine (Story 1.15): decodes every sample of one instrument of a
 // formatlib bundle into RAM as planar float and exposes it, with the instrument's region table,
 // through the engine/ports sample-source port. Control thread only (it allocates and reads files);
-// the audio thread never touches it. All samples fully resident: heads, locked RAM and streaming
-// are Stories 1.16 and 1.17.
+// the audio thread never touches it. By default all samples are fully resident. Story 1.16 adds an opt-in HEAD MODE (SampleLoadOptions::head): only a
+// sized head of each sample is decoded, into mlocked, pre-faulted memory; streaming of the rest is Story 1.17.
 //
 // Conversion is lossless in the float domain: integer PCM becomes value / 2^(bits-1) (exact in
 // float for 16 and 24 bits; 32-bit integer PCM is NOT exact in float, only lossless up to 24 bit), float32
@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "velora/format/bundle.hpp"
+#include "velora/host/head_memory.hpp"
+#include "velora/host/head_sizing.hpp"
 #include "velora/ports/sample_source.hpp"
 
 namespace velora::host {
@@ -37,6 +39,9 @@ enum class LoadStatus : std::uint8_t {
   kKeyUnavailable,       // `key_unavailable`: the key provider could not unwrap the key (another device or library, a modified blob, no provider)
   kProtectedUnsupported, // `protected_unsupported`: the host was built or configured without protected-library support
   kProtectedDowngrade,   // `protected_downgrade`: an unprotected bundle.vlb stands beside the files of a protected bundle
+  // Story 1.16 (instrument heads).
+  kHeadLockFailed,           // `head_lock_failed`: mlock of a head failed (RLIMIT_MEMLOCK) and SampleLoadOptions::head.memory.allow_unlocked is not set; nothing is left resident
+  kHeadProtectedUnsupported, // `head_protected_unsupported`: head mode is on and the bundle is protected (heads are supported for unprotected bundles only; deferred)
 };
 const char* to_string(LoadStatus s);
 // Story 6.5: the typed refusal for a formatlib error met while opening or reading a PROTECTED bundle. kBundleInconsistent for anything that is not one of
@@ -56,6 +61,16 @@ class InstrumentSource {
   virtual bool protected_source() const { return false; }
 };
 
+// Story 1.16: head mode. Off (the default) = the Story 1.15 behaviour, every sample whole, bit for bit.
+struct HeadOptions {
+  bool enabled = false;
+  HeadSizing sizing;         // p99.99 + margin, the engine block and the interpolation guard (head_sizing.hpp)
+  HeadMemoryOptions memory;  // allow_unlocked (dev), test hooks for mlock
+};
+struct SampleLoadOptions {
+  HeadOptions head;
+};
+
 class BundleInstrument final : public velora::ports::SampleSource {
  public:
   velora::ports::InstrumentView instrument() const noexcept override { return {regions_, pcm_}; }
@@ -68,6 +83,11 @@ class BundleInstrument final : public velora::ports::SampleSource {
   std::size_t resident_bytes() const { return resident_bytes_; }
   // The first formatlib error met while reading a sample (kNone when none). For a protected bundle this is the typed cause of a refused load.
   velora::format::Error first_error() const { return first_error_; }
+  // Story 1.16, head mode only. head_mode(): the samples hold heads, not whole samples (a sample whose head reaches its end is whole and has no tail).
+  // heads_locked(): every head buffer is mlocked (false only with HeadMemoryOptions::allow_unlocked after a failed mlock). tail_samples(): samples that have a tail.
+  bool head_mode() const { return head_mode_; }
+  bool heads_locked() const { return head_mode_ && heads_locked_; }
+  std::size_t tail_samples() const { return tail_samples_; }
   // Story 6.5: an opaque object the loader's caller hangs on the instrument so that it lives and dies with it -- for a protected instrument the reader that
   // holds the content key. The instrument is what every generation that plays it shares (SampleBank::owner), so whatever is attached here is released,
   // and the key wiped, when the last generation is freed after its last voice ended. Set once, before the instrument is shared.
@@ -93,6 +113,9 @@ class BundleInstrument final : public velora::ports::SampleSource {
   std::vector<std::vector<float>> data_;  // one buffer per sample: left then (stereo) right
   std::size_t failed_samples_ = 0;
   std::size_t resident_bytes_ = 0;
+  bool head_mode_ = false, heads_locked_ = true;
+  std::size_t tail_samples_ = 0;
+  std::unique_ptr<HeadBuffer> head_arena_;  // head mode: ONE locked, pre-faulted arena holding every sample's head (64 byte aligned); munlocked and freed with the instrument
 };
 
 struct LoadResult {
@@ -114,6 +137,10 @@ inline constexpr std::uint64_t kLoadChunkFrames = 1u << 16;
 
 // Loads the instrument at `index` / the instrument whose key is `key` (exact match, as minted by formatlib).
 LoadResult load_instrument_by_index(const velora::format::BundleReader& bundle, std::size_t index, const LoadHooks* hooks = nullptr);
+// Story 1.16: the same with load options (head mode). A head-mode load decodes only each sample's head into locked, pre-faulted memory, on the calling thread; the
+// instrument is returned only when EVERY head is resident (kOk), otherwise nothing is left resident. Typed refusals: kHeadLockFailed, kHeadProtectedUnsupported.
+LoadResult load_instrument_by_index(const InstrumentSource& source, std::size_t index, const LoadHooks* hooks, const SampleLoadOptions& options);
+LoadResult load_instrument_by_index(const velora::format::BundleReader& bundle, std::size_t index, const LoadHooks* hooks, const SampleLoadOptions& options);
 // The same over any InstrumentSource (Story 6.5: protected bundles). A sample whose frames cannot be read stays empty and is counted in failed_samples();
 // first_error() then says why.
 LoadResult load_instrument_by_index(const InstrumentSource& source, std::size_t index, const LoadHooks* hooks = nullptr);
@@ -124,6 +151,12 @@ LoadResult load_instrument(const velora::format::BundleReader& bundle, std::stri
 // of a load without failures. 0 for an index out of range or an inconsistent sample range.
 std::uint64_t instrument_head_bytes(const velora::format::BundleReader& bundle, std::size_t index);
 std::uint64_t instrument_head_bytes(std::span<const velora::format::InstrumentInfo> instruments, std::span<const velora::format::SampleInfo> samples, std::size_t index);
+// Story 1.16: with head mode on, the bytes of the HEADS the loader will make resident (sized per sample from the instrument's region table, see head_sizing.hpp);
+// equals BundleInstrument::resident_bytes() of that load: the size of the one locked arena (heads 64 byte aligned, the arena page rounded), i.e. what is really mapped.
+// With head mode off it is the function above.
+std::uint64_t instrument_head_bytes(std::span<const velora::format::InstrumentInfo> instruments, std::span<const velora::format::SampleInfo> samples, std::size_t index, const HeadOptions& head);
+// The head plan itself (frames per instrument-local sample; 0 frames for a sample the loader leaves empty). Empty for an index out of range.
+std::vector<HeadLength> plan_heads(std::span<const velora::format::InstrumentInfo> instruments, std::span<const velora::format::SampleInfo> samples, std::size_t index, const HeadSizing& sizing);
 
 // Interleaved exchange PCM -> planar float (left then right in `out`, 2 * frames values for stereo).
 // False (and `out` unspecified) for bits outside 1..32, a float format that is not 32 bit, an

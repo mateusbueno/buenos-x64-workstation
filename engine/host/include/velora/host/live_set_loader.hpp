@@ -69,10 +69,21 @@ class HeadProvider {
 // The Mac path: whole instruments in RAM (load_instrument_by_index). A sample that fails to decode makes the load fail (kBundleInconsistent):
 // a part with holes in its instrument is not "resident". The returned instrument keeps the opened bundle (its file descriptor, the BundleLease)
 // alive: the lease is released when the last generation that holds the instrument is freed.
+//
+// Story 1.16: constructed with SampleLoadOptions whose `head.enabled` is true it brings only the HEADS resident (sized from the qualified SSD latency, in locked,
+// pre-faulted memory) and its estimate_bytes() is the real head size, so the head budget is checked against what will actually be resident. The default
+// (head mode off) is the Story 1.15 behaviour. Head mode refuses protected libraries (kHeadProtectedUnsupported).
 class RamHeadProvider : public HeadProvider {
  public:
+  RamHeadProvider() = default;
+  explicit RamHeadProvider(SampleLoadOptions options) : options_(std::move(options)) {}
+  const SampleLoadOptions& load_options() const { return options_; }
+  std::uint64_t estimate_bytes(const ResolveResult& resolved) const override;
   LoadStatus load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) override;
   LoadStatus load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) override;
+
+ private:
+  SampleLoadOptions options_;
 };
 
 enum class LiveSetLoadStatus : std::uint8_t {

@@ -10,6 +10,7 @@ add_library(velora_host STATIC
   src/library_resolver.cpp
   src/sample_bundle_loader.cpp
   src/secure_memory.cpp
+  src/head_memory.cpp
   src/damage_registry.cpp
   src/trust_list.cpp
   src/mcu_frame.cpp
@@ -377,6 +378,12 @@ target_link_libraries(virtual_panel_map_test PRIVATE velora_host)
 target_compile_definitions(virtual_panel_map_test PRIVATE VELORA_VIRTUAL_PANEL_MAP="${CMAKE_CURRENT_SOURCE_DIR}/dev/virtual-panel.json")
 add_test(NAME virtual_panel_map_test COMMAND virtual_panel_map_test)
 set_tests_properties(virtual_panel_map_test PROPERTIES TIMEOUT 120)
+
+# Story 1.16: instrument heads in locked RAM (sizing, head-mode loader, onset from heads with the bundle unreadable, underrun placeholder, head budget).
+add_executable(head_mode_test tests/head_mode_test.cpp)
+target_link_libraries(head_mode_test PRIVATE velora_control)
+add_test(NAME head_mode_test COMMAND head_mode_test)
+set_tests_properties(head_mode_test PROPERTIES TIMEOUT 120)
 
 add_executable(sample_bundle_loader_test tests/sample_bundle_loader_test.cpp)
 target_link_libraries(sample_bundle_loader_test PRIVATE velora_host)

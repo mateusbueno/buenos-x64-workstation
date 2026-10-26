@@ -77,6 +77,8 @@ int main(int argc, char** argv) {
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false, no_audio = false;
   std::string din_source;  // Story 7.7: a CoreMIDI source whose name contains this is the DIN input (Mac only; the board's DIN UART adapter tags kDin itself)
+  bool head_extra_flag = false;  // a head tuning flag was given (needs --head-mode)
+  host::SampleLoadOptions load_options;  // Story 1.16: --head-mode (instrument heads in locked RAM; default off = whole samples)
   std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path, sysd_socket;
   host::PedalDirection switch_direction = host::PedalDirection::kNormal;  // Story 3.11
   std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
@@ -110,6 +112,23 @@ int main(int argc, char** argv) {
       data_dir = argv[++i];
     } else if (!std::strcmp(argv[i], "--library-root") && i + 1 < argc) {
       library_root = argv[++i];
+    } else if (!std::strcmp(argv[i], "--head-mode")) {
+      load_options.head.enabled = true;
+    } else if (!std::strcmp(argv[i], "--allow-unlocked-heads")) {
+      load_options.head.memory.allow_unlocked = true;
+      head_extra_flag = true;
+    } else if ((!std::strcmp(argv[i], "--head-p9999-us") || !std::strcmp(argv[i], "--head-margin-us")) && i + 1 < argc) {
+      const bool is_p = !std::strcmp(argv[i], "--head-p9999-us");
+      const char* flag = argv[i];
+      errno = 0;
+      char* end = nullptr;
+      const unsigned long long us = std::strtoull(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0' || argv[i][0] == '-' || us > 10'000'000ull) {  // at most 10 s: anything larger is a typo, and the ns multiply cannot overflow
+        std::fprintf(stderr, "engine-host: %s expects whole microseconds between 0 and 10000000, got '%s'\n", flag, argv[i]);
+        return 2;
+      }
+      (is_p ? load_options.head.sizing.p9999_ns : load_options.head.sizing.margin_ns) = us * 1000u;
+      head_extra_flag = true;
     } else if (!std::strcmp(argv[i], "--library-playing-idle-ms") && i + 1 < argc) {
       library_idle_ms = std::strtol(argv[++i], nullptr, 10);
       if (library_idle_ms <= 0) {
@@ -161,6 +180,8 @@ int main(int argc, char** argv) {
     } else {
       std::fprintf(stderr,
                    "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in] [--no-audio (dev/test only)]\n"
+                   "                   [--head-mode [--allow-unlocked-heads] [--head-p9999-us N] [--head-margin-us N]]   (Story 1.16: only the head of each sample in mlocked RAM; the rest is\n"
+                   "                                                              Story 1.17; --allow-unlocked-heads is for development when RLIMIT_MEMLOCK is too small)\n"
                    "                   [--live-set FILE --library-root DIR]   (load a Live Set at start; its parts play from the keyboard by zone)\n"
                    "                   [--live-set-dir DIR --library-root DIR]   (the Live Sets of a directory (<id>.liveset) that ws.v1 JumpToLiveSet can switch to,\n"
                    "                                                              seamlessly, loading in the background; without --live-set the first by name loads at start)\n"
@@ -187,6 +208,10 @@ int main(int argc, char** argv) {
                    "                                                                           performing = a note within the last N ms, default 3000; default off)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
+  }
+  if (head_extra_flag && !load_options.head.enabled) {
+    std::fprintf(stderr, "engine-host: --allow-unlocked-heads, --head-p9999-us and --head-margin-us need --head-mode\n");
+    return 2;
   }
   // Story 4.1 (AD-27): the tier is read ONCE, here, and the profile is immutable for the run. The Mac has no strap (NoStrapTierSource: v1), unless the dev override says Pro.
   host::NoStrapTierSource tier_source;
@@ -387,12 +412,16 @@ int main(int argc, char** argv) {
   core::FmEngine fm(48000.0f, profile.fm_voice_capacity);
   core::VaEngine va(48000.0f, profile.va_voice_capacity);
   host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);
-  host::RamHeadProvider ram_heads;
+  host::RamHeadProvider ram_heads(load_options);
   host::HeadProvider* head_provider = &ram_heads;
 #ifdef VELORA_ENGINE_DEV_KEYS
   std::unique_ptr<host::DevKeyProvider> dev_keys;
   std::unique_ptr<host::ProtectedHeadProvider> protected_heads;
   if (!trust_list_path.empty()) {
+    if (load_options.head.enabled) {
+      std::fprintf(stderr, "engine-host: --head-mode and protected libraries (--trust-list) cannot be combined (heads are for unprotected bundles: head_protected_unsupported)\n");
+      return 1;
+    }
     // Core dumps off before any key exists in this process (the content key and the decoded PCM must not reach a core file).
     if (!host::disable_core_dumps()) {
       std::fprintf(stderr, "engine-host: cannot disable core dumps (RLIMIT_CORE); refusing to hold content keys\n");

@@ -36,16 +36,18 @@ bool is_integrity_error(fmt::Error e) {
   return e == fmt::Error::kBlockHashMismatch || e == fmt::Error::kCorruptBlock || e == fmt::Error::kPcmHashMismatch;
 }
 
-ProtectedHeadProvider::ProtectedHeadProvider(std::shared_ptr<FsPort> fs, ports::KeyProvider& keys, DamageRegistry* damage)
-    : fs_(std::move(fs)), keys_(keys), damage_(damage) {}
+ProtectedHeadProvider::ProtectedHeadProvider(std::shared_ptr<FsPort> fs, ports::KeyProvider& keys, DamageRegistry* damage, SampleLoadOptions options)
+    : RamHeadProvider(std::move(options)), fs_(std::move(fs)), keys_(keys), damage_(damage) {}
 
 LoadStatus ProtectedHeadProvider::load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) {
   if (!resolved.ok() || !resolved.is_protected()) return RamHeadProvider::load(resolved, out);
+  if (load_options().head.enabled) return LoadStatus::kHeadProtectedUnsupported;  // Story 1.16: heads are for unprotected bundles only (deferred)
   return load_protected(resolved, out, nullptr);
 }
 
 LoadStatus ProtectedHeadProvider::load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) {
   if (!resolved.ok() || !resolved.is_protected()) return RamHeadProvider::load_controlled(resolved, out, hooks);
+  if (load_options().head.enabled) return LoadStatus::kHeadProtectedUnsupported;
   return load_protected(resolved, out, &hooks);
 }
 

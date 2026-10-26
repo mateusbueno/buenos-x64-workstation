@@ -73,6 +73,10 @@ bash yocto/ci/validate.sh --clean  # delete that volume
 
 The checks (recipe-level graph only; no package-level or `do_rootfs` validation): static config checks; kas checkout at pinned commits; `bitbake -p` over all layers; `bitbake -g velora-image-dev` (full provider resolution); `bitbake -g` package set (forbidden recipes absent, required ones present, self-test with a deliberately bad image); resolved variables via `bitbake -e`; licence policy (test images with a GPL-3.0, LGPL-3.0 or AGPL-3.0 recipe must fail with "incompatible license", the GPL-2.0 test image must resolve, and BusyBox, linux-yocto, U-Boot, libgcc and gcc-runtime must stay in the resolved image with the policy applied to them).
 
+## Locked memory for instrument heads (Story 1.16)
+
+The engine keeps the decoded head of every sample in `mlock`ed RAM (engine/host README, "Instrument heads in locked RAM"). The head budget of the tier (5 GiB v1, 10 GiB Pro) must be lockable, so the engine service unit needs `LimitMEMLOCK=infinity` (or at least the budget); with the default 8 MiB limit a head-mode load is refused (`head_lock_failed`). Not yet wired: there is no engine service unit in the image recipes at this point, so this is a requirement for the unit that will be added. `ulimit -l unlimited` for manual runs. The SSD read latency that sizes the heads is measured with `velora-ssd-qualify` (tools/ssd-qualify/README.md); that run is dev-board work.
+
 ## Disk layout (Story 6.11)
 
 Defined once in `meta-velora/files/wic/velora-nvme.wks` (`WKS_FILE = "velora-nvme.wks"` in the image recipe, which overrides the meta-rockchip default `rockchip.wks`). GPT on the NVMe (`nvme0n1`).

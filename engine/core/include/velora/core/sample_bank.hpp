@@ -47,6 +47,9 @@ struct SampleBankRegion {
   // set by non-real-time threads that found a block of a protected library damaged.
   const std::atomic<std::uint8_t>* damage = nullptr;
   std::uint32_t damage_block_frames = 0, damage_block_count = 0;
+  // Story 1.16: the sample has a tail that is not resident (only a head is). Reaching the head end is a stream underrun (see SampleEngine). total_frames is the stored length.
+  bool has_tail = false;
+  std::uint64_t total_frames = 0;
   std::int32_t damage_shift = -1;  // log2(damage_block_frames) when it is a power of two (the block index is then a shift), else -1 (a division)
 };
 

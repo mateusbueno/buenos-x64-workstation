@@ -987,6 +987,15 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
   std::uint64_t integrity = 0;
   for (std::size_t i = 0; i < registry_.size(); ++i) integrity += registry_.at(i)->content_integrity_events();
   last_.store_content_integrity(integrity);
+  // Story 1.16: stream underruns (a voice reached the head end of a sample with a tail) -> Diagnostics, as the delta since the previous block.
+  std::uint64_t underruns = 0;
+  for (std::size_t i = 0; i < registry_.size(); ++i) underruns += registry_.at(i)->stream_underrun_events();
+  if (underruns > published_underruns_) {
+    last_.diagnostics_rt().record_stream_underruns(underruns - published_underruns_);
+    published_underruns_ = underruns;
+  } else {
+    published_underruns_ = underruns;  // the engine total dropped (an engine was replaced): resync, so later increments are not lost
+  }
   // Story 1.21: the arbiter's steal / exhausted totals for the diagnostics reply.
   last_.diagnostics_rt().store_voice_totals(arbiter_.steals(), arbiter_.exhausted());
   last_.store_input_activity(input_held_count_, input_pedal_down_);  // Story 8.8

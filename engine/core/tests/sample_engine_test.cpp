@@ -785,7 +785,65 @@ static void test_voice_info_reports_started_notes() {
   for (std::uint32_t i = 0; i < e.voice_capacity(); ++i) CHECK(!e.voice_info(i, vi));
 }
 
+// Story 1.16: a sample with a tail has only its head resident. Inside the head the render is the whole-sample render bit for bit; at the head end the voice fades
+// out with a short release and is counted as a stream underrun (once per voice). A head that is the whole sample is not a tail and never underruns.
+static void test_head_with_tail_underrun() {
+  std::vector<float> wave(5000);
+  for (std::size_t i = 0; i < wave.size(); ++i) wave[i] = 0.5f * static_cast<float>(std::sin(0.05 * static_cast<double>(i)));
+  TestInstrument whole, head;
+  whole.region(whole.add_sample(wave), 60, 60);
+  head.region(head.add_sample(std::vector<float>(wave.begin(), wave.begin() + 400)), 60, 60);
+  head.pcm[0].total_frames = 5000;
+  head.pcm[0].has_tail = true;
+  SampleEngine ew(cfg()), eh(cfg());
+  CHECK(ew.set_instrument(whole) && eh.set_instrument(head));
+  CHECK(ew.start_voice(0, 60, 65535) == EngineStatus::kOk && eh.start_voice(0, 60, 65535) == EngineStatus::kOk);
+  const Out a = render(ew, 300), b = render(eh, 300);
+  CHECK(std::equal(a.l.begin(), a.l.end(), b.l.begin()) && std::equal(a.r.begin(), a.r.end(), b.r.begin()));
+  CHECK(eh.stream_underrun_events() == 0 && eh.active_voices() == 1);
+  render(eh, 6000);
+  CHECK(eh.stream_underrun_events() == 1 && eh.active_voices() == 0);
+  CHECK(ew.stream_underrun_events() == 0 && ew.active_voices() == 1);
+  // frames == total_frames (a head that reaches the end of the sample): no tail, the Story 1.15 end of sample, no count.
+  TestInstrument full;
+  const std::uint32_t si = full.add_sample(std::vector<float>(wave.begin(), wave.begin() + 400));
+  full.pcm[si].total_frames = 400;
+  full.region(si, 60, 60);
+  SampleEngine ef(cfg());
+  CHECK(ef.set_instrument(full) && ef.start_voice(0, 60, 65535) == EngineStatus::kOk);
+  render(ef, 6000);
+  CHECK(ef.stream_underrun_events() == 0 && ef.active_voices() == 0);
+}
+
+// Story 1.16: a looping voice whose loop end lies just past the head ends at the head end like a non-looping one and must not wrap back into head audio mid-fade.
+static void test_loop_past_head_does_not_wrap_while_fading() {
+  std::vector<float> wave(5000);
+  for (std::size_t i = 0; i < wave.size(); ++i) wave[i] = 0.5f * static_cast<float>(std::sin(0.05 * static_cast<double>(i)));
+  TestInstrument loop, plain;
+  for (TestInstrument* t : {&loop, &plain}) {
+    const std::uint32_t si = t->add_sample(std::vector<float>(wave.begin(), wave.begin() + 400));
+    t->pcm[si].total_frames = 5000;
+    t->pcm[si].has_tail = true;
+    ports::SampleRegionDesc& d = t->region(si, 60, 60);
+    if (t == &loop) {
+      d.loop_mode = ports::SampleLoopMode::kLoopContinuous;
+      d.has_loop_points = true;
+      d.loop_start = 0;
+      d.loop_end = 410;
+    }
+  }
+  SampleEngine el(cfg()), ep(cfg());
+  CHECK(el.set_instrument(loop) && ep.set_instrument(plain));
+  el.start_voice(0, 60, 65535);
+  ep.start_voice(0, 60, 65535);
+  const Out a = render(el, 6000), b = render(ep, 6000);
+  CHECK(std::equal(a.l.begin(), a.l.end(), b.l.begin()));  // identical: the loop never wraps back
+  CHECK(el.stream_underrun_events() == 1 && el.active_voices() == 0);
+}
+
 int main() {
+  test_loop_past_head_does_not_wrap_while_fading();
+  test_head_with_tail_underrun();
   test_voice_info_reports_started_notes();
   test_robustness();
   test_region_selection();

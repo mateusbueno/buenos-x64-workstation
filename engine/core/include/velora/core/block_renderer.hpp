@@ -322,6 +322,7 @@ class BlockRenderer {
   // Story 8.8: physical input activity (group 0 note on/off, CC 64), published once per block through LastValueTable::store_input_activity().
   std::array<std::uint8_t, 16 * 128> input_held_{};
   std::uint32_t input_held_count_ = 0;
+  std::uint64_t published_underruns_ = 0;  // Story 1.16: engine stream-underrun total already added to Diagnostics
   bool input_pedal_down_ = false;
   bool keyboard_pedal_down_ = false;              // RT-owned: the last keyboard sustain (CC 64) state seen in a Live Set generation
   // Per (channel, note): bit i set = this key holds one reference on ledger slot i (a generation).
