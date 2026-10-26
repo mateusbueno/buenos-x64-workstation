@@ -10,6 +10,8 @@ adds the owner, the file, the channel and the client.
   Unix domain socket).
 - Engine side: `engine/host` `SysdConfigClient` (`velora/host/sysd_config_client.hpp`), wired into `engine-host` behind `--sysd-socket PATH`.
 - Dev CLI: `velora-sysdctl [--socket PATH] get | set FIELD VALUE... | watch [COUNT]` (`tools/sysdctl/`).
+- **TCP bridge** (Foundation: Velora Studio device connection; `BridgeServer`, `PairingWindow`, `PairedStore`): the one door through which Velora Studio reaches the unit
+  (below, "TCP bridge"). Enabled with `--bridge-port`.
 
 ## Ownership and file layout
 
@@ -187,3 +189,95 @@ Restart=on-failure
 kill at each stage simulated and by real kills, single writer), `sysd_service_tests` (protocol with a fake loop, concurrent SetConfig), `sysd_socket_tests`
 (real UDS in a temp dir: framing and limits, latency, stale / live socket, the engine client with a late-starting sysd, reconnect, revision guard, never
 blocking), `control_tests` (the engine refuses the config messages), `engine_host_sysd_smoke` (real `engine-host`, `velora-sysd`, `velora-sysdctl`).
+
+
+## TCP bridge (Velora Studio device connection; Story 9.3 Mac/localhost logic, pairing-lite of Story 9.6, relay of Story 9.7)
+
+Velora Studio speaks the same ws.v1 schema as the on-device clients, framed on **one TCP port** over the USB NCM link (4-byte big-endian length + protobuf,
+largest frame 65536 bytes, exactly the Unix socket framing). `velora-sysd` bridges that port to the unit's services. The Mac build runs it on localhost.
+This is the unit's only network door; the rules below are what protect it.
+
+```
+velora-sysd --data-dir DIR --bridge-port 7410 [--bind 127.0.0.1] --engine-socket /run/velora/engine.sock [--librarian-socket /run/velora/librarian.sock] \
+            [--pairing-code CODE | --dev-bypass-pairing]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--bridge-port PORT` | enables the bridge; `0` picks an ephemeral port (printed: `sysd: bridge ws.v1 on HOST:PORT ...`). Must be a number 0..65535, anything else is refused. Without it nothing listens on TCP |
+| `--bind ADDR` | IPv4 or IPv6 literal, default `127.0.0.1` (the Mac). The NCM interface address is board work |
+| `--engine-socket`, `--librarian-socket` | the upstream Unix sockets; a missing one answers `UPSTREAM_UNAVAILABLE` |
+| `--pairing-code CODE` | **DEV / TEST ONLY**: a fixed code, at least 6 digits (shorter or non-digit codes are refused). Logs a loud warning |
+| `--dev-bypass-pairing` | **DEV HOST ONLY**: every client is paired at Hello, the model is `DEV HOST`. Logs a loud warning. Never on a unit |
+| `--i-know-dev-flags-on-a-network` | the two dev flags above are **refused** when `--bind` is not a loopback address (127.0.0.0/8, ::1) unless this override is given |
+
+The dev flags are runtime flags of the same binary: **nothing in the build stops a production image from passing them**. The guard is the loopback check above plus the loud
+warning; the board image's unit file must not pass them (a build-time exclusion is deferred to the board work).
+
+**Handshake.** `Hello {version, features[], client_name, client_version, client_id, pairing_token}` -> `HelloAck {version, features, device_version, firmware_version, device_id,
+model, paired}`. `features` is the **negotiated set**: the client's list intersected with the device features (`params.v1`, `snapshots.v1`, `subscribe.v1`, `liveset.v1`,
+`config.v1`, `library.v1`) plus `pairing.v1`. Version rule as the engine's control server (N / N-1; another major is `UNSUPPORTED_VERSION` and the connection closes). The
+`client_id` only **names** the computer (it is kept only when it is 1..64 of `A-Z a-z 0-9 - _ .`, so it can never inject into a log or the paired file); it is not a credential.
+
+**Pairing.** A computer is paired only by `PairRequest {code, computer_name}` with the code the unit shows. The reply `PairReply {paired, computer_id, pairing_token}` carries a
+**pairing token: 256 random bits (hex) from `getentropy`, returned once**; the unit stores only its SHA-256 (`<data>/bridge/paired_computers.txt`, mode 0600, dir 0700, atomic
+replace; up to 32 computers, the least recently connected is evicted at the cap). From then on a `Hello` pairs only when `client_id` is known **and** SHA-256(`pairing_token`)
+equals the stored hash (constant-time compare). A known id without the token, with a wrong token, or with another computer's token is `HelloAck{paired=false}` and **nothing is
+written to disk** for it. A client learns the unit's `device_id` from the first `HelloAck` and may then send **one** more `Hello` on the same connection carrying the token it holds
+for that device id; any later `Hello` is `INVALID_COMMAND`. The pairing window opens at start with the code, lasts **2 minutes**, closes after **5 wrong codes** (a global
+counter: `PAIRING_CODE_INVALID` with `details.attempts_left`, then `PAIRING_CLOSED` with `details.reason` = `attempts` | `expired` | `not_open`) and **closes at the first
+successful pairing** (one code pairs one computer). The code is compared in constant time; the clock is injected (tests do not sleep).
+Code strength: a 6-digit code is about 20 bits, protected by the 5 global attempts per window and the 2-minute life, not by its entropy. The code is printed on stdout (journald on a
+unit): a dev convenience until the unit's own pairing UI (Story 9.6) shows it on the display only. There is **no reopen path** on a unit before Story 9.6; a closed window
+stays closed until `velora-sysd` restarts. Because the attempts are global, anyone who can reach the port can burn them and deny pairing: a per-source cooldown is deferred
+(Story 9.6). Randomness is `getentropy` only and **fails closed**: with no entropy the bridge does not start (there is no `rand()` fallback anywhere). A corrupt paired file (or an
+old v1 one without tokens) reads as an empty list **and a new device id**, logged: every stored token was bound to the old id, so computers pair again.
+
+**The message table (a total table, no default).** `BridgeServer::message_rules()` classifies **every** `ClientMessage` body: `{field, feature, route, unpaired_allowed}`. A
+test walks the proto descriptor and fails when a body is added without a row. An unpaired client gets `NOT_PAIRED` for everything whose `unpaired_allowed` is false (that is
+every row except `Hello` and `PairRequest`, and also unknown bodies and the empty message); a paired client gets `INVALID_COMMAND` for an unlisted body, `INVALID_COMMAND`
+(`reason=not_available_over_bridge`) for a denied one, and `UNSUPPORTED_FEATURE` when the row's feature was not negotiated.
+
+| Route | Rows |
+|---|---|
+| engine, `params.v1` (edits) | `set_insert_chain`, `set_send_levels`, `set_part_output`, `set_master_params`, `set_timbre_ref`, `set_performance_param`, `set_part_timbre`, `set_part_volume` |
+| engine, `snapshots.v1` / `subscribe.v1` (state) | `get_state`, `get_performance_values`, `get_diagnostics` / `subscribe` |
+| engine, `liveset.v1` (scenes, Live Sets, setlists, Write, the Live Set's ASSIGN map) | `recall_scene`, `next_scene`, `previous_scene`, `jump_to_live_set`, `cancel_load`, the setlist and tag commands, `create_live_set`, `delete_live_set`, `next_live_set`, `previous_live_set`, `get_setlists`, `write_live_set`, `set_assign_slot`, `clear_assign_slot` |
+| config, `config.v1` (in process) | `get_config`, `set_config`, `subscribe_config` |
+| library, `library.v1` | `library` (allow-listed, below) |
+| **denied** (panel, pedals, encoders: hardware, not Studio's) | `set_led`, `move_fader`, `select_part`, `set_fader_mode`, `select_organ_part`, `set_encoder_mode`, `start_pedal_calibration`, `finish_pedal_calibration`, `cancel_pedal_calibration` |
+| local | `hello`, `pair_request` (the only unpaired-allowed rows) |
+
+Decisions: `set_performance_param` is an edit (Studio edits parameters live); the ASSIGN map belongs to the Live Set, so `set_assign_slot` / `clear_assign_slot` are allowed while
+`set_encoder_mode` (a panel mode) is not. The engine's own control server also answers the two bridge-only bodies (`pair_request`, `library`) with `INVALID_COMMAND`.
+
+**Library allow-list.** `LibraryRequest {payload}` carries a `LibraryClientMessage`; `BridgeServer::library_rules()` is a total table over its body too. Allowed (read / safe):
+`subscribe`, `add_favorite`, `remove_favorite`, `get_favorites_and_recent`, `list_libraries`, `list_instruments`, `import_status`, `cancel_import`, `cancel_preflight`. Refused with
+`INVALID_COMMAND` (`reason=library_message_not_available`) before the librarian sees them: a second `hello` (the bridge did the handshake), the engine-to-librarian reports
+(`report_active`, `live_set_deleted`, `reconcile`, `set_playing`, `flush_recent`), `install_protected`, and everything that names absolute device paths (`import_request`,
+`preflight_request`, and `list_preflight_rows`, which returns them). The import path policy (restricting sources to removable media) is deferred; until it exists the import is not
+offered over the bridge. Inner ids: `CancelPreflight.request_id` names one of the client's own requests and is translated to the upstream id of that request (none pending: 0).
+
+**Forwarding.** Each paired session gets a connection of its own to the engine's control socket (so the engine keeps its per-client `Subscribe` state and its State pushes flow back
+as they come) and, on first use, one to the librarian. The upstream sockets are connected non-blocking: an unreachable or backlogged one is `UPSTREAM_UNAVAILABLE`. `request_id` is
+the client's: the bridge maps it to a fresh per-connection upstream id and back (two clients may use the same ids); the library message's inner `request_id` is mapped the same way
+and the outer reply carries the client's id. A pending entry is dropped at its first reply (every allowed request has exactly one; pushes carry request_id 0); one that never gets a
+reply is answered `UPSTREAM_UNAVAILABLE` (`reason=timeout`) after 30 s so the 256-entry cap cannot fill with dead requests. Pushes (`request_id` 0) are relayed untouched. The bridge never
+interprets Live Set content. An upstream lost mid-session sends `UPSTREAM_UNAVAILABLE` (request_id 0) and closes the client connection, so the client reconnects and subscribes again.
+A reply that does not fit one 65536-byte ws.v1 frame (library replies can be larger) is answered `INTERNAL` (`reason=reply_too_large`) when it answers a request; an oversize push is dropped and logged.
+
+**Limits.** Frame cap 65536 (violation = `FRAME_TOO_LARGE` + close, counted), malformed protobuf = close, counted; at most 8 clients (more are closed at accept, counted) and at most 3
+handshaken-but-unpaired sessions (`BUSY` at Hello); handshake timeout 5 s; idle timeout 120 s paired, 45 s unpaired (Studio keepalive every 20 s); at most 500 messages per second per
+connection (`BUSY` above, close at 4x); at most 256 requests and 1 MiB queued toward one upstream; a slow client whose output queue passes 4 MiB is dropped (counted). A flood of
+connections that never say Hello can hold the 8 slots for the 5 s handshake timeout each: acceptable on a USB link, noted.
+
+**Not done here (recorded as deferred).** No TLS: the physical USB link is the trust boundary (architecture). The nftables single-port policy, the NCM interface and its link-local
+addressing, the USB gadget, and the unit-side pairing lifecycle (showing the code on the display only, reopening the window, the paired computers list, Forget, a per-source
+cooldown against burning the global attempts, rotating the code) are board work and Story 9.6's device section. Also deferred: the library import path policy (above), bidirectional /
+control characters beyond the ASCII control range in computer names (names are for display only), and `ConfigService` holding its mutex across the config fsync (a slow disk can stall the
+bridge thread for one `SetConfig`).
+
+Tests: `sysd_bridge_tests` (every row of the matrix against fake upstream sockets, an injected clock, the shared config service, SHA-256 known vectors, the descriptor-totality test,
+NOT_PAIRED for every table row) and `engine_host_bridge_smoke` (real `engine-host --no-audio` + `velora-sysd` + a TCP client). `engine_host_bridge_studio_smoke` runs the same smoke
+plus the Velora Studio Rust client (`cargo test --offline real_bridge_round_trip`) against that real bridge and engine; it is skipped with a clear message (exit 77) when cargo is not
+installed.

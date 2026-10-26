@@ -20,6 +20,8 @@
 namespace velora::sysd {
 
 using ConnId = std::uint64_t;
+// The TCP bridge (bridge_server.hpp) shares one ConfigService with the Unix socket server: its connection ids start here so the two never collide.
+constexpr ConnId kBridgeConnBase = ConnId{1} << 40;
 
 struct Outbound {
   ConnId to = 0;

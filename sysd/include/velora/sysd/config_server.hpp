@@ -5,6 +5,8 @@
 // The socket is created 0600 (the sysd user's; deployment decides the group) and a stale socket file of a crashed run is replaced; a live one is refused.
 #include <atomic>
 #include <cstdint>
+#include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -32,6 +34,10 @@ class ConfigServer {
   void stop();  // joins the thread and removes the socket file
   const std::string& path() const noexcept { return path_; }
   std::uint64_t accepted() const noexcept { return accepted_.load(std::memory_order_relaxed); }
+  // Outputs of a ConfigService call that belong to connections of ANOTHER server (the TCP bridge shares the service; ids >= kBridgeConnBase) go to this sink.
+  // Set before start(). And the reverse: post() (any thread) delivers outputs produced elsewhere to this server's clients.
+  void set_foreign_sink(std::function<void(std::vector<Outbound>)> sink) { foreign_ = std::move(sink); }
+  void post(std::vector<Outbound> out);
 
  private:
   struct Client {
@@ -59,6 +65,10 @@ class ConfigServer {
   std::vector<Client> clients_;
   ConnId next_id_ = 1;
   std::atomic<std::uint64_t> accepted_{0};
+  std::function<void(std::vector<Outbound>)> foreign_;
+  std::mutex inbox_mu_;
+  std::vector<Outbound> inbox_;
+  bool post_closed_ = false;
 };
 
 }  // namespace velora::sysd

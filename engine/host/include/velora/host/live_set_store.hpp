@@ -210,7 +210,7 @@ enum class HookAction : std::uint8_t { kContinue, kAbort };
 // kCommittedNotDurable: renamed, but the directory fsync failed (or `inject_dir_sync_failure`). Control thread only (the caller checks ownership).
 // `inject_write_errno` (test only, 0 = off) makes the write of the temp file fail with that errno (ENOSPC gives kNoSpace); the temp file is removed.
 Status atomic_replace_file(const std::string& dir, const std::string& name, const std::string& tmp_name, const std::string& bytes,
-                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure, int inject_write_errno = 0);
+                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure, int inject_write_errno = 0, unsigned file_mode = 0644);
 // Reads a regular file (no symlink) of at most `max_bytes` into `out`. kNotFound when absent, kTooLarge above the cap, kIo otherwise.
 Status read_regular_file(const std::string& path, std::size_t max_bytes, std::string& out);
 

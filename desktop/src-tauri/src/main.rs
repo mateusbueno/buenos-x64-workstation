@@ -34,11 +34,13 @@ pub use velora::liveset::v1 as liveset_v1;
 pub use velora::backup::v1 as backup_v1;
 
 pub mod backup_restore;
+pub mod device;
 
 use backup_restore::*;
 use std::path::Path;
-use std::sync::Mutex;
-use tauri::State;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{Emitter, Manager, State};
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ConnectionInfo {
@@ -429,6 +431,85 @@ fn perform_restore_cmd(
     Ok(result)
 }
 
+// ---- device connection (Foundation: Velora Studio device connection) --------------------------------------------------------------------------------
+// The real link to a unit through the sysd bridge. The simulated device above stays as the offline fallback: the UI follows this status only once a device
+// address is configured (`device_connect`, or the VELORA_DEVICE=host:port environment variable at startup).
+
+pub struct DeviceHandle {
+    pub client: Arc<device::DeviceClient>,
+    app: Arc<Mutex<Option<tauri::AppHandle>>>,
+}
+
+// device_connect / device_disconnect are async: stopping a worker joins its thread, and nothing may block the UI thread.
+#[tauri::command]
+async fn device_connect(host: String, port: u16, dev: State<'_, DeviceHandle>) -> Result<device::DeviceStatus, String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        client.connect(&host, port);
+        client.status()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn device_pair(code: String, name: String, dev: State<'_, DeviceHandle>) -> Result<(), String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || client.pair(&code, &name)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn device_disconnect(dev: State<'_, DeviceHandle>) -> Result<device::DeviceStatus, String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        client.disconnect();
+        client.status()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn device_status(dev: State<DeviceHandle>) -> device::DeviceStatus {
+    dev.client.status()
+}
+
+/// The latest engine State received through the bridge, as JSON (null before the first one). Stories 9.8 / 9.13 read this and `device://state`.
+#[tauri::command]
+fn device_state(dev: State<DeviceHandle>) -> Option<serde_json::Value> {
+    dev.client.latest_state()
+}
+
+/// Generic ws.v1 request. A TRUSTED-FRONTEND capability: whatever page runs in this webview can send any message the bridge allows a paired computer (the bridge's
+/// message table is the second fence), so the webview must only ever load Studio's own bundled assets (see the CSP in tauri.conf.json). JSON numbers are
+/// IEEE doubles in the webview: u64 values (revisions, ids) are exact below 2^53, which a unit's revisions never approach.
+/// `request` is a ClientMessage as JSON (`{"body": {"GetState": {}}}`), the answer a ServerMessage as JSON.
+#[tauri::command]
+async fn device_request(request: serde_json::Value, dev: State<'_, DeviceHandle>) -> Result<serde_json::Value, String> {
+    let msg: ws_v1::ClientMessage = serde_json::from_value(request).map_err(|e| format!("bad request: {}", e))?;
+    let client = dev.client.clone();
+    let reply = tauri::async_runtime::spawn_blocking(move || client.request(msg, Duration::from_secs(10)))
+        .await
+        .map_err(|e| e.to_string())??;
+    serde_json::to_value(&reply).map_err(|e| e.to_string())
+}
+
+fn make_device_handle() -> DeviceHandle {
+    let app: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
+    let app2 = app.clone();
+    let sink: device::EventSink = Arc::new(move |name, payload| {
+        if let Some(h) = app2.lock().unwrap().as_ref() {
+            let _ = h.emit(name, payload);
+        }
+    });
+    // The computer id: a random one for this run; `setup` replaces it with the persisted one once the app data folder is known. No constant fallback id.
+    let client_id = device::random_client_id().unwrap_or_default();
+    DeviceHandle {
+        client: Arc::new(device::DeviceClient::new(client_id, env!("CARGO_PKG_VERSION").to_string(), sink)),
+        app,
+    }
+}
+
 fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -455,6 +536,31 @@ fn main() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .manage(make_device_handle())
+        .setup(|app| {
+            let dev = app.state::<DeviceHandle>();
+            *dev.app.lock().unwrap() = Some(app.handle().clone());
+            // The stable computer id and the pairing tokens live under the app data dir (VELORA_STUDIO_DATA_DIR overrides it for tests). A failure to save is
+            // reported in the status (`persist_error`), never turned into a new id at every launch.
+            let dir = std::env::var("VELORA_STUDIO_DATA_DIR").ok().map(std::path::PathBuf::from).or_else(|| app.path().app_data_dir().ok());
+            if let Some(dir) = dir {
+                match device::load_or_create_client_id(&dir) {
+                    Ok(id) => dev.client.set_client_id(id),
+                    Err(e) => dev.client.set_persist_error(Some(e)),
+                }
+                dev.client.set_token_dir(dir);
+            } else {
+                dev.client.set_persist_error(Some("no app data folder: this computer pairs again at every launch".to_string()));
+            }
+            if let Ok(addr) = std::env::var("VELORA_DEVICE") {
+                if let Some((host, port)) = addr.rsplit_once(':') {
+                    if let Ok(port) = port.parse::<u16>() {
+                        dev.client.connect(host, port);
+                    }
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_connection_status,
             set_connection_status,
@@ -468,6 +574,12 @@ fn main() {
             save_backup_file_cmd,
             get_restore_counts_cmd,
             perform_restore_cmd,
+            device_connect,
+            device_pair,
+            device_disconnect,
+            device_status,
+            device_state,
+            device_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");
@@ -484,6 +596,7 @@ mod tests {
             version: ProtocolVersion::ProtocolVersion1 as u32,
             features: vec!["snapshots.v1".to_string(), "params.v1".to_string()],
             client_name: "Velora Studio".to_string(),
+            ..Default::default()
         };
         assert_eq!(hello.version, 1);
         assert_eq!(hello.client_name, "Velora Studio");

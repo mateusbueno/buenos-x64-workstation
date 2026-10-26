@@ -108,3 +108,14 @@ target_link_libraries(engine_host_boot_smoke PRIVATE velora_control)
 add_dependencies(engine_host_boot_smoke engine-host velora-sysd velora-sysdctl)
 add_test(NAME engine_host_boot_smoke COMMAND engine_host_boot_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-sysd> $<TARGET_FILE:velora-sysdctl> ${_ehs_dir}/switch ${_ehs_dir}/root ${_ehs_dir}/scenes.liveset)
 set_tests_properties(engine_host_boot_smoke PROPERTIES TIMEOUT 180)
+
+# Foundation: Velora Studio device connection: the sysd TCP bridge with the real engine-host and velora-sysd (a TCP client on 127.0.0.1). --no-audio.
+add_executable(engine_host_bridge_smoke engine_host_bridge_smoke.cpp)
+target_link_libraries(engine_host_bridge_smoke PRIVATE velora_control)
+add_dependencies(engine_host_bridge_smoke engine-host velora-sysd)
+add_test(NAME engine_host_bridge_smoke COMMAND engine_host_bridge_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-sysd>)
+set_tests_properties(engine_host_bridge_smoke PROPERTIES TIMEOUT 120)
+# The same smoke plus the Velora Studio Rust client (desktop/src-tauri, cargo test real_bridge_round_trip) against the real bridge and engine. Skipped (exit 77)
+# with a clear message when cargo is not installed; it needs the crates already in desktop/src-tauri/Cargo.lock (cargo test --offline).
+add_test(NAME engine_host_bridge_studio_smoke COMMAND engine_host_bridge_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-sysd>)
+set_tests_properties(engine_host_bridge_studio_smoke PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77 ENVIRONMENT "VELORA_STUDIO_CARGO_TEST=${CMAKE_SOURCE_DIR}")

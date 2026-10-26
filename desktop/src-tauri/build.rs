@@ -46,6 +46,8 @@ fn main() {
 
     let mut config = prost_build::Config::new();
     config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
+    // Absent fields read as their defaults when a message arrives as JSON from the UI (the generic `device_request` command).
+    config.message_attribute(".", "#[serde(default)]");
     config
         .compile_protos(
             &[ws_v1_proto, setlist_proto, live_set_proto, backup_proto],

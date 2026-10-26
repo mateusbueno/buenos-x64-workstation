@@ -876,6 +876,10 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kSubscribeConfig:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "system config commands are served by sysd, not by the engine");
         break;
+      case B::kPairRequest:  // the sysd TCP bridge's messages: never served here
+      case B::kLibrary:
+        fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "bridge messages are served by velora-sysd, not by the engine");
+        break;
       case B::kHello:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "handshake already done on this connection");
         break;

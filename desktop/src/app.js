@@ -4,6 +4,19 @@ const CATALOGS = {
   en: {
     "studio.title_bar.app_name": "Velora Studio",
     "studio.conn.no_device": "No Velora connected",
+    "studio.conn.connecting": "Connecting to your Velora…",
+    "studio.conn.unpaired": "Velora found: pairing required",
+    "studio.conn.version_mismatch": "Velora version not compatible",
+    "studio.conn.paired": "%s connected (the Live Sets shown are simulated for now)",
+    "studio.write.simulated": "Writing is disabled: the Live Sets shown are simulated until Studio reads them from the Velora.",
+    "studio.pair.ok": "Pair",
+    "studio.pair.cancel": "Cancel",
+    "studio.pair.failed": "Pairing failed: %s",
+    "studio.offline.hint_connecting": "Looking for your Velora…",
+    "studio.offline.hint_unpaired": "Enter the pairing code shown on your Velora to connect this computer.",
+    "studio.offline.hint_mismatch": "This Velora and Velora Studio do not speak a compatible protocol version. Update the app or the Velora.",
+    "studio.offline.hint_unreachable": "Your Velora is not reachable. Check the USB cable; Studio keeps trying.",
+    "studio.pair.prompt": "Enter the pairing code shown on your Velora:",
     "studio.title_bar.btn_import": "Import",
     "studio.title_bar.btn_backup": "Backup",
     "studio.title_bar.btn_write": "Write to Velora",
@@ -74,6 +87,19 @@ const CATALOGS = {
   es: {
     "studio.title_bar.app_name": "Velora Studio",
     "studio.conn.no_device": "No hay ningún Velora conectado",
+    "studio.conn.connecting": "Conectando con su Velora…",
+    "studio.conn.unpaired": "Velora encontrado: se requiere emparejamiento",
+    "studio.conn.version_mismatch": "Versión de Velora no compatible",
+    "studio.conn.paired": "%s conectado (los Live Sets mostrados son simulados por ahora)",
+    "studio.write.simulated": "Escribir está desactivado: los Live Sets mostrados son simulados hasta que Studio los lea del Velora.",
+    "studio.pair.ok": "Emparejar",
+    "studio.pair.cancel": "Cancelar",
+    "studio.pair.failed": "Error de emparejamiento: %s",
+    "studio.offline.hint_connecting": "Buscando su Velora…",
+    "studio.offline.hint_unpaired": "Introduzca el código de emparejamiento que muestra su Velora para conectar este ordenador.",
+    "studio.offline.hint_mismatch": "Este Velora y Velora Studio no hablan una versión de protocolo compatible. Actualice la aplicación o el Velora.",
+    "studio.offline.hint_unreachable": "No se puede alcanzar su Velora. Compruebe el cable USB; Studio sigue intentándolo.",
+    "studio.pair.prompt": "Introduzca el código de emparejamiento que muestra su Velora:",
     "studio.title_bar.btn_import": "Importar",
     "studio.title_bar.btn_backup": "Copia de seguridad",
     "studio.title_bar.btn_write": "Escribir en Velora",
@@ -144,6 +170,19 @@ const CATALOGS = {
   "pt-BR": {
     "studio.title_bar.app_name": "Velora Studio",
     "studio.conn.no_device": "Nenhum Velora conectado",
+    "studio.conn.connecting": "Conectando ao seu Velora…",
+    "studio.conn.unpaired": "Velora encontrado: pareamento necessário",
+    "studio.conn.version_mismatch": "Versão do Velora não compatível",
+    "studio.conn.paired": "%s conectado (os Live Sets exibidos são simulados por enquanto)",
+    "studio.write.simulated": "A escrita está desativada: os Live Sets exibidos são simulados até o Studio lê-los do Velora.",
+    "studio.pair.ok": "Parear",
+    "studio.pair.cancel": "Cancelar",
+    "studio.pair.failed": "Falha no pareamento: %s",
+    "studio.offline.hint_connecting": "Procurando seu Velora…",
+    "studio.offline.hint_unpaired": "Digite o código de pareamento exibido no seu Velora para conectar este computador.",
+    "studio.offline.hint_mismatch": "Este Velora e o Velora Studio não falam uma versão de protocolo compatível. Atualize o app ou o Velora.",
+    "studio.offline.hint_unreachable": "Seu Velora não está acessível. Verifique o cabo USB; o Studio continua tentando.",
+    "studio.pair.prompt": "Digite o código de pareamento exibido no seu Velora:",
     "studio.title_bar.btn_import": "Importar",
     "studio.title_bar.btn_backup": "Backup",
     "studio.title_bar.btn_write": "Gravar no Velora",
@@ -388,6 +427,7 @@ window.addEventListener("DOMContentLoaded", () => {
   let activeLiveSetIndex = 0;
   let selectedPartIndex = 1; // Default to Part 2 (FM) per Story 12.10
   let isConnected = true;
+  let deviceLinkActive = false; // true once a real device address is configured: the connection UI then follows the real link
   let deviceHasFmVa = true;
   let deviceFirmwareVersion = "1.4.0";
   let isDirty = false;
@@ -476,7 +516,10 @@ window.addEventListener("DOMContentLoaded", () => {
     const footerStatus = document.getElementById("footer-live-edit-status");
 
     if (badge) badge.style.display = isDirty ? "inline-block" : "none";
-    if (writeBtn && isConnected) {
+    if (writeBtn && isConnected && deviceLinkActive) {
+      writeBtn.disabled = true; // a real unit is connected but the editor still shows simulated Live Sets (until Stories 9.8 / 9.13): never write them
+      writeBtn.title = localeMgr.tr("studio.write.simulated");
+    } else if (writeBtn && isConnected) {
       writeBtn.disabled = !isDirty;
     }
     if (footerStatus) {
@@ -965,7 +1008,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // Query Tauri backend for initial connection status and device state
   if (window.__TAURI__?.core?.invoke) {
     window.__TAURI__.core.invoke("get_connection_status").then((conn) => {
-      if (conn?.connected) {
+      if (conn?.connected && !deviceLinkActive) {
         isConnected = true;
         deviceHasFmVa = conn.has_fm_va;
         deviceFirmwareVersion = conn.firmware_version || "1.4.0";
@@ -1029,6 +1072,161 @@ window.addEventListener("DOMContentLoaded", () => {
       ]
     };
     renderEditor();
+  }
+
+  // ---- Real device link (Foundation: Velora Studio device connection) ------------------------------------------------------------------------------
+  // The Rust side (src-tauri/src/device.rs) connects to the unit through the sysd bridge. Until a device address is configured (device_connect, or the
+  // VELORA_DEVICE=host:port environment variable) the simulated device above stays the offline fallback. Once configured, the title-bar indicator and the
+  // offline explanation follow the real status: disconnected | connecting | unpaired | paired | version-mismatch. Stories 9.8 / 9.13 read the State store.
+  const deviceStore = {
+    status: null,
+    state: null,
+    stateListeners: new Set(),
+    statusListeners: new Set(),
+  };
+  window.veloraDevice = {
+    get status() { return deviceStore.status; },
+    get state() { return deviceStore.state; },
+    onState(cb) { deviceStore.stateListeners.add(cb); return () => deviceStore.stateListeners.delete(cb); },
+    onStatus(cb) { deviceStore.statusListeners.add(cb); return () => deviceStore.statusListeners.delete(cb); },
+    connect(host, port) { return window.__TAURI__.core.invoke("device_connect", { host, port }); },
+    pair(code, name) { return window.__TAURI__.core.invoke("device_pair", { code, name }); },
+    disconnect() { return window.__TAURI__.core.invoke("device_disconnect"); },
+    // request: a ws.v1 ClientMessage as JSON, e.g. { body: { GetState: {} } }; resolves to the ServerMessage as JSON.
+    request(request) { return window.__TAURI__.core.invoke("device_request", { request }); },
+  };
+  let pairPromptedFor = null;
+  function applyDeviceStatus(st) {
+    if (!st || !st.configured) return; // no real device configured: the simulation stays
+    const wasLinked = deviceLinkActive;
+    deviceLinkActive = true;
+    deviceStore.status = st;
+    const paired = st.status === "paired";
+    const connText = document.querySelector("#connection-status .conn-text");
+    const footerDev = document.getElementById("footer-device-status");
+    const hintEl = document.querySelector("#offline-empty-card .offline-hint");
+    let label;
+    let hint;
+    switch (st.status) {
+      case "paired":
+        label = localeMgr.tr("studio.conn.paired").replace("%s", st.model || "Velora");
+        break;
+      case "unpaired":
+        label = localeMgr.tr("studio.conn.unpaired");
+        hint = localeMgr.tr("studio.offline.hint_unpaired");
+        break;
+      case "version-mismatch":
+        label = localeMgr.tr("studio.conn.version_mismatch");
+        hint = localeMgr.tr("studio.offline.hint_mismatch");
+        break;
+      case "connecting":
+        label = localeMgr.tr("studio.conn.connecting");
+        hint = localeMgr.tr("studio.offline.hint_connecting");
+        break;
+      default:
+        label = localeMgr.tr("studio.conn.no_device");
+        hint = localeMgr.tr("studio.offline.hint_unreachable");
+    }
+    if (connText) connText.textContent = label;
+    if (footerDev) footerDev.textContent = label;
+    if (hintEl && hint) hintEl.textContent = hint;
+    const connEl = document.getElementById("connection-status");
+    if (connEl) connEl.dataset.link = st.status;
+    const becameConnected = paired && (!isConnected || !wasLinked);
+    isConnected = paired;
+    if (paired) {
+      if (st.firmware_version) deviceFirmwareVersion = st.firmware_version;
+      if (becameConnected && window.__TAURI__?.core?.invoke) {
+        // The editor still shows the simulated Live Sets until Stories 9.8 / 9.13 map the real State.
+        window.__TAURI__.core.invoke("get_current_device_state").then((state) => { currentDeviceState = state; renderEditor(); }).catch(() => {});
+      }
+      pairPromptedFor = null;
+    } else {
+      currentDeviceState = null;
+      renderEditor(); // the existing offline card (and any loaded backup)
+    }
+    deviceStore.statusListeners.forEach((cb) => { try { cb(st); } catch (e) { /* a listener never breaks the link */ } });
+    if (paired) markLiveEdit(false); // refreshes the Write button state for the simulated data
+    if (st.status !== "unpaired") {
+      pairPromptedFor = null;
+      closePairDialog();
+    } else if (pairPromptedFor !== st.host + ":" + st.port) {
+      pairPromptedFor = st.host + ":" + st.port;
+      openPairDialog();
+    }
+  }
+
+  // Placeholder pairing dialog (the real one is Story 9.6): a minimal in-page input (window.prompt is not available in Tauri 2's webviews). A wrong code
+  // keeps it open with the reason; Cancel closes it and clicking the connection indicator while "unpaired" opens it again.
+  let pairDialogEl = null;
+  function closePairDialog() {
+    if (pairDialogEl) pairDialogEl.remove();
+    pairDialogEl = null;
+  }
+  function openPairDialog() {
+    if (pairDialogEl) return;
+    const overlay = document.createElement("div");
+    overlay.className = "pair-dialog-backdrop";
+    const box = document.createElement("div");
+    box.className = "pair-dialog";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    const label = document.createElement("label");
+    label.textContent = localeMgr.tr("studio.pair.prompt");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.inputMode = "numeric";
+    input.autocomplete = "off";
+    input.maxLength = 12;
+    label.appendChild(input);
+    const err = document.createElement("div");
+    err.className = "pair-dialog-error";
+    err.setAttribute("role", "alert");
+    const row = document.createElement("div");
+    row.className = "pair-dialog-actions";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "btn";
+    cancel.textContent = localeMgr.tr("studio.pair.cancel");
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "btn btn-primary";
+    ok.textContent = localeMgr.tr("studio.pair.ok");
+    row.append(cancel, ok);
+    box.append(label, err, row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    pairDialogEl = overlay;
+    input.focus();
+    const submit = () => {
+      const code = input.value.trim();
+      if (!code) return;
+      ok.disabled = true;
+      const name = (navigator.platform || "Computer").slice(0, 60);
+      window.veloraDevice.pair(code, name).then(closePairDialog).catch((e) => {
+        ok.disabled = false;
+        err.textContent = localeMgr.tr("studio.pair.failed").replace("%s", String(e));
+        input.select();
+      });
+    };
+    ok.addEventListener("click", submit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+      if (e.key === "Escape") closePairDialog();
+    });
+    cancel.addEventListener("click", closePairDialog);
+  }
+  document.getElementById("connection-status")?.addEventListener("click", () => {
+    if (deviceStore.status && deviceStore.status.status === "unpaired") openPairDialog();
+  });
+  if (window.__TAURI__?.event?.listen && window.__TAURI__?.core?.invoke) {
+    window.__TAURI__.event.listen("device://status", (e) => applyDeviceStatus(e.payload));
+    window.__TAURI__.event.listen("device://state", (e) => {
+      deviceStore.state = e.payload;
+      deviceStore.stateListeners.forEach((cb) => { try { cb(e.payload); } catch (err) { /* ignore */ } });
+    });
+    window.__TAURI__.core.invoke("device_status").then(applyDeviceStatus).catch(() => {});
+    window.__TAURI__.core.invoke("device_state").then((st) => { if (st) deviceStore.state = st; }).catch(() => {});
   }
 
   // Backup and Restore actions

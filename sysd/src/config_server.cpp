@@ -100,12 +100,28 @@ bool ConfigServer::start(std::string& err) {
     return fail("wake pipe");
   }
   stop_.store(false);
+  {
+    std::lock_guard<std::mutex> lk(inbox_mu_);
+    post_closed_ = false;
+  }
   thread_ = std::thread([this] { run(); });
   return true;
 }
 
+void ConfigServer::post(std::vector<Outbound> out) {
+  std::lock_guard<std::mutex> lk(inbox_mu_);
+  if (post_closed_ || wake_[1] < 0) return;  // stop() closes the pipe only after post_closed_ is set under this mutex
+  for (Outbound& o : out) inbox_.push_back(std::move(o));
+  const char b = 1;
+  [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
+}
+
 void ConfigServer::stop() {
   if (!thread_.joinable()) return;
+  {
+    std::lock_guard<std::mutex> lk(inbox_mu_);
+    post_closed_ = true;
+  }
   stop_.store(true);
   const char b = 1;
   [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
@@ -140,6 +156,14 @@ void ConfigServer::run() {
       char buf[16];
       while (::read(wake_[0], buf, sizeof buf) > 0) {
       }
+    }
+    {
+      std::vector<Outbound> mine;
+      {
+        std::lock_guard<std::mutex> lk(inbox_mu_);
+        mine.swap(inbox_);
+      }
+      if (!mine.empty()) deliver(mine);
     }
     if (fds[1].revents & POLLIN) accept_clients();
     const std::size_t polled = fds.size() - 2;
@@ -244,7 +268,12 @@ void ConfigServer::dispatch(Client& c, const std::string& payload) {
 }
 
 void ConfigServer::deliver(const std::vector<Outbound>& out) {
+  std::vector<Outbound> foreign;
   for (const Outbound& o : out) {
+    if (o.to >= kBridgeConnBase) {
+      foreign.push_back(o);
+      continue;
+    }
     Client* c = find(o.to);
     if (!c || c->dead) continue;
     std::string body;
@@ -260,6 +289,7 @@ void ConfigServer::deliver(const std::vector<Outbound>& out) {
     c->tx.append(body);
     if (o.close_after) c->closing = true;
   }
+  if (!foreign.empty() && foreign_) foreign_(std::move(foreign));
 }
 
 void ConfigServer::flush(Client& c) {

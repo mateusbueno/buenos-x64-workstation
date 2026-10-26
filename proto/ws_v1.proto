@@ -70,6 +70,12 @@ enum ErrorCode {
   ERROR_CODE_INVALID_CONFIG = 41;      // SetConfig: a value that is individually in range but not valid (pedal min >= max, bad Live Set id, DEFAULT_LIVE_SET without an id);
                                        // details: field, reason. Nothing changes. Unknown enum values answer ERROR_CODE_UNKNOWN_ENUM_VALUE, values out of range ERROR_CODE_OUT_OF_RANGE,
                                        // an empty patch ERROR_CODE_INVALID_COMMAND, a config that could not be persisted ERROR_CODE_STORAGE_FAILED / ERROR_CODE_STORAGE_FULL
+  // Foundation: the sysd TCP bridge (Velora Studio device connection). Spoken by the bridge only; the engine never produces them.
+  ERROR_CODE_NOT_PAIRED = 42;          // an unpaired client sent anything but Hello / PairRequest; nothing was forwarded
+  ERROR_CODE_UNSUPPORTED_FEATURE = 43; // the message belongs to a feature that was not negotiated in Hello (details: feature)
+  ERROR_CODE_UPSTREAM_UNAVAILABLE = 44;  // the engine / librarian the command routes to is not reachable (details: upstream = engine | library, reason)
+  ERROR_CODE_PAIRING_CODE_INVALID = 45;  // PairRequest with a wrong code (details: attempts_left)
+  ERROR_CODE_PAIRING_CLOSED = 46;      // the pairing window is closed (details: reason = attempts | expired | not_open)
 }
 
 message Error {
@@ -83,12 +89,46 @@ message Hello {
   uint32 version = 1;                // = PROTOCOL_VERSION_1
   repeated string features = 2;      // features the client can use; unknown ones are ignored by the server
   string client_name = 3;
+  // Foundation: sysd TCP bridge (additive). Sent by Velora Studio; ignored by the engine and by the config service.
+  string client_version = 4;         // the client application's version (informational; the protocol check is `version`)
+  string client_id = 5;              // a stable id the client generates once (names the computer; NOT a credential)
+  string pairing_token = 6;          // the secret returned by PairReply when this computer paired; the bridge pairs a Hello only with a valid token
 }
 
 message HelloAck {
   uint32 version = 1;
   repeated string features = 2;      // "params.v1", "snapshots.v1", "subscribe.v1"
   uint64 revision = 3;               // current snapshot revision
+  // Foundation: sysd TCP bridge (additive; empty / false from the engine's own control server). `features` is then the NEGOTIATED set: the features
+  // the client named that the device also speaks, plus "pairing.v1".
+  string device_version = 4;         // the bridge's ws.v1 dialect as text ("1")
+  string firmware_version = 5;
+  string device_id = 6;              // stable id of this unit
+  string model = 7;                  // "DEV HOST" under --dev-bypass-pairing
+  bool paired = 8;                   // this session may send commands
+}
+
+// Foundation: sysd TCP bridge, pairing (reduced, Story 9.6 Mac scope). Allowed to an unpaired client (with Hello).
+message PairRequest {
+  string code = 1;                   // the pairing code shown by the unit
+  string computer_name = 2;          // shown in the paired computers list (at most 64 bytes, control characters are dropped)
+}
+
+message PairReply {                  // a refusal is an Error (PAIRING_CODE_INVALID / PAIRING_CLOSED), never a PairReply with paired = false
+  bool paired = 1;
+  string computer_id = 2;
+  string pairing_token = 3;          // 64 hex characters (256 random bits), returned ONCE; the unit keeps only its SHA-256. Present it in every later Hello
+}
+
+// Foundation: sysd TCP bridge, library forwarding. The library service speaks its own protocol (library_api.proto, LibraryClientMessage /
+// LibraryServerMessage); the bridge carries those messages opaquely: `payload` is a serialised LibraryClientMessage (request_id inside is the client's) and the
+// reply is a LibraryReply holding a serialised LibraryServerMessage. A library message larger than the ws.v1 frame limit cannot be relayed.
+message LibraryRequest {
+  bytes payload = 1;
+}
+
+message LibraryReply {
+  bytes payload = 1;
 }
 
 // --- state ----------------------------------------------------------------------------------------
@@ -798,6 +838,8 @@ message ClientMessage {
     StartPedalCalibration start_pedal_calibration = 58;   // Story 3.11 (engine control plane)
     FinishPedalCalibration finish_pedal_calibration = 59;
     CancelPedalCalibration cancel_pedal_calibration = 60;
+    PairRequest pair_request = 61;        // sysd TCP bridge only
+    LibraryRequest library = 62;          // sysd TCP bridge only: forwarded to the librarian
   }
 }
 
@@ -833,5 +875,7 @@ message ServerMessage {
     PanelEvent panel_event = 24;          // Story 3.10: pushed (request_id 0) to subscribers
     ConfigReply config_reply = 25;        // sysd config service: GetConfig / SetConfig reply, and the push to SubscribeConfig subscribers (request_id 0)
     PedalCalibrationReply pedal_calibration_reply = 26;  // Story 3.11: the reply to StartPedalCalibration / FinishPedalCalibration / CancelPedalCalibration
+    PairReply pair_reply = 27;           // sysd TCP bridge only
+    LibraryReply library_reply = 28;     // sysd TCP bridge only: a library reply or push (request_id as the client sent it, 0 for pushes)
   }
 }

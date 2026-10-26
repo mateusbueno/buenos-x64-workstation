@@ -593,13 +593,13 @@ Status LiveSetStore::write(const lsp::LiveSet& ls, ValidationReport* report) {
 }
 
 Status atomic_replace_file(const std::string& dir, const std::string& name, const std::string& tmp_name, const std::string& bytes,
-                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure, int inject_write_errno) {
+                           const std::function<HookAction(Stage)>& on_stage, bool inject_dir_sync_failure, int inject_write_errno, unsigned file_mode) {
   const std::string final_path = dir + "/" + name;
   const std::string tmp = dir + "/" + tmp_name;
   ::unlink(tmp.c_str());  // a stale temp of ours (we hold the writer lock)
   const auto hook = [&](Stage st) { return on_stage && on_stage(st) == HookAction::kAbort; };
   {
-    Fd f(::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644));
+    Fd f(::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, static_cast<mode_t>(file_mode)));
     if (!f.ok()) return no_space_errno(errno) ? Status::kNoSpace : Status::kIo;
     if (inject_write_errno != 0) {  // test hook: the disk fills up while the temp file is written
       errno = inject_write_errno;
