@@ -24,11 +24,26 @@ IMAGE_INSTALL = " \
     libgcc \
     libstdc++ \
     kernel-modules \
+    rauc \
+    rauc-conf \
+    velora-rauc-mark-good \
+    velora-rollback-record \
+    velora-uboot-ab-script \
 "
 
 # The audio stack and tools in these packages are NOT allowed in the image (Story 1.4 AC, NFR27):
 # the flac/metaflac CLIs, libflac/libflac++ and libsndfile. A hard exclude makes the build fail if anything pulls them in.
 PACKAGE_EXCLUDE = "flac metaflac libflac libflac++ libsndfile1 libsndfile1-bin"
+
+# Story 6.12: the stock meta-rauc mark-good unit (wanted by multi-user.target, waits only for boot-complete.target) is not wanted; ours is
+# velora-rauc-mark-good, gated on the engine, ui and sysd readiness targets.
+BAD_RECOMMENDATIONS += "rauc-mark-good"
+
+# Story 6.12: the plain ext4 rootfs image is what the RAUC bundle ships for slot rootfs (RAUC_IMAGE_FSTYPE in the bundle recipe).
+IMAGE_FSTYPES += "ext4"
+
+# Story 6.12: the dev image carries ONLY the dev keyring (public certificate of the dev RAUC root), supplied as VELORA_RAUC_KEYRING_FILE;
+# the rauc-conf recipe fails the build with a clear message when it is missing, so this layer still parses without keys.
 
 # Disk layout (Story 6.11): the single committed wks (boot area, rootfs.0/rootfs.1 A/B slots, /data). Hard assignment: overrides
 # the meta-rockchip default (WKS_FILE ?= "rockchip.wks"). Found through the layer's files/wic/ directory (WKS_SEARCH_PATH).

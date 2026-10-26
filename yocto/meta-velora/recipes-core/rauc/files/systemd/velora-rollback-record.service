@@ -1,0 +1,19 @@
+# Records a rollback in /data/config/rollback.json (Story 6.12) when the running slot is not the slot the last update targeted.
+# TODO(Story 8.x): this is a stand-in for sysd, which will own the record (AD-9: /data/config is sysd's directory). Runs as root because
+# `rauc status` needs the bootloader environment; the file is written atomically (temp, fsync, rename) and is world-readable.
+[Unit]
+Description=Record a RAUC rollback in /data/config/rollback.json
+RequiresMountsFor=/data/config
+After=rauc.service systemd-tmpfiles-setup.service
+Wants=rauc.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/velora/velora-rollback-record
+ProtectSystem=strict
+ReadWritePaths=/data/config
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

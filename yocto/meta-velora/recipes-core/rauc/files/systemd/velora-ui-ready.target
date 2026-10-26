@@ -1,0 +1,14 @@
+# Readiness contract target for "ui" (Story 6.12). Reached only when the ui service reports that it is READY (not merely started).
+#
+# Contract (the services do not exist yet; see yocto/README.md, "RAUC: mark good"):
+#   - the ui service is Type=notify and sends READY=1 only when it can do its job (engine: audio running; ui: first frame shown; sysd: bus
+#     name acquired and /data/config usable);
+#   - the service declares RequiredBy=velora-ui-ready.target and Before=velora-ui-ready.target;
+#   - velora-rauc-mark-good.service Requires= and is After= this target, so a service that fails or never gets ready keeps the slot unmarked.
+#
+# TODO(Story for the ui service): PLACEHOLDER dependency set. velora-ui.service does not exist yet, so this target FAILS to start (fail
+# closed): until the real service exists, nothing can mark a slot good. Replace with the real unit when the service lands.
+[Unit]
+Description=Velora ui ready
+Requires=velora-ui.service
+After=velora-ui.service

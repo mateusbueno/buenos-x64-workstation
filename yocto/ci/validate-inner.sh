@@ -36,7 +36,7 @@ echo "== 4. dev image resolves (bitbake -g resolution) and dependency graph"
 if bb kas/velora-dev.yml -n velora-image-dev; then pass "velora-image-dev resolves (task graph resolves, bitbake -g)"; else fail "velora-image-dev dry run"; tail_log; fi
 GRAPH="$PROJ/.yocto-work/graph"; rm -rf "$GRAPH"; mkdir -p "$GRAPH"
 if $KAS shell yocto/kas/velora-dev.yml -c "cd $GRAPH && bitbake -g velora-image-dev" >"$LOGDIR/graph.log" 2>&1 && [ -s "$GRAPH/pn-buildlist" ]; then pass "bitbake -g velora-image-dev ($(wc -l < "$GRAPH/pn-buildlist") recipes)"; else fail "bitbake -g"; tail -n 25 "$LOGDIR/graph.log"; fi
-for r in linux-yocto systemd openssh busybox libgcc gcc-runtime velora-system-config velora-service-users volatile-binds os-release u-boot; do
+for r in linux-yocto systemd openssh busybox libgcc gcc-runtime velora-system-config velora-service-users volatile-binds os-release u-boot rauc rauc-conf velora-rauc-mark-good velora-rollback-record velora-uboot-ab-script libubootenv python3; do
   if grep -qx "$r" "$GRAPH/pn-buildlist" 2>/dev/null; then pass "image package set contains $r"; else fail "image package set lacks $r"; fi
 done
 for r in flac libsndfile1 libsndfile; do
@@ -74,6 +74,10 @@ chk "os-release fields include VARIANT_ID" os-release OS_RELEASE_FIELDS 'VARIANT
 chk "kernel is 6.18.x" linux-yocto LINUX_VERSION '^6\.18\.'
 chk "kernel SRC_URI has preempt-rt.cfg and velora-dev.cfg" linux-yocto SRC_URI 'preempt-rt\.cfg.*velora-dev\.cfg|velora-dev\.cfg.*preempt-rt\.cfg'
 
+chk "DISTRO_FEATURES has rauc" velora-image-dev DISTRO_FEATURES '(^| )rauc( |$)'
+chk "stock rauc-mark-good is a bad recommendation" velora-image-dev BAD_RECOMMENDATIONS 'rauc-mark-good'
+chk "IMAGE_FSTYPES has ext4 (the bundle's rootfs file)" velora-image-dev IMAGE_FSTYPES '(^| )ext4( |$)'
+for pkg in rauc rauc-conf velora-rauc-mark-good velora-rollback-record velora-uboot-ab-script; do chk "image installs $pkg" velora-image-dev IMAGE_INSTALL "(^| )$pkg( |$)"; done
 chk "ROOTFS_POSTPROCESS_COMMAND runs velora_dev_authorized_keys" velora-image-dev ROOTFS_POSTPROCESS_COMMAND 'velora_dev_authorized_keys'
 chk "IMAGE_FEATURES has read-only-rootfs" velora-image-dev IMAGE_FEATURES '(^| )read-only-rootfs( |$)'
 chk "WKS_FILE = velora-nvme.wks" velora-image-dev WKS_FILE '^velora-nvme\.wks$'
@@ -151,6 +155,65 @@ for spec in "engine 900" "librarian 901" "sysd 902"; do
 done
 
 rm -rf "$PROJ/.yocto-work/build/tmp"
+
+echo "== 5d. RAUC (Story 6.12): keyring handling, bundle recipe variables, installed artefacts (no image build)"
+# the layer parses without any key (step 3 already did); the keyring variable is empty by default
+envdump rauc-conf; envdump velora-bundle-dev; envdump rauc
+chk "VELORA_RAUC_KEYRING_FILE is empty by default (layer parses without keys)" rauc-conf VELORA_RAUC_KEYRING_FILE '^$'
+chk "rauc-conf SRC_URI has system.conf and fw_env.config but no keyring when unset" rauc-conf SRC_URI '^ *file://system\.conf +file://fw_env\.config *$'
+chk "bundle: plain format" velora-bundle-dev RAUC_BUNDLE_FORMAT '^plain$'
+chk "bundle: one rootfs slot from velora-image-dev" velora-bundle-dev RAUC_SLOT_rootfs '^velora-image-dev$'
+chk "bundle: signing key unset without VELORA_RAUC_SIGN_DIR" velora-bundle-dev RAUC_KEY_FILE '^$'
+chk "bundle: compatible equals system.conf" velora-bundle-dev RAUC_BUNDLE_COMPATIBLE '^Velora RK3588$'
+if [ -n "$(ev rauc RRECOMMENDS:rauc)" ] && ! ev rauc RRECOMMENDS:rauc | grep -q 'rauc-mark-good'; then pass "RRECOMMENDS:rauc has no rauc-mark-good (stock mark-good not pulled in): $(ev rauc RRECOMMENDS:rauc | head -c 120)"; else fail "RRECOMMENDS:rauc contains rauc-mark-good or is empty (got: $(ev rauc RRECOMMENDS:rauc | head -c 200))"; fi
+RAUCDIR="$PROJ/.yocto-work/rauc-test"; rm -rf "$RAUCDIR"; mkdir -p "$RAUCDIR"
+# a throw-away PUBLIC certificate (self-signed, generated here, not an image key) and one carrying a private key
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=validate-only dev root (not for production)" -days 2 -keyout "$RAUCDIR/k.pem" -out "$RAUCDIR/ca.pem" >/dev/null 2>&1
+cat "$RAUCDIR/ca.pem" "$RAUCDIR/k.pem" > "$RAUCDIR/ca-with-key.pem"
+cat "$RAUCDIR/ca.pem" "$RAUCDIR/ca.pem" > "$RAUCDIR/two-certs.pem"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=Some Production Root" -days 2 -keyout "$RAUCDIR/k2.pem" -out "$RAUCDIR/prod.pem" >/dev/null 2>&1
+: > "$RAUCDIR/empty.pem"
+printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca.pem" > "$RAUCDIR/good.conf"
+printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca-with-key.pem" > "$RAUCDIR/withkey.conf"
+printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/empty.pem" > "$RAUCDIR/emptyfile.conf"
+printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/two-certs.pem" > "$RAUCDIR/twocerts.conf"
+printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/prod.pem" > "$RAUCDIR/prod.conf"
+printf 'VELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/does-not-exist.pem" > "$RAUCDIR/missing.conf"
+printf 'VELORA_RAUC_SIGN_DIR = "/signing"\nVELORA_RAUC_KEYRING_FILE = "%s"\n' "$RAUCDIR/ca.pem" > "$RAUCDIR/sign.conf"
+rm -rf "$PROJ/.yocto-work/build/tmp"
+rc_install() { # rc_install <postfile or ""> : do_install of rauc-conf, log in $RAUCDIR/inst.log
+  local post=""; [ -n "$1" ] && post="-R $1"
+  $KAS shell yocto/kas/velora-dev.yml -c "cd $PROJ/.yocto-work/scratch && bitbake $post -c cleansstate rauc-conf >/dev/null 2>&1; bitbake $post rauc-conf -c install" >"$RAUCDIR/inst.log" 2>&1
+}
+if rc_install ""; then fail "rauc-conf do_install passed WITHOUT a keyring"; else
+  if grep -q "VELORA_RAUC_KEYRING_FILE is not set" "$RAUCDIR/inst.log"; then pass "no keyring: rauc-conf fails with a clear bbfatal"; else fail "no keyring: failed, but not with the expected message"; tail -n 15 "$RAUCDIR/inst.log"; fi; fi
+for v in withkey:"contains a private key" emptyfile:"is missing or empty" twocerts:"must hold exactly one PEM certificate" prod:"not for production" missing:"does-not-exist.pem: file could not be found"; do
+  n="${v%%:*}"; msg="${v#*:}"
+  if rc_install "$RAUCDIR/$n.conf"; then fail "rauc-conf accepted keyring variant '$n'"; elif grep -q "$msg" "$RAUCDIR/inst.log"; then pass "keyring variant '$n' rejected: $msg"; else fail "keyring variant '$n' failed with another message"; tail -n 15 "$RAUCDIR/inst.log"; fi
+done
+if rc_install "$RAUCDIR/good.conf"; then pass "rauc-conf do_install with a public dev-style certificate"; else fail "rauc-conf do_install with a certificate"; tail -n 25 "$RAUCDIR/inst.log"; fi
+RCD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/*/rauc-conf/*/image 2>/dev/null | head -1)
+if [ -n "$RCD" ] && cmp -s "$RCD/usr/lib/rauc/ca.cert.pem" "$RAUCDIR/ca.pem" && ! grep -q "PRIVATE KEY" "$RCD/usr/lib/rauc/ca.cert.pem"; then pass "installed keyring is exactly the supplied certificate and holds no private key"; else fail "installed keyring (dir: '$RCD')"; fi
+RCD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/*/rauc-conf/*/image 2>/dev/null | head -1)
+if [ -n "$RCD" ] && cmp -s "$RCD/usr/lib/rauc/system.conf" "$PROJ/yocto/meta-velora/recipes-core/rauc/files/system.conf" && grep -q '^/dev/disk/by-partlabel/uboot_env' "$RCD/etc/fw_env.config"; then pass "installed system.conf is the committed one; fw_env.config targets uboot_env"; else fail "installed system.conf / fw_env.config"; fi
+# the signing directory variable reaches the bundle recipe's key and certificate paths
+$KAS shell yocto/kas/velora-dev.yml -c "bitbake -R $RAUCDIR/sign.conf -e velora-bundle-dev" > "$LOGDIR/env-bundle-sign.txt" 2>&1
+if grep -q '^RAUC_KEY_FILE="/signing/signing.key.pem"' "$LOGDIR/env-bundle-sign.txt" && grep -q '^RAUC_CERT_FILE="/signing/signing.cert.pem"' "$LOGDIR/env-bundle-sign.txt" && grep -q "^BUNDLE_ARGS=\"--keyring=$RAUCDIR/ca.pem\"" "$LOGDIR/env-bundle-sign.txt"; then pass "VELORA_RAUC_SIGN_DIR / keyring reach RAUC_KEY_FILE, RAUC_CERT_FILE and BUNDLE_ARGS"; else fail "bundle recipe signing variables"; grep -E '^(RAUC_KEY_FILE|RAUC_CERT_FILE|BUNDLE_ARGS)=' "$LOGDIR/env-bundle-sign.txt"; fi
+# our units, recorder and boot script through do_install
+MGREC="$PROJ/yocto/meta-velora/recipes-core/rauc/velora-rauc-mark-good_1.0.bb"; RRREC="$PROJ/yocto/meta-velora/recipes-core/rauc/velora-rollback-record_1.0.bb"; UBREC="$PROJ/yocto/meta-velora/recipes-core/rauc/velora-uboot-ab-script_1.0.bb"
+if $KAS shell yocto/kas/velora-dev.yml -c "cd $PROJ/.yocto-work/scratch && bitbake -b $MGREC -c install && bitbake -b $RRREC -c install && bitbake velora-uboot-ab-script -c install" >"$LOGDIR/install-rauc.log" 2>&1; then pass "do_install of velora-rauc-mark-good, velora-rollback-record, velora-uboot-ab-script"; else fail "do_install of the RAUC recipes"; grep -v 'Duplicate inclusion' "$LOGDIR/install-rauc.log" | tail -n 25 | sed 's/^/  | /'; fi
+MGD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/all-*/velora-rauc-mark-good/*/image 2>/dev/null | head -1)
+RRD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/all-*/velora-rollback-record/*/image 2>/dev/null | head -1)
+UBD=$(ls -d "$PROJ"/.yocto-work/build/tmp/work/*/velora-uboot-ab-script/*/image 2>/dev/null | head -1)
+U="$MGD/usr/lib/systemd/system"; [ -d "$U" ] || U="$MGD/lib/systemd/system"
+MGU="$U/velora-rauc-mark-good.service"
+okm=1; for t in engine ui sysd; do grep -Eq "^Requires=.*velora-$t-ready\.target" "$MGU" && grep -Eq "^After=.*velora-$t-ready\.target" "$MGU" && [ -f "$U/velora-$t-ready.target" ] || okm=0; done
+[ -L "$MGD/etc/systemd/system/rauc-mark-good.service" ] && [ "$(readlink "$MGD/etc/systemd/system/rauc-mark-good.service")" = /dev/null ] && pass "stock rauc-mark-good.service is masked in the image" || fail "rauc-mark-good.service mask missing"
+[ "$okm" = 1 ] && pass "installed mark-good unit: Requires= and After= engine, ui and sysd ready targets; the targets are installed" || fail "installed mark-good unit ordering (dir '$MGD')"
+if grep -Eq '^WantedBy=.*default\.target' "$MGU" || ! grep -Eq '^ExecStart=/usr/bin/rauc status mark-good$' "$MGU"; then fail "installed mark-good unit: wanted by default.target or no rauc status mark-good"; else pass "installed mark-good unit: runs rauc status mark-good, not wanted by default.target"; fi
+if [ -n "$RRD" ] && [ -x "$RRD/usr/libexec/velora/velora-rollback-record" ] && python3 -I -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$RRD/usr/libexec/velora/velora-rollback-record"; then pass "installed rollback recorder is executable and parses"; else fail "installed rollback recorder (dir '$RRD')"; fi
+if [ -n "$UBD" ] && [ -s "$UBD/boot/boot.scr" ] && file "$UBD/boot/boot.scr" | grep -qi "u-boot legacy uImage"; then pass "boot.scr compiled with mkimage (u-boot-tools-native)"; else fail "boot.scr missing or not a U-Boot script image (dir '$UBD')"; fi
+rm -rf "$PROJ/.yocto-work/build/tmp" "$RAUCDIR"
 
 echo "== 6. license policy"
 for pair in gpl3:GPL-3.0-only lgpl3:LGPL-3.0-only agpl3:AGPL-3.0-only; do

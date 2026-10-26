@@ -140,6 +140,77 @@ if len(urls) != len(commits) or not urls:
     errors.append(f"kas: {len(urls)} repos with url but {len(commits)} full commit pins")
 if "test-layer" in kas or "meta-velora-test" in kas:
     errors.append("kas/velora-dev.yml references the test layer")
+# Story 6.12: RAUC A/B slots, dev keyring only, mark good, rollback record
+RA = f"{M}/recipes-core/rauc"
+SYSCONF = f"{RA}/files/system.conf"
+need("rauc: compatible string", SYSCONF, r"^compatible=Velora RK3588$")
+need("rauc: u-boot backend", SYSCONF, r"^bootloader=uboot$")
+need("rauc: TODO(Story 1.6) on the placeholder backend", SYSCONF, r"TODO\(Story 1\.6\)")
+need("rauc: plain bundles only", SYSCONF, r"^bundle-formats=-verity -crypt$")
+need("rauc: status on /data", SYSCONF, r"^data-directory=/data/rauc$")
+need("rauc: keyring is the dev ca.cert.pem", SYSCONF, r"^\[keyring\]\n(#.*\n)*path=/usr/lib/rauc/ca\.cert\.pem$", re.M)
+need("rauc: slot rootfs.0 by partition name", SYSCONF, r"^\[slot\.rootfs\.0\]\ndevice=/dev/disk/by-partlabel/rootfs\.0\ntype=ext4\nbootname=A$")
+need("rauc: slot rootfs.1 by partition name", SYSCONF, r"^\[slot\.rootfs\.1\]\ndevice=/dev/disk/by-partlabel/rootfs\.1\ntype=ext4\nbootname=B$")
+forbid("rauc: no device path by number", SYSCONF, r"^device=/dev/(nvme|mmc|sd)")
+need("fw_env.config points at the uboot_env partition", f"{RA}/files/fw_env.config", r"^/dev/disk/by-partlabel/uboot_env 0x0 0x[0-9a-f]+$")
+need("fw_env.config: TODO(Story 1.6)", f"{RA}/files/fw_env.config", r"TODO\(Story 1\.6\)")
+RC = f"{RA}/rauc-conf.bbappend"
+need("keyring path variable defaults to empty", RC, r'^VELORA_RAUC_KEYRING_FILE \?= ""$')
+need("keyring: bbfatal when unset", RC, r'bbfatal "VELORA_RAUC_KEYRING_FILE is not set')
+need("keyring: bbfatal when missing", RC, r"bbfatal \"VELORA_RAUC_KEYRING_FILE='\$keyring' is missing or empty")
+need("keyring: bbfatal on a private key", RC, r"grep -q \"PRIVATE KEY\" \"\$keyring\"")
+need("keyring: exactly one certificate", RC, r'must hold exactly one PEM certificate')
+need("keyring: dev marker required", RC, r"not for production")
+need("keyring: openssl-native for the subject check", RC, r'^DEPENDS \+= "openssl-native"$')
+need("keyring: installs only ca.cert.pem and system.conf", RC, r'install -m 0644 "\$keyring" \$\{D\}\$\{nonarch_libdir\}/rauc/ca\.cert\.pem')
+for p in root.rglob("*"):
+    if p.is_file() and ".yocto-work" not in p.parts and p.name != "static_checks.py" and re.search(rb"-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----", p.read_bytes()):
+        errors.append(f"PEM block committed under yocto/: {p.relative_to(root)}")
+    if p.is_file() and ".yocto-work" not in p.parts and p.suffix in (".pem", ".key", ".crt", ".cert", ".p12", ".der"):
+        errors.append(f"key or certificate file committed under yocto/: {p.relative_to(root)}")
+need("rauc target packageconfig", f"{RA}/rauc_%.bbappend", r'^PACKAGECONFIG = "service json nocreate gpt"$')
+need("rauc: libubootenv provides fw_setenv", f"{RA}/rauc_%.bbappend", r'^RAUC_BOOTLOADER_RDEPENDS = "libubootenv-bin"$')
+need("stock mark-good recommendation removed", f"{RA}/rauc_%.bbappend", r'^RRECOMMENDS:\$\{PN\}:remove = "\$\{PN\}-mark-good"$')
+need("image: stock mark-good not installed", IMG, r'^BAD_RECOMMENDATIONS \+= "rauc-mark-good"$')
+for pkg in ("rauc", "rauc-conf", "velora-rauc-mark-good", "velora-rollback-record", "velora-uboot-ab-script"):
+    need(f"image installs {pkg}", IMG, rf"^\s+{re.escape(pkg)} \\$")
+need("image produces the ext4 rootfs the bundle ships", IMG, r'^IMAGE_FSTYPES \+= "ext4"$')
+need("rauc distro feature", D, r'^DISTRO_FEATURES:append = ".* rauc"')
+need("layer depends on meta-rauc", f"{M}/conf/layer.conf", r'^LAYERDEPENDS_velora = "core rockchip rauc"$')
+need("kas pins meta-rauc on wrynose", "kas/velora-dev.yml", r"meta-rauc:\n\s+url: https://github\.com/rauc/meta-rauc\n\s+path: \S+\n\s+branch: wrynose\n\s+commit: [0-9a-f]{40}\n", re.M)
+BUN = f"{M}/recipes-core/bundles/velora-bundle-dev.bb"
+need("bundle recipe uses the bundle class", BUN, r"^inherit bundle$")
+need("bundle recipe: plain", BUN, r'^RAUC_BUNDLE_FORMAT = "plain"$')
+need("bundle recipe: compatible equals system.conf", BUN, r'^RAUC_BUNDLE_COMPATIBLE = "Velora RK3588"$')
+need("bundle recipe: rootfs slot from the dev image", BUN, r'^RAUC_SLOT_rootfs = "velora-image-dev"$')
+need("bundle recipe: signing dir variable empty by default", BUN, r'^VELORA_RAUC_SIGN_DIR \?= ""$')
+need("bundle recipe: bbfatal without signing files", BUN, r"bbfatal \"VELORA_RAUC_SIGN_DIR is not set")
+need("bundle recipe: keyring verifies at creation", BUN, r"--keyring=")
+need("bundle recipe: bbfatal without keyring", BUN, r'bbfatal "VELORA_RAUC_KEYRING_FILE is not set')
+need("bundle recipe: certificate verified against the keyring", BUN, r"openssl verify -CAfile \"\$keyring\" \"\$\{RAUC_CERT_FILE\}\"")
+need("bundle recipe: key matches certificate", BUN, r"bbfatal \"signing key .* does not match the certificate")
+MG = f"{RA}/files/systemd/velora-rauc-mark-good.service"
+for t in ("engine", "ui", "sysd"):
+    need(f"mark-good Requires velora-{t}-ready.target", MG, rf"^Requires=.*\bvelora-{t}-ready\.target\b")
+    need(f"mark-good After velora-{t}-ready.target", MG, rf"^After=.*\bvelora-{t}-ready\.target\b")
+    need(f"velora-{t}-ready.target has a placeholder dependency set", f"{RA}/files/systemd/velora-{t}-ready.target", rf"^Requires=velora-{t}\.service$")
+    need(f"velora-{t}-ready.target is marked TODO", f"{RA}/files/systemd/velora-{t}-ready.target", r"TODO\(")
+need("mark-good runs rauc status mark-good", MG, r"^ExecStart=/usr/bin/rauc status mark-good$")
+forbid("mark-good is not wanted by default.target", MG, r"^WantedBy=.*default\.target")
+forbid("mark-good has no unconditional After=default.target shortcut", MG, r"^(Before|After)=.*default\.target")
+need("mark-good installed to multi-user.target only", MG, r"^\[Install\]\nWantedBy=multi-user\.target$", re.M)
+need("mark-good recipe enables the unit", f"{RA}/velora-rauc-mark-good_1.0.bb", r'^SYSTEMD_SERVICE:\$\{PN\} = "velora-rauc-mark-good\.service"$')
+need("stock rauc-mark-good.service masked", f"{RA}/velora-rauc-mark-good_1.0.bb", r"ln -sf /dev/null \$\{D\}\$\{sysconfdir\}/systemd/system/rauc-mark-good\.service")
+need("rollback record unit writes /data/config only", f"{RA}/files/systemd/velora-rollback-record.service", r"^ReadWritePaths=/data/config$")
+need("rollback recorder: temp + fsync + rename", f"{RA}/files/rollback/velora-rollback-record", r"(?s)mkstemp.*os\.fsync\(f\.fileno\(\)\).*os\.replace\(tmp, path\)")
+need("rollback recorder default path", f"{RA}/files/rollback/velora-rollback-record", r'"--out", default="/data/config/rollback\.json"')
+need("/data/rauc exists (tmpfiles)", DATA, r"^d\s+/data/rauc\s+0755\s+root\s+root\s")
+need("u-boot script: 3 attempts and the RAUC variables", f"{M}/files/uboot/velora-ab-boot.cmd", r"(?s)BOOT_ORDER.*setenv BOOT_A_LEFT 3.*setenv BOOT_B_LEFT 3")
+need("u-boot script: TODO(Story 1.6)", f"{M}/files/uboot/velora-ab-boot.cmd", r"TODO\(Story 1\.6\)")
+need("u-boot script: root by partition name per slot", f"{M}/files/uboot/velora-ab-boot.cmd", r"root=PARTLABEL=rootfs\.\$\{velora_slotnum\} rauc\.slot=\$\{velora_slot\}")
+need("kernel fragment for verity installs", f"{M}/recipes-kernel/linux/files/velora-rauc.cfg", r"^CONFIG_DM_VERITY=y$")
+need("README: RAUC section", "README.md", r"(?m)^## RAUC")
+need("README: install/boot counter/rollback not done", "README.md", r"(?is)RAUC.*NOT done.*(install|rollback)")
 # CI workflow: manual only
 wf = (root.parent / ".github/workflows/yocto.yml")
 if wf.is_file():

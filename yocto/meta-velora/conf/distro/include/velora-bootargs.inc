@@ -8,5 +8,7 @@ VELORA_BOOTARGS_RT ?= "isolcpus=managed_irq,domain,5-7 nohz_full=5-7 rcu_nocbs=5
 VELORA_BOOTARGS_BASE ?= "noresume ro"
 UBOOT_EXTLINUX_KERNEL_ARGS:append = " ${VELORA_BOOTARGS_BASE} ${VELORA_BOOTARGS_RT}"
 # Story 6.11: boot from root slot A by GPT partition name (wic --part-name rootfs.0 in files/wic/velora-nvme.wks); RAUC switches slots in Story 6.12.
+# Story 6.12: this extlinux root is only the FALLBACK for slot A. Slot B holds the same image content (same extlinux root=rootfs.0), so the
+# slot choice is made by files/uboot/velora-ab-boot.cmd, which builds root=PARTLABEL=rootfs.<n> itself and boots without extlinux.
 UBOOT_EXTLINUX_ROOT = "root=PARTLABEL=rootfs.0"
 UBOOT_EXTLINUX_KERNEL_ARGS:remove = "rw"

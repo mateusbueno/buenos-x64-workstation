@@ -60,6 +60,8 @@ Key kind and root in the first two columns. Production incident handling (compro
 signing key is created by Story 1.6 (secure-boot chain) and the dev and factory-test RAUC keys and keyrings by Story 6.13 (image variants); this story
 defines their place in the hierarchy but does not create them.
 
+**Dev RAUC root (Story 6.12).** `yocto/ci/rauc/gen-dev-root.sh` creates the dev RAUC root outside the repository; the dev image's `system.conf` sets `use-bundle-signing-time=true`, so a bundle's certificate chain is judged at the time written into the bundle rather than the device clock (devices have no trustworthy clock yet). This is a DEV-ONLY trade-off: it also means an expired or later-revoked signing certificate keeps validating old bundles. Story 6.13 must revisit it before the factory-test and production keyrings are defined.
+
 A trust list may hold several public keys of its root so a rotation overlap needs no code change.
 
 ## 3. Which images trust which public keys

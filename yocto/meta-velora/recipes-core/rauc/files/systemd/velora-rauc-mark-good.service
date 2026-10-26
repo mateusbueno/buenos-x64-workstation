@@ -1,0 +1,23 @@
+# Marks the running RAUC slot good (Story 6.12). Contract:
+#   - it runs ONLY after velora-engine-ready.target, velora-ui-ready.target and velora-sysd-ready.target are active (Requires= + After=);
+#     if any of them fails, this unit fails and the slot stays unmarked, so the U-Boot boot-attempt counter runs down and the bootloader
+#     falls back to the other slot;
+#   - it is NOT wanted by default.target (nor by anything that does not also require the three targets); the only [Install] entry is
+#     multi-user.target, which merely starts it, while Requires=/After= hold it back until the services are ready;
+#   - never add a timeout-based or "after boot" shortcut that marks good without the three targets.
+[Unit]
+Description=Mark the running RAUC slot good once engine, ui and sysd are ready
+Requires=velora-engine-ready.target velora-ui-ready.target velora-sysd-ready.target
+After=velora-engine-ready.target velora-ui-ready.target velora-sysd-ready.target
+Wants=rauc.service
+After=rauc.service
+RequiresMountsFor=/data
+ConditionKernelCommandLine=|rauc.slot
+ConditionKernelCommandLine=|root=PARTLABEL=rootfs.0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rauc status mark-good
+
+[Install]
+WantedBy=multi-user.target

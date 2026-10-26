@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""velora-rollback-record (Story 6.12): record a RAUC rollback in /data/config/rollback.json.
+
+Input: the JSON of `rauc status --detailed --output-format=json` (run here, or read from --status-file / stdin).
+Versions are null when RAUC has no record of one (a wic-flashed slot A has no slot_status). With no install recorded at all there is nothing to roll back.
+Rule: the "attempted" slot is the slot whose installed.timestamp is newest (the one the last update targeted). If the booted slot is not that
+slot, the update did not stick: RAUC fell back to the other slot. The record is then
+    {"schema": 1, "from_version": <version of the attempted slot>, "to_version": <version of the booted slot>,
+     "timestamp": <UTC ISO 8601>, "reason": "boot-failed" | "slot-mismatch", "failed_slot": <name>, "booted_slot": <name>}
+reason is "boot-failed" when RAUC marks the attempted slot's boot_status "bad", else "slot-mismatch".
+Idempotent: if the file already holds a record for the same failed slot, versions and installed timestamp, it is left untouched (the original
+timestamp is kept), so repeated boots on the old slot do not rewrite it. When nothing was rolled back, nothing is written (a stale record
+from an earlier rollback stays: sysd/the UI clears it, not this tool).
+Atomic write: temp file in the target directory, fsync, rename over the target, fsync of the directory. Any failure leaves the previous
+file as it was and exits non-zero.
+Exit codes: 0 ok (written, unchanged or no rollback), 1 write failure, 2 unusable input.
+"""
+import argparse
+import datetime
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+SCHEMA = 1
+
+
+def load_status(args):
+    if args.status_file == "-":
+        raw = sys.stdin.read()
+    elif args.status_file:
+        with open(args.status_file, encoding="utf-8") as f:
+            raw = f.read()
+    else:
+        raw = subprocess.run(["rauc", "status", "--detailed", "--output-format=json"], check=True, capture_output=True, text=True).stdout
+    return json.loads(raw)
+
+
+def slots_of(status):
+    """name -> slot dict, from RAUC's list of single-key objects."""
+    out = {}
+    for entry in status.get("slots", []):
+        for name, slot in entry.items():
+            out[name] = slot
+    return out
+
+
+def analyse(status):
+    """Return None when no rollback is visible, else the record fields (without timestamp). Raises ValueError on unusable input."""
+    slots = slots_of(status)
+    booted = [n for n, s in slots.items() if s.get("state") == "booted"]
+    if len(booted) != 1:
+        raise ValueError(f"expected exactly one booted slot, found {booted}")
+    installed = {}
+    for name, s in slots.items():
+        st = s.get("slot_status") or {}
+        ts = (st.get("installed") or {}).get("timestamp")
+        ver = (st.get("bundle") or {}).get("version")
+        if ts:
+            installed[name] = (ts, ver)
+    if not installed:
+        return None  # nothing was ever installed by RAUC (for example a wic-flashed slot A and no update yet): nothing to roll back
+    # a wic-flashed slot has no slot_status: its version is unknown (None) and it never counts as the attempted slot
+    attempted = max(installed, key=lambda n: installed[n][0])
+    if attempted == booted[0]:
+        return None
+    reason = "boot-failed" if slots[attempted].get("boot_status") == "bad" else "slot-mismatch"
+    return {
+        "schema": SCHEMA,
+        "from_version": installed[attempted][1],
+        "to_version": installed.get(booted[0], (None, None))[1],
+        "reason": reason,
+        "failed_slot": attempted,
+        "booted_slot": booted[0],
+        "failed_installed_at": installed[attempted][0],
+    }
+
+
+def atomic_write_json(path, obj):
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=".rollback.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+    dfd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def same_event(old, new):
+    keys = ("schema", "from_version", "to_version", "failed_slot", "booted_slot", "failed_installed_at")
+    return isinstance(old, dict) and all(old.get(k) == new.get(k) for k in keys)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--status-file", help="rauc status JSON file ('-' = stdin); default: run rauc")
+    ap.add_argument("--out", default="/data/config/rollback.json")
+    ap.add_argument("--now", help="timestamp to record (tests); default: current UTC time")
+    args = ap.parse_args(argv)
+    try:
+        rec = analyse(load_status(args))
+    except (OSError, ValueError, subprocess.CalledProcessError) as e:
+        print(f"velora-rollback-record: unusable rauc status: {e}", file=sys.stderr)
+        return 2
+    if rec is None:
+        print("velora-rollback-record: booted slot is the attempted slot, no rollback")
+        return 0
+    try:
+        with open(args.out, encoding="utf-8") as f:
+            old = json.load(f)
+    except (OSError, ValueError):
+        old = None
+    if same_event(old, rec):
+        print("velora-rollback-record: rollback already recorded, unchanged")
+        return 0
+    rec["timestamp"] = args.now or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        atomic_write_json(args.out, rec)
+    except OSError as e:
+        print(f"velora-rollback-record: cannot write {args.out}: {e}", file=sys.stderr)
+        return 1
+    print(f"velora-rollback-record: recorded {rec['from_version']} -> {rec['to_version']} ({rec['reason']})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
