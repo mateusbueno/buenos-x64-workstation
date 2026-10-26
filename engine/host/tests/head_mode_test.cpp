@@ -4,6 +4,8 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -27,6 +29,7 @@
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/live_set_loader.hpp"
 #include "velora/host/sample_bundle_loader.hpp"
+#include "velora/host/stream_manager.hpp"
 #include "velora/host/tier_profile.hpp"
 
 namespace fs = std::filesystem;
@@ -519,6 +522,67 @@ void test_head_mode_refuses_protected_and_default_is_off() {
   CHECK(ram.load_options().head.enabled);
 }
 
+// Story 1.17: stream mode through the Live Set loader. The RamHeadProvider keeps the opened bundle (the lease) and the stream manager's I/O threads read the tails through it:
+// a long sustained note over the loaded Live Set renders bit for bit like the fully resident Live Set, with no underrun, and every ring comes back when the generation is gone.
+void test_stream_mode_through_the_live_set_loader() {
+  host::StreamConfig sc;
+  sc.ring_count = host::v1_profile().sample_voice_capacity;
+  sc.io_threads = 2;
+  sc.p9999_ns = 20'000'000;
+  sc.margin_ns = 20'000'000;
+  sc.poll_us = 100;
+  sc.memory.allow_unlocked = true;
+  sc.memory.lock_fn = [](void*, std::size_t) { return true; };
+  sc.memory.unlock_fn = [](void*, std::size_t) {};
+  auto mgr = host::StreamManager::create(sc);  // declared before the rigs: it outlives every instrument
+  CHECK(mgr != nullptr);
+  if (!mgr) return;
+  host::SampleLoadOptions so = head_options();
+  so.head.sizing.p9999_ns = sc.p9999_ns;
+  so.head.sizing.margin_ns = sc.margin_ns;
+  so.stream.enabled = true;
+  so.stream.fence = mgr.get();
+  const host::HeadMemoryStats before = host::head_memory_stats();
+  bool clean = false;
+  for (int attempt = 0; attempt < 3 && !clean; ++attempt) {  // an attempt in which an I/O thread was not scheduled for longer than the head lasts (a very loaded machine) starves legitimately: repeated slower
+    Rig res(host::SampleLoadOptions{}, 0), str(so, 0);
+    str.sample.set_stream_service(mgr.get());
+    const std::string a = install_library(res.tmp.path, 1), b = install_library(str.tmp.path, 1);
+    CHECK(a == b);
+    CHECK(res.loader.load(live_set(1, {a})).ok());
+    const host::LiveSetLoadResult one = str.loader.load(live_set(1, {b}));
+    CHECK(one.ok());
+    // The estimate the head budget uses is what the stream-mode load made resident (this bundle has no loop beyond its head: no loop segments).
+    CHECK(one.resident_bytes == host::head_arena_bytes(host::head_align(3844 * sizeof(float)) + host::head_align(200 * sizeof(float))));
+    CHECK(res.br->submit({core::make_note_on(0, 0, 72, 65535), 0}) && str.br->submit({core::make_note_on(0, 0, 72, 65535), 0}));
+    bool same = true;
+    float peak = 0.0f;
+    for (int blk = 0; blk < 340; ++blk) {  // 21760 frames: the sample (48001 frames, 24000 at ratio 2) is read far past its 3844 frame head and still sounds
+      res.br->process_block(res.l, res.r);
+      str.br->process_block(str.l, str.r);
+      same = same && std::memcmp(res.l, str.l, sizeof(res.l)) == 0 && std::memcmp(res.r, str.r, sizeof(res.r)) == 0;
+      for (float x : str.l) peak = std::max(peak, std::fabs(x));
+      std::this_thread::sleep_for(std::chrono::microseconds(150 + 400 * attempt));
+    }
+    clean = str.sample.stream_underrun_events() == 0;
+    if (clean) {
+      CHECK(same && peak > 1e-3f);
+      CHECK(str.br->last_values().diagnostics().stream_underruns() == 0 && str.sample.stream_open_failures() == 0);
+      CHECK(mgr->stats().opens >= 1 && mgr->stats().reads >= 5 && mgr->stats().read_errors == 0);
+      CHECK(str.sample.active_voices() == 1);  // the note still sounds (a long sustained note)
+    }
+    // Replacing the Live Set: the old generation (and its instrument) is released once no voice references it; the stream's ring is given back with the voice.
+    CHECK(str.br->submit({core::make_note_off(0, 0, 72), 0}));
+    for (int blk = 0; blk < 200; ++blk) str.br->process_block(str.l, str.r);
+    CHECK(str.sample.active_voices() == 0);
+    for (int i = 0; i < 2000 && mgr->rings_active() != 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(mgr->rings_active() == 0);
+  }
+  CHECK(clean);
+  CHECK(host::head_memory_stats().live_buffers == before.live_buffers);  // heads released with the generations (the manager's arena is the one it owns)
+  mgr.reset();
+}
+
 // Item: a loop with explicit points that ends near the natural head end extends the head over the loop end plus the guard, so a loop inside the sample never underruns.
 void test_loop_near_head_end_is_covered() {
   const auto bytes = make_bundle(nullptr, kLongFrames, true, 290);  // loop 0..290; the natural head is 292 frames (end-of-head check at 290)
@@ -551,6 +615,7 @@ int main() {
   test_live_set_not_ready_until_all_heads();
   test_head_mode_refuses_protected_and_default_is_off();
   test_loop_near_head_end_is_covered();
+  test_stream_mode_through_the_live_set_loader();
   if (g_fail) {
     std::printf("head_mode_test: %d failure(s)\n", g_fail);
     return 1;

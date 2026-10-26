@@ -1,5 +1,6 @@
 #include "velora/format/factory_fm_va.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include "velora/format/hash.hpp"
 

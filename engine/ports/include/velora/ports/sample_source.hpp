@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <span>
 
+#include "velora/ports/stream.hpp"
+
 namespace velora::ports {
 
 enum class SampleLoopMode : std::uint8_t {
@@ -81,6 +83,13 @@ struct SampleRegionDesc {
   float filter_cutoff_hz = 0.0f, filter_resonance_db = 0.0f;
 };
 
+// Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.
+struct SamplePcmSegment {
+  std::uint64_t start = 0, frames = 0;
+  const float* left = nullptr;
+  const float* right = nullptr;
+};
+
 // One sample's PCM. channels is 1 or 2; `right` is used only when channels == 2. A sample whose
 // data is absent (null pointer, zero frames) makes every region using it unplayable: the engine
 // skips such regions and counts them, it never plays garbage.
@@ -106,6 +115,15 @@ struct SamplePcm {
   // is counted as a stream underrun; a source that is fully resident never produces one, and its render is bit for bit the Story 1.15 one.
   std::uint64_t total_frames = 0;
   bool has_tail = false;
+  // Story 1.17 (streaming). A sample with a tail may carry the reader of its tail: `tail_source` (borrowed, owned by the source that owns this PCM) and its
+  // instrument-local index `tail_sample`. nullptr (the default; every head-only source of Story 1.16 and every resident one) = the tail cannot be streamed and the voice
+  // keeps the Story 1.16 placeholder (fade and count at the head end). A SampleEngine without a StreamService ignores both.
+  // `segments` are extra RESIDENT pieces of the sample past the head: the loop-start regions of loops that reach beyond the head, so a loop wrap is seamless while the
+  // stream re-seeks (see engine/core/README.md "Streaming"). Frame i of segment k is `left[i - start]`; where a segment overlaps the head the head wins.
+  const BlockSource* tail_source = nullptr;
+  std::uint32_t tail_sample = 0;
+  const SamplePcmSegment* segments = nullptr;
+  std::uint32_t segment_count = 0;
 };
 
 struct InstrumentView {

@@ -55,6 +55,8 @@
 #include "velora/host/scene_controller.hpp"
 #include "velora/host/setlist_controller.hpp"
 #include "velora/host/setlist_store.hpp"
+#include "velora/host/stream_manager.hpp"
+#include "velora/host/thread_priority.hpp"
 #include "velora/host/tier_profile.hpp"
 #include "velora/host/sysd_config_client.hpp"
 #ifdef VELORA_ENGINE_DEV_KEYS
@@ -78,6 +80,8 @@ int main(int argc, char** argv) {
   bool want_line_in = false, no_audio = false;
   std::string din_source;  // Story 7.7: a CoreMIDI source whose name contains this is the DIN input (Mac only; the board's DIN UART adapter tags kDin itself)
   bool head_extra_flag = false;  // a head tuning flag was given (needs --head-mode)
+  long io_threads = 2;           // Story 1.17: --io-threads N (the I/O edge threads of --stream-mode)
+  bool io_threads_given = false;
   host::SampleLoadOptions load_options;  // Story 1.16: --head-mode (instrument heads in locked RAM; default off = whole samples)
   std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path, sysd_socket;
   host::PedalDirection switch_direction = host::PedalDirection::kNormal;  // Story 3.11
@@ -114,6 +118,16 @@ int main(int argc, char** argv) {
       library_root = argv[++i];
     } else if (!std::strcmp(argv[i], "--head-mode")) {
       load_options.head.enabled = true;
+    } else if (!std::strcmp(argv[i], "--stream-mode")) {
+      load_options.stream.enabled = true;  // Story 1.17: stream the rest of each sample from the SSD ahead of the playhead (needs --head-mode)
+    } else if (!std::strcmp(argv[i], "--io-threads") && i + 1 < argc) {
+      char* end = nullptr;
+      io_threads = std::strtol(argv[++i], &end, 10);
+      if (*end != '\0' || io_threads < 1 || io_threads > 16) {
+        std::fprintf(stderr, "engine-host: --io-threads needs a number of I/O edge threads between 1 and 16, got '%s'\n", argv[i]);
+        return 2;
+      }
+      io_threads_given = true;
     } else if (!std::strcmp(argv[i], "--allow-unlocked-heads")) {
       load_options.head.memory.allow_unlocked = true;
       head_extra_flag = true;
@@ -182,6 +196,9 @@ int main(int argc, char** argv) {
                    "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in] [--no-audio (dev/test only)]\n"
                    "                   [--head-mode [--allow-unlocked-heads] [--head-p9999-us N] [--head-margin-us N]]   (Story 1.16: only the head of each sample in mlocked RAM; the rest is\n"
                    "                                                              Story 1.17; --allow-unlocked-heads is for development when RLIMIT_MEMLOCK is too small)\n"
+                   "                   [--stream-mode [--io-threads N]]   (Story 1.17, needs --head-mode: the rest of each sample is read from the SSD by N I/O edge threads (default 2, below the\n"
+                   "                                                       audio thread's priority) into per-voice ring buffers ahead of the playhead; a late read is silence with a short fade and\n"
+                   "                                                       one counted underrun, never a wait; the Linux io_uring + O_DIRECT reader is board work)\n"
                    "                   [--live-set FILE --library-root DIR]   (load a Live Set at start; its parts play from the keyboard by zone)\n"
                    "                   [--live-set-dir DIR --library-root DIR]   (the Live Sets of a directory (<id>.liveset) that ws.v1 JumpToLiveSet can switch to,\n"
                    "                                                              seamlessly, loading in the background; without --live-set the first by name loads at start)\n"
@@ -211,6 +228,14 @@ int main(int argc, char** argv) {
   }
   if (head_extra_flag && !load_options.head.enabled) {
     std::fprintf(stderr, "engine-host: --allow-unlocked-heads, --head-p9999-us and --head-margin-us need --head-mode\n");
+    return 2;
+  }
+  if ((load_options.stream.enabled || io_threads_given) && !load_options.head.enabled) {
+    std::fprintf(stderr, "engine-host: --stream-mode needs --head-mode (streaming continues a head: stream_requires_heads)\n");
+    return 2;
+  }
+  if (io_threads_given && !load_options.stream.enabled) {
+    std::fprintf(stderr, "engine-host: --io-threads needs --stream-mode\n");
     return 2;
   }
   // Story 4.1 (AD-27): the tier is read ONCE, here, and the profile is immutable for the run. The Mac has no strap (NoStrapTierSource: v1), unless the dev override says Pro.
@@ -379,6 +404,36 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
+  // Story 1.17 --stream-mode: the stream manager (ring pool and I/O edge threads) is declared BEFORE the renderer and the plane, so it is destroyed AFTER every generation and
+  // instrument (an instrument's destructor fences the manager before its reader goes away). The pool is one ring per sample voice.
+  host::PosixThreadPriority io_priority;  // the I/O edge threads run below the audio thread (QoS class on the Mac, SCHED_FIFO - 10 on the board)
+  std::unique_ptr<host::StreamManager> stream_manager;
+  if (load_options.stream.enabled) {
+    host::StreamConfig sc;
+    sc.io_threads = static_cast<std::uint32_t>(io_threads);
+    sc.ring_count = profile.sample_voice_capacity;
+    sc.p9999_ns = load_options.head.sizing.p9999_ns;
+    sc.margin_ns = load_options.head.sizing.margin_ns;
+    sc.sample_rate = 48000;                    // the engine's rate; a library recorded at 96 kHz needs more lookahead (documented, engine/host/README.md)
+    sc.max_pitch_ratio = 2.0;                  // an octave above the root: the working figure of the ring lookahead (the heads are sized per instrument)
+    sc.block_frames = core::kBlockFrames;      // the engine block (64): the ring sizing assumes voices render at most this many frames per call
+    sc.memory = load_options.head.memory;
+    sc.priority = &io_priority;
+    host::StreamManager::Status ss = host::StreamManager::Status::kOk;
+    stream_manager = host::StreamManager::create(sc, &ss);
+    if (!stream_manager) {
+      std::fprintf(stderr, "engine-host: cannot start stream mode (status %d: %s)\n", static_cast<int>(ss),
+                   ss == host::StreamManager::Status::kLockFailed ? "the ring buffers cannot be locked: raise RLIMIT_MEMLOCK or use --allow-unlocked-heads" : "see stream_manager.hpp");
+      return 1;
+    }
+    stream_manager->set_error_handler([](const host::StreamError& e) {  // the typed host-side error log (an I/O edge thread); the audio thread only sees missing data
+      std::fprintf(stderr, "engine-host: stream read error %s: ring %u sample %u frames [%llu, +%u)\n", ports::to_string(e.status), e.ring, e.sample, static_cast<unsigned long long>(e.start), e.frames);
+    });
+    load_options.stream.fence = stream_manager.get();
+    std::printf("stream mode: %u I/O threads, %u rings of %u frames, %llu bytes of stream buffers%s\n", sc.io_threads, stream_manager->ring_count(), stream_manager->ring_frames(),
+                static_cast<unsigned long long>(stream_manager->buffer_bytes()), stream_manager->buffers_locked() ? " (locked)" : " (NOT locked)");
+  }
+
   auto renderer = std::make_unique<core::BlockRenderer>();
   auto queue = std::make_unique<host::HostEventQueue>();
   auto control_queue = std::make_unique<host::ControlEventQueue>();
@@ -408,6 +463,7 @@ int main(int argc, char** argv) {
   sample_cfg.extended_voices = true;  // Story 5.2: any imported instrument may use filters and CC crossfades, so every voice is budgeted for them
   sample_cfg.release_velocity_triggers = true;  // Story 3.6: release-trigger samples follow the key's release velocity (the Note Off the keybed reader sends)
   core::SampleEngine sample(sample_cfg);
+  if (stream_manager) sample.set_stream_service(stream_manager.get());  // Story 1.17: opt-in streaming of the tails
   core::OrganEngine organ(profile.part_count, profile.organ_voice_capacity);  // Story 4.1: generators for the tier's parts, the tier's voice pool
   core::FmEngine fm(48000.0f, profile.fm_voice_capacity);
   core::VaEngine va(48000.0f, profile.va_voice_capacity);
@@ -419,7 +475,7 @@ int main(int argc, char** argv) {
   std::unique_ptr<host::ProtectedHeadProvider> protected_heads;
   if (!trust_list_path.empty()) {
     if (load_options.head.enabled) {
-      std::fprintf(stderr, "engine-host: --head-mode and protected libraries (--trust-list) cannot be combined (heads are for unprotected bundles: head_protected_unsupported)\n");
+      std::fprintf(stderr, "engine-host: --head-mode / --stream-mode and protected libraries (--trust-list) cannot be combined (heads and streaming are for unprotected bundles: head_protected_unsupported / stream_protected_unsupported)\n");
       return 1;
     }
     // Core dumps off before any key exists in this process (the content key and the decoded PCM must not reach a core file).

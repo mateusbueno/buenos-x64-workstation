@@ -261,6 +261,9 @@ class BundleReader {
   Error read_frames(std::size_t sample, std::uint64_t first, std::uint64_t count,
                     std::span<std::int32_t> out) const;
 
+  // Story 1.17: asks the OS not to cache what this reader reads from now on (see ByteSource::set_no_cache). True when the page cache is bypassed.
+  bool set_no_cache() const noexcept;
+
   // Decodes every block of every sample and checks block hashes and per-sample PCM hashes.
   Error verify_all() const;
 

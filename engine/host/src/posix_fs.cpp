@@ -77,6 +77,15 @@ class PosixFs final : public FsPort {
 
   void close(int fd) override { ::close(fd); }
 
+  bool set_no_cache(int fd) override {
+#if defined(__APPLE__)
+    return ::fcntl(fd, F_NOCACHE, 1) == 0;
+#else
+    (void)fd;  // Linux: O_DIRECT is the board's io_uring reader (aligned buffers); no page-cache bypass in the portable reader
+    return false;
+#endif
+  }
+
   FsStatus list_dir(const std::string& path, std::vector<std::string>& names) override {
     DIR* d = ::opendir(path.c_str());
     if (!d) return from_errno();

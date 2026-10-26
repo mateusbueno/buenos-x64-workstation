@@ -41,13 +41,13 @@ ProtectedHeadProvider::ProtectedHeadProvider(std::shared_ptr<FsPort> fs, ports::
 
 LoadStatus ProtectedHeadProvider::load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out) {
   if (!resolved.ok() || !resolved.is_protected()) return RamHeadProvider::load(resolved, out);
-  if (load_options().head.enabled) return LoadStatus::kHeadProtectedUnsupported;  // Story 1.16: heads are for unprotected bundles only (deferred)
+  if (load_options().head.enabled) return load_options().stream.enabled ? LoadStatus::kStreamProtectedUnsupported : LoadStatus::kHeadProtectedUnsupported;  // Stories 1.16 / 1.17: heads and streaming are for unprotected bundles only (deferred)
   return load_protected(resolved, out, nullptr);
 }
 
 LoadStatus ProtectedHeadProvider::load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) {
   if (!resolved.ok() || !resolved.is_protected()) return RamHeadProvider::load_controlled(resolved, out, hooks);
-  if (load_options().head.enabled) return LoadStatus::kHeadProtectedUnsupported;
+  if (load_options().head.enabled) return load_options().stream.enabled ? LoadStatus::kStreamProtectedUnsupported : LoadStatus::kHeadProtectedUnsupported;
   return load_protected(resolved, out, &hooks);
 }
 

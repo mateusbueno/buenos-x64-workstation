@@ -33,6 +33,8 @@ class FsPort {
   // Reads exactly n bytes at off (kIo on short read or error).
   virtual FsStatus pread(int fd, std::uint64_t off, void* dst, std::size_t n) = 0;
   virtual void close(int fd) = 0;
+  // Story 1.17: asks the OS not to cache what is read from `fd` from now on (streaming reads). True when the page cache is bypassed; the default does nothing.
+  virtual bool set_no_cache(int /*fd*/) { return false; }
   // Directory listing. The resolver never calls this; it exists so tests can prove it.
   virtual FsStatus list_dir(const std::string& path, std::vector<std::string>& names) = 0;
 };
@@ -55,6 +57,7 @@ class CountingFs final : public FsPort {
   FsStatus open_read(const std::string& path, int& fd, std::uint64_t& size) override;
   FsStatus pread(int fd, std::uint64_t off, void* dst, std::size_t n) override;
   void close(int fd) override;
+  bool set_no_cache(int fd) override { return inner_->set_no_cache(fd); }
   FsStatus list_dir(const std::string& path, std::vector<std::string>& names) override;
 
   FsOpCounts counts() const;

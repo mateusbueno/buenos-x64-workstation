@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 
 #include "velora/format/byte_source.hpp"
 #include "velora/format/hash.hpp"
@@ -17,6 +18,7 @@ class PortSource final : public format::ByteSource {
   ~PortSource() override { fs_->close(fd_); }
   std::uint64_t size() const override { return size_; }
   const std::uint8_t* direct(std::uint64_t, std::size_t) const override { return nullptr; }
+  bool set_no_cache() const noexcept override { return fs_->set_no_cache(fd_); }
   format::Error read_at(std::uint64_t off, void* dst, std::size_t n) const override {
     if (off > size_ || n > size_ - off) return format::Error::kTruncated;
     if (n == 0) return format::Error::kNone;

@@ -65,14 +65,17 @@ std::uint64_t HeadProvider::estimate_bytes(const ResolveResult& resolved) const 
 namespace {
 // The instrument keeps the opened bundle (the BundleLease: its file descriptor) until the last generation holding it is freed.
 LoadStatus ram_load(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks* hooks, const SampleLoadOptions& options) {
-  if (resolved.ok() && resolved.protected_view) return options.head.enabled ? LoadStatus::kHeadProtectedUnsupported : LoadStatus::kProtectedUnsupported;  // Story 6.5: this provider has no key provider (see ProtectedHeadProvider)
+  if (resolved.ok() && resolved.protected_view) return options.stream.enabled ? LoadStatus::kStreamProtectedUnsupported : options.head.enabled ? LoadStatus::kHeadProtectedUnsupported : LoadStatus::kProtectedUnsupported;  // Story 6.5: this provider has no key provider (see ProtectedHeadProvider)
   if (!resolved.ok() || !resolved.bundle) return LoadStatus::kInstrumentNotFound;
   LoadResult r = load_instrument_by_index(*resolved.bundle, resolved.instrument, hooks, options);
   if (!r.ok()) return r.status;
   if (r.instrument->failed_samples() != 0) return LoadStatus::kBundleInconsistent;  // holes in the instrument: not resident
   std::shared_ptr<const format::BundleReader> lease = resolved.bundle;
   const BundleInstrument* raw = r.instrument.release();
-  out = std::shared_ptr<const BundleInstrument>(raw, [lease = std::move(lease)](const BundleInstrument* p) { delete p; });
+  out = std::shared_ptr<const BundleInstrument>(raw, [lease = std::move(lease)](const BundleInstrument* p) {
+    delete p;
+    if (BundleInstrument::take_fence_failed()) (void)new std::shared_ptr<const format::BundleReader>(lease);  // a stream read is stuck: never close the file under it
+  });
   return LoadStatus::kOk;
 }
 }  // namespace
@@ -82,8 +85,10 @@ LoadStatus RamHeadProvider::load(const ResolveResult& resolved, std::shared_ptr<
 std::uint64_t RamHeadProvider::estimate_bytes(const ResolveResult& resolved) const {
   if (!options_.head.enabled) return HeadProvider::estimate_bytes(resolved);
   if (!resolved.ok()) return 0;
-  if (resolved.protected_view) return instrument_head_bytes(resolved.protected_view->instruments(), resolved.protected_view->samples(), resolved.instrument, options_.head);
-  return resolved.bundle ? instrument_head_bytes(resolved.bundle->instruments(), resolved.bundle->samples(), resolved.instrument, options_.head) : 0;
+  HeadOptions head = options_.head;
+  head.loop_segments = options_.stream.enabled;  // Story 1.17: stream mode keeps the resident loop segments in the arena too
+  if (resolved.protected_view) return instrument_head_bytes(resolved.protected_view->instruments(), resolved.protected_view->samples(), resolved.instrument, head);
+  return resolved.bundle ? instrument_head_bytes(resolved.bundle->instruments(), resolved.bundle->samples(), resolved.instrument, head) : 0;
 }
 
 LoadStatus RamHeadProvider::load_controlled(const ResolveResult& resolved, std::shared_ptr<const BundleInstrument>& out, const LoadHooks& hooks) {

@@ -26,6 +26,9 @@ const char* to_string(LoadStatus s) {
     case LoadStatus::kProtectedDowngrade: return "protected_downgrade";
     case LoadStatus::kHeadLockFailed: return "head_lock_failed";
     case LoadStatus::kHeadProtectedUnsupported: return "head_protected_unsupported";
+    case LoadStatus::kStreamRequiresHeads: return "stream_requires_heads";
+    case LoadStatus::kStreamProtectedUnsupported: return "stream_protected_unsupported";
+    case LoadStatus::kStreamNeedsReader: return "stream_needs_reader";
   }
   return "?";
 }
@@ -72,6 +75,7 @@ class PlainSource final : public InstrumentSource {
   fmt::Error read_frames(std::size_t sample, std::uint64_t first, std::uint64_t count, std::span<std::int32_t> out) const override {
     return r_.read_frames(sample, first, count, out);
   }
+  bool set_no_cache() const override { return r_.set_no_cache(); }
 
  private:
   const fmt::BundleReader& r_;
@@ -152,6 +156,87 @@ bool pcm_to_float(const fmt::PcmFormat& f, std::span<const std::int32_t> in, std
   return true;
 }
 
+namespace {
+
+// Story 1.17: the reader of the tails. Decodes frames [start, start + n) of a sample with the SAME decoder the resident loader uses (InstrumentSource::read_frames, then
+// pcm_to_float), so the floats the I/O threads put in a ring are bit for bit those of a fully resident render. Blocking; called by I/O edge threads only (it allocates, in
+// per-thread scratch buffers that grow once). The Linux io_uring + O_DIRECT implementation of ports::BlockSource replaces this class on the board (TODO(board)): the port is
+// the seam, nothing above it changes.
+class BundleBlockSource final : public ports::BlockSource {
+ public:
+  struct Sample {
+    fmt::PcmFormat format;
+    std::uint64_t frames = 0;
+  };
+  BundleBlockSource(std::shared_ptr<const InstrumentSource> src, std::size_t first_sample, std::vector<Sample> samples, ports::StreamFence* fence)
+      : src_(std::move(src)), first_(first_sample), samples_(std::move(samples)), fence_(fence) {}
+  // Called by ~BundleInstrument before anything the reads use goes away: stops new reads and waits (StreamFence, with its timeout) for the in-flight ones. false = an I/O thread
+  // is stuck inside a read: the caller must leak this object and the reader.
+  bool quiesce() noexcept {
+    closed_.store(true, std::memory_order_release);
+    return fence_ == nullptr || fence_->fence();
+  }
+
+  ports::BlockReadStatus read(std::uint32_t sample, std::uint64_t start, std::uint32_t frames, float* left, float* right) const noexcept override {
+    if (closed_.load(std::memory_order_acquire)) return ports::BlockReadStatus::kClosed;
+    if (sample >= samples_.size()) return ports::BlockReadStatus::kOutOfRange;
+    const Sample& s = samples_[sample];
+    if (start > s.frames || frames > s.frames - start || left == nullptr) return ports::BlockReadStatus::kOutOfRange;
+    if (frames == 0) return ports::BlockReadStatus::kOk;
+    const std::size_t ch = s.format.channels;
+    if (ch == 2 && right == nullptr) return ports::BlockReadStatus::kOutOfRange;
+    try {
+      thread_local std::vector<std::int32_t> raw;
+      thread_local std::vector<float> planar;
+      raw.resize(static_cast<std::size_t>(frames) * ch);
+      const fmt::Error e = src_->read_frames(first_ + sample, start, frames, raw);
+      if (e != fmt::Error::kNone) {
+        switch (e) {
+          case fmt::Error::kIo: return ports::BlockReadStatus::kIoError;
+          case fmt::Error::kTruncated: return ports::BlockReadStatus::kShortRead;
+          case fmt::Error::kOutOfRange: return ports::BlockReadStatus::kOutOfRange;
+          default: return ports::BlockReadStatus::kDecodeError;
+        }
+      }
+      if (!pcm_to_float(s.format, raw, frames, planar)) return ports::BlockReadStatus::kDecodeError;
+      std::memcpy(left, planar.data(), static_cast<std::size_t>(frames) * sizeof(float));
+      if (ch == 2) std::memcpy(right, planar.data() + frames, static_cast<std::size_t>(frames) * sizeof(float));
+      return ports::BlockReadStatus::kOk;
+    } catch (...) {
+      return ports::BlockReadStatus::kIoError;  // no memory for the scratch: a failed read, never an exception into the I/O thread
+    }
+  }
+
+ private:
+  std::shared_ptr<const InstrumentSource> src_;
+  std::size_t first_;
+  std::vector<Sample> samples_;
+  ports::StreamFence* fence_;
+  std::atomic<bool> closed_{false};
+};
+
+}  // namespace
+
+namespace {
+thread_local bool t_fence_failed = false;
+}
+
+BundleInstrument::~BundleInstrument() {
+  // Stream mode: no I/O thread may be inside a read of this instrument's tails when the reader (the lease / context) and the memory go. fence() timed out (a stuck read): leak
+  // the block source (and the reader reference it holds) and tell the owner's deleter to leak the lease too (take_fence_failed); never free what a stuck thread may still use.
+  if (block_source_ && !static_cast<BundleBlockSource*>(block_source_.get())->quiesce()) {
+    t_fence_failed = true;
+    (void)block_source_.release();
+    if (context_) (void)new std::shared_ptr<const void>(context_);
+  }
+}
+
+bool BundleInstrument::take_fence_failed() noexcept {
+  const bool f = t_fence_failed;
+  t_fence_failed = false;
+  return f;
+}
+
 struct BundleInstrumentLoader {
   static LoadResult load(const InstrumentSource& bundle, std::size_t index, const LoadHooks* hooks, const SampleLoadOptions& options) {
     LoadResult res;
@@ -164,23 +249,41 @@ struct BundleInstrumentLoader {
     }
 
     const bool head_mode = options.head.enabled;
-    if (head_mode && bundle.protected_source()) {  // heads are for unprotected bundles only (deferred): refuse, typed
-      res.status = LoadStatus::kHeadProtectedUnsupported;
+    const bool stream_mode = options.stream.enabled;
+    if (stream_mode && !head_mode) {  // streaming continues a head: there is no heads-off streaming
+      res.status = LoadStatus::kStreamRequiresHeads;
+      return res;
+    }
+    if (head_mode && bundle.protected_source()) {  // heads (and so streaming) are for unprotected bundles only (deferred): refuse, typed
+      res.status = stream_mode ? LoadStatus::kStreamProtectedUnsupported : LoadStatus::kHeadProtectedUnsupported;
+      return res;
+    }
+    if (stream_mode && !options.stream.reader) {  // no reader that outlives this call (the BundleReader overload supplies one): refuse instead of keeping a dangling reference
+      res.status = LoadStatus::kStreamNeedsReader;
       return res;
     }
     std::vector<HeadLength> plan;
     if (head_mode) plan = plan_heads(instruments, bundle.samples(), index, options.head.sizing);
+    std::vector<std::vector<LoopSegment>> seg_plan;
+    if (stream_mode) seg_plan = plan_loop_segments(instruments, bundle.samples(), index, options.head.sizing, plan);
 
     auto out = std::make_unique<BundleInstrument>();
     out->head_mode_ = head_mode;
     std::vector<std::size_t> head_offset;  // floats, per sample, inside the arena
+    std::vector<std::vector<std::size_t>> seg_offset(stream_mode ? info.sample_count : 0);  // floats, per sample and loop segment, inside the arena
     if (head_mode) {
-      // One arena for the whole instrument: heads at 64 byte aligned offsets, the arena page rounded and mlocked once (the budget counts exactly this).
+      // One arena for the whole instrument: heads (and in stream mode the resident loop segments) at 64 byte aligned offsets, the arena page rounded and mlocked once (the budget counts exactly this).
       head_offset.assign(info.sample_count, 0);
       std::size_t payload = 0;
       for (std::size_t s = 0; s < plan.size(); ++s) {
         head_offset[s] = payload / sizeof(float);
-        payload += head_align(static_cast<std::size_t>(plan[s].frames) * bundle.samples()[info.first_sample + s].format.channels * sizeof(float));
+        const std::size_t sch = bundle.samples()[info.first_sample + s].format.channels;
+        payload += head_align(static_cast<std::size_t>(plan[s].frames) * sch * sizeof(float));
+        if (stream_mode && s < seg_plan.size())
+          for (const LoopSegment& sg : seg_plan[s]) {
+            seg_offset[s].push_back(payload / sizeof(float));
+            payload += head_align(static_cast<std::size_t>(sg.frames) * sch * sizeof(float));
+          }
       }
       if (payload != 0) {
         HeadBuffer::Status hs = HeadBuffer::Status::kOk;
@@ -197,6 +300,15 @@ struct BundleInstrumentLoader {
     for (const fmt::Region& r : info.regions) out->regions_.push_back(to_port_region(r));
     out->pcm_.resize(info.sample_count);
     out->data_.resize(info.sample_count);
+    if (stream_mode) {
+      // The reader of the tails (StreamLoadOptions::reader; the BundleReader overload makes one that lives as long as the instrument).
+      std::shared_ptr<const InstrumentSource> reader = options.stream.reader;
+      std::vector<BundleBlockSource::Sample> descs(info.sample_count);
+      for (std::size_t s = 0; s < info.sample_count; ++s) descs[s] = {bundle.samples()[info.first_sample + s].format, bundle.samples()[info.first_sample + s].frame_count};
+      if (options.stream.no_cache) out->stream_no_cache_ = reader->set_no_cache();
+      out->block_source_ = std::make_unique<BundleBlockSource>(std::move(reader), info.first_sample, std::move(descs), options.stream.fence);
+      out->segments_.resize(info.sample_count);
+    }
     if (bundle.protected_source()) {  // Story 6.5: every sample gets a block-damage map the I/O edge threads can set and the audio thread reads
       out->damage_.resize(info.sample_count);
       out->damage_count_.assign(info.sample_count, 0);
@@ -272,6 +384,50 @@ struct BundleInstrumentLoader {
         out->data_[s] = std::vector<float>();  // the temporary decode buffer is released; the head lives in locked memory
         if (frames < total_frames) ++out->tail_samples_;
       }
+      if (stream_mode && s < seg_plan.size() && !seg_plan[s].empty()) {
+        // The resident loop segments (stream mode): read like the head, in chunks so a cancel is seen, into the arena on this (loading) thread.
+        try {
+          std::vector<std::int32_t> raw;
+          std::vector<float> planar;
+          bool seg_ok = true;
+          for (std::size_t k = 0; k < seg_plan[s].size() && seg_ok; ++k) {
+            const LoopSegment& sg = seg_plan[s][k];
+            float* base = out->head_arena_->floats() + seg_offset[s][k];
+            for (std::uint64_t at = 0; at < sg.frames && seg_ok; at += kLoadChunkFrames) {
+              const std::uint64_t n = std::min<std::uint64_t>(kLoadChunkFrames, sg.frames - at);
+              raw.resize(static_cast<std::size_t>(n) * ch);
+              const fmt::Error rerr = bundle.read_frames(info.first_sample + s, sg.start + at, n, raw);
+              seg_ok = rerr == fmt::Error::kNone && pcm_to_float(si.format, raw, n, planar);
+              if (!seg_ok && out->first_error_ == fmt::Error::kNone) out->first_error_ = rerr;
+              if (!seg_ok) break;
+              std::memcpy(base + at, planar.data(), static_cast<std::size_t>(n) * sizeof(float));
+              if (ch == 2) std::memcpy(base + sg.frames + at, planar.data() + n, static_cast<std::size_t>(n) * sizeof(float));
+              if (!proceed(n * ch * sizeof(float))) {
+                res.status = LoadStatus::kCancelled;
+                return res;
+              }
+            }
+            if (seg_ok) {
+              ports::SamplePcmSegment ps;
+              ps.start = sg.start;
+              ps.frames = sg.frames;
+              ps.left = base;
+              ps.right = ch == 2 ? base + sg.frames : nullptr;
+              out->segments_[s].push_back(ps);
+              ++out->loop_segments_;
+            }
+          }
+          if (!seg_ok) {
+            out->segments_[s].clear();
+            ++out->failed_samples_;
+            continue;
+          }
+        } catch (const std::bad_alloc&) {
+          out->segments_[s].clear();
+          ++out->failed_samples_;
+          continue;
+        }
+      }
       pcm.sample_rate = si.format.sample_rate;
       pcm.channels = static_cast<std::uint8_t>(ch);
       pcm.frames = frames;
@@ -279,6 +435,12 @@ struct BundleInstrumentLoader {
       pcm.has_tail = head_mode && frames < total_frames;
       pcm.left = left;
       pcm.right = right;
+      if (stream_mode && pcm.has_tail) {  // Story 1.17: the tail's reader and the resident loop segments travel with the sample
+        pcm.tail_source = out->block_source_.get();
+        pcm.tail_sample = static_cast<std::uint32_t>(s);
+        pcm.segments = out->segments_[s].empty() ? nullptr : out->segments_[s].data();
+        pcm.segment_count = static_cast<std::uint32_t>(out->segments_[s].size());
+      }
       if (!out->damage_.empty() && out->damage_count_[s] != 0) {
         pcm.damaged_blocks = out->damage_[s].get();
         pcm.damaged_block_frames = fmt::kBlockFrames;
@@ -302,6 +464,14 @@ LoadResult load_instrument_by_index(const InstrumentSource& source, std::size_t 
 }
 
 LoadResult load_instrument_by_index(const fmt::BundleReader& bundle, std::size_t index, const LoadHooks* hooks, const SampleLoadOptions& options) {
+  if (options.stream.enabled && !options.stream.reader) {
+    // The I/O threads read through an adapter that must live as long as the instrument (not this call's stack): an owning adapter over the caller's reader, which the caller
+    // keeps alive for the instrument's life.
+    SampleLoadOptions opt = options;
+    opt.stream.reader = std::make_shared<PlainSource>(bundle);
+    const PlainSource src(bundle);
+    return BundleInstrumentLoader::load(src, index, hooks, opt);
+  }
   const PlainSource src(bundle);
   return BundleInstrumentLoader::load(src, index, hooks, options);
 }
@@ -360,6 +530,43 @@ std::vector<HeadLength> plan_heads(std::span<const fmt::InstrumentInfo> instrume
   return plan;
 }
 
+std::vector<std::vector<LoopSegment>> plan_loop_segments(std::span<const fmt::InstrumentInfo> instruments, std::span<const fmt::SampleInfo> samples, std::size_t index, const HeadSizing& sizing,
+                                                         const std::vector<HeadLength>& plan) {
+  std::vector<std::vector<LoopSegment>> out;
+  if (index >= instruments.size()) return out;
+  const fmt::InstrumentInfo& info = instruments[index];
+  if (info.first_sample > samples.size() || info.sample_count > samples.size() - info.first_sample) return out;
+  out.resize(info.sample_count);
+  for (const fmt::Region& r : info.regions) {
+    if (r.sample >= info.sample_count || r.sample >= plan.size()) continue;
+    if (r.loop_mode != fmt::LoopMode::kLoopContinuous && r.loop_mode != fmt::LoopMode::kLoopSustain) continue;
+    const std::size_t s = r.sample;
+    const fmt::SampleInfo& si = samples[info.first_sample + s];
+    const std::uint64_t total = si.frame_count, head = plan[s].frames;
+    if (total == 0 || !plan[s].has_tail) continue;
+    // The loop as the engine reads it: explicit points, else the whole sample; a range outside the sample is no loop.
+    const std::uint64_t ls = r.has_loop_points ? r.loop_start : 0, le = r.has_loop_points ? r.loop_end : total - 1;
+    if (ls > le || le >= total) continue;
+    if (le + 1 + sizing.guard_frames <= head) continue;  // the loop (and its interpolation taps) lies inside the head: a wrap never leaves resident memory
+    const std::uint64_t lo = ls > 0 ? ls - 1 : 0;  // the left interpolation tap of the first frame after a wrap
+    const double ratio = region_max_pitch_ratio(r.key_hi, r.key_center, r.transpose, r.tune_cents);
+    const std::uint64_t need_end = head_length(sizing, si.format.sample_rate, ratio, total, lo).frames;
+    const std::uint64_t s0 = std::max(lo, head);
+    if (need_end <= s0) continue;  // the head already covers the latency after the wrap
+    out[s].push_back({s0, need_end - s0});
+  }
+  for (auto& v : out) {  // merge overlapping and adjoining segments (sorted by start)
+    std::sort(v.begin(), v.end(), [](const LoopSegment& a, const LoopSegment& b) { return a.start < b.start; });
+    std::vector<LoopSegment> m;
+    for (const LoopSegment& g : v) {
+      if (!m.empty() && g.start <= m.back().start + m.back().frames) m.back().frames = std::max(m.back().frames, g.start + g.frames - m.back().start);
+      else m.push_back(g);
+    }
+    v = std::move(m);
+  }
+  return out;
+}
+
 std::uint64_t instrument_head_bytes(std::span<const fmt::InstrumentInfo> instruments, std::span<const fmt::SampleInfo> samples, std::size_t index, const HeadOptions& head) {
   if (!head.enabled) return instrument_head_bytes(instruments, samples, index);
   const std::vector<HeadLength> plan = plan_heads(instruments, samples, index, head.sizing);
@@ -367,6 +574,11 @@ std::uint64_t instrument_head_bytes(std::span<const fmt::InstrumentInfo> instrum
   const fmt::InstrumentInfo& info = instruments[index];
   std::size_t payload = 0;
   for (std::size_t s = 0; s < plan.size(); ++s) payload += head_align(static_cast<std::size_t>(plan[s].frames) * samples[info.first_sample + s].format.channels * sizeof(float));
+  if (head.loop_segments) {  // Story 1.17: the resident loop segments live in the same arena
+    const auto segs = plan_loop_segments(instruments, samples, index, head.sizing, plan);
+    for (std::size_t s = 0; s < segs.size(); ++s)
+      for (const LoopSegment& sg : segs[s]) payload += head_align(static_cast<std::size_t>(sg.frames) * samples[info.first_sample + s].format.channels * sizeof(float));
+  }
   return head_arena_bytes(payload);
 }
 

@@ -16,6 +16,9 @@ class ByteSource {
   virtual const std::uint8_t* direct(std::uint64_t off, std::size_t n) const = 0;
   // Reads exactly n bytes at off; Error::kTruncated when the range exceeds size().
   virtual Error read_at(std::uint64_t off, void* dst, std::size_t n) const = 0;
+  // Story 1.17: asks the OS not to keep what this source reads in the page cache (macOS F_NOCACHE), for a source whose reads are one-shot streaming reads. True when the
+  // page cache is bypassed for the reads that follow. The default (memory sources, and any source that cannot) does nothing and says false.
+  virtual bool set_no_cache() const noexcept { return false; }
 };
 
 }  // namespace velora::format

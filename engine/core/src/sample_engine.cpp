@@ -148,6 +148,12 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
       r.right = pcm.right;
       r.has_tail = pcm.total_frames > pcm.frames;
       r.total_frames = r.has_tail ? pcm.total_frames : pcm.frames;
+      if (r.has_tail) {  // Story 1.17: the tail's reader and the resident loop segments travel with the region (borrowed; the bank's owner keeps them alive)
+        r.tail_source = pcm.tail_source;
+        r.tail_sample = pcm.tail_sample;
+        r.segs = pcm.segments;
+        r.seg_count = pcm.segment_count;
+      }
       r.damage = pcm.damaged_blocks;
       r.damage_block_frames = pcm.damaged_block_frames;
       r.damage_block_count = pcm.damaged_block_count;
@@ -192,6 +198,26 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
         r.loop_start = ls;
         r.loop_end = le;
         r.loop_size = le + 1 - ls;
+        if (r.has_tail) {
+          // Where the stream re-seeks on a wrap: the first frame after the resident run (head, then the segments) that starts at the frame before the loop start (the left tap).
+          std::int64_t c = std::max<std::int64_t>(ls - 1, 0);
+          for (int it = 0; it < 8; ++it) {
+            bool moved = false;
+            if (c < static_cast<std::int64_t>(r.frames)) {
+              c = static_cast<std::int64_t>(r.frames);
+              moved = true;
+            }
+            for (std::uint32_t k = 0; k < r.seg_count; ++k) {
+              const auto& sg = r.segs[k];
+              if (sg.left != nullptr && c >= static_cast<std::int64_t>(sg.start) && c < static_cast<std::int64_t>(sg.start + sg.frames)) {
+                c = static_cast<std::int64_t>(sg.start + sg.frames);
+                moved = true;
+              }
+            }
+            if (!moved) break;
+          }
+          r.loop_seek = c;
+        }
       }
     }
 
@@ -266,7 +292,10 @@ bool SampleEngine::set_instrument(const velora::ports::SampleSource& src) {
 }
 
 void SampleEngine::clear_instrument() {
-  for (auto& v : voices_) v = Voice{};
+  for (auto& v : voices_) {
+    release_stream(v);
+    v = Voice{};
+  }
   default_bank_.reset();
   last_vel7_.fill(0);
   last_bank_.fill(0);
@@ -464,6 +493,7 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   const float vgain = 1.0f - 1.0f * (1.0f - vf * vf);
   const float base = vgain * r.vol_gain;
 
+  release_stream(*v);  // a free slot holds no ring (every end gives it back); defence in depth, so a ring can never leak through a reused slot
   *v = Voice{};
   v->active = true;
   v->release_trigger = release_trigger;
@@ -485,6 +515,23 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
     v->xf_step = 0.0f;
   }
   if ((r.filtered || r.has_xfade) && !cfg_.extended_voices) ++undeclared_extended_;
+  if (stream_ != nullptr && r.has_tail && r.tail_source != nullptr) {
+    // Story 1.17: register the stream (non-blocking). The ring starts at the head end: frames below it are read from the head. No ring = the Story 1.16 placeholder.
+    velora::ports::StreamOpen req;
+    req.source = r.tail_source;
+    req.sample = r.tail_sample;
+    req.total_frames = r.total_frames;
+    req.channels = r.stereo ? 2 : 1;
+    req.start = r.frames;
+    if (velora::ports::StreamRing* ring = stream_->open(req)) {
+      v->ring = ring;
+      v->streamed = true;
+      v->seg = 1;
+      v->seg_start = r.frames;
+    } else {
+      stream_open_failures_.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
   return true;
 }
 
@@ -564,7 +611,7 @@ EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t 
       continue;
     }
     if (!env_release(v.env, r)) {
-      v.active = false;
+      end_voice(v);
     } else if (const float scale = half_pedal_scale(cc_[channel][64]); scale < 1.0f) {
       v.env.release_rate = std::pow(v.env.release_rate, scale);  // Story 3.11: half-pedal damping (see half_pedal_scale)
     }
@@ -719,10 +766,70 @@ void SampleEngine::render_parallel(float* const* left, float* const* right, std:
   }
 }
 
+namespace {
+
+// Story 1.17: where the frames of a streamed sample are: the resident head, the resident loop segments, or the ring buffer of the stream.
+struct StreamView {
+  const float* hl = nullptr;
+  const float* hr = nullptr;
+  std::int64_t head_n = 0;
+  const velora::ports::SamplePcmSegment* segs = nullptr;
+  std::uint32_t nsegs = 0;
+  const float* rl = nullptr;  // the ring (nullptr: the voice no longer has one)
+  const float* rr = nullptr;
+  std::uint32_t cap = 1;
+  std::uint64_t seg_start = 0, hi = 0;  // the ring holds frames [seg_start, hi) of the voice's segment (hi: a snapshot of the producer's filled_end)
+  std::int64_t total = 0;
+  bool stereo = false;
+};
+
+constexpr std::size_t kNoSlot = ~std::size_t{0};
+
+// Frame `i` (left, right; mono repeats left in `r`). Outside [0, total) the sample is zero, as a fully resident render reads it. false = the frame is not available yet.
+// `slot` is the ring slot of the PREVIOUS frame when the caller reads consecutive frames (kNoSlot otherwise): the slot of a ring frame is then that plus one with a wrap compare,
+// instead of a 64-bit modulo per tap.
+inline bool stream_frame(const StreamView& sv, std::int64_t i, float& l, float& r, std::size_t& slot) noexcept {
+  if (i < 0 || i >= sv.total) {
+    l = 0.0f;
+    r = 0.0f;
+    slot = kNoSlot;
+    return true;
+  }
+  if (i < sv.head_n) {
+    l = sv.hl[i];
+    r = sv.stereo ? sv.hr[i] : l;
+    slot = kNoSlot;
+    return true;
+  }
+  for (std::uint32_t k = 0; k < sv.nsegs; ++k) {
+    const auto& sg = sv.segs[k];
+    if (sg.left != nullptr && i >= static_cast<std::int64_t>(sg.start) && i < static_cast<std::int64_t>(sg.start + sg.frames)) {
+      const std::int64_t o = i - static_cast<std::int64_t>(sg.start);
+      l = sg.left[o];
+      r = sv.stereo && sg.right != nullptr ? sg.right[o] : l;
+      slot = kNoSlot;
+      return true;
+    }
+  }
+  const auto u = static_cast<std::uint64_t>(i);
+  if (sv.rl != nullptr && u >= sv.seg_start && u < sv.hi) {
+    if (slot == kNoSlot) slot = static_cast<std::size_t>(u % sv.cap);
+    else if (++slot == sv.cap) slot = 0;
+    l = sv.rl[slot];
+    r = sv.stereo ? sv.rr[slot] : l;
+    return true;
+  }
+  slot = kNoSlot;
+  return false;
+}
+
+}  // namespace
+
 void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32_t frames) noexcept {
   const RegionRt& r = v.bank->regions[v.region];
   const bool linear = cfg_.interpolation == SampleInterpolation::kLinear;
-  const std::int64_t nframes = static_cast<std::int64_t>(r.frames);
+  const bool streamed = v.streamed;  // Story 1.17: the sample is `total_frames` long and the head is only its first part
+  const std::int64_t nframes = static_cast<std::int64_t>(streamed ? r.total_frames : r.frames);
   const std::int64_t end_idx = nframes - 2;  // sfizz: positions at or past this index end the sample
   const bool sustain_loop = r.d.loop_mode == velora::ports::SampleLoopMode::kLoopSustain;
   const float gl = v.gain_l * gain_, gr = v.gain_r * gain_;
@@ -737,6 +844,40 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
   }
   const float cl = r.chan_l * gain_, cr = r.chan_r * gain_;
 
+  // Story 1.17: this block's view of the stream. The producer's progress is read ONCE (acquire) per block, and the lowest frame the voice can still read is published (release) so
+  // the producer never overwrites it: positions only move forward within a segment, and the voice reads at most idx - 1 - ceil(ratio) (the oracle hold) below its start.
+  StreamView sv;
+  if (streamed) {
+    sv.hl = r.left;
+    sv.hr = r.right;
+    sv.head_n = static_cast<std::int64_t>(r.frames);
+    sv.segs = r.segs;
+    sv.nsegs = r.seg_count;
+    sv.total = nframes;
+    sv.stereo = r.stereo;
+    sv.seg_start = v.seg_start;
+    if (v.ring != nullptr) {
+      sv.rl = v.ring->left;
+      sv.rr = v.ring->right;
+      sv.cap = v.ring->capacity;
+      const std::uint64_t a = v.ring->avail.load(std::memory_order_acquire);
+      sv.hi = static_cast<std::uint32_t>(a >> 48) == v.seg ? (a & velora::ports::kStreamFrameMask) : 0;
+      const std::int64_t i0 = static_cast<std::int64_t>(std::floor(v.pos));
+      const std::int64_t lo = std::max<std::int64_t>(static_cast<std::int64_t>(v.seg_start), i0 - 2 - static_cast<std::int64_t>(std::ceil(v.ratio)));
+      v.lo_pub = static_cast<std::uint64_t>(lo);
+      v.ring->consumed_lo.store(v.lo_pub, std::memory_order_release);
+    }
+  }
+  // Reads the producer's progress again (the data may have arrived since the block began). True when it moved.
+  const auto refresh_stream = [&]() noexcept {
+    if (v.ring == nullptr) return false;
+    const std::uint64_t a = v.ring->avail.load(std::memory_order_acquire);
+    const std::uint64_t nh = static_cast<std::uint32_t>(a >> 48) == v.seg ? (a & velora::ports::kStreamFrameMask) : 0;
+    const bool moved = nh != sv.hi;
+    sv.hi = nh;
+    return moved;
+  };
+
   const std::uint64_t oracle_n = cfg_.oracle_block_frames;
   // Story 6.5: how far ahead of the playhead (in sample frames) the integrity fade looks, so the fade has finished when a damaged block is reached.
   const std::int64_t integ_look = r.damage != nullptr ? static_cast<std::int64_t>(std::ceil(static_cast<double>(v.ratio) * kIntegrityFadeFrames)) + 1 : 0;
@@ -744,7 +885,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
     float fade = 1.0f;
     if (v.stolen) {  // steal ramp: gain fade_left/fade_total, strictly falling; 0 frees the voice
       if (v.fade_left == 0) {
-        v.active = false;
+        end_voice(v);
         return;
       }
       fade = static_cast<float>(v.fade_left) / static_cast<float>(v.fade_total);
@@ -765,15 +906,31 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
         v.pos = static_cast<double>(r.loop_start) +
                 std::fmod(v.pos - static_cast<double>(r.loop_start), static_cast<double>(r.loop_size));
         idx = static_cast<std::int64_t>(std::floor(v.pos));
+        if (streamed && v.ring != nullptr && r.loop_seek >= 0 && r.loop_seek < nframes) {
+          // Story 1.17: the wrap sends the voice back to resident memory (the head and the loop segments); the stream re-seeks to the frame after that resident run. A ring
+          // still at its segment start (nothing consumed, nothing skipped) already is where the seek would put it.
+          const auto s0 = static_cast<std::uint64_t>(r.loop_seek);
+          if (!(v.lo_pub <= v.seg_start && v.seg_start == s0)) {
+            const std::uint32_t ns = velora::ports::stream_next_segment(v.seg);
+            v.ring->consumed_lo.store(s0, std::memory_order_relaxed);
+            v.ring->seek_start.store(s0, std::memory_order_relaxed);
+            v.ring->seek_seq.store(ns, std::memory_order_release);  // publishes the two stores above to the producer
+            v.seg = ns;
+            v.seg_start = s0;
+            v.lo_pub = s0;
+            sv.seg_start = s0;
+            sv.hi = 0;
+          }
+        }
       }
     } else if (idx >= end_idx && !v.ended) {
       // Sample exhausted: a 6 ms release starts on this very frame (sfizz turns the voice off at
       // the frame where the position reaches the end) while the last frame is held below.
       v.ended = true;
       env_fast_release(v.env);
-      if (r.has_tail) underrun_events_.fetch_add(1, std::memory_order_relaxed);  // Story 1.16: the head of a sample with a tail ran out (1.17 streams it)
+      if (r.has_tail && !streamed) underrun_events_.fetch_add(1, std::memory_order_relaxed);  // Story 1.16: the head of a sample with a tail ran out (a streamed voice reads on)
     }
-    if (looping && r.has_tail && idx >= end_idx) {  // a loop that reaches beyond the resident head: same ending, same count (once ended, the voice no longer loops)
+    if (looping && r.has_tail && !streamed && idx >= end_idx) {  // a loop that reaches beyond the resident head: same ending, same count (once ended, the voice no longer loops)
       v.ended = true;
       env_fast_release(v.env);
       underrun_events_.fetch_add(1, std::memory_order_relaxed);
@@ -781,12 +938,97 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
 
     const float env = env_next(v.env, r);
     if (v.env.s == EnvState::kDone) {
-      v.active = false;
+      end_voice(v);
       return;
     }
 
     float sl, sr_;
-    if (idx >= end_idx && (!looping || r.has_tail)) {  // past the end (or, for a looping voice with a tail, past the resident head): hold the last frame
+    if (streamed) {
+      // Story 1.17: the same arithmetic as the resident path below on frames that come from the head, the loop segments or the ring. The frames the interpolation window needs
+      // must all be there; otherwise the voice is STARVED: it never waits, it holds its last output under a short fade (silence), counts one underrun per episode and goes on
+      // (the position advances). When the data arrives it fades back in. With the data on time the fade gain is exactly 1 and nothing differs from the resident render.
+      bool ok = true;
+      if (idx >= end_idx && !looping) {  // past the end: hold the last frame (read once, then the ring is given back)
+        if (v.hold_valid) {
+          sl = v.hold_l;
+          sr_ = v.hold_r;
+        } else {
+          float a = 0.0f, b = 0.0f;
+          std::size_t slot = kNoSlot;
+          ok = stream_frame(sv, nframes - 1, a, b, slot) || (refresh_stream() && stream_frame(sv, nframes - 1, a, b, slot));
+          sl = a;
+          sr_ = r.stereo ? b : a;
+          if (ok) {
+            v.hold_l = sl;
+            v.hold_r = sr_;
+            v.hold_valid = true;
+            release_stream(v);
+            sv.rl = nullptr;
+          }
+        }
+      } else {
+        const float c = static_cast<float>(v.pos - static_cast<double>(idx));
+        float tl[4], tr[4];
+        const auto gather = [&]() noexcept {
+          if (idx >= 1 && idx + 2 < sv.head_n) {  // all four taps in the head: the common case at the start of a note
+            for (int k = 0; k < 4; ++k) {
+              tl[k] = sv.hl[idx - 1 + k];
+              tr[k] = sv.stereo ? sv.hr[idx - 1 + k] : tl[k];
+            }
+            return true;
+          }
+          std::size_t slot = kNoSlot;
+          for (int k = 0; k < 4; ++k)
+            if (!stream_frame(sv, idx - 1 + k, tl[k], tr[k], slot)) return false;
+          return true;
+        };
+        ok = gather() || (refresh_stream() && gather());
+        if (ok) {
+          if (linear) {
+            const float a = 1.0f - c;
+            sl = tl[1] * a + tl[2] * c;
+            sr_ = r.stereo ? tr[1] * a + tr[2] * c : sl;
+          } else {
+            float w[4];
+            hermite_weights(c, w);
+            sl = w[0] * tl[0] + w[1] * tl[1] + w[2] * tl[2] + w[3] * tl[3];
+            sr_ = r.stereo ? w[0] * tr[0] + w[1] * tr[1] + w[2] * tr[2] + w[3] * tr[3] : sl;
+          }
+        } else {
+          sl = 0.0f;
+          sr_ = 0.0f;
+        }
+      }
+      constexpr float kSgStep = 1.0f / static_cast<float>(kStreamFadeFrames);
+      if (ok) {
+        if (v.starved) {
+          // Re-entry: the output was the held sample under the fade; crossfade from it (not from the pre-fade value) to the real samples over kStreamFadeFrames, so a starve of any
+          // length, even a few frames, ends without a step. (Only after a starve: with the data on time none of this runs and nothing is multiplied.)
+          v.starved = false;
+          v.rx_l = v.last_l * v.sgain;
+          v.rx_r = v.last_r * v.sgain;
+          v.rx_n = 1;
+          v.sgain = 1.0f;
+        }
+        if (v.rx_n != 0) {
+          const float t = static_cast<float>(v.rx_n) * kSgStep;
+          sl = v.rx_l * (1.0f - t) + sl * t;
+          sr_ = v.rx_r * (1.0f - t) + sr_ * t;
+          v.rx_n = v.rx_n >= kStreamFadeFrames ? 0u : v.rx_n + 1u;
+        }
+        v.last_l = sl;
+        v.last_r = sr_;
+      } else {
+        if (!v.starved) {  // one underrun per episode (a stream that flaps starves, recovers and starves again counts each episode)
+          v.starved = true;
+          v.rx_n = 0;
+          underrun_events_.fetch_add(1, std::memory_order_relaxed);
+        }
+        v.sgain = std::max(0.0f, v.sgain - kSgStep);
+        sl = v.last_l * v.sgain;
+        sr_ = v.last_r * v.sgain;
+      }
+    } else if (idx >= end_idx && (!looping || r.has_tail)) {  // past the end (or, for a looping voice with a tail, past the resident head): hold the last frame
       sl = r.left[nframes - 1];
       sr_ = r.stereo ? r.right[nframes - 1] : sl;
     } else {

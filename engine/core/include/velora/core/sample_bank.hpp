@@ -50,6 +50,14 @@ struct SampleBankRegion {
   // Story 1.16: the sample has a tail that is not resident (only a head is). Reaching the head end is a stream underrun (see SampleEngine). total_frames is the stored length.
   bool has_tail = false;
   std::uint64_t total_frames = 0;
+  // Story 1.17 (streaming): the reader of the tail and the resident loop segments of the sample (borrowed from the source the bank's `owner` keeps alive). A voice of a
+  // region with `tail_source` may stream the tail when the engine has a StreamService. loop_seek: for a loop on a sample with a tail, the first frame after the
+  // resident run (head, then segments) that starts at the loop start: where the stream re-seeks when the voice wraps (-1 = none / not needed).
+  const velora::ports::BlockSource* tail_source = nullptr;
+  std::uint32_t tail_sample = 0;
+  const velora::ports::SamplePcmSegment* segs = nullptr;
+  std::uint32_t seg_count = 0;
+  std::int64_t loop_seek = -1;
   std::int32_t damage_shift = -1;  // log2(damage_block_frames) when it is a power of two (the block index is then a shift), else -1 (a division)
 };
 

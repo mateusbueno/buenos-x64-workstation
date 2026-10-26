@@ -40,6 +40,16 @@ class FileSource final : public ByteSource {
   ~FileSource() override { ::close(fd_); }
   std::uint64_t size() const override { return size_; }
   const std::uint8_t* direct(std::uint64_t, std::size_t) const override { return nullptr; }
+  bool set_no_cache() const noexcept override {
+#if defined(__APPLE__)
+    return ::fcntl(fd_, F_NOCACHE, 1) == 0;
+#else
+    // Linux: O_DIRECT needs aligned offsets, lengths and buffers, which block reads at arbitrary byte offsets do not have; that is the io_uring + O_DIRECT reader of the
+    // board (dev-board work). Here only an access-pattern hint, and the page cache is NOT bypassed (false).
+    (void)::posix_fadvise(fd_, 0, 0, POSIX_FADV_RANDOM);
+    return false;
+#endif
+  }
   Error read_at(std::uint64_t off, void* dst, std::size_t n) const override {
     if (off > size_ || n > size_ - off) return Error::kTruncated;
     auto* p = static_cast<std::uint8_t*>(dst);
@@ -510,6 +520,8 @@ Error BundleReader::read_frames(std::size_t sample, std::uint64_t first, std::ui
   }
   return Error::kNone;
 }
+
+bool BundleReader::set_no_cache() const noexcept { return src_ != nullptr && src_->set_no_cache(); }
 
 Error BundleReader::verify_all() const {
   BlockDecoder dec;

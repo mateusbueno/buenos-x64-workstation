@@ -125,3 +125,13 @@ add_test(NAME engine_host_head_flags_need_head_mode COMMAND engine-host --allow-
 set_tests_properties(engine_host_head_flags_need_head_mode PROPERTIES PASS_REGULAR_EXPRESSION "need --head-mode")
 add_test(NAME engine_host_head_flag_absurd_value COMMAND engine-host --head-mode --head-p9999-us 99999999999999999999 --no-audio)
 set_tests_properties(engine_host_head_flag_absurd_value PROPERTIES PASS_REGULAR_EXPRESSION "expects whole microseconds")
+
+# Story 1.17: --stream-mode needs --head-mode, --io-threads needs --stream-mode and a sane count (exit 2, before anything is opened); with both modes the manager starts and says so.
+add_test(NAME engine_host_stream_needs_head_mode COMMAND engine-host --stream-mode --no-audio)
+set_tests_properties(engine_host_stream_needs_head_mode PROPERTIES PASS_REGULAR_EXPRESSION "--stream-mode needs --head-mode")
+add_test(NAME engine_host_io_threads_need_stream_mode COMMAND engine-host --head-mode --io-threads 2 --no-audio)
+set_tests_properties(engine_host_io_threads_need_stream_mode PROPERTIES PASS_REGULAR_EXPRESSION "--io-threads needs --stream-mode")
+add_test(NAME engine_host_io_threads_absurd_value COMMAND engine-host --head-mode --stream-mode --io-threads 999 --no-audio)
+set_tests_properties(engine_host_io_threads_absurd_value PROPERTIES PASS_REGULAR_EXPRESSION "between 1 and 16")
+add_test(NAME engine_host_stream_mode_starts COMMAND engine-host --head-mode --allow-unlocked-heads --stream-mode --io-threads 2 --no-audio --duration 1 --socket /tmp/velora-engine-stream-smoke.sock)
+set_tests_properties(engine_host_stream_mode_starts PROPERTIES PASS_REGULAR_EXPRESSION "stream mode: 2 I/O threads" TIMEOUT 60)

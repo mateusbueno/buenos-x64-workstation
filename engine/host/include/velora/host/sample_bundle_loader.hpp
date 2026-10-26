@@ -42,6 +42,10 @@ enum class LoadStatus : std::uint8_t {
   // Story 1.16 (instrument heads).
   kHeadLockFailed,           // `head_lock_failed`: mlock of a head failed (RLIMIT_MEMLOCK) and SampleLoadOptions::head.memory.allow_unlocked is not set; nothing is left resident
   kHeadProtectedUnsupported, // `head_protected_unsupported`: head mode is on and the bundle is protected (heads are supported for unprotected bundles only; deferred)
+  // Story 1.17 (streaming).
+  kStreamRequiresHeads,         // `stream_requires_heads`: stream mode is on without head mode (streaming continues a head; there is no heads-off streaming)
+  kStreamProtectedUnsupported,  // `stream_protected_unsupported`: stream mode is on and the bundle is protected (unprotected bundles only; deferred like heads)
+  kStreamNeedsReader,           // `stream_needs_reader`: stream mode through the InstrumentSource overload without StreamLoadOptions::reader (the I/O threads need a reader that outlives the call)
 };
 const char* to_string(LoadStatus s);
 // Story 6.5: the typed refusal for a formatlib error met while opening or reading a PROTECTED bundle. kBundleInconsistent for anything that is not one of
@@ -59,6 +63,8 @@ class InstrumentSource {
   virtual velora::format::Error read_frames(std::size_t sample, std::uint64_t first, std::uint64_t count, std::span<std::int32_t> out) const = 0;
   // True for a protected bundle: the loader then gives every sample a block-damage map (ports::SamplePcm::damaged_blocks) for the I/O edge threads to set.
   virtual bool protected_source() const { return false; }
+  // Story 1.17: asks the OS not to cache what the I/O threads read from now on. True when the page cache is bypassed (macOS F_NOCACHE); the default does nothing.
+  virtual bool set_no_cache() const { return false; }
 };
 
 // Story 1.16: head mode. Off (the default) = the Story 1.15 behaviour, every sample whole, bit for bit.
@@ -66,13 +72,39 @@ struct HeadOptions {
   bool enabled = false;
   HeadSizing sizing;         // p99.99 + margin, the engine block and the interpolation guard (head_sizing.hpp)
   HeadMemoryOptions memory;  // allow_unlocked (dev), test hooks for mlock
+  // Story 1.17: the instrument also keeps the resident LOOP SEGMENTS (plan_loop_segments) in the head arena. Set by whoever turns stream mode on; instrument_head_bytes() then
+  // counts them, so the head budget covers exactly what a stream-mode load makes resident. RamHeadProvider sets it from SampleLoadOptions::stream.enabled.
+  bool loop_segments = false;
+};
+
+// Story 1.17: stream mode. The instrument gets a BlockSource (the reader of its tails, used by the I/O edge threads of the stream manager) and every SamplePcm with a tail carries it
+// (ports::SamplePcm::tail_source), together with the resident loop segments. Requires head mode (kStreamRequiresHeads) and an unprotected bundle (kStreamProtectedUnsupported).
+struct StreamLoadOptions {
+  bool enabled = false;
+  // Called by the instrument's destructor before its reader goes away (StreamManager::fence): no I/O thread is inside a read of a stream that already ended. nullptr = none.
+  velora::ports::StreamFence* fence = nullptr;
+  // The reader the I/O threads use for the tails; it must outlive the call. Empty is accepted by the BundleReader overloads (they wrap the reader, which the caller keeps alive for the
+  // life of the instrument: RamHeadProvider's lease does) and refused by the InstrumentSource overload (kStreamNeedsReader). A test passes a counting or failing reader here.
+  std::shared_ptr<const InstrumentSource> reader;
+  bool no_cache = true;  // ask the OS to bypass the page cache for the tail reads (InstrumentSource::set_no_cache)
 };
 struct SampleLoadOptions {
   HeadOptions head;
+  StreamLoadOptions stream;
+};
+
+// One resident piece of a sample past its head (see plan_loop_segments).
+struct LoopSegment {
+  std::uint64_t start = 0, frames = 0;
 };
 
 class BundleInstrument final : public velora::ports::SampleSource {
  public:
+  BundleInstrument() = default;
+  ~BundleInstrument() override;
+  // Stream mode: true (once, on the calling thread) when the destructor that just ran had to leak its block source because StreamFence::fence() timed out (an I/O thread stuck in a
+  // read). The deleter that owns the opened bundle (RamHeadProvider's lease) then leaks the lease too instead of closing the file under the stuck thread.
+  static bool take_fence_failed() noexcept;
   velora::ports::InstrumentView instrument() const noexcept override { return {regions_, pcm_}; }
 
   std::size_t sample_count() const { return pcm_.size(); }
@@ -88,6 +120,12 @@ class BundleInstrument final : public velora::ports::SampleSource {
   bool head_mode() const { return head_mode_; }
   bool heads_locked() const { return head_mode_ && heads_locked_; }
   std::size_t tail_samples() const { return tail_samples_; }
+  // Story 1.17, stream mode only. streaming(): the samples with a tail carry `block_source()` (the reader of their tails). loop_segments(): resident loop-start segments kept in the arena.
+  // stream_no_cache(): the OS page cache is bypassed for the tail reads (macOS F_NOCACHE; false on Linux until the io_uring + O_DIRECT reader of the board).
+  bool streaming() const { return block_source_ != nullptr; }
+  const velora::ports::BlockSource* block_source() const { return block_source_.get(); }
+  std::size_t loop_segments() const { return loop_segments_; }
+  bool stream_no_cache() const { return stream_no_cache_; }
   // Story 6.5: an opaque object the loader's caller hangs on the instrument so that it lives and dies with it -- for a protected instrument the reader that
   // holds the content key. The instrument is what every generation that plays it shares (SampleBank::owner), so whatever is attached here is released,
   // and the key wiped, when the last generation is freed after its last voice ended. Set once, before the instrument is shared.
@@ -116,6 +154,11 @@ class BundleInstrument final : public velora::ports::SampleSource {
   bool head_mode_ = false, heads_locked_ = true;
   std::size_t tail_samples_ = 0;
   std::unique_ptr<HeadBuffer> head_arena_;  // head mode: ONE locked, pre-faulted arena holding every sample's head (64 byte aligned); munlocked and freed with the instrument
+  std::vector<std::vector<velora::ports::SamplePcmSegment>> segments_;  // stream mode: per sample, the resident loop segments (in the arena)
+  std::size_t loop_segments_ = 0;
+  bool stream_no_cache_ = false;
+  // Declared LAST so it is destroyed FIRST: its destructor fences the I/O threads (a read of a stream that ended may still be in flight) before the reader (context_) and the memory go.
+  std::unique_ptr<velora::ports::BlockSource> block_source_;
 };
 
 struct LoadResult {
@@ -155,6 +198,11 @@ std::uint64_t instrument_head_bytes(std::span<const velora::format::InstrumentIn
 // equals BundleInstrument::resident_bytes() of that load: the size of the one locked arena (heads 64 byte aligned, the arena page rounded), i.e. what is really mapped.
 // With head mode off it is the function above.
 std::uint64_t instrument_head_bytes(std::span<const velora::format::InstrumentInfo> instruments, std::span<const velora::format::SampleInfo> samples, std::size_t index, const HeadOptions& head);
+// Story 1.17: the resident loop segments per instrument-local sample (empty vectors when none). A looping region whose loop reaches beyond the head needs, after a wrap, the
+// frames from the loop start on in memory for as long as the stream takes to re-seek: [max(loop_start - 1, head end), loop_start - 1 + latency frames + guard) (the head formula
+// with the loop start as the start offset, at the region's highest pitch). Overlapping and adjoining segments of one sample are merged. Needs the head plan (plan_heads).
+std::vector<std::vector<LoopSegment>> plan_loop_segments(std::span<const velora::format::InstrumentInfo> instruments, std::span<const velora::format::SampleInfo> samples, std::size_t index,
+                                                         const HeadSizing& sizing, const std::vector<HeadLength>& plan);
 // The head plan itself (frames per instrument-local sample; 0 frames for a sample the loader leaves empty). Empty for an index out of range.
 std::vector<HeadLength> plan_heads(std::span<const velora::format::InstrumentInfo> instruments, std::span<const velora::format::SampleInfo> samples, std::size_t index, const HeadSizing& sizing);
 

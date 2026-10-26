@@ -45,6 +45,9 @@ inline constexpr std::uint32_t kSampleCrossfadeCostUnits = 1;
 // Story 6.5: the length, in frames of engine output, of the fade to silence a voice makes before it reaches a damaged block of a protected library (and of the
 // fade back in after it). It is a straight gain ramp; the voice reads the block-damage flags that non-real-time threads set (ports::SamplePcm::damaged_blocks).
 inline constexpr std::uint32_t kIntegrityFadeFrames = 64;
+// Story 1.17: the length, in frames of engine output, of the fade to silence a streaming voice makes when the stream data it needs has not arrived (and of the fade back in
+// when it has). The voice holds its last output sample under the fade, so there is no click; the position keeps advancing.
+inline constexpr std::uint32_t kStreamFadeFrames = 64;
 constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q, bool extended = false) noexcept {
   return (q == SampleInterpolation::kLinear ? 3u : 5u) + (extended ? kSampleFilterCostUnits + kSampleCrossfadeCostUnits : 0u);
 }
@@ -125,6 +128,16 @@ class SampleEngine final : public Engine {
   // serially); the pool is borrowed and must outlive its use.
   void set_parallel_voice_pool(WorkerPool* pool, std::uint32_t max_frames) override;
   bool parallel_voice_render() const noexcept { return pool_ != nullptr; }
+
+  // Story 1.17: streaming from the SSD ahead of the playhead (opt-in; nullptr = off, every voice behaves as in Story 1.16 / 1.15). With a service, a voice whose region has a
+  // tail reader (SamplePcm::tail_source) registers a stream at note start (StreamService::open, non-blocking), plays its head, continues from the stream's ring buffer
+  // bit for bit as a fully resident render would, and gives the ring back when it ends. Data not there in time = silence with a short fade (kStreamFadeFrames), one counted
+  // underrun per episode, playback continues and resumes when the data arrives. A voice that gets no ring keeps the Story 1.16 placeholder (fade at the head end, counted).
+  // Setup-time; the service is borrowed, must outlive its use and no voice may be sounding when it is replaced (clear_instrument() / stop first).
+  void set_stream_service(velora::ports::StreamService* service) noexcept { stream_ = service; }
+  velora::ports::StreamService* stream_service() const noexcept { return stream_; }
+  // Voices of a region with a tail that started with a service bound but got no ring (pool exhausted or request queue full): each plays the Story 1.16 fade at its head end.
+  std::uint64_t stream_open_failures() const noexcept { return stream_open_failures_.load(std::memory_order_relaxed); }
 
   // Deterministic RNG for lorand/hirand: one draw per note on and per note off.
   void set_seed(std::uint64_t seed) noexcept;
@@ -216,6 +229,20 @@ class SampleEngine final : public Engine {
     // Story 6.5: the integrity fade of a voice over a protected sample (used only when the region has a damage map).
     float integ_gain = 1.0f;
     bool integ_seen = false, integ_bad = false;
+    // Story 1.17 (streaming). `streamed`: the voice started with a ring, so the sample's length is region.total_frames and the head is only its first part. `ring` is
+    // non-null while the voice still needs the stream (it is given back as soon as the voice ends, or has captured the held last frame). seg / seg_start: the segment the
+    // ring is in and its first frame; lo_pub: the last consumed_lo the voice published in this segment (a loop wrap that finds it still at the segment start needs no new seek).
+    velora::ports::StreamRing* ring = nullptr;
+    bool streamed = false;
+    bool hold_valid = false;  // the held last frame of a streamed sample has been read (hold_l / hold_r)
+    bool starved = false;     // the stream data the voice needs has not arrived (an underrun episode is open)
+    std::uint32_t seg = 0;
+    std::uint64_t seg_start = 0, lo_pub = 0;
+    float hold_l = 0.0f, hold_r = 0.0f;
+    float last_l = 0.0f, last_r = 0.0f;  // the last interpolated frame (held, faded, while starved)
+    float sgain = 1.0f;                  // stream fade gain: 1 normally, ramps to 0 while starved (reset to 1 at re-entry)
+    float rx_l = 0.0f, rx_r = 0.0f;      // the held output at re-entry after a starve, crossfaded away over kStreamFadeFrames (rx_n counts, 0 = not crossfading)
+    std::uint32_t rx_n = 0;
   };
 
   // A part's keyswitch state (sw_last / sw_previous / held keys).
@@ -231,6 +258,17 @@ class SampleEngine final : public Engine {
     }
   };
 
+  // Story 1.17: gives the voice's ring back (idempotent) / ends the voice (releases the ring, then clears `active`). Atomics only: safe on a render worker thread.
+  void release_stream(Voice& v) noexcept {
+    if (v.ring != nullptr) {
+      if (stream_ != nullptr) stream_->close(v.ring);
+      v.ring = nullptr;
+    }
+  }
+  void end_voice(Voice& v) noexcept {
+    release_stream(v);
+    v.active = false;
+  }
   void init_env(Env& e, const RegionRt& r) const noexcept;
   float env_next(Env& e, const RegionRt& r) const noexcept;
   // false: the voice must be dropped (released before its envelope delay elapsed).
@@ -279,6 +317,8 @@ class SampleEngine final : public Engine {
   std::uint64_t skipped_unplayable_ = 0;
   std::uint64_t undeclared_extended_ = 0;
   std::atomic<std::uint64_t> integrity_events_{0};
+  velora::ports::StreamService* stream_ = nullptr;  // Story 1.17
+  std::atomic<std::uint64_t> stream_open_failures_{0};
   std::atomic<std::uint64_t> underrun_events_{0};  // Story 1.16: voices that reached the head end of a sample with a tail
   std::array<KeyState, 16> ks_{};                       // per part (channel) keyswitch state
   std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units

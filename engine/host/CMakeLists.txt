@@ -11,6 +11,8 @@ add_library(velora_host STATIC
   src/sample_bundle_loader.cpp
   src/secure_memory.cpp
   src/head_memory.cpp
+  src/stream_manager.cpp
+  src/thread_priority.cpp
   src/damage_registry.cpp
   src/trust_list.cpp
   src/mcu_frame.cpp
@@ -26,7 +28,7 @@ add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
 # velora_format_verify (Story 6.5): the resolver VERIFIES protected bundles (Ed25519 signature, hash list, index). It holds no cipher: the decrypting code is only in
 # velora_host_protected below (tools/ci/check_format_no_decrypt.py scans the librarian, which links this library, and keeps proving it).
-target_link_libraries(velora_host PUBLIC velora_core velora_ports velora_format velora_format_verify velora_mcu_common)
+target_link_libraries(velora_host PUBLIC velora_core velora_ports velora_format velora_format_verify velora_mcu_common Threads::Threads)
 
 # --- control plane (Story 2.1): ws.v1 over a Unix domain socket, parameter registry, snapshots ------------
 # protobuf lives only here (engine/host), in proto/ and in tools; engine/core never sees it.
@@ -385,6 +387,18 @@ target_link_libraries(head_mode_test PRIVATE velora_control)
 add_test(NAME head_mode_test COMMAND head_mode_test)
 set_tests_properties(head_mode_test PROPERTIES TIMEOUT 120)
 
+# Story 1.17: streaming from NVMe ahead of the playhead (stream manager, bundle block source, stream voices: bit identity with the resident render, stalls, errors, ABA, 256 voices).
+add_executable(stream_test tests/stream_test.cpp)
+target_link_libraries(stream_test PRIVATE velora_host)
+add_test(NAME stream_test COMMAND stream_test)
+set_tests_properties(stream_test PROPERTIES TIMEOUT 600 FAIL_REGULAR_EXPRESSION "FAIL")
+
+# The audio-thread path in stream mode beside two I/O threads (a per-thread allocation counter, no sanitizer: macOS runs it); the RTSan build of the same file is below.
+add_executable(stream_rt_traffic_test tests/rtsan_stream_test.cpp)
+target_link_libraries(stream_rt_traffic_test PRIVATE velora_host)
+add_test(NAME stream_rt_traffic_test COMMAND stream_rt_traffic_test)
+set_tests_properties(stream_rt_traffic_test PROPERTIES TIMEOUT 300)
+
 add_executable(sample_bundle_loader_test tests/sample_bundle_loader_test.cpp)
 target_link_libraries(sample_bundle_loader_test PRIVATE velora_host)
 add_test(NAME sample_bundle_loader_test COMMAND sample_bundle_loader_test)
@@ -428,6 +442,14 @@ if(VELORA_RTSAN AND VELORA_HAVE_RTSAN)
   target_link_options(rtsan_switch_test PRIVATE -fsanitize=realtime)
   add_test(NAME rtsan_switch_test COMMAND rtsan_switch_test)
   set_tests_properties(rtsan_switch_test PROPERTIES TIMEOUT 300)
+
+  # Story 1.17: the audio path in stream mode (ring claim, request push, ring reads, seeks, release) under RealtimeSanitizer.
+  add_executable(rtsan_stream_test tests/rtsan_stream_test.cpp)
+  target_link_libraries(rtsan_stream_test PRIVATE velora_host)
+  target_compile_options(rtsan_stream_test PRIVATE -fsanitize=realtime -g)
+  target_link_options(rtsan_stream_test PRIVATE -fsanitize=realtime)
+  add_test(NAME rtsan_stream_test COMMAND rtsan_stream_test)
+  set_tests_properties(rtsan_stream_test PROPERTIES TIMEOUT 300)
 endif()
 
 # Story 6.5 negative control of the damage path (no key, no provider): REPORTING a damaged block inside a nonblocking function is reported by RTSan.
