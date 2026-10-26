@@ -117,7 +117,7 @@ message PartState {
 // (engine/host/dev/engine-dev.json, JSON mapping of this message; `revision` is ignored there).
 message State {
   uint64 revision = 1;
-  repeated PartState parts = 2;          // always all 8 when sent by the server
+  repeated PartState parts = 2;          // always the tier's part count when sent by the server (8 on v1, 16 on Pro; State.tier.part_count)
   repeated ParamValue master = 3;        // structural master-scope parameters
   repeated ParamValue performance_init = 4;  // initial values of performance parameters: applied by RT on a generation
                                              // change only where they differ from the previous generation's, and they
@@ -134,6 +134,28 @@ message State {
   ContentStatus content = 14;            // Story 6.5: protected-library integrity (counter and damaged libraries); additive
   FaderStatus faders = 15;               // Story 4.12: fader bindings, modes and pickup state; additive
   PreloadStatus preload = 16;            // Story 4.7: the next Live Set of the loaded setlist, preloaded within the head budget; additive
+  TierStatus tier = 17;                  // Story 4.1: the tier profile the engine started with (read once, immutable); additive
+}
+
+// Story 4.1 (AD-27): the tier profile, read once at engine start from the board strap / OTP (the Mac host and an unreadable strap run v1; `--tier pro|v1` is a
+// dev-only override). One image runs both tiers: these numbers are the profile's data, not behaviour switches. The budgets are placeholders until recalibrated
+// on the board. Read-only; ui and sysd may use it to size what they show.
+enum Tier {
+  TIER_UNSPECIFIED = 0;
+  TIER_V1 = 1;
+  TIER_PRO = 2;
+}
+message TierStatus {
+  Tier tier = 1;
+  string name = 2;                       // "v1" | "pro"
+  uint32 part_count = 3;                 // parts a Live Set carries (8 | 16)
+  uint64 head_budget_bytes = 4;          // the head (decoded PCM) budget of the switcher and loader
+  uint64 arbiter_budget = 5;             // cost units of the whole voice pool
+  uint64 fx_budget = 6;                  // cost units reserved for effects
+  uint32 sample_floor_voices = 7;
+  uint32 fm_floor_voices = 8;
+  uint32 va_floor_voices = 9;
+  bool sequencer_enabled = 10;           // the sequencer module (Pro only; not implemented yet)
 }
 
 // Story 4.7: the preload of the NEXT Live Set of the loaded setlist. `next_live_set_id` / `next_live_set_name` name the Live Set being (or to be) preloaded

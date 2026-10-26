@@ -17,6 +17,9 @@
 namespace velora::offline {
 
 namespace {
+
+// The offline renderer sets up the 8 organ parts of the v1 tier (channels 8..15 stay refused, as before); the engine itself carries 16 parts (Story 4.1).
+constexpr std::uint32_t kOfflineOrganParts = 8;
 // Reads a WAV (mono or stereo, 48 kHz) block by block; silent after its end.
 class WavLineIn final : public velora::ports::LineInSource {
  public:
@@ -80,14 +83,14 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       out = make_control_change(0, e.channel, e.note, v32);
       return true;
     }
-    if (!organ_render || e.contact || e.channel >= OrganEngine::kPartCount) return false;
+    if (!organ_render || e.contact || e.channel >= kOfflineOrganParts) return false;
     return cc_to_param_event(make_control_change(0, e.channel, e.note, v32), out);
   };
   std::uint64_t last = 0;
   for (const NoteEvent& e : events) {
     Ump u;
     if (e.contact) {
-      if (organ_render && e.channel < OrganEngine::kPartCount) last = std::max(last, e.frame);  // an organ feature on parts, like controllers
+      if (organ_render && e.channel < kOfflineOrganParts) last = std::max(last, e.frame);  // an organ feature on parts, like controllers
     } else if (!e.cc || control(e, u)) {
       last = std::max(last, e.frame);
     }
@@ -207,7 +210,7 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   std::unique_ptr<OrganEngine> organ;
   // Frame-0 setup per organ part: 9 drawbars + 5 percussion/key click parameters + 3 scanner/leakage parameters + 2 rotary parameters. All of it must fit the block loop's
   // pending-event buffer together with the events of the first block (checked after the first block, see below).
-  static_assert(OrganEngine::kPartCount * 19 <= BlockRenderer::kPendingCapacity, "organ setup events must fit the pending buffer");
+  static_assert(kOfflineOrganParts * 19 <= BlockRenderer::kPendingCapacity, "organ setup events must fit the pending buffer");
   if (opt.engine == EngineKind::kOrgan) {
     if (opt.drawbars.size() != 9 ||
         std::any_of(opt.drawbars.begin(), opt.drawbars.end(), [](char c) { return c < '0' || c > '8'; })) {
@@ -223,7 +226,7 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
       error = "cannot bind the organ engine";
       return false;
     }
-    for (std::uint32_t ch = 0; ch < OrganEngine::kPartCount; ++ch) {
+    for (std::uint32_t ch = 0; ch < kOfflineOrganParts; ++ch) {
       br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
       for (std::uint32_t d = 0; d < 9; ++d)
         if (!br->submit({make_param_event(*params::find(params::kDrawbar16 + d), ch, opt.drawbars[d] - '0'), 0})) {
@@ -250,7 +253,7 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
         }
     }
     // Channels 8..15 have no organ part: their notes are refused (engine not available), not played as test tone.
-    for (std::uint32_t ch = OrganEngine::kPartCount; ch < 16; ++ch)
+    for (std::uint32_t ch = kOfflineOrganParts; ch < 16; ++ch)
       br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kFm));
   }
 

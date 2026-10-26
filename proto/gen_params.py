@@ -409,7 +409,7 @@ def emit_proto(r):
 
 def write_atomic(path, text):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
     os.replace(tmp, path)

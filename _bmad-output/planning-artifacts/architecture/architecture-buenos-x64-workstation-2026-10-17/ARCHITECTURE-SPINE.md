@@ -355,6 +355,14 @@ Dependencies point downward only. `engine/core` depends on nothing but `ports`. 
 - **Rule:**
   - At boot, a tier is read from the board ID or OTP. It sets the part count (8 or 16), the head budget, the voice and cost budgets, and the enabled modules (the sequencer is Pro only).
   - The same image runs on both tiers.
+  - Implementation notes (Story 4.1, Mac logic):
+    - The tier ID comes from the `TierSource` port (`engine/ports`), read once at start. On the board it reads the strap / OTP (not built yet); the Mac host, and a board whose strap cannot be read, run v1 and log the reason. `engine-host --tier pro|v1` is a dev-only override with a loud log line.
+    - `TierProfile` (`engine/host/include/velora/host/tier_profile.hpp`) is a data table with two constant instances. Nothing branches on the tier ID; `tools/ci/check_tier_branching.py` is the gate. The profile caps the parts a Live Set may carry (the Live Set validator and loader), sets the head budget of the switcher and loader, the voice-pool budget and floors, the FX budget, and the sequencer module flag. It is published in `ws.v1 State.tier`.
+    - The build is structurally sized for 16 parts (`kPartCount` in the registry, the snapshot, the part router, the mixer). v1 accepts exactly 8-part Live Sets and Pro exactly 16-part ones; the other size is refused with the typed format error. The RT loops (mixer, router, encoder ALL mode, per-part arps) run over the 16 structural parts whatever the cap, and MIDI channels 1-16 are all parts now (CC on channels 9-16 is accepted as a parameter event; channel c no longer aliases part c-8 on the Mixer's buses, a v1 behaviour change). Memory grows accordingly (BlockRenderer 409 KB to 750 KB, as measured in review).
+    - The organ, FM and VA engines are built from the profile (organ: generators for the tier's parts and a voice pool of 640 on v1, 1280 on Pro; FM and VA pools sized for the doubled floors), so on Pro parts 8..15 of every engine sound; v1 engines are the same as before.
+    - Pro values are 2x v1 (the user's decision): head budget 10 GB against 5 GB, voice-pool budget and floors doubled (sample floor 512), FX budget from 16 parts. All budgets are placeholders to be recalibrated on the board (TODO(board)); none was measured there. The arbiter budget is cosmetic until that calibration: real polyphony is bounded by the engines' voice capacities. The FX budget is 1280 vs 2240 units (about 1.75x, not 2x, because the fixed topology is shared). The head budget now also applies on the Mac (v1: 5 GB; it was 64 GB).
+    - `tools/ci/check_tier_branching.py` is a lint, not a proof of data-driven behaviour.
+    - Deferred: Pro bank A/B, the 16-part UI part strip (the UI still shows 8), the board strap / OTP reader, the sequencer module itself.
 
 ### AD-28 — Signal routing (v1)
 

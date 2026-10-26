@@ -73,8 +73,8 @@ constexpr Ump make_encoder_mode_event(EncoderMode mode) noexcept {
 constexpr Ump make_select_part_event(std::uint32_t part) noexcept { return detail::make_reserved_event(kSelectPartEventId, part); }
 
 // The reserved id of a channel-15 assignable controller; false when `ump` is not one.
-// Only ids from kReservedEventFirstId on are control events. A lower id on channel 15 is not diverted: it falls through to decode_param_event, which
-// refuses it (channel 15 is no part, and a master-scope parameter needs channel 0), so it is counted in param_events_rejected() exactly as before.
+// Only ids from kReservedEventFirstId on are control events. A lower id on channel 15 is not diverted: it falls through to decode_param_event: a part-scope parameter is part 15's (the build carries 16 parts, Story 4.1), a master-scope one is refused (it
+// needs channel 0) and counted in param_events_rejected().
 constexpr bool decode_reserved_event_id(const Ump& ump, std::uint32_t& id) noexcept {
   if (ump.group() != 0 || !ump.is_assignable_controller() || ump.channel() != kReservedEventChannel) return false;
   const std::uint32_t v = (((ump.word0 >> 8) & 0x7Fu) << 7) | (ump.word0 & 0x7Fu);

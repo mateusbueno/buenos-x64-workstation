@@ -37,13 +37,13 @@ struct RoutingOptions {
     bool bypass = false;
   };
   bool enabled = false;                               // any routing option given
-  std::array<std::uint8_t, 8> output{};               // registry part_output per part: 0 main (default), 1 aux
-  std::array<float, 8> send_reverb{}, send_delay{};   // 0..1 per part
-  std::array<std::vector<Insert>, 8> inserts;         // up to 5 per part
-  std::array<velora::core::ArpConfig, 8> arp{};       // per-part arpeggiator config (Story 7.2 / 7.3)
+  std::array<std::uint8_t, velora::core::params::kPartCount> output{};               // registry part_output per part: 0 main (default), 1 aux
+  std::array<float, velora::core::params::kPartCount> send_reverb{}, send_delay{};   // 0..1 per part
+  std::array<std::vector<Insert>, velora::core::params::kPartCount> inserts;         // up to 5 per part
+  std::array<velora::core::ArpConfig, velora::core::params::kPartCount> arp{};       // per-part arpeggiator config (Story 7.2 / 7.3)
   struct ArpSwitch {
     double seconds = 0.0;
-    std::array<velora::core::ArpConfig, 8> arp{};
+    std::array<velora::core::ArpConfig, velora::core::params::kPartCount> arp{};
   };
   std::vector<ArpSwitch> arp_switches;                // optional mid-render Snapshot switches of per-part ArpConfig (Story 7.3)
   float master_level_db = 0.0f;

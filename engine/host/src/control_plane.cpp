@@ -35,6 +35,7 @@ struct ControlFail {
   ErrorCode code = ws::v1::ERROR_CODE_UNSPECIFIED;
   std::string message;
   std::map<std::string, std::string> details;
+  std::uint32_t part_cap = p::kPartCount;  // the tier's part count (Story 4.1): a part index at or above it is out of range
 };
 
 namespace {
@@ -54,9 +55,9 @@ bool fail(Fail& f, ErrorCode c, std::string m) {
 }
 
 bool check_part(std::uint32_t part, Fail& f) {
-  if (part < p::kPartCount) return true;
+  if (part < f.part_cap) return true;
   f.details["part"] = std::to_string(part);
-  f.details["max_part"] = std::to_string(p::kPartCount - 1);
+  f.details["max_part"] = std::to_string(f.part_cap - 1);
   return fail(f, ws::v1::ERROR_CODE_INVALID_PART, "part index out of range");
 }
 
@@ -234,13 +235,13 @@ bool apply_config(core::Snapshot& s, const ws::v1::State& cfg, Fail& f) {
 
 ws::v1::ParamId pid(std::uint32_t id) { return static_cast<ws::v1::ParamId>(id); }
 
-void fill_from(const core::Snapshot& s, ws::v1::State* out) {
+void fill_from(const core::Snapshot& s, ws::v1::State* out, std::uint32_t part_cap) {
   out->Clear();
   out->set_revision(s.revision);
   out->set_live_set_loaded(s.live_set);
   out->set_current_scene(s.live_set ? s.scene_index : -1);
   out->set_scene_count(s.live_set ? s.scene_count : 0);
-  for (std::uint32_t part = 0; part < p::kPartCount; ++part) {
+  for (std::uint32_t part = 0; part < part_cap; ++part) {
     const core::PartCfg& pc = s.parts[part];
     ws::v1::PartState* ps = out->add_parts();
     ps->set_part(part);
@@ -261,7 +262,7 @@ void fill_from(const core::Snapshot& s, ws::v1::State* out) {
       pv->set_param_id(pid(d.id));
       pv->set_value(s.master[static_cast<std::size_t>(d.master_index)]);
     } else if (d.cls == p::Class::kPerformance) {
-      const std::uint32_t n = d.scope == p::Scope::kPart ? p::kPartCount : 1;
+      const std::uint32_t n = d.scope == p::Scope::kPart ? part_cap : 1;
       for (std::uint32_t part = 0; part < n; ++part) {
         ws::v1::ParamValue* pv = out->add_performance_init();
         pv->set_param_id(pid(d.id));
@@ -348,6 +349,7 @@ ControlPlane::PublishStatus ControlPlane::publish_snapshot(const core::Snapshot&
     return fault_;
   }
   Fail f;
+  f.part_cap = part_cap();
   if (commit(work, f)) return PublishStatus::kOk;
   detail = f.message;
   for (const auto& kv : f.details) detail += " [" + kv.first + "=" + kv.second + "]";
@@ -384,6 +386,7 @@ bool ControlPlane::load_initial(const ws::v1::State& config, std::string& err) {
   }
   core::Snapshot work = core::Snapshot::defaults();
   Fail f;
+  f.part_cap = part_cap();
   if (!apply_config(work, config, f) || !commit(work, f)) {
     err = f.message;
     for (const auto& kv : f.details) err += " [" + kv.first + "=" + kv.second + "]";
@@ -443,8 +446,38 @@ void ControlPlane::set_damage_registry(DamageRegistry* registry) {
   if (damage_) damage_->set_listener([this] { bump_revision(); });
 }
 
+// tier-lint: allow (the wire values of the ID, not a branch)
+static_assert(static_cast<int>(ports::TierId::kV1) == ws::v1::TIER_V1 && static_cast<int>(ports::TierId::kPro) == ws::v1::TIER_PRO,
+              "State.tier carries ports::TierId's values on the wire");
+
+void ControlPlane::set_tier_profile(const TierProfile& profile) noexcept {
+  if (tier_set_) {  // the tier is read once and immutable: a later call is a bug in the caller, never a re-read
+    std::fprintf(stderr, "control plane: set_tier_profile called again (%s ignored; the tier stays %s)\n", profile.name, tier_->name);
+    return;
+  }
+  tier_set_ = true;
+  tier_ = &profile;
+  fx_budget_.store(profile.fx_budget, std::memory_order_release);
+}
+
+void ControlPlane::fill_tier(ws::v1::State* out) const {
+  const TierProfile& t = *tier_;
+  ws::v1::TierStatus* ts = out->mutable_tier();
+  ts->set_tier(static_cast<ws::v1::Tier>(static_cast<int>(t.id)));  // TIER_V1 = 1, TIER_PRO = 2 are ports::TierId's values
+  ts->set_name(t.name);
+  ts->set_part_count(t.part_count);
+  ts->set_head_budget_bytes(t.head_budget_bytes);
+  ts->set_arbiter_budget(t.arbiter_budget);
+  ts->set_fx_budget(t.fx_budget);
+  ts->set_sample_floor_voices(t.sample_floor_voices);
+  ts->set_fm_floor_voices(t.fm_floor_voices);
+  ts->set_va_floor_voices(t.va_floor_voices);
+  ts->set_sequencer_enabled(t.sequencer_enabled);
+}
+
 void ControlPlane::fill_state(ws::v1::State* out) const {
-  if (current_) fill_from(*current_, out);
+  if (current_) fill_from(*current_, out, part_cap());
+  fill_tier(out);
   fill_encoders(out);
   fill_content(out);
   if (switch_handler_) switch_handler_->fill_status(out);
@@ -477,7 +510,7 @@ void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
   out->set_current_scene(current_ && current_->live_set ? current_->scene_index : -1);
   for (const p::ParamDef& d : p::kParams) {
     if (d.cls != p::Class::kPerformance) continue;
-    const std::uint32_t n = d.scope == p::Scope::kPart ? p::kPartCount : 1;
+    const std::uint32_t n = d.scope == p::Scope::kPart ? part_cap() : 1;
     for (std::uint32_t part = 0; part < n; ++part) {
       ws::v1::ParamValue* pv = out->add_values();
       pv->set_param_id(pid(d.id));
@@ -487,7 +520,7 @@ void ControlPlane::fill_live_values(ws::v1::PerformanceValues* out) const {
   }
   // Compressor gain reduction (Story 2.8): the insert slots that hold a compressor in the current generation, then the master ones.
   if (current_) {
-    for (std::uint32_t part = 0; part < p::kPartCount; ++part) {
+    for (std::uint32_t part = 0; part < part_cap(); ++part) {
       const core::PartCfg& pc = current_->parts[part];
       for (std::uint32_t slot = 0; slot < pc.insert_count && slot < p::kInsertSlotCount; ++slot) {
         if (pc.inserts[slot].type != p::kInsertTypeCompressor) continue;
@@ -511,6 +544,7 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   ws::v1::ServerMessage reply;
   reply.set_request_id(msg.request_id());
   Fail f;
+  f.part_cap = part_cap();
   bool ok = false;
   using B = ws::v1::ClientMessage;
   const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;

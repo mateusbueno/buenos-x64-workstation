@@ -29,6 +29,7 @@
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/host/live_set_loader.hpp"
+#include "velora/host/tier_profile.hpp"
 
 namespace fs = std::filesystem;
 using namespace velora;
@@ -134,7 +135,7 @@ struct Rig {
   TmpDir tmp;
   std::unique_ptr<core::BlockRenderer> br = std::make_unique<core::BlockRenderer>(8);
   core::SampleEngine sample;
-  core::OrganEngine organ;
+  core::OrganEngine organ;  // the tier's generators and voice pool (v1: 8 parts, 640 voices)
   host::ControlEventQueue rt_events;
   host::ControlPlane plane;
   host::LibraryResolver resolver;
@@ -143,16 +144,22 @@ struct Rig {
   float l[core::kBlockFrames], r[core::kBlockFrames];
   std::vector<std::vector<float>> blocks;
 
-  static core::SampleEngine::Config cfg() {
+  static core::SampleEngine::Config cfg(std::uint32_t voices = 340) {
     core::SampleEngine::Config c;
-    c.max_voices = 340;  // the 256 voice floor plus the 64 voice fade headroom, with slack
+    c.max_voices = voices;  // the 256 voice floor plus the 64 voice fade headroom, with slack (the tier's sample_voice_capacity)
     return c;
   }
   explicit Rig(bool with_sample = true, host::LiveSetLoaderOptions opt = {})
-      : sample(cfg()),
+      : Rig(with_sample, opt, host::v1_profile().sample_voice_capacity) {}
+  // A rig of a tier (Story 4.1): the plane takes the profile, the loader its options, the sample engine its voice capacity -- exactly what engine-host does.
+  explicit Rig(const host::TierProfile& tier) : Rig(true, host::loader_options_for(tier), tier.sample_voice_capacity, &tier) {}
+  Rig(bool with_sample, host::LiveSetLoaderOptions opt, std::uint32_t voices, const host::TierProfile* tier = nullptr)
+      : sample(cfg(voices)),
+        organ((tier ? *tier : host::v1_profile()).part_count, (tier ? *tier : host::v1_profile()).organ_voice_capacity),
         plane(br->snapshots(), br->last_values(), rt_events, [] { return std::uint64_t{0}; }),
         resolver(host::make_posix_fs(), tmp.path),
         loader(*br, plane, resolver, heads, with_sample ? &sample : nullptr, opt) {
+    if (tier) plane.set_tier_profile(*tier);
     if (with_sample) CHECK(br->bind_engine(sample));
     CHECK(br->bind_engine(organ));
   }
@@ -557,24 +564,132 @@ void test_refused_while_rendering() {
 // --- the tier ---------------------------------------------------------------------------------------------------
 
 void test_tier_part_count() {
-  Rig rig;  // v1 tier: 8 parts
+  // v1: a Pro-sized (16 part) file is refused with the typed format error, and what plays keeps playing.
+  Rig rig;
+  const std::string lib = install_library(rig.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet cur = base_set(60);
+  sample_part(cur, 0, lib, "dc.sfz");
+  CHECK(rig.loader.load(cur).ok());
+  rig.run(2);
+  const std::uint64_t rev = rig.plane.revision();
   lsp::LiveSet pro = fixtures::full(16);
   host::LiveSetLoadResult res = rig.loader.load(pro);
   CHECK(res.status == LiveSetLoadStatus::kInvalidLiveSet);
   bool saw = false;
   for (const ls::Issue& i : res.report.errors) saw = saw || i.code == ls::IssueCode::kBadPartCount;
   CHECK(saw);
-  CHECK(rig.plane.revision() == 0);
-  // A Pro tier accepts the 16 part set, but this build's engine carries 8 parts (core::params::kPartCount): a typed refusal, nothing published.
+  CHECK(rig.plane.revision() == rev && rig.br->arbiter().reserved());
+  CHECK_NEAR(rig.play(60), 0.1, 1e-3);  // the current set keeps playing
+  // A tier whose part count the build cannot carry (a profile above the structural capacity of 16) is a typed refusal, nothing published.
   host::LiveSetLoaderOptions o;
-  o.part_count = ls::kProPartCount;
-  Rig pro_rig(true, o);
-  res = pro_rig.loader.load(pro);
+  o.part_count = core::params::kPartCount + 1;
+  Rig big_rig(true, o);
+  res = big_rig.loader.load(base_set(61, core::params::kPartCount + 1));
   CHECK(res.status == LiveSetLoadStatus::kPartCountUnsupported);
-  CHECK(pro_rig.plane.revision() == 0 && !pro_rig.br->arbiter().reserved());
-  // An 8 part file on a Pro tier is just as invalid.
+  CHECK(big_rig.plane.revision() == 0 && !big_rig.br->arbiter().reserved());
+  // Pro: 16 parts load; an 8 part file on a Pro tier is invalid.
+  Rig pro_rig(host::pro_profile());
   res = pro_rig.loader.load(base_set(50, 8));
   CHECK(res.status == LiveSetLoadStatus::kInvalidLiveSet);
+  CHECK(pro_rig.plane.revision() == 0);
+}
+
+// Story 4.1: a 16 part Live Set on the Pro profile loads and EVERY part renders (parts 8..15 included): part j owns the key zone [20 + 4j, 23 + 4j] and a
+// constant of its own level, so the level of a note tells which part sounded it.
+void test_pro_sixteen_parts_render();
+// Story 4.1: on Pro the organ, FM and VA engines are built for the profile (16 organ parts, FM / VA pools large enough for the doubled floors): parts at
+// index >= 8 of each engine load AND sound. Each part owns a key zone; the loudest sample of a note says it sounded.
+void test_pro_engine_parts_above_seven_sound() {
+  const host::TierProfile& pro = host::pro_profile();
+  Rig rig(pro);
+  core::FmEngine fm(48000.0f, pro.fm_voice_capacity);
+  core::VaEngine va(48000.0f, pro.va_voice_capacity);
+  CHECK(rig.br->bind_engine(fm) && rig.br->bind_engine(va));
+  const std::string lib = install_library(rig.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet s = base_set(90, 16);
+  sample_part(s, 14, lib, "dc.sfz", 50, 53);
+  s.mutable_parts(10)->mutable_engine()->set_engine_type_id(2);  // organ
+  s.mutable_parts(10)->set_low_key(40);
+  s.mutable_parts(10)->set_high_key(43);
+  s.mutable_parts(9)->mutable_engine()->set_engine_type_id(3);  // FM
+  s.mutable_parts(9)->set_low_key(20);
+  s.mutable_parts(9)->set_high_key(23);
+  s.mutable_parts(12)->mutable_engine()->set_engine_type_id(4);  // VA
+  s.mutable_parts(12)->set_low_key(30);
+  s.mutable_parts(12)->set_high_key(33);
+  for (int j : {0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 15}) s.mutable_parts(j)->set_keyboard_on(false);
+  const host::LiveSetLoadResult res = rig.loader.load(s);
+  CHECK(res.ok());
+  for (int j : {9, 10, 12, 14}) CHECK(res.parts[static_cast<std::size_t>(j)].state == core::PartState::kReady);
+  CHECK(rig.br->arbiter().floor_cost(static_cast<std::uint32_t>(core::EngineTypeId::kFm)) == pro.fm_floor_voices * fm.cost_units_per_voice());
+  CHECK(rig.br->arbiter().floor_cost(static_cast<std::uint32_t>(core::EngineTypeId::kVa)) == pro.va_floor_voices * va.cost_units_per_voice());
+  rig.run(2);
+  auto peak_of = [&](std::uint32_t key) {
+    rig.blocks.clear();
+    rig.note_on(key);
+    rig.run(12);
+    float pk = 0;
+    for (const auto& b : rig.blocks)
+      for (float v : b) pk = std::fmax(pk, std::fabs(v));
+    rig.note_off(key);
+    rig.run(200);
+    return pk;
+  };
+  CHECK(peak_of(21) > 1e-4f);  // FM, part 9
+  CHECK(peak_of(41) > 1e-4f);  // organ, part 10
+  CHECK(peak_of(31) > 1e-4f);  // VA, part 12
+  CHECK(peak_of(51) > 1e-4f);  // sample, part 14
+}
+
+void test_pro_sixteen_parts_render() {
+  Rig rig(host::pro_profile());
+  std::vector<Spec> specs;
+  for (std::uint32_t j = 0; j < 16; ++j) specs.push_back({"p" + std::to_string(j) + ".sfz", 0.004f * static_cast<float>(j + 1)});
+  const std::string lib = install_library(rig.tmp.path, 1, specs);
+  lsp::LiveSet s = base_set(70, 16);
+  for (int j = 0; j < 16; ++j) sample_part(s, j, lib, "p" + std::to_string(j) + ".sfz", 20 + 4 * j, 23 + 4 * j);
+  const host::LiveSetLoadResult res = rig.loader.load(s);
+  CHECK(res.ok());
+  CHECK(res.parts.size() == 16);
+  for (const host::PartLoadReport& p : res.parts) CHECK(p.state == core::PartState::kReady);
+  CHECK(rig.plane.part_cap() == 16);
+  rig.run(2);
+  for (std::uint32_t j = 0; j < 16; ++j) CHECK_NEAR(rig.play(20 + 4 * j + 1), 0.004 * static_cast<double>(j + 1), 1e-3);
+  CHECK(rig.sample.active_voices() == 0);
+  const core::Snapshot* g = rig.br->held_snapshot();
+  CHECK(g && g->live_set && g->parts[15].sample_bank != nullptr && g->parts[15].state == core::PartState::kReady);
+}
+
+// Story 4.1: the profile reaches the arbiter reservation (budget and floors) and the loader's head budget.
+void test_tier_budgets_reach_the_loader() {
+  Rig v1(host::v1_profile());
+  const std::string lib1 = install_library(v1.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet a = base_set(80);
+  sample_part(a, 0, lib1, "dc.sfz");
+  CHECK(v1.loader.load(a).ok());
+  Rig pro(host::pro_profile());
+  const std::string lib2 = install_library(pro.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet b = base_set(81, 16);
+  sample_part(b, 0, lib2, "dc.sfz");
+  CHECK(pro.loader.load(b).ok());
+  const std::uint64_t cost = v1.sample.cost_units_per_voice();
+  CHECK(v1.br->arbiter().reservation().budget == host::v1_profile().arbiter_budget);
+  CHECK(pro.br->arbiter().reservation().budget == host::pro_profile().arbiter_budget);
+  CHECK(pro.br->arbiter().reservation().budget == 2 * v1.br->arbiter().reservation().budget);
+  CHECK(v1.br->arbiter().floor_cost(static_cast<std::uint32_t>(core::EngineTypeId::kSample)) == 256ull * cost);
+  CHECK(pro.br->arbiter().floor_cost(static_cast<std::uint32_t>(core::EngineTypeId::kSample)) == 512ull * cost);
+  CHECK(v1.plane.fx_budget() == host::v1_profile().fx_budget && pro.plane.fx_budget() == host::pro_profile().fx_budget);
+  CHECK(pro.plane.fx_budget() > v1.plane.fx_budget());
+  // The head budget is the profile's: a profile whose budget the Live Set's heads exceed refuses it early with the typed error, nothing published.
+  host::TierProfile tiny = host::v1_profile();
+  tiny.head_budget_bytes = 1000;
+  Rig small(tiny);
+  const std::string lib3 = install_library(small.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet c = base_set(82);
+  sample_part(c, 0, lib3, "dc.sfz");
+  const host::LiveSetLoadResult r = small.loader.load(c);
+  CHECK(r.status == LiveSetLoadStatus::kHeadBudgetExceeded && r.head_budget == 1000 && r.head_bytes > 1000);
+  CHECK(small.plane.revision() == 0);
 }
 
 // --- files ---------------------------------------------------------------------------------------------------------
@@ -686,6 +801,9 @@ int main() {
   test_full_ledger_is_busy();
   test_refused_while_rendering();
   test_tier_part_count();
+  test_pro_sixteen_parts_render();
+  test_pro_engine_parts_above_seven_sound();
+  test_tier_budgets_reach_the_loader();
   test_load_files();
   if (g_fail) {
     std::printf("live_set_loader_tests: %d FAILED\n", g_fail);

@@ -5,8 +5,8 @@
 
 namespace velora::core {
 
-FmEngine::FmEngine(float sample_rate) noexcept
-    : sample_rate_(sample_rate) {
+FmEngine::FmEngine(float sample_rate, uint32_t voice_capacity)
+    : sample_rate_(sample_rate), voices_(voice_capacity) {
   for (uint32_t p = 0; p < kPartCount; ++p) {
     part_params_[p] = create_ep_fm_voice();
     part_sustain_[p] = false;
@@ -57,7 +57,7 @@ uint32_t FmEngine::allocate_voice_slot(uint32_t channel, uint32_t note) noexcept
   (void)channel;
   (void)note;
   // 1. Search for an inactive slot
-  for (uint32_t i = 0; i < kVoiceCapacity; ++i) {
+  for (uint32_t i = 0; i < voices_.size(); ++i) {
     if (!voices_[i].is_active()) {
       return i;
     }
@@ -68,7 +68,7 @@ uint32_t FmEngine::allocate_voice_slot(uint32_t channel, uint32_t note) noexcept
   uint64_t oldest_time = UINT64_MAX;
   bool found_releasing = false;
 
-  for (uint32_t i = 0; i < kVoiceCapacity; ++i) {
+  for (uint32_t i = 0; i < voices_.size(); ++i) {
     if (!voices_[i].is_held() && !voices_[i].is_sustained()) {
       if (!found_releasing || voices_[i].start_time() < oldest_time) {
         found_releasing = true;
@@ -86,7 +86,7 @@ uint32_t FmEngine::allocate_voice_slot(uint32_t channel, uint32_t note) noexcept
 
 EngineStatus FmEngine::start_voice(uint32_t channel, uint32_t note, uint32_t velocity16) noexcept {
   uint32_t slot = acquire_slot(channel, note);
-  if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
+  if (slot == VoiceAllocator::kNoSlot || slot >= voices_.size()) {
     return EngineStatus::kPoolExhausted;
   }
   uint32_t part_idx = channel % kPartCount;
@@ -190,7 +190,7 @@ void FmEngine::render_split(float* const* left, float* const* right, uint32_t fr
 }
 
 bool FmEngine::voice_info(uint32_t slot, VoiceInfo& out) const noexcept {
-  if (slot >= kVoiceCapacity || !voices_[slot].is_active()) {
+  if (slot >= voices_.size() || !voices_[slot].is_active()) {
     return false;
   }
   const auto& v = voices_[slot];
@@ -209,7 +209,7 @@ bool FmEngine::voice_info(uint32_t slot, VoiceInfo& out) const noexcept {
 }
 
 bool FmEngine::begin_steal_fade(uint32_t slot, uint32_t ramp_frames) noexcept {
-  if (slot >= kVoiceCapacity || !voices_[slot].is_active() || voices_[slot].is_steal_fading()) {
+  if (slot >= voices_.size() || !voices_[slot].is_active() || voices_[slot].is_steal_fading()) {
     return false;
   }
   voices_[slot].begin_steal_fade(ramp_frames);

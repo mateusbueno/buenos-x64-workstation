@@ -611,7 +611,7 @@ static void test_fx_chain_and_budget() {
   Rig rig;
   CHECK(rig.load("{}"));
   const std::int64_t base = core::Effect::live_instances();
-  CHECK(rig.plane.fx_cost() == core::kFixedFxCost && rig.plane.fx_budget() == core::kMaxFxCost);
+  CHECK(rig.plane.fx_cost() == core::kFixedFxCost && rig.plane.fx_budget() == host::v1_profile().fx_budget);  // a plane starts on the v1 profile (Story 4.1)
   bool changed = false;
   ws::v1::ServerMessage r;
 

@@ -120,7 +120,9 @@ LiveSetLoadResult LiveSetLoader::load(const lsp::LiveSet& ls) {
   SceneController::LoadScope scene_scope(options_.scenes);  // recalls answer "load in progress" until this load ends
   if (options_.is_rendering && options_.is_rendering()) return failure(LiveSetLoadStatus::kNotQuiesced);
   std::unique_ptr<StagedLiveSet> staged;
-  LiveSetLoadResult r = stage(ls, StageControl{}, staged);
+  StageControl direct;
+  direct.head_budget_bytes = options_.head_budget_bytes;
+  LiveSetLoadResult r = stage(ls, direct, staged);
   if (!r.ok()) return r;
   return commit_quiesced(*staged, scene_scope);
 }

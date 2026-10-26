@@ -1022,7 +1022,7 @@ void test_encoder_commands_with_a_full_queue() {
   m.mutable_set_encoder_mode()->set_mode(ws::v1::ENCODER_MODE_PART);
   CHECK(rig.send(m, &changed).has_ack() && changed);  // commanded PART twice, RT still shows ASSIGN (no block rendered yet)
   // A bad event is visible in the State.
-  CHECK(rig.ctl_q.push(host::StampedUmp{core::make_select_part_event(9), rig.now_ns.load()}));
+  CHECK(rig.ctl_q.push(host::StampedUmp{core::make_select_part_event(core::params::kPartCount), rig.now_ns.load()}));
   rig.step(3);
   CHECK(rig.state().encoders().events_rejected() == 1);
 }

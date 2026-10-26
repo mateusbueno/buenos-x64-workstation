@@ -26,7 +26,8 @@ set(VELORA_CORE_SOURCES
   src/va_engine.cpp
   src/worker_pool.cpp
   src/block_renderer.cpp)
-add_library(velora_core STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
+add_library(velora_core STATIC ${VELORA_CORE_SOURCES})
+add_dependencies(velora_core velora_params_core_gen)
 add_library(velora::core ALIAS velora_core)
 target_include_directories(velora_core PUBLIC include ${VELORA_GENERATED_DIR}/core)
 # Dependency rule: core may link only core and ports targets.
@@ -226,7 +227,8 @@ set_tests_properties(arpeggiator_traffic_test PROPERTIES TIMEOUT 300)
 
 # The cost benchmarks assert the declared cost units, which only means something on optimised code: they link a bench-private copy of the core sources built
 # with -O3 -DNDEBUG (and are compiled -O2 themselves), so the assertions run in every configuration, the default unoptimised builds included.
-add_library(velora_core_o2 STATIC ${VELORA_PARAMS_CORE_HPP} ${VELORA_CORE_SOURCES})
+add_library(velora_core_o2 STATIC ${VELORA_CORE_SOURCES})
+add_dependencies(velora_core_o2 velora_params_core_gen)
 target_include_directories(velora_core_o2 PUBLIC include ${VELORA_GENERATED_DIR}/core)
 target_link_libraries(velora_core_o2 PUBLIC velora_ports)
 target_compile_options(velora_core_o2 PRIVATE -O3 -DNDEBUG)

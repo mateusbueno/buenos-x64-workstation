@@ -18,6 +18,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <optional>
 #include <memory>
 #include <sys/stat.h>
 #include <string>
@@ -53,6 +54,7 @@
 #include "velora/host/scene_controller.hpp"
 #include "velora/host/setlist_controller.hpp"
 #include "velora/host/setlist_store.hpp"
+#include "velora/host/tier_profile.hpp"
 #include "velora/host/sysd_config_client.hpp"
 #ifdef VELORA_ENGINE_DEV_KEYS
 #include "velora/host/dev_key_provider.hpp"
@@ -77,6 +79,7 @@ int main(int argc, char** argv) {
   std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path, sysd_socket;
   host::PedalDirection switch_direction = host::PedalDirection::kNormal;  // Story 3.11
   std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
+  std::optional<ports::TierId> tier_override;   // Story 4.1: dev-only --tier pro|v1 (the Mac has no tier strap)
   bool factory_live_sets_required = false;      // --factory-live-sets-required: a failed import is fatal
   std::string factory_live_sets_path;            // Story 6.9 (dev builds): the signed factory Live Set file imported on first boot
   long scrub_interval_ms = 30000;               // Story 6.5: how often an I/O edge thread re-verifies the resident protected instruments (0 = never)
@@ -145,6 +148,13 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "engine-host: --switch-polarity open|closed|auto\n");
         return 2;
       }
+    } else if (!std::strcmp(argv[i], "--tier") && i + 1 < argc) {
+      ports::TierId t;
+      if (!host::parse_tier_name(argv[++i], t)) {
+        std::fprintf(stderr, "engine-host: --tier needs pro or v1 (dev-only override of the tier profile), got \"%s\"\n", argv[i]);
+        return 2;
+      }
+      tier_override = t;
     } else if (!std::strcmp(argv[i], "--sysd-socket") && i + 1 < argc) {
       sysd_socket = argv[++i];  // Foundation: the system config (clock source, velocity curve, pedals, Boot into) comes from sysd at start and on change
     } else {
@@ -167,6 +177,8 @@ int main(int argc, char** argv) {
                    "                                                 into panel MCU frames for the panel reader; wheels reach the keyboard-on parts, BUTTON frames reach subscribed ui clients)\n"
                    "                   [--din-source NAME]   (Story 7.7: the CoreMIDI source whose name contains NAME is the DIN input, every other source is USB; clock is followed from\n"
                    "                                           the port the sysd clock_source selects and ignored from the other)\n"
+                   "                   [--tier pro|v1]   (Story 4.1, DEV ONLY: run the Pro or the v1 tier profile; the tier is otherwise read once from the tier source, and the Mac has\n"
+                   "                                      no strap, so it runs v1)\n"
                    "                   [--sysd-socket PATH]   (the sysd config service (velora-sysd): the engine runs on the defaults until sysd answers, applies the config on connect and on every\n"
                    "                                           change, keeps the last one when sysd goes away; sysd absent never stops the engine; default off)\n"
                    "                   [--switch-polarity open|closed|auto]   (Story 3.11: the footswitch pedal's wiring: closed = normally closed, inverted; default raw)\n"
@@ -175,6 +187,12 @@ int main(int argc, char** argv) {
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
+  // Story 4.1 (AD-27): the tier is read ONCE, here, and the profile is immutable for the run. The Mac has no strap (NoStrapTierSource: v1), unless the dev override says Pro.
+  host::NoStrapTierSource tier_source;
+  const host::TierSelection tier = host::resolve_tier(&tier_source, tier_override);
+  const host::TierProfile& profile = *tier.profile;
+  std::printf("%s: %u parts, head budget %llu bytes, sequencer %s\n", tier.log_line.c_str(), static_cast<unsigned>(profile.part_count),
+              static_cast<unsigned long long>(profile.head_budget_bytes), profile.sequencer_enabled ? "enabled" : "off");
   if (!data_dir.empty()) {
     if (!live_set_dir.empty()) {
       std::fprintf(stderr, "engine-host: --data-dir and --live-set-dir exclude each other (--data-dir uses DIR/live_sets)\n");
@@ -217,6 +235,7 @@ int main(int argc, char** argv) {
     factory_resolver.set_protected_trust(std::make_shared<const velora::format::TrustedKeys>(trusted));
     host::liveset::StoreOptions fso;
     fso.dir = live_set_dir;
+    fso.part_count = profile.part_count;
     std::unique_ptr<host::liveset::LiveSetStore> factory_store;
     const host::liveset::Status fst = host::liveset::LiveSetStore::open(fso, factory_store);
     if (fst != host::liveset::Status::kOk) {
@@ -225,6 +244,7 @@ int main(int argc, char** argv) {
     }
     host::factory::InstallOptions fio;
     fio.trusted = &trusted;
+    fio.part_count = profile.part_count;
     fio.resolves = host::factory::resolver_of(factory_resolver);
     const host::factory::InstallResult fr = host::factory::install_factory_live_sets_file(*factory_store, factory_live_sets_path, fio);
     if (fr.ok()) {
@@ -244,13 +264,13 @@ int main(int argc, char** argv) {
   std::vector<host::CatalogEntry> catalog;
   if (!live_set_dir.empty()) {
     std::vector<std::string> problems;
-    catalog = host::scan_live_set_dir(live_set_dir, host::liveset::kV1PartCount, &problems);
+    catalog = host::scan_live_set_dir(live_set_dir, profile.part_count, &problems);
     for (const std::string& pr : problems) std::fprintf(stderr, "engine-host: live set directory: skipped %s\n", pr.c_str());
     std::printf("live set directory %s: %zu Live Set(s)\n", live_set_dir.c_str(), catalog.size());
     if (!live_set_path.empty()) {  // the Live Set we start with is always one a jump can come back to
       host::CatalogEntry e;
       std::string cerr2;
-      if (host::catalog_entry_for_file(live_set_path, host::liveset::kV1PartCount, e, cerr2)) {
+      if (host::catalog_entry_for_file(live_set_path, profile.part_count, e, cerr2)) {
         bool known = false;
         for (const host::CatalogEntry& c : catalog) known = known || c.id == e.id;
         if (!known) catalog.push_back(std::move(e));
@@ -273,6 +293,7 @@ int main(int argc, char** argv) {
   auto make_empty_live_set = [&](std::string& path_out) -> bool {
     host::liveset::StoreOptions blo;
     blo.dir = live_set_dir;
+    blo.part_count = profile.part_count;
     host::setlist::StoreOptions bso;
     bso.dir = data_dir + "/setlists";
     std::unique_ptr<host::liveset::LiveSetStore> tl;
@@ -344,6 +365,7 @@ int main(int argc, char** argv) {
                                 // detaches its listener from it when it is destroyed.
   host::ControlPlane plane(renderer->snapshots(), renderer->last_values(), *control_queue,
                            [] { return host::macos::now_ns(); });
+  plane.set_tier_profile(profile);  // Story 4.1: the part cap, the FX budget and State.tier come from the profile (before load_initial)
   // With --live-set the Live Set is the first generation (below); the dev configuration is not published first.
   if (live_set_path.empty()) {
     ws::v1::State initial;
@@ -356,13 +378,13 @@ int main(int argc, char** argv) {
 
   // The sample engine and the organ are bound only for a Live Set (the dev configuration plays the test tone).
   core::SampleEngine::Config sample_cfg;
-  sample_cfg.max_voices = 340;  // the 256 voice floor plus the 64 voice fade headroom, with slack
+  sample_cfg.max_voices = profile.sample_voice_capacity;  // the profile's sample floor plus the 64 voice fade headroom, with slack
   sample_cfg.extended_voices = true;  // Story 5.2: any imported instrument may use filters and CC crossfades, so every voice is budgeted for them
   sample_cfg.release_velocity_triggers = true;  // Story 3.6: release-trigger samples follow the key's release velocity (the Note Off the keybed reader sends)
   core::SampleEngine sample(sample_cfg);
-  core::OrganEngine organ;
-  core::FmEngine fm;
-  core::VaEngine va;
+  core::OrganEngine organ(profile.part_count, profile.organ_voice_capacity);  // Story 4.1: generators for the tier's parts, the tier's voice pool
+  core::FmEngine fm(48000.0f, profile.fm_voice_capacity);
+  core::VaEngine va(48000.0f, profile.va_voice_capacity);
   host::LibraryResolver resolver(host::make_posix_fs(), library_root.empty() ? std::string(host::kDefaultLibraryRoot) : library_root);
   host::RamHeadProvider ram_heads;
   host::HeadProvider* head_provider = &ram_heads;
@@ -423,7 +445,7 @@ int main(int argc, char** argv) {
     }
     // Story 4.3: the Live Set is the first generation and reserves the voice pool for the whole Live Set (FX, organ,
     // sample floor) before audio runs. A Live Set that cannot be loaded stops the engine here with the reason; nothing is half loaded.
-    host::LiveSetLoaderOptions lopt;
+    host::LiveSetLoaderOptions lopt = host::loader_options_for(profile);  // Story 4.1: part count, voice budget, floors and head budget of the tier
     lopt.is_rendering = [&audio_running] { return audio_running.load(); };
     scenes = std::make_unique<host::SceneController>(plane);
     lopt.scenes = scenes.get();
@@ -431,7 +453,7 @@ int main(int argc, char** argv) {
     // No Live Set to load: the flat FX reservation of the dev configuration (as without --live-set); the first jump replaces it seamlessly.
     auto reserve_dev_config = [&]() -> bool {
       core::VoiceArbiter::LiveSetConfig reservation;
-      reservation.budget = 1u << 20;
+      reservation.budget = profile.arbiter_budget;
       reservation.fx_cost = plane.fx_budget();
       reservation.waive_sample_floor = true;  // the engines are bound for the first jump, but nothing plays on them yet
       reservation.waive_organ_reservation = true;
@@ -506,12 +528,14 @@ int main(int argc, char** argv) {
     {
       // After audio starts the voice pool is switched without stopping: the reservation is applied by the RT thread with the new generation.
       host::SwitcherOptions sopt;
+      sopt.head_budget_bytes = profile.head_budget_bytes;  // Story 4.1: the tier's head budget (the Mac default of 64 GB is for tests)
       switcher = std::make_unique<host::LiveSetSwitcher>(*loader, plane, sopt);
       switcher->set_catalog(catalog);
     }
     if (!data_dir.empty()) {
       host::liveset::StoreOptions lso;
       lso.dir = live_set_dir;
+      lso.part_count = profile.part_count;
       host::setlist::StoreOptions sso;
       sso.dir = data_dir + "/setlists";
       std::size_t removed = 0;
@@ -535,6 +559,7 @@ int main(int argc, char** argv) {
       // Story 4.9: edits stay in memory until a Write command. The fence a Write raises is acknowledged by the render thread; without audio (--no-audio,
       // dev/test only) nobody renders, so the wait itself renders one block per pass.
       host::EditSessionOptions eo;
+      eo.part_count = profile.part_count;
       host::LiveSetSwitcher* swp = switcher.get();
       eo.load_in_progress = [swp] { return swp->loading(); };
       eo.reload_current = [swp] { return swp->reload_current(); };
@@ -575,7 +600,7 @@ int main(int argc, char** argv) {
     // reservation is static for the run while commands may raise the FX cost up to that budget, so a smaller reservation would
     // let voices occupy budget the control plane still promises to the effects.
     core::VoiceArbiter::LiveSetConfig reservation;
-    reservation.budget = 1u << 20;
+    reservation.budget = profile.arbiter_budget;
     reservation.fx_cost = plane.fx_budget();
     const auto st = renderer->arbiter().reserve(reservation);
     if (st != core::VoiceArbiter::ReserveStatus::kOk) {

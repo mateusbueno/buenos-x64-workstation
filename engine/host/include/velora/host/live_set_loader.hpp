@@ -125,6 +125,7 @@ struct LiveSetLoadResult {
 struct LiveSetLoaderOptions {
   std::uint32_t part_count = liveset::kV1PartCount;  // the tier's part count (8 on v1, 16 on Pro)
   std::uint64_t arbiter_budget = 1u << 20;           // cost units of the whole voice pool (calibrated on the board: Story 1.18)
+  std::uint64_t head_budget_bytes = 0;               // the tier's head budget for a direct load_file()/load() (0 = unlimited); the switcher passes its own through StageControl (Story 4.1)
   std::uint64_t fx_flat = 0;                         // extra flat FX reservation on top of the Live Set's own effect instances
   std::uint32_t sample_floor_voices = core::VoiceArbiter::kSampleFloorVoices;
   std::uint32_t fm_floor_voices = core::VoiceArbiter::kFmFloorVoices;
@@ -139,6 +140,18 @@ struct LiveSetLoaderOptions {
   // (a scene with more insert effects than the base is not refused later for lack of reserved cost). Unset = scenes are ignored, as in 4.3.
   SceneController* scenes = nullptr;
 };
+
+// The loader options of a tier (Story 4.1): part count, voice-pool budget, floors and head budget come from the profile, never from `if (tier == ...)`.
+inline LiveSetLoaderOptions loader_options_for(const TierProfile& t) {
+  LiveSetLoaderOptions o;
+  o.part_count = t.part_count;
+  o.arbiter_budget = t.arbiter_budget;
+  o.head_budget_bytes = t.head_budget_bytes;
+  o.sample_floor_voices = t.sample_floor_voices;
+  o.fm_floor_voices = t.fm_floor_voices;
+  o.va_floor_voices = t.va_floor_voices;
+  return o;
+}
 
 // What stage() can be told (Story 4.5). All optional.
 struct StageProgress {

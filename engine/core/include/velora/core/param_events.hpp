@@ -59,8 +59,7 @@ inline bool decode_param_event(const Ump& ump, ParamEvent& out) noexcept {
   return true;
 }
 
-// Control->RT fence event (Story 4.9). Same wire shape as a parameter event but on channel 15 (parts are 0..7, so it can never be one) with the
-// reserved id 0x3FFF; word1 carries the sequence number. RT acknowledges it in LastValueTable::store_fence_ack().
+// Control->RT fence event (Story 4.9). Same wire shape as a parameter event but on channel 15 with the reserved id 0x3FFF (the registry refuses ids from 0x3FE0, so it never is a parameter event of part 15); word1 carries the sequence number. RT acknowledges it in LastValueTable::store_fence_ack().
 constexpr std::uint32_t kFenceChannel = 0xF;
 constexpr std::uint32_t kFenceParamId = 0x3FFF;
 constexpr Ump make_fence_event(std::uint32_t seq) noexcept {

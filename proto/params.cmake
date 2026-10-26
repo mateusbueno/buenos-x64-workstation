@@ -25,5 +25,10 @@ function(velora_params_output kind out_var)
     DEPENDS "${VELORA_PARAMS_DEFS}" "${VELORA_PARAMS_GEN}"
     COMMENT "Generating ${kind} parameter registry"
     VERBATIM)
+  # One custom target owns the generation: a file that is a source of two libraries (velora_core and velora_core_o2) would otherwise get two
+  # concurrent generator rules under a Makefile generator. Libraries that share it use add_dependencies(<lib> velora_params_<kind>_gen).
+  if(NOT TARGET velora_params_${kind}_gen)
+    add_custom_target(velora_params_${kind}_gen DEPENDS "${out}")
+  endif()
   set(${out_var} "${out}" PARENT_SCOPE)
 endfunction()

@@ -566,6 +566,29 @@ nonblocking function IS reported by RealtimeSanitizer), `engine_host_protected_s
   (reported as skipped) when CoreMIDI is unavailable.
 
 
+## Tier profile (Story 4.1: FR17, AR24, NFR39, AD-27)
+
+One image runs v1 and Pro. `velora/host/tier_profile.hpp` holds `TierProfile` and its two constant instances (`v1_profile()`, `pro_profile()`), with every number and its source in `src/tier_profile.cpp`. The tier ID comes from a `ports::TierSource` (`engine/ports/include/velora/ports/tier_source.hpp`) that `resolve_tier()` reads once, at start; the profile is a constant, so it cannot change afterwards. The Mac host has no strap (`NoStrapTierSource`) and runs v1; a source that cannot read its strap also gives v1, with the reason logged (`tier: v1 (<reason>)`). `engine-host --tier pro|v1` is the dev-only override (log line `tier: *** DEV OVERRIDE: ... ***`; any other value is an error exit, code 2).
+
+| | v1 | Pro |
+|---|---|---|
+| parts | 8 | 16 |
+| head budget | 5 GB (4-6 GB, NFR39) | 10 GB |
+| voice-pool budget (cost units) | 1 << 20 | 2 << 20 |
+| sample / FM / VA floors | 256 / 128 / 64 | 512 / 256 / 128 |
+| FX budget | 8 parts' worth | 16 parts' worth |
+| sequencer module | off | enabled (no sequencer code yet) |
+
+Pro is 2x v1 (the user's decision). All budgets are placeholders to be recalibrated on the board (`TODO(board)`); nothing here was measured there.
+
+- **Consumers read the profile.** `engine-host` applies it to the control plane (`ControlPlane::set_tier_profile`: the part cap, the FX budget, `State.tier`), the switcher (`head_budget_bytes`), the loader (`loader_options_for(profile)`: part count, voice-pool budget, floors, head budget of a direct load), the Live Set stores and the edit session (part count), and the sample engine's voice capacity. No code branches on the tier ID; `tools/ci/check_tier_branching.py` (ctest `tier_branching_check`) fails when one does.
+- **Structural capacity is 16.** `core::params::kPartCount`, the engines' part arrays, the snapshot, the part router and the mixer carry 16 parts; the profile is the cap. A profile accepts Live Sets of exactly its part count (v1: 8, Pro: 16; an 8-part v1 Live Set does not load on Pro). A v1 profile refuses a 16-part Live Set with the existing typed error (`kInvalidLiveSet` / `kBadPartCount`; the current set keeps playing); the plane answers `INVALID_PART` for a part at or above the cap, and `State.parts`, `performance_init` and the performance values carry exactly the tier's parts (8 on v1, as before). `LiveSetLoadStatus::kPartCountUnsupported` remains for a profile above the structural capacity.
+- **State.** `State.tier` (`TierStatus`, additive, field 17): tier, name, part count, head budget, arbiter budget, FX budget, the three floors, sequencer flag.
+- **Deferred.** Pro bank A/B (only the 16-part data model is enabled), the 16-part UI part strip (the UI still draws 8 and reads no tier field yet), the board strap / OTP reader, the sequencer module.
+- **Not changed.** The offline renderer CLI still takes parts 0..7 (its routing arrays are sized for 16); `OrganEngine(part_count, voice_capacity)`, `FmEngine(rate, voice_capacity)` and `VaEngine(rate, voice_capacity)` are built from the profile (defaults = v1: organ 8 parts and 640 voices, FM 256, VA 128; Pro: 16 parts and 1280, FM 512, VA 256), so floor + `kFadeHeadroomVoices` fits each pool on both tiers (`tier_profile_tests`) and parts 8..15 of each engine sound on Pro (`live_set_loader_tests`).
+- **v1 behaviour changes.** MIDI channel c is part c on the Mixer's buses (before, channels 8..15 aliased parts 0..7); CC on channels 9-16 is accepted as a parameter event; the RT loops (mixer, router, encoder ALL mode, per-part arps) run over the 16 structural parts whatever the cap (BlockRenderer 409 KB to 750 KB); the head budget (5 GB on v1) now also applies on the Mac, where it was 64 GB. The arbiter budget is cosmetic until board calibration (voices are bounded by the engines' capacities), and Pro's FX budget is about 1.75x v1's (2240 vs 1280 units). `tools/ci/check_tier_branching.py` is a lint, not a proof. Deferred: a per-snapshot active-parts loop bound, gating `--tier` out of production builds, board calibration of the organ, FM, VA and all budgets.
+- Tests: `tier_profile_tests` (the profile data, the resolution matrix, State.tier and the part cap of the plane), `live_set_loader_tests` (a 16-part Pro Live Set loads and every part renders, v1 refuses it and keeps playing, the budgets reach the arbiter and the head budget), `engine_host_boot_smoke` (`--tier`, State.tier of the real binary), `tier_branching_check`.
+
 ## Boot target (Story 8.9)
 
 `engine-host --data-dir DIR --library-root R [--sysd-socket S]` (without an explicit `--live-set`) starts on the target the sysd `boot_into` setting and the Boot-into pointer (Story 8.8, `DIR/boot_into.vbp`) name; see `sysd/README.md`, "Boot into", for the flow. `velora/host/boot_target.hpp` holds the pure `resolve()` (inputs: mode, default id, the pointer, the valid Live Sets, the members of each setlist) and `fetch_sysd_config()` (bounded wait, `kSysdBootWaitMs` = 1500 ms, a short-lived `SysdConfigClient`; no answer = the default config, LAST_SOUND).

@@ -299,7 +299,7 @@ static void test_selected_part_and_scope() {
   step_blocks(br);
   CHECK(live(br, kDrawbar8, 7) == 4.0f);
   // A select-part event for a part that does not exist is refused and counted.
-  br.submit({make_select_part_event(8), 0});
+  br.submit({make_select_part_event(kPartCount), 0});
   br.submit({make_select_part_event(200), 0});
   step_blocks(br);
   CHECK(br.encoder_state().selected_part() == 7 && br.encoder_state().counters().events_rejected == 2);
@@ -466,7 +466,7 @@ static void test_assignability_rule() {
   CHECK(apply_relative_step(big, 16777216.0f, 5) == 16777216.0f && apply_relative_step(big, 3.0f, -100) == 0.0f);
 }
 
-// Channel 15 below the reserved ids is not a control event: it is refused as a parameter event (part 15 does not exist), counted exactly once.
+// Channel 15 below the reserved ids is not a control event: it is a parameter event of part 15 (16 parts, Story 4.1), and a master-scope parameter on it is refused, counted once.
 static void test_low_ids_on_channel_15() {
   BlockRenderer br;
   Gens g(br);
@@ -482,7 +482,8 @@ static void test_low_ids_on_channel_15() {
   br.submit({low, 0});
   br.submit({master, 0});
   step_blocks(br);
-  CHECK(br.param_events_rejected() == before + 2);
+  CHECK(br.param_events_rejected() == before + 1);  // only the master-scope one; the drawbar is part 15's
+  CHECK(live(br, kDrawbar8, 15) == 1.0f);
   CHECK(live(br, kDrawbar8, 0) == 8.0f && live(br, kTempoBpm) == 120.0f);
   const EncoderState::Counters c = br.encoder_state().counters();
   CHECK(c.steps_rejected == 0 && c.events_rejected == 0);

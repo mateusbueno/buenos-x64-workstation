@@ -50,11 +50,15 @@ float OrganEngine::drawbar_level(int step) noexcept {
   return std::pow(10.0f, -kDrawbarStepDb * static_cast<float>(8 - step) / 20.0f);
 }
 
-OrganEngine::OrganEngine()
-    : voices_(kVoiceCapacity),
+OrganEngine::OrganEngine(std::uint32_t part_count, std::uint32_t voice_capacity)
+    : voices_(voice_capacity),
       osc_cos_(static_cast<std::size_t>(kPartCount) * kW, 1.0),
       osc_sin_(static_cast<std::size_t>(kPartCount) * kW, 0.0),
       wheels_(static_cast<std::size_t>(kPartCount) * kWheelStride, 0.0f) {
+  const std::uint32_t parts = part_count < 1 ? 1u : (part_count > kPartCount ? kPartCount : part_count);
+  voice_capacity_ = voice_capacity;
+  part_mask_ = (1u << parts) - 1u;
+  enabled_ = part_mask_;
   for (std::uint32_t w = 0; w < kW; ++w) {
     const double inc = kTwoPi * wheel_frequency_hz(w + 1) / 48000.0;
     rot_cos_[w] = std::cos(inc);
@@ -155,7 +159,7 @@ EngineStatus OrganEngine::spawn_voice(std::uint32_t channel, std::uint32_t note,
   for (const Voice& v : voices_)
     if (v.active && v.state == VoiceState::kHeld && v.channel == channel) other_key_held = true;  // single trigger: another key is down
   std::uint32_t slot = acquire_slot(channel, note);
-  if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
+  if (slot == VoiceAllocator::kNoSlot || slot >= voice_capacity_) {
     // All slots busy: reclaim the oldest releasing voice (a tail), never a held one.
     Voice* oldest = nullptr;
     for (Voice& v : voices_) {  // prefer a tail with no click pending (reclaiming one would cut its burst)
@@ -167,7 +171,7 @@ EngineStatus OrganEngine::spawn_voice(std::uint32_t channel, std::uint32_t note,
     if (!oldest) return EngineStatus::kPoolExhausted;
     oldest->active = false;
     slot = acquire_slot(channel, note);
-    if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) return EngineStatus::kPoolExhausted;
+    if (slot == VoiceAllocator::kNoSlot || slot >= voice_capacity_) return EngineStatus::kPoolExhausted;
   }
   Voice& v = voices_[slot];
   v = Voice{};
@@ -621,7 +625,7 @@ void OrganEngine::render_chunk(float* const* left, float* const* right, std::uin
 }
 
 bool OrganEngine::voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept {
-  if (slot >= kVoiceCapacity || !voices_[slot].active) return false;
+  if (slot >= voice_capacity_ || !voices_[slot].active) return false;
   const Voice& v = voices_[slot];
   float sum = 0.0f;
   for (std::uint32_t d = 0; d < kD; ++d) sum += parts_[v.part].cur[d] * v.gate_cur[contact_group(v.groups, d)];

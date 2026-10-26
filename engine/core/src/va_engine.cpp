@@ -5,8 +5,8 @@
 
 namespace velora::core {
 
-VaEngine::VaEngine(float sample_rate) noexcept
-    : sample_rate_(sample_rate) {
+VaEngine::VaEngine(float sample_rate, uint32_t voice_capacity)
+    : sample_rate_(sample_rate), voices_(voice_capacity) {
   for (uint32_t p = 0; p < kPartCount; ++p) {
     part_params_[p] = create_init_va_voice();
     part_sustain_[p] = false;
@@ -63,7 +63,7 @@ uint32_t VaEngine::allocate_voice_slot(uint32_t channel, uint32_t note) noexcept
   (void)channel;
   (void)note;
   // 1. Inactive slot
-  for (uint32_t i = 0; i < kVoiceCapacity; ++i) {
+  for (uint32_t i = 0; i < voices_.size(); ++i) {
     if (!voices_[i].is_active()) {
       return i;
     }
@@ -74,7 +74,7 @@ uint32_t VaEngine::allocate_voice_slot(uint32_t channel, uint32_t note) noexcept
   uint64_t oldest_time = UINT64_MAX;
   bool found_releasing = false;
 
-  for (uint32_t i = 0; i < kVoiceCapacity; ++i) {
+  for (uint32_t i = 0; i < voices_.size(); ++i) {
     if (!voices_[i].is_held() && !voices_[i].is_sustained()) {
       if (!found_releasing || voices_[i].start_time() < oldest_time) {
         found_releasing = true;
@@ -98,7 +98,7 @@ EngineStatus VaEngine::start_voice(uint32_t channel, uint32_t note, uint32_t vel
   // Check Mono / Legato mode
   if (params.voice_mode == VaVoiceMode::kMono || params.voice_mode == VaVoiceMode::kLegato) {
     int32_t current_slot = part_mono_slots_[part_idx];
-    if (current_slot >= 0 && static_cast<uint32_t>(current_slot) < kVoiceCapacity) {
+    if (current_slot >= 0 && static_cast<uint32_t>(current_slot) < voices_.size()) {
       auto& mono_voice = voices_[current_slot];
       if (mono_voice.is_active()) {
         if (params.voice_mode == VaVoiceMode::kLegato && mono_voice.is_held()) {
@@ -118,7 +118,7 @@ EngineStatus VaEngine::start_voice(uint32_t channel, uint32_t note, uint32_t vel
 
     // Allocate new mono voice
     uint32_t slot = acquire_slot(channel, note);
-    if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
+    if (slot == VoiceAllocator::kNoSlot || slot >= voices_.size()) {
       return EngineStatus::kPoolExhausted;
     }
     part_mono_slots_[part_idx] = static_cast<int32_t>(slot);
@@ -131,7 +131,7 @@ EngineStatus VaEngine::start_voice(uint32_t channel, uint32_t note, uint32_t vel
 
   // Polyphonic mode
   uint32_t slot = acquire_slot(channel, note);
-  if (slot == VoiceAllocator::kNoSlot || slot >= kVoiceCapacity) {
+  if (slot == VoiceAllocator::kNoSlot || slot >= voices_.size()) {
     return EngineStatus::kPoolExhausted;
   }
   voices_[slot].start(channel, note7, velocity16, params, sample_rate_);
@@ -155,7 +155,7 @@ EngineStatus VaEngine::stop_voice(uint32_t channel, uint32_t note) noexcept {
   uint8_t note7 = static_cast<uint8_t>(std::clamp(note, 0u, 127u));
   uint32_t part_idx = channel % kPartCount;
 
-  for (uint32_t i = 0; i < kVoiceCapacity; ++i) {
+  for (uint32_t i = 0; i < voices_.size(); ++i) {
     auto& v = voices_[i];
     if (v.is_active() && v.channel() == channel && v.note() == note7 && v.is_held()) {
       v.stop();
@@ -232,7 +232,7 @@ void VaEngine::render_split(float* const* left, float* const* right, uint32_t fr
 }
 
 bool VaEngine::voice_info(uint32_t slot, VoiceInfo& out) const noexcept {
-  if (slot >= kVoiceCapacity || !voices_[slot].is_active()) {
+  if (slot >= voices_.size() || !voices_[slot].is_active()) {
     return false;
   }
   const auto& v = voices_[slot];
@@ -245,7 +245,7 @@ bool VaEngine::voice_info(uint32_t slot, VoiceInfo& out) const noexcept {
 }
 
 bool VaEngine::begin_steal_fade(uint32_t slot, uint32_t ramp_frames) noexcept {
-  if (slot >= kVoiceCapacity || !voices_[slot].is_active() || voices_[slot].is_steal_fading()) {
+  if (slot >= voices_.size() || !voices_[slot].is_active() || voices_[slot].is_steal_fading()) {
     return false;
   }
   voices_[slot].begin_steal_fade(ramp_frames);

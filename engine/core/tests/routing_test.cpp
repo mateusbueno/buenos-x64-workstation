@@ -502,10 +502,10 @@ void test_render_split_channel_mapping() {
     CHECK(eng.set_instrument(ins));
     check(eng, "sample");
   }
-  // In the Mixer, channel c + 8 aliases part c: a note on channel 11 sounds on part 3 (here assigned to Aux).
+  // In the Mixer, channel c is part c (16 parts, Story 4.1): a note on channel 11 sounds on part 11 (here assigned to Aux).
   Rig rig;
   Snapshot s = Snapshot::defaults();
-  s.parts[3].output = params::kPartOutputAux;
+  s.parts[11].output = params::kPartOutputAux;
   rig.publish(s);
   rig.note(true, 11, 60);
   const Cap c = rig.run(10);

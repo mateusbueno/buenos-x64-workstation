@@ -21,6 +21,7 @@
 #include "velora/core/snapshot.hpp"
 #include "velora/host/damage_registry.hpp"
 #include "velora/host/midi_ingest.hpp"
+#include "velora/host/tier_profile.hpp"
 #include "ws_v1.pb.h"
 
 namespace velora::host {
@@ -250,6 +251,13 @@ class ControlPlane {
   // the effect instances built for it are freed on the spot). Set it before load_initial(); the default (core::kMaxFxCost) is
   // the cost of every slot of every part holding the heaviest insert, i.e. nothing is ever refused.
   void set_fx_budget(std::uint64_t units) noexcept { fx_budget_.store(units, std::memory_order_release); }
+  // Tier profile (Story 4.1, AD-27): the plane starts on the v1 profile. engine-host applies the profile it resolved once at start (control thread, before
+  // load_initial()): the part cap (parts above it answer INVALID_PART; State and performance values carry exactly that many), the FX budget, and the profile
+  // itself, which State.tier publishes. The profile is a constant instance that outlives the plane. ONE-SHOT: call it once, before load_initial(); a later
+  // call is ignored (logged), because the tier is read once and never re-read.
+  void set_tier_profile(const TierProfile& profile) noexcept;
+  const TierProfile& tier_profile() const noexcept { return *tier_; }
+  std::uint32_t part_cap() const noexcept { return tier_->part_count; }
   std::uint64_t fx_budget() const noexcept { return fx_budget_.load(std::memory_order_acquire); }
   // Declared cost of the effect instances of the current generation (fixed topology included); 0 before load_initial().
   std::uint64_t fx_cost() const noexcept { return fx_cost_.load(std::memory_order_acquire); }
@@ -260,6 +268,7 @@ class ControlPlane {
   bool commit(const core::Snapshot& work, ControlFail& fail);
   void fill_encoders(ws::v1::State* out) const;
   void fill_content(ws::v1::State* out) const;
+  void fill_tier(ws::v1::State* out) const;
   DamageRegistry* damage_ = nullptr;
   std::uint64_t content_pushed_ = 0;
   ws::v1::EncoderMode enc_mode_req_ = ws::v1::ENCODER_MODE_PART;
@@ -288,7 +297,9 @@ class ControlPlane {
   std::atomic<std::uint64_t> revision_{0};
   std::atomic<std::size_t> live_count_{0};
   std::atomic<std::uint64_t> freed_{0}, rejected_{0};
-  std::atomic<std::uint64_t> fx_budget_{core::kMaxFxCost}, fx_cost_{0};
+  const TierProfile* tier_ = &v1_profile();
+  bool tier_set_ = false;
+  std::atomic<std::uint64_t> fx_budget_{v1_profile().fx_budget}, fx_cost_{0};
 };
 
 }  // namespace velora::host

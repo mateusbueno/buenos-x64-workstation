@@ -87,7 +87,7 @@ class Engine {
   // Per-part render (Story 2.7). Same as render(), but the output of the voices of UMP channel c is added into left[c]/right[c]
   // (c = 0..kSplitChannels-1). Every pointer must be valid. The arithmetic per sample is the one of render(), so a render() call
   // equals a render_split() call with all pointers equal. Pure virtual: an engine must say where its voices go. In the routing
-  // topology UMP channels 8..15 ALIAS parts 0..7 (the Mixer points channel c and c + 8 at the same part bus); parts are 0..7.
+  // topology UMP channel c IS part c (16 parts, Story 4.1; before it, channels 8..15 aliased parts 0..7 on the Mixer's part buses).
   static constexpr std::uint32_t kSplitChannels = 16;
   virtual void render_split(float* const* left, float* const* right, std::uint32_t frames) noexcept VELORA_NONBLOCKING = 0;
 

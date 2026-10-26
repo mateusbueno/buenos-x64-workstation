@@ -281,14 +281,18 @@ struct Booted {
   std::string live_id, live_name, setlist_id, log;
   int scene = -2;
   std::uint32_t scene_count = 0;
+  std::string tier_name;  // Story 4.1: State.tier
+  std::uint32_t tier_parts = 0;
+  int state_parts = 0;
   bool ok = false;
 };
 
 // Boots an engine on `root` (optionally with sysd), reads the State once, stops it.
-static Booted boot(const Root& root, const std::string& sysd_sock, const char* tag) {
+static Booted boot(const Root& root, const std::string& sysd_sock, const char* tag, const std::vector<std::string>& more = {}) {
   Booted b;
   Engine e;
   if (!sysd_sock.empty()) e.extra = {"--sysd-socket", sysd_sock};
+  for (const std::string& m : more) e.extra.push_back(m);
   if (!e.start(g_exe.c_str(), root.dir, g_lib, tag) || !hello(e.fd)) {
     b.log = e.slurp();
     e.stop();
@@ -302,6 +306,9 @@ static Booted boot(const Root& root, const std::string& sysd_sock, const char* t
     b.setlist_id = r.state().setlists().loaded_setlist_id();
     b.scene = r.state().current_scene();
     b.scene_count = r.state().scene_count();
+    b.tier_name = r.state().tier().name();
+    b.tier_parts = r.state().tier().part_count();
+    b.state_parts = r.state().parts_size();
     b.ok = true;
   }
   b.log = e.slurp();
@@ -324,6 +331,30 @@ int main(int argc, char** argv) {
   g_scenes = argv[6];
   const std::string GONE = "e0000000-0000-4000-8000-0000000000ff";
 
+  {  // Story 4.1: the tier profile. The Mac has no strap: v1 (8 parts), the reason logged; State.tier says so.
+    Root r;
+    const Booted b = boot(r, "", "t1");
+    CHECK(b.ok && b.tier_name == "v1" && b.tier_parts == 8 && b.state_parts == 8);
+    CHECK(has(b.log, "tier: v1 (no tier strap on this host)") && !has(b.log, "DEV OVERRIDE"));
+    const Booted v = boot(r, "", "t1b", {"--tier", "v1"});  // the override can also name v1
+    CHECK(v.ok && v.tier_name == "v1" && has(v.log, "DEV OVERRIDE"));
+  }
+  {  // --tier pro (dev-only): the Pro profile with a loud log line; 16 parts in the State; the 8 part fixtures are not Pro Live Sets (skipped), so the unit starts on a new
+     // empty 16 part Live Set, which loads.
+    Root r(false, false);
+    const Booted b = boot(r, "", "t2", {"--tier", "pro"});
+    CHECK(b.ok && b.tier_name == "pro" && b.tier_parts == 16 && b.state_parts == 16);
+    CHECK(has(b.log, "DEV OVERRIDE") && has(b.log, "16 parts") && has(b.log, "head budget 10737418240 bytes") && has(b.log, "sequencer enabled"));
+    CHECK(has(b.log, "made an empty Live Set") && !b.live_id.empty());
+    // The same data root again on v1: the 16 part Live Set it holds is not a v1 Live Set, so v1 does not list it (and starts on a new empty one).
+    const Booted v = boot(r, "", "t2b");
+    CHECK(v.ok && v.tier_name == "v1" && v.tier_parts == 8 && v.live_id != b.live_id);
+  }
+  {  // An invalid --tier value is an error exit with a message.
+    Root r(false, false);
+    CHECK(run_ctl({g_exe, "--no-audio", "--tier", "gold"}, r.dir + "/tier-bad.log") == 2);
+    CHECK(has(slurp_file(r.dir + "/tier-bad.log"), "--tier needs pro or v1"));
+  }
   {  // No sysd, no pointer: LAST_SOUND with nothing remembered = the first Live Set of All Live Sets.
     Root r;
     CHECK(r.sorted.size() >= 2);

@@ -74,7 +74,7 @@ class Mixer {
   // Once per block, before the voices render: updates level targets from the live values. True = routed block (render into the
   // part buses, then finish()); false = trivial routing, render straight into Main and do not call finish().
   bool begin_block(LastValueTable& live) noexcept VELORA_NONBLOCKING;
-  // Channel c of an engine's render_split() output (c = 0..15; channel c and c + 8 share a part bus), at frame `offset` of the block.
+  // Channel c of an engine's render_split() output (c = 0..15; channel c feeds part bus c; before Story 4.1 channels c and c + 8 shared a bus), at frame `offset` of the block.
   void part_sinks(std::uint32_t offset, float** left, float** right) noexcept VELORA_NONBLOCKING;
   // After the voices rendered a routed block: chains, sends, Main/Aux, line-in, master; adds the result to `out`.
   void finish(const OutputBuses& out, LastValueTable& live) noexcept VELORA_NONBLOCKING;

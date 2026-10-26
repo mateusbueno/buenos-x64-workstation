@@ -42,7 +42,7 @@ static void test_registry() {
   CHECK(find(kInsertType)->cls == Class::kStructural && find(kMasterEqLowGain)->scope == Scope::kMaster);
   CHECK(find_by_cc(70) == find(kDrawbar16));
   CHECK(find_by_cc(64) == nullptr);
-  CHECK(kPartCount == 8 && kInsertSlotCount == 5 && kInsertParamCount == 5);
+  CHECK(kPartCount == 16 && kInsertSlotCount == 5 && kInsertParamCount == 5);
   CHECK(find(kMasterEqBypass) && find(kMasterEqBypass)->cls == Class::kStructural && find(kMasterEqBypass)->scope == Scope::kMaster &&
         find(kMasterEqBypass)->type == Type::kBool && find(kMasterEqBypass)->def == 0.0);
   CHECK(find(kMasterCompBypass) && find(kMasterCompBypass)->master_index >= 0 && find(kMasterCompBypass)->def == 0.0);
@@ -69,8 +69,10 @@ static void test_event_mapping() {
   Ump bad = make_param_event(*find(kDrawbar16), 0, 1);
   bad.word0 |= (3u << 16);
   CHECK(decode_param_event(bad, pe));
-  bad = make_param_event(*find(kDrawbar16), 9, 1);  // part 9 does not exist
+  bad = make_param_event(*find(kTempoBpm), 9, 1);  // a master-scope parameter has no part 9 (the 4-bit part field cannot name a part above 15)
   CHECK(!decode_param_event(bad, pe));
+  bad = make_param_event(*find(kDrawbar16), 15, 1);  // all 16 parts exist (Story 4.1: the structural capacity is 16 parts)
+  CHECK(decode_param_event(bad, pe) && pe.part == 15);
   bad = make_param_event(*find(kInsertType), 0, 1);  // structural parameters never travel as UMP
   CHECK(!decode_param_event(bad, pe));
   bad = Ump{make_param_event(*find(kDrawbar16), 0, 1).word0 | 0x7F, 0};  // id 127 is unregistered
@@ -79,7 +81,7 @@ static void test_event_mapping() {
   CHECK(cc_to_param_event(make_control_change(0, 2, 70, 0xFFFFFFFFu), out));
   CHECK(decode_param_event(out, pe) && pe.def->id == kDrawbar16 && pe.part == 2 && pe.value == 8.0f);
   CHECK(!cc_to_param_event(make_control_change(0, 2, 64, 1), out));
-  CHECK(!cc_to_param_event(make_control_change(0, 9, 70, 1), out));
+  CHECK(cc_to_param_event(make_control_change(0, 15, 70, 1), out));  // every MIDI channel is a part
 }
 
 static void test_last_value_table() {

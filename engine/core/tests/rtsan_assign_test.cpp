@@ -115,7 +115,7 @@ void run_block(BlockRenderer& br, Player& pl, OutputBuses ob, std::uint32_t i) n
   if (i % 13 == 0) br.submit({make_encoder_mode_event(static_cast<EncoderMode>((i / 13) % 3 == 0 ? 0 : 2)), pl.rnd() % 64});  // mostly ASSIGN
   if (i % 17 == 0) br.submit({make_encoder_mode_event(EncoderMode::kAll), 40});
   if (i % 19 == 0) br.submit({make_select_part_event((i / 19) % params::kPartCount), pl.rnd() % 64});
-  if (i % 23 == 0) br.submit({make_select_part_event(8 + i % 5), 10});  // malformed
+  if (i % 23 == 0) br.submit({make_select_part_event(params::kPartCount + i % 5), 10});  // malformed: no such part
   if (i % 29 == 0) br.submit({make_fence_event(i), 50});
   br.process_block(ob);
 }

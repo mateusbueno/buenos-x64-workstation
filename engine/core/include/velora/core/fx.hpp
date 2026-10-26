@@ -90,8 +90,11 @@ static_assert(kMasterEqCost == effect_cost_units(EffectType::kEq) && kMasterComp
 constexpr std::uint32_t kFixedFxCost =
     kOutputBusCount * (kReverbSendCost + kDelaySendCost + kMasterEqCost + kMasterCompCost);
 // Every slot of every part filled with the heaviest insert, plus the fixed topology: a budget at which no command is ever refused.
-constexpr std::uint64_t kMaxFxCost =
-    static_cast<std::uint64_t>(params::kPartCount) * params::kInsertSlotCount * kMaxInsertCost + kFixedFxCost;
+constexpr std::uint64_t max_fx_cost_for_parts(std::uint32_t parts) noexcept {
+  return static_cast<std::uint64_t>(parts) * params::kInsertSlotCount * kMaxInsertCost + kFixedFxCost;
+}
+// The structural capacity (every part the build carries, 16). A tier's own FX budget is max_fx_cost_for_parts(profile part count) (Story 4.1).
+constexpr std::uint64_t kMaxFxCost = max_fx_cost_for_parts(params::kPartCount);
 
 // One effect instance. process() runs on the RT thread and must not allocate, lock or block.
 class Effect {

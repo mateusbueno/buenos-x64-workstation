@@ -109,7 +109,7 @@ development_status:
   epic-3-retrospective: optional
 
   epic-4: in-progress
-  4-1-tier-profile-read-at-boot: backlog
+  4-1-tier-profile-read-at-boot: done
   4-2-versioned-live-set-format-with-parts-scenes-and-assign-map: done
   4-3-live-set-load-with-8-parts-zones-layers-and-splits: done
   4-4-scene-recall-as-a-parameter-only-snapshot-swap: done

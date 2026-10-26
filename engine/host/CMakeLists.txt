@@ -1,6 +1,7 @@
 find_package(Threads REQUIRED)
 add_library(velora_host STATIC
   src/host_info.cpp
+  src/tier_profile.cpp
   src/time_mapper.cpp
   src/midi_ingest.cpp
   src/sysex_receiver.cpp
@@ -230,6 +231,12 @@ add_executable(boot_into_tests tests/boot_into_test.cpp)
 target_link_libraries(boot_into_tests PRIVATE velora_control)
 add_test(NAME boot_into_tests COMMAND boot_into_tests)
 set_tests_properties(boot_into_tests PROPERTIES TIMEOUT 180)
+
+# Tier profile (Story 4.1): the two profiles, the one-time tier resolution, the part cap and State.tier of the control plane.
+add_executable(tier_profile_tests tests/tier_profile_test.cpp)
+target_link_libraries(tier_profile_tests PRIVATE velora_control)
+add_test(NAME tier_profile_tests COMMAND tier_profile_tests)
+set_tests_properties(tier_profile_tests PROPERTIES TIMEOUT 60)
 
 # Boot target resolution (Story 8.9): the I/O matrix over plain data, the bounded sysd wait, the tracker baseline.
 add_executable(boot_target_tests tests/boot_target_test.cpp)

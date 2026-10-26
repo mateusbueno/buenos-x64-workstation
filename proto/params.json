@@ -2,7 +2,7 @@
   "schema": 1,
   "comment": "Parameter registry (Story 2.1). Single source of truth for parameter ids; see proto/README.md. Ids are never reused: retire one by moving it to 'reserved'.",
   "limits": {
-    "parts": 8,
+    "parts": 16,
     "insert_slots": 5
   },
   "enums": {

@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "velora/core/engine.hpp"
+#include "velora/core/params_gen.hpp"
 #include "velora/core/rotary_speaker.hpp"
 #include "velora/core/tonewheel_tables.hpp"
 #include "velora/core/vibrato_scanner.hpp"
@@ -41,7 +42,7 @@ namespace velora::core {
 class OrganEngine final : public Engine {
  public:
   static constexpr const char* kEngineName = "tonewheel organ";
-  static constexpr std::uint32_t kPartCount = 8;
+  static constexpr std::uint32_t kPartCount = params::kPartCount;  // structural capacity (16); the tier profile caps the parts a Live Set may use (Story 4.1)
   static constexpr std::uint32_t kBlockFrames = 64;
   static constexpr std::uint32_t kVoiceCapacity = 640;  // 8 parts x 73 keys = 584, plus release tails
   static constexpr std::uint32_t kAttackFrames = 48;    // declick gate only (1 ms); not a key-click model
@@ -99,18 +100,20 @@ class OrganEngine final : public Engine {
            (kGeneratorCostUnits + kRotaryCostUnits + static_cast<std::uint64_t>(tonewheel::kKeyCount) * kVoiceCostUnits);
   }
 
-  OrganEngine();
+  // `part_count` parts run a generator (v1: 8, Pro: 16; at most kPartCount) and the pool holds `voice_capacity` voices (v1: kVoiceCapacity). Both are fixed at
+  // construction (Story 4.1: tier profile); a part above part_count is refused with kEngineNotAvailable, and an engine built with 8 parts costs what it always did.
+  explicit OrganEngine(std::uint32_t part_count = 8, std::uint32_t voice_capacity = kVoiceCapacity);
 
   EngineTypeId type_id() const noexcept override { return EngineTypeId::kOrgan; }
   std::uint32_t cost_units_per_voice() const noexcept override { return kVoiceCostUnits; }
-  std::uint32_t voice_capacity() const noexcept override { return kVoiceCapacity; }
+  std::uint32_t voice_capacity() const noexcept override { return voice_capacity_; }
   bool steal_protected() const noexcept override { return true; }
 
-  // Setup-time: which parts run a generator (default all 8). A voice for a disabled part, or for a channel
+  // Setup-time: which parts run a generator (default all the parts the engine was built for). A voice for a disabled part, or for a channel
   // above 7, is refused with kEngineNotAvailable.
   // Disabling a part deactivates its voices at once (they are not stranded; the arbiter sees the slots free).
   void set_enabled_parts(std::uint32_t mask) noexcept {
-    enabled_ = mask & 0xFFu;
+    enabled_ = mask & part_mask_;
     for (Voice& v : voices_)
       if (v.active && !(enabled_ & (1u << v.part))) v.active = false;
   }
@@ -302,6 +305,8 @@ class OrganEngine final : public Engine {
   std::uint32_t contact_count_ = 3;
   std::uint64_t contact_applied_ = 0, contact_ignored_ = 0;
   std::array<std::atomic<std::uint32_t>, kPartCount> rot_state_{}, rot_horn_{}, rot_drum_{};  // published rotary state
+  std::uint32_t voice_capacity_ = kVoiceCapacity;
+  std::uint32_t part_mask_ = 0xFFu;  // the parts this engine was built for
   std::uint32_t enabled_ = 0xFF;
   std::uint32_t block_pos_ = 0, gen_frames_ = 0;
   std::uint64_t clock_ = 0;

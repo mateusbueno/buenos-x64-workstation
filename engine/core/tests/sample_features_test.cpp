@@ -1090,12 +1090,12 @@ void test_mapped_cc_is_a_raw_controller_only_when_midi() {
   rig.run(1);
   CHECK(rig.br->param_events_applied() == 2);
   CHECK(rig.sample.part_cc(0, 72) == 100.0f);
-  // A parameter event the block loop refuses (a part above 7) from a MIDI CC still is a controller.
+  // Every channel is a part (16 parts, Story 4.1), so a MIDI CC parameter event is never refused for its part; it still is a controller.
   Ump bad = make_param_event(*d, 9, 8.0);
   bad.word0 |= kMidiCcOriginBit;
   CHECK(rig.br->submit({bad, 0}));
   rig.run(1);
-  CHECK(rig.br->param_events_rejected() == 1);
+  CHECK(rig.br->param_events_rejected() == 0);
   CHECK(rig.sample.part_cc(0, 72) == static_cast<float>(127.0 * 1.0));
   // Outside a Live Set the channel is the part.
   Rig plain;
