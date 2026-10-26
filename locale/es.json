@@ -269,6 +269,8 @@
   "notice.usb_drive_found": "Unidad USB encontrada",
   "notice.action.import": "¿Importar?",
   "notice.import_finished": "Importación finalizada: %d importados, %d omitidos",
+  "notice.clock_source_unreachable": "Fuente de reloj no cambiada: sysd no está accesible",
+  "notice.clock_source_refused": "Fuente de reloj no cambiada: sysd rechazó el cambio",
   "import.title": "Importar",
   "import.header": "Importar · Unidad USB \"%s\"",
   "import.summary": "%d timbres · %s",

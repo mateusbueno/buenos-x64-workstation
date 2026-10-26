@@ -269,6 +269,8 @@
   "notice.usb_drive_found": "Drive USB encontrado",
   "notice.action.import": "Importar?",
   "notice.import_finished": "Importação concluída: %d importados, %d ignorados",
+  "notice.clock_source_unreachable": "Fonte de clock não alterada: o sysd não está acessível",
+  "notice.clock_source_refused": "Fonte de clock não alterada: o sysd recusou a mudança",
   "import.title": "Importar",
   "import.header": "Importar · Drive USB \"%s\"",
   "import.summary": "%d timbres · %s",

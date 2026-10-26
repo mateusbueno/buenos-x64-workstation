@@ -271,6 +271,8 @@
   "notice.sysex_damaged": "SysEx received but damaged. Nothing was imported.",
   "notice.action.import": "Import?",
   "notice.import_finished": "Import finished: %d imported, %d skipped",
+  "notice.clock_source_unreachable": "Clock source not changed: sysd is not reachable",
+  "notice.clock_source_refused": "Clock source not changed: sysd refused the change",
   "import.title": "Import",
   "import.header": "Import · USB drive \"%s\"",
   "import.summary": "%d timbres · %s",
