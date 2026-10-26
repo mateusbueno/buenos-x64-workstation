@@ -56,6 +56,11 @@ bool UiApp::init() {
     on_state_updated(st);
   });
 
+  ws_client_.set_setlists_callback([this](const ws::v1::SetlistsReply& r) {
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    pending_setlists_ = r;
+    has_pending_setlists_ = true;
+  });
   ws_client_.start();
   running_.store(true);
   return true;
@@ -147,6 +152,10 @@ int UiApp::run() {
           nav_controller_->update_from_state(pending_state_);
         }
         has_pending_state_ = false;
+      }
+      if (has_pending_setlists_) {
+        if (nav_controller_) nav_controller_->on_setlists_reply(pending_setlists_);
+        has_pending_setlists_ = false;
       }
     }
 

@@ -194,12 +194,12 @@ void test_fieldwise_patch() {
     a.mutable_boot_into()->set_mode(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET);
     CHECK(s.apply(a).rejection.details.at("reason") == "missing_live_set_id");  // the merged result needs an id
     ws::v1::ConfigPatch b;
-    b.mutable_boot_into()->set_default_live_set_id("live-1");
-    CHECK(s.apply(b).changed() && s.config().boot_into().mode() == ws::v1::BOOT_INTO_MODE_LAST_SOUND && s.config().boot_into().default_live_set_id() == "live-1");
-    CHECK(s.apply(a).changed() && s.config().boot_into().mode() == ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET && s.config().boot_into().default_live_set_id() == "live-1");
+    b.mutable_boot_into()->set_default_live_set_id("b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71");
+    CHECK(s.apply(b).changed() && s.config().boot_into().mode() == ws::v1::BOOT_INTO_MODE_LAST_SOUND && s.config().boot_into().default_live_set_id() == "b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71");
+    CHECK(s.apply(a).changed() && s.config().boot_into().mode() == ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET && s.config().boot_into().default_live_set_id() == "b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71");
     ws::v1::ConfigPatch c;
     c.mutable_boot_into()->set_mode(ws::v1::BOOT_INTO_MODE_START_OF_SETLIST);
-    CHECK(s.apply(c).changed() && s.config().boot_into().default_live_set_id() == "live-1");  // the id stays
+    CHECK(s.apply(c).changed() && s.config().boot_into().default_live_set_id() == "b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71");  // the id stays
     ws::v1::ConfigPatch e;
     e.mutable_boot_into()->set_default_live_set_id("");
     CHECK(s.apply(e).changed() && s.config().boot_into().default_live_set_id().empty());
@@ -222,6 +222,45 @@ void expect_rejected(const char* what, const ws::v1::ConfigPatch& p, ws::v1::Err
   CHECK(same_config(s.config(), before) && s.revision() == rev);  // nothing changed in memory
   CHECK(slurp(cfg_file(d)) == bytes);                            // nor on disk
   CHECK(!exists(d.path + "/" + sd::kTmpFileName));
+}
+
+// Story 8.9: a legacy default_live_set_id (not a UUID) stays loadable; with DEFAULT_LIVE_SET it loads as LAST_SOUND (note logged), and patches use the UUID rule.
+void test_legacy_default_live_set_id() {
+  const std::string uuid = "b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71";
+  {  // legacy id, DEFAULT mode: the file loads, as LAST_SOUND, the id is kept, a note is logged
+    TmpDir d;
+    ws::v1::Config c = velora::host::default_config();
+    c.mutable_boot_into()->set_mode(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET);
+    c.mutable_boot_into()->set_default_live_set_id("live-1");
+    c.set_clock_source(ws::v1::CLOCK_SOURCE_USB);
+    { std::ofstream f(cfg_file(d), std::ios::binary); f << file_bytes(sd::kSchemaVersion, 7, c); }
+    g_log.clear();
+    sd::ConfigStore s(opts(d));
+    CHECK(s.load_reason() == sd::LoadReason::kLoaded);
+    CHECK(s.config().boot_into().mode() == ws::v1::BOOT_INTO_MODE_LAST_SOUND && s.config().boot_into().default_live_set_id() == "live-1");
+    CHECK(s.config().clock_source() == ws::v1::CLOCK_SOURCE_USB);
+    bool noted = false;
+    for (const std::string& l : g_log) noted = noted || l.find("loaded as LAST_SOUND") != std::string::npos;
+    CHECK(noted);
+    // a patch that only changes the mode to DEFAULT cannot use the legacy id
+    ws::v1::ConfigPatch m;
+    m.mutable_boot_into()->set_mode(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET);
+    CHECK(s.apply(m).status == sd::ApplyStatus::kRejected);
+    // another mode with a legacy id kept is fine, and a real id then works with the mode
+    ws::v1::ConfigPatch sl;
+    sl.mutable_boot_into()->set_mode(ws::v1::BOOT_INTO_MODE_START_OF_SETLIST);
+    CHECK(s.apply(sl).changed());
+    CHECK(s.apply(boot_patch(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET, uuid)).changed());
+  }
+  {  // legacy id with LAST_SOUND: untouched
+    TmpDir d;
+    ws::v1::Config c = velora::host::default_config();
+    c.mutable_boot_into()->set_mode(ws::v1::BOOT_INTO_MODE_LAST_SOUND);
+    c.mutable_boot_into()->set_default_live_set_id("live-1");
+    { std::ofstream f(cfg_file(d), std::ios::binary); f << file_bytes(sd::kSchemaVersion, 1, c); }
+    sd::ConfigStore s(opts(d));
+    CHECK(s.load_reason() == sd::LoadReason::kLoaded && s.config().boot_into().default_live_set_id() == "live-1");
+  }
 }
 
 void test_validation() {
@@ -253,6 +292,8 @@ void test_validation() {
   expect_rejected("default live set without id", boot_patch(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET, ""), E::ERROR_CODE_INVALID_CONFIG, "missing_live_set_id");
   expect_rejected("id with a slash", boot_patch(ws::v1::BOOT_INTO_MODE_LAST_SOUND, "../etc"), E::ERROR_CODE_INVALID_CONFIG, "bad_live_set_id");
   expect_rejected("id too long", boot_patch(ws::v1::BOOT_INTO_MODE_LAST_SOUND, std::string(65, 'a')), E::ERROR_CODE_INVALID_CONFIG, "bad_live_set_id");
+  expect_rejected("legacy id format is refused in a patch", boot_patch(ws::v1::BOOT_INTO_MODE_LAST_SOUND, "live-1"), E::ERROR_CODE_INVALID_CONFIG, "bad_live_set_id");
+  expect_rejected("uppercase uuid", boot_patch(ws::v1::BOOT_INTO_MODE_LAST_SOUND, "B8E2F6A3-5D40-4F9B-8C71-2A3B4C5D6E71"), E::ERROR_CODE_INVALID_CONFIG, "bad_live_set_id");
   expect_rejected("id with a space", boot_patch(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET, "a b"), E::ERROR_CODE_INVALID_CONFIG, "bad_live_set_id");
   {  // one bad field refuses the whole patch: the valid clock change is not applied either
     ws::v1::ConfigPatch p = pedal_patch(true, 10, 5);
@@ -264,7 +305,7 @@ void test_validation() {
     sd::ConfigStore s(opts(d));
     CHECK(s.apply(pedal_patch(true, 0, 256)).status == sd::ApplyStatus::kApplied);
     CHECK(s.apply(pedal_patch(false, 3839, 4095)).status == sd::ApplyStatus::kApplied);
-    CHECK(s.apply(boot_patch(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET, std::string(64, 'z'))).status == sd::ApplyStatus::kApplied);
+    CHECK(s.apply(boot_patch(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET, "00000000-0000-4000-8000-000000000001")).status == sd::ApplyStatus::kApplied);
   }
 }
 
@@ -639,6 +680,7 @@ void test_single_writer_lock() {
 }  // namespace
 
 int main() {
+  test_legacy_default_live_set_id();
   test_defaults_first_start();
   test_valid_updates_persist_and_reload();
   test_validation();

@@ -110,6 +110,12 @@ class NavigationController {
   // Story 7.7: the sysd seam of the Settings Clock source control (not owned).
   void show_clock_source(ClockSourceMode m);
   void set_sysd_sender(SysdConfigSender* s) { settings_view_.set_sysd_sender(s); }
+  // Story 8.9: the All Live Sets list the Boot into > Default Live Set picker offers (the Live Set that sounds is added from State).
+  void set_live_set_choices(std::vector<LiveSetChoice> c) { settings_view_.set_live_set_choices(std::move(c)); }
+  // Story 8.9: a SetlistsReply from the engine (GetSetlists{include_all_live_sets}) feeds the picker; request_live_set_choices() asks for it (when the picker opens and
+  // when the setlist library revision changes).
+  void on_setlists_reply(const ws::v1::SetlistsReply& r) { settings_view_.update_from_setlists_reply(r); }
+  bool request_live_set_choices();
   void set_connected_probe(std::function<bool()> fn) { connected_fn_ = std::move(fn); }
   void set_command_sender(std::function<bool(const ws::v1::ClientMessage&)> fn) { command_fn_ = std::move(fn); }
   void resend_leds();  // the full LED state again (what the connection edge in tick() does)
@@ -149,6 +155,7 @@ class NavigationController {
 
   std::function<bool()> connected_fn_;
   std::function<bool(const ws::v1::ClientMessage&)> command_fn_;
+  uint64_t live_set_choices_revision_{~0ull};  // library_revision the picker list was last requested for
   LedDriver led_driver_;
   LedView led_view_;
   bool led_view_enabled_{false};

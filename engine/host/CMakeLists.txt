@@ -62,6 +62,7 @@ add_library(velora_control STATIC
   src/live_set_switcher.cpp
   src/setlist_store.cpp
   src/boot_into_store.cpp
+  src/boot_target.cpp
   src/setlist_controller.cpp
   src/edit_session.cpp
   src/fader_bindings.cpp
@@ -229,6 +230,12 @@ add_executable(boot_into_tests tests/boot_into_test.cpp)
 target_link_libraries(boot_into_tests PRIVATE velora_control)
 add_test(NAME boot_into_tests COMMAND boot_into_tests)
 set_tests_properties(boot_into_tests PROPERTIES TIMEOUT 180)
+
+# Boot target resolution (Story 8.9): the I/O matrix over plain data, the bounded sysd wait, the tracker baseline.
+add_executable(boot_target_tests tests/boot_target_test.cpp)
+target_link_libraries(boot_target_tests PRIVATE velora_control)
+add_test(NAME boot_target_tests COMMAND boot_target_tests)
+set_tests_properties(boot_target_tests PROPERTIES TIMEOUT 60)
 
 add_executable(setlist_tests tests/setlist_test.cpp)
 target_link_libraries(setlist_tests PRIVATE velora_control)

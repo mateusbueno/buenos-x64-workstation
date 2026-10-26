@@ -50,6 +50,10 @@ class WsClient {
   // thread with a Button PanelEvent whose timestamp_us is the engine's device time of the press / release.
   void set_panel_event_listener(PanelEventListener cb);
 
+  // Story 8.9: a SetlistsReply (the answer to GetSetlists, e.g. with all_live_sets for the Boot into picker), invoked on the client thread.
+  using SetlistsCallback = std::function<void(const ws::v1::SetlistsReply&)>;
+  void set_setlists_callback(SetlistsCallback cb);
+
   // Send a command to the engine
   bool send_command(const ws::v1::ClientMessage& msg);
 
@@ -75,6 +79,7 @@ class WsClient {
   StateCallback state_cb_;
   ErrorCallback error_cb_;
   PanelEventListener panel_cb_;
+  SetlistsCallback setlists_cb_;
 
   std::thread worker_thread_;
   int active_fd_{-1};

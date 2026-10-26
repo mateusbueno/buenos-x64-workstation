@@ -214,7 +214,7 @@ development_status:
   8-6-a-firmware-update-adds-a-new-engine-on-a-v1-unit: backlog
   8-7-boot-screen-with-drawbar-animation-and-reduced-motion: done
   8-8-journaled-boot-into-pointer: done
-  8-9-boot-into-setting-and-restoring-the-target: backlog
+  8-9-boot-into-setting-and-restoring-the-target: done
   8-10-boot-to-playable-in-10-s-with-a-1-tb-library: backlog
   8-11-power-fail-acceptance-brown-out-recovery-and-scope-verificat: backlog
   8-12-startup-reconcile-of-interrupted-imports-fault-injection-and: done

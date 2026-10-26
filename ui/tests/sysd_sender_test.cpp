@@ -72,6 +72,16 @@ static bool wait_config(SysdConfigSender& s, ClockSourceMode want, int timeout_m
   return false;
 }
 
+static bool wait_boot(SysdConfigSender& s, uint8_t mode, const std::string& id, int timeout_ms = 15000) {
+  const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < end) {
+    SysdConfigSender::Event e;
+    if (!wait_event(s, SysdConfigSender::Event::Kind::Config, e, 200)) continue;
+    if (e.has_boot_into && e.boot_into == mode && e.default_live_set_id == id) return true;
+  }
+  return false;
+}
+
 int main(int argc, char** argv) {
   if (argc != 2) {
     std::fprintf(stderr, "usage: sysd_sender_test VELORA_SYSD\n");
@@ -115,6 +125,24 @@ int main(int argc, char** argv) {
       if (!ok) s->request_clock_source(ClockSourceMode::USB);
     }
     CHECK(ok);
+  }
+  // 5. Story 8.9: Boot into. Mode only, then the default Live Set (mode + id), persisted across a restart; a refused id is a Failed event for Boot into and leaves the value.
+  spid = spawn({sysd, "--data-dir", d + "/data", "--socket", sock}, log);
+  {
+    const std::string uuid = "b8e2f6a3-5d40-4f9b-8c71-2a3b4c5d6e71";
+    auto s = make_socket_sysd_sender(sock);
+    CHECK(wait_boot(*s, 0, ""));
+    s->request_boot_into(1, "");
+    CHECK(wait_boot(*s, 1, ""));
+    s->request_boot_into(2, uuid);
+    CHECK(wait_boot(*s, 2, uuid));
+    s->request_boot_into(0, "live-1");  // not a Live Set id: refused
+    SysdConfigSender::Event e;
+    CHECK(wait_event(*s, SysdConfigSender::Event::Kind::Failed, e) && e.setting == SysdConfigSender::Event::Setting::BootInto && !e.unreachable);
+    stop(spid);  // restart: the value persists and a new sender is told
+    spid = spawn({sysd, "--data-dir", d + "/data", "--socket", sock}, log);
+    auto s2 = make_socket_sysd_sender(sock);
+    CHECK(wait_boot(*s2, 2, uuid));
   }
   stop(spid);
   const std::string cmd = "rm -rf " + d;

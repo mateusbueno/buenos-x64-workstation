@@ -6,6 +6,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <algorithm>
 #include <atomic>
 #include <thread>
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <memory>
 #include <sys/stat.h>
 #include <string>
@@ -32,6 +34,7 @@
 #include "velora/core/sample_engine.hpp"
 #include "velora/core/va_engine.hpp"
 #include "velora/host/boot_into_store.hpp"
+#include "velora/host/boot_target.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/control_server.hpp"
 #include "velora/host/edit_session.hpp"
@@ -259,13 +262,73 @@ int main(int argc, char** argv) {
         return 1;
       }
       live_set_path = catalog.front().path;  // the first by name
-    } else if (live_set_path.empty() && !catalog.empty()) {
-      live_set_path = catalog.front().path;  // --data-dir: the first by name
+    }  // --data-dir: the boot target below names the Live Set to start with (Story 8.9)
+  }
+  // Story 8.9: the boot target. With a data root and no explicit --live-set, the sysd `boot_into` setting (read with a bounded wait; the defaults when sysd does not
+  // answer) and the Boot-into pointer (Story 8.8) name the Live Set, scene and setlist to start on; a missing target falls back (logged) to the first Live Set of All
+  // Live Sets, and an empty library gets an empty new Live Set. Boot never waits for a target or for sysd beyond kSysdBootWaitMs.
+  host::boottarget::Target boot_target;
+  bool boot_resolved = false;
+  // An empty new Live Set in the data root (persisted: the product decision in-memory vs persisted is open, see the README), added to the catalog. Control thread, start.
+  auto make_empty_live_set = [&](std::string& path_out) -> bool {
+    host::liveset::StoreOptions blo;
+    blo.dir = live_set_dir;
+    host::setlist::StoreOptions bso;
+    bso.dir = data_dir + "/setlists";
+    std::unique_ptr<host::liveset::LiveSetStore> tl;
+    std::unique_ptr<host::setlist::SetlistStore> ts;
+    std::string id;
+    if (host::liveset::LiveSetStore::open(blo, tl) != host::liveset::Status::kOk || host::setlist::SetlistStore::open(bso, ts) != host::setlist::Status::kOk ||
+        ts->create_live_set(*tl, "Live Set", id) != host::setlist::Status::kOk)
+      return false;
+    path_out = tl->path_for(id);
+    catalog.push_back(host::CatalogEntry{id, "Live Set", path_out});
+    std::printf("data dir %s: made an empty Live Set (%s)\n", data_dir.c_str(), id.c_str());
+    return true;
+  };
+  if (!data_dir.empty() && live_set_path.empty()) {
+    ws::v1::Config boot_cfg = host::default_config();
+    if (!sysd_socket.empty()) {
+      if (!host::boottarget::fetch_sysd_config(sysd_socket, host::boottarget::kSysdBootWaitMs, boot_cfg))
+        std::printf("boot target: sysd did not answer within %d ms: Boot into LAST_SOUND (default)\n", host::boottarget::kSysdBootWaitMs);
     }
+    host::boottarget::Inputs bi;
+    bi.mode = boot_cfg.boot_into().mode();
+    bi.default_live_set_id = boot_cfg.boot_into().default_live_set_id();
+    host::bootinto::Pointer ptr;
+    if (host::bootinto::load(data_dir, ptr) == host::bootinto::LoadStatus::kOk) bi.pointer = ptr;
+    bi.live_sets = catalog;
+    // The setlists are read through a short-lived store (closed again before the engine's own opens it, as the factory import does).
+    std::map<std::string, std::vector<std::string>> members;
+    {
+      host::setlist::StoreOptions bso;
+      bso.dir = data_dir + "/setlists";
+      std::unique_ptr<host::setlist::SetlistStore> tmp;
+      if (host::setlist::SetlistStore::open(bso, tmp) == host::setlist::Status::kOk) {
+        for (const auto& sl : tmp->library().setlists()) members[sl.id()] = std::vector<std::string>(sl.live_set_ids().begin(), sl.live_set_ids().end());
+      }
+    }
+    if (catalog.empty()) {  // an empty library: the unit still starts on a sounding (empty) Live Set
+      std::string np;
+      std::printf("data dir %s holds no Live Set yet\n", data_dir.c_str());
+      if (make_empty_live_set(np)) bi.live_sets = catalog;
+      else std::fprintf(stderr, "engine-host: warning: could not make an empty Live Set in %s\n", live_set_dir.c_str());
+    }
+    bi.setlist_members = [&members](const std::string& id) -> const std::vector<std::string>* {
+      const auto it = members.find(id);
+      return it == members.end() ? nullptr : &it->second;
+    };
+    boot_target = host::boottarget::resolve(bi);
+    boot_resolved = true;
+    for (const std::string& n : boot_target.notes) std::printf("boot target: %s\n", n.c_str());
+    for (const host::CatalogEntry& e : catalog)
+      if (e.id == boot_target.live_set_id) live_set_path = e.path;
+    std::printf("boot target: %s mode=%s live set %s scene %u setlist %s\n", host::boottarget::to_string(boot_target.source), ws::v1::BootIntoMode_Name(boot_cfg.boot_into().mode()).c_str(),
+                boot_target.live_set_id.empty() ? "-" : boot_target.live_set_id.c_str(), static_cast<unsigned>(boot_target.scene) + 1, boot_target.setlist_id.empty() ? "NO SETLIST" : boot_target.setlist_id.c_str());
   }
   // A fresh data root (no Live Set yet): the engine starts on the dev configuration with the switcher, the stores and the setlist controller, so that
   // CreateLiveSet and JumpToLiveSet can bootstrap an empty install.
-  const bool bootstrap = live_set_path.empty() && !data_dir.empty();
+  bool bootstrap = live_set_path.empty() && !data_dir.empty();
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
@@ -365,8 +428,8 @@ int main(int argc, char** argv) {
     scenes = std::make_unique<host::SceneController>(plane);
     lopt.scenes = scenes.get();
     loader = std::make_unique<host::LiveSetLoader>(*renderer, plane, resolver, *head_provider, &sample, lopt);
-    if (bootstrap) {
-      // No Live Set to load: the flat FX reservation of the dev configuration (as without --live-set); the first jump replaces it seamlessly.
+    // No Live Set to load: the flat FX reservation of the dev configuration (as without --live-set); the first jump replaces it seamlessly.
+    auto reserve_dev_config = [&]() -> bool {
       core::VoiceArbiter::LiveSetConfig reservation;
       reservation.budget = 1u << 20;
       reservation.fx_cost = plane.fx_budget();
@@ -377,20 +440,68 @@ int main(int argc, char** argv) {
       const auto st = renderer->arbiter().reserve(reservation);
       if (st != core::VoiceArbiter::ReserveStatus::kOk) {
         std::fprintf(stderr, "engine-host: cannot reserve the FX budget (status %d)\n", static_cast<int>(st));
-        return 1;
+        return false;
       }
+      return true;
+    };
+    if (bootstrap) {
+      if (!reserve_dev_config()) return 1;
       std::printf("data dir %s holds no Live Set yet: running on the dev configuration\n", data_dir.c_str());
     } else {
-      const host::LiveSetLoadResult loaded = loader->load_file(live_set_path);
-      if (!loaded.ok()) {
-        std::fprintf(stderr, "engine-host: live set %s: %s%s%s\n", live_set_path.c_str(), host::to_string(loaded.status),
+      host::LiveSetLoadResult loaded = loader->load_file(live_set_path);
+      if (!loaded.ok() && boot_resolved) {
+        // Story 8.9: the boot target cannot be loaded (nothing is half loaded): the unit still starts. At most kBootLoadAttempts Live Sets are tried (the target, then
+        // the first of All Live Sets, ...); when none loads an empty new Live Set is made, and when even that fails the engine runs on the dev configuration.
+        constexpr int kBootLoadAttempts = 3;
+        int attempts = 1;
+        std::fprintf(stderr, "engine-host: boot target %s: %s%s%s; trying the other Live Sets\n", live_set_path.c_str(), host::to_string(loaded.status),
                      loaded.detail.empty() ? "" : " ", loaded.detail.c_str());
-        return 1;
+        for (const host::CatalogEntry& e : host::boottarget::sorted_all(catalog)) {
+          if (attempts >= kBootLoadAttempts) break;
+          if (e.path == live_set_path) continue;
+          ++attempts;
+          loaded = loader->load_file(e.path);
+          if (loaded.ok()) {
+            live_set_path = e.path;
+            boot_target.setlist_id.clear();  // the setlist and scene belonged to the target that did not load
+            boot_target.scene = 0;
+            boot_target.live_set_id = e.id;
+            std::printf("boot target: fell back to live set %s scene 1 NO SETLIST\n", e.id.c_str());
+            break;
+          }
+          std::fprintf(stderr, "engine-host: live set %s: %s%s%s\n", e.path.c_str(), host::to_string(loaded.status), loaded.detail.empty() ? "" : " ", loaded.detail.c_str());
+        }
+        std::string np;
+        if (!loaded.ok() && make_empty_live_set(np)) {
+          loaded = loader->load_file(np);
+          if (loaded.ok()) {
+            live_set_path = np;
+            boot_target.setlist_id.clear();
+            boot_target.scene = 0;
+            boot_target.live_set_id = catalog.back().id;
+            std::printf("boot target: no Live Set loaded; started on the new empty Live Set %s scene 1 NO SETLIST\n", boot_target.live_set_id.c_str());
+          }
+        }
+        if (!loaded.ok()) {
+          std::string cerr3;
+          ws::v1::State initial;
+          if (host::load_dev_config(config_path, initial, cerr3) && plane.load_initial(initial, cerr3) && reserve_dev_config()) {
+            bootstrap = true;  // the dev-configuration bootstrap: the first jump loads a Live Set
+            std::printf("boot target: no Live Set could be loaded: running on the dev configuration\n");
+          }
+        }
       }
+      if (!bootstrap) {
+        if (!loaded.ok()) {
+          std::fprintf(stderr, "engine-host: live set %s: %s%s%s\n", live_set_path.c_str(), host::to_string(loaded.status),
+                       loaded.detail.empty() ? "" : " ", loaded.detail.c_str());
+          return 1;
+        }
       for (std::size_t p = 0; p < loaded.parts.size(); ++p)
         std::printf("live set part %zu: %s\n", p, host::to_string(loaded.parts[p].state));
       std::printf("live set: %s -> generation %llu, %zu bytes of samples resident\n", live_set_path.c_str(),
                   (unsigned long long)loaded.revision, loaded.resident_bytes);
+      }
     }
     {
       // After audio starts the voice pool is switched without stopping: the reservation is applied by the RT thread with the new generation.
@@ -439,6 +550,23 @@ int main(int argc, char** argv) {
       edits = std::make_unique<host::EditSession>(plane, *scenes, *live_store, setlist_store.get(), setlists.get(), switch_port.get(), eo);
       edits->attach(*loader);
       edits->attach(*switcher);
+      if (boot_resolved && !bootstrap) {
+        // Story 8.9: the boot target's setlist and scene, applied before the control server serves anything. NO SETLIST is the state a Live Set loaded at start
+        // leaves (nothing to do); a scene that does not exist keeps the Live Set as loaded.
+        if (!boot_target.setlist_id.empty()) {
+          const host::setlist::Status ls_rc = setlists->load_setlist(boot_target.setlist_id);
+          if (ls_rc != host::setlist::Status::kOk) std::printf("boot target: setlist %s not loaded (%s): NO SETLIST\n", boot_target.setlist_id.c_str(), host::setlist::to_string(ls_rc));
+        }
+        if (boot_target.scene < scenes->scene_count()) {
+          const host::SceneOutcome so = scenes->recall_scene(boot_target.scene);
+          if (!so.ok()) std::printf("boot target: scene %u not recalled (%s)\n", static_cast<unsigned>(boot_target.scene) + 1, host::to_string(so.result));
+        } else if (boot_target.scene > 0) {
+          std::printf("boot target: scene %u does not exist (the Live Set has %u): scene 1\n", static_cast<unsigned>(boot_target.scene) + 1, static_cast<unsigned>(scenes->scene_count()));
+          if (scenes->scene_count() > 0) scenes->recall_scene(0);
+        } else if (scenes->scene_count() > 0) {
+          scenes->recall_scene(0);
+        }
+      }
       std::printf("data dir %s: %d setlist(s), %d tag(s)\n", data_dir.c_str(), setlist_store->library().setlists_size(), setlist_store->library().tags_size());
     }
   } else {
@@ -619,6 +747,15 @@ int main(int argc, char** argv) {
       // runs imports in-process sets this probe (Story 8.8: never a write while an import verifies).
       bp.import_verifying = [] { return false; };
       boot_tracker = std::make_unique<host::bootinto::BootIntoTracker>(*boot_store, std::move(bp));
+      if (boot_resolved && !bootstrap && scenes && setlists) {
+        // Story 8.9: the tracker starts AFTER the boot target is resolved and applied: the position the unit booted on is its baseline, so the first observation
+        // cannot overwrite the stored pointer with it (only a real user change makes the pointer dirty).
+        host::bootinto::Pointer base;
+        base.live_set_id = switcher->sounding_id();
+        base.scene_index = static_cast<std::uint32_t>(std::max(0, scenes->current_scene()));
+        base.setlist_id = setlists->loaded_setlist_id();
+        boot_tracker->seed(base);
+      }
     }
     control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string(), bt = boot_tracker.get(), scn = scenes.get(), pt = &panel_tick, sy = sysd_client.get()]() mutable {
       if (*pt) (*pt)();
@@ -630,7 +767,7 @@ int main(int argc, char** argv) {
       if (bt && scn) {  // Story 8.8: the position the player is on; dirty in memory only, written at idle-safe moments (binds the store to this thread on first call)
         host::bootinto::BootIntoTracker::Position pos;
         pos.live_set_id = sw->sounding_id();
-        pos.scene = scn->current_scene();
+        pos.scene = std::max(0, scn->current_scene());  // Story 8.9: a Live Set no scene was recalled on yet is on scene 1 (the base), so the pointer follows every Live Set change
         pos.loading = sw->loading();
         if (sc) pos.setlist_id = sc->loaded_setlist_id();
         bt->update(pos);

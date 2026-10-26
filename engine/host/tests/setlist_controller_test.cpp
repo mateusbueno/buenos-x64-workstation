@@ -590,6 +590,18 @@ void test_stepping_all_live_sets() {
   CHECK(w.status().loaded_setlist_id().empty());
   for (std::size_t i = 1; i < order.size(); ++i) expect_move(w.step(true), order[i], static_cast<int>(i), false);
   CHECK((w.port.jumps == std::vector<std::string>(order.begin() + 1, order.end())));
+  {  // Story 8.9: GetSetlists{include_all_live_sets} lists All Live Sets in the stepping order; without the flag the list is not sent.
+    auto m = msg();
+    m.mutable_get_setlists();
+    CHECK(w.send(m).setlists_reply().all_live_sets_size() == 0);
+    m = msg();
+    m.mutable_get_setlists()->set_include_all_live_sets(true);
+    const auto rep = w.send(m);
+    CHECK(rep.has_setlists_reply() && rep.setlists_reply().all_live_sets_size() == static_cast<int>(order.size()));
+    for (std::size_t i = 0; i < order.size() && static_cast<int>(i) < rep.setlists_reply().all_live_sets_size(); ++i)
+      CHECK(rep.setlists_reply().all_live_sets(static_cast<int>(i)).live_set_id() == order[i] && !rep.setlists_reply().all_live_sets(static_cast<int>(i)).missing() &&
+            !rep.setlists_reply().all_live_sets(static_cast<int>(i)).name().empty());
+  }
   // The end of All Live Sets: next does nothing.
   const auto r = w.step(true);
   CHECK(World::is_err(r, ws::v1::ERROR_CODE_END_OF_SETLIST) && r.error().details().at("scope") == "all_live_sets" && w.status().end_of_setlist());

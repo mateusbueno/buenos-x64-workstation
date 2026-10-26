@@ -79,6 +79,11 @@ void WsClient::set_error_callback(ErrorCallback cb) {
   error_cb_ = std::move(cb);
 }
 
+void WsClient::set_setlists_callback(SetlistsCallback cb) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  setlists_cb_ = std::move(cb);
+}
+
 void WsClient::set_panel_event_listener(PanelEventListener cb) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   panel_cb_ = std::move(cb);
@@ -241,6 +246,13 @@ void WsClient::run_worker() {
           const uint64_t ts = pe.device_ns() / 1000;
           pcb(pe.pressed() ? PanelEvent::button_press(id, ts) : PanelEvent::button_release(id, ts));
         }
+      } else if (smsg.has_setlists_reply()) {
+        SetlistsCallback scb;
+        {
+          std::lock_guard<std::mutex> lock(state_mutex_);
+          scb = setlists_cb_;
+        }
+        if (scb) scb(smsg.setlists_reply());
       } else if (smsg.has_error()) {
         ErrorCallback ecb;
         {

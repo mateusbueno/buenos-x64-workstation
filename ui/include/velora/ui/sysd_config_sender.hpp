@@ -1,7 +1,7 @@
 #pragma once
 // Story 7.7: the ui's seam to the sysd config service (AR17, AR39). sysd owns the system configuration; the ui asks it to change a setting and shows what sysd
 // reports. The seam is injectable (like the LED send hook): tests give a fake; the real one (make_socket_sysd_sender) speaks ws.v1 to velora-sysd on a worker
-// thread with the blocking sysdctl client, so the UI loop never waits on a socket. Today the only setting that goes through it is the Clock source.
+// thread with the blocking sysdctl client, so the UI loop never waits on a socket. The settings that go through it are the Clock source (Story 7.7) and Boot into (Story 8.9).
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -17,6 +17,15 @@ class SysdConfigSender {
       Config,  // sysd reported its config (at connect, after a change, or the reply to ours): `clock_source` is its value
       Failed,  // a request could not be delivered or sysd refused it: `error` says why; the ui reverts to its last known value
     };
+    // Which request a Failed event is about (the ui reverts that control and says so).
+    enum class Setting : uint8_t { ClockSource, BootInto };
+    Setting setting{Setting::ClockSource};
+    // Config: sysd's Boot into (Story 8.9), when it reported one this ui knows: the mode as SystemConfig::boot_into (0 last sound, 1 start of setlist, 2 default Live Set)
+    // and the default Live Set id ("" = none).
+    bool has_clock_source{true};  // false when sysd reported a clock source this ui does not know (it is not shown; a valid boot_into in the same event still is)
+    bool has_boot_into{false};
+    uint8_t boot_into{0};
+    std::string default_live_set_id;
     bool unreachable{false};  // Failed: sysd could not be reached (absent, connection lost, no reply) as opposed to answering with a refusal
     Kind kind{Kind::Config};
     ClockSourceMode clock_source{ClockSourceMode::Internal};
@@ -26,6 +35,9 @@ class SysdConfigSender {
   virtual ~SysdConfigSender() = default;
   // Asks sysd to set the clock source (a SetConfig patch with only clock_source). Never blocks; the outcome comes back through poll(). UI thread.
   virtual void request_clock_source(ClockSourceMode mode) = 0;
+  // Story 8.9: asks sysd to set Boot into (a SetConfig patch with only the boot_into fields: the mode, and the default Live Set id only when `default_live_set_id` is
+  // not empty). `mode` is SystemConfig::boot_into. Never blocks; the outcome comes back through poll(). UI thread.
+  virtual void request_boot_into(uint8_t mode, const std::string& default_live_set_id) = 0;
   // The next outcome / report, oldest first. UI thread; false when there is none.
   virtual bool poll(Event& out) = 0;
 };

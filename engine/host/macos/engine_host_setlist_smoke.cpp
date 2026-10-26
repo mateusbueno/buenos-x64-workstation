@@ -3,8 +3,9 @@
 //    background switch), reaches the end of the setlist, and a SUBSCRIBED second client receives the State push with the new setlist position after a
 //    JumpToLiveSet; then the engine is restarted on the same directory and the setlist, tag and new Live Set are still there. A second engine-host on the
 //    same directory is refused (single writer).
-//  * Fresh data root (no Live Set at all): the engine starts on the dev configuration, CreateLiveSet makes the first Live Set over ws.v1, JumpToLiveSet loads
-//    it, and a restart on the same directory starts with it.
+//  * Fresh data root (no Live Set at all, Story 8.9): the engine makes and starts on a persisted empty Live Set named "Live Set" (it sounds at once: State has its
+//    id and name), CreateLiveSet adds a second Live Set over ws.v1, JumpToLiveSet loads it, and a restart on the same directory (no Boot-into pointer written yet:
+//    LAST_SOUND falls back to the first Live Set by name) starts on the persisted empty one again, with the same id.
 // Note: State pushes also come from the switcher's own tick, and State.setlists is synchronised whenever a State is built, so dropping the controller tick
 // from engine-host alone is not detectable here. Removing the controller, the store hand-over to the server thread or --data-dir handling fails this test.
 // Runs engine-host --no-audio.
@@ -321,7 +322,7 @@ int main(int argc, char** argv) {
     if (!mkdtemp(tmpl2)) return 2;
     const std::string fresh = tmpl2;
     Engine e2;
-    std::string first;
+    std::string first, empty_id;
     auto fail2 = [&](const char* what) {
       std::printf("FAILED (fresh data dir): %s\n%s\n", what, e2.slurp().c_str());
       ok = false;
@@ -332,8 +333,10 @@ int main(int argc, char** argv) {
       fail2("hello");
     } else {
       ws::v1::ServerMessage r;
+      if (!state(e2.fd, r) || r.state().live_set_name() != "Live Set" || r.state().live_set_id().empty() || !r.state().live_set_loaded()) fail2("the fresh root did not start on the empty Live Set");
+      empty_id = r.state().live_set_id();
       ws::v1::ClientMessage m = mk();
-      m.mutable_create_live_set()->set_name("First");
+      m.mutable_create_live_set()->set_name("Zeta");
       if (!call(e2.fd, m, r) || !r.has_created_reply()) fail2("CreateLiveSet");
       else first = r.created_reply().id();
       if (ok) {
@@ -347,11 +350,11 @@ int main(int argc, char** argv) {
           fail2("get_state");
           break;
         }
-        ready = r.state().loading().state() == ws::v1::LOADING_STATE_READY && r.state().live_set_name() == "First";
+        ready = r.state().loading().state() == ws::v1::LOADING_STATE_READY && r.state().live_set_name() == "Zeta";
         if (!ready) std::this_thread::sleep_for(std::chrono::milliseconds(50));
       }
-      if (ok && !ready) fail2("the first Live Set never loaded");
-      if (ok && e2.slurp().find("holds no Live Set yet") == std::string::npos) fail2("the bootstrap line is missing");
+      if (ok && !ready) fail2("the created Live Set never loaded");
+      if (ok && e2.slurp().find("made an empty Live Set") == std::string::npos) fail2("the empty Live Set was not made at start");
     }
     e2.stop();
     if (ok) {
@@ -359,7 +362,7 @@ int main(int argc, char** argv) {
         fail2("restart on the bootstrapped directory");
       } else {
         ws::v1::ServerMessage r;
-        if (!hello(e2.fd) || !state(e2.fd, r) || r.state().live_set_name() != "First" || r.state().live_set_id() != first) fail2("the restart did not start on the created Live Set");
+        if (!hello(e2.fd) || !state(e2.fd, r) || r.state().live_set_name() != "Live Set" || r.state().live_set_id() != empty_id || r.state().live_set_id() == first) fail2("the restart did not start on the persisted empty Live Set");
       }
       e2.stop();
     }

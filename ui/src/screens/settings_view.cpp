@@ -100,6 +100,7 @@ bool SettingsView::create(lv_obj_t* parent) {
   build_computer_detail();
   build_system_update_detail();
   create_picker_modal();
+  create_boot_picker_modal();
 
   update_sidebar_ui();
   update_knob_cards_ui();
@@ -826,6 +827,11 @@ void SettingsView::select_param_in_picker(uint32_t param_id) {
 }
 
 void SettingsView::update_from_state(const ws::v1::State& state) {
+  if (!state.live_set_id().empty()) {  // the Live Set that sounds is always a choice for the Default Live Set picker
+    state_live_set_.id = state.live_set_id();
+    state_live_set_.name = state.live_set_name();
+    update_boot_default_label();
+  }
   if (state.has_encoders()) {
     const auto& enc = state.encoders();
     if (enc.assign_size() > 0) {
@@ -850,6 +856,23 @@ void SettingsView::update_from_state(const ws::v1::State& state) {
 }
 
 void SettingsView::on_panel_event(const PanelEvent& ev) {
+  if (boot_picker_open_) {  // Story 8.9: the default Live Set picker
+    const int32_t total = static_cast<int32_t>(boot_picker_ids_.size());
+    if (ev.type == PanelEventType::Encoder && ev.id == MCU_CTRL_VALUE_ENCODER) {
+      if (total > 0) {
+        boot_picker_row_ = std::clamp(boot_picker_row_ + ev.delta, 0, total - 1);
+        for (int32_t i = 0; i < static_cast<int32_t>(boot_picker_rows_.size()); ++i) boot_picker_rows_[i]->set_selected(i == boot_picker_row_);
+        if (boot_picker_row_ < static_cast<int32_t>(boot_picker_rows_.size()) && boot_picker_rows_[boot_picker_row_]->container())
+          lv_obj_scroll_to_view(boot_picker_rows_[boot_picker_row_]->container(), LV_ANIM_OFF);
+      }
+      return;
+    }
+    if (ev.type == PanelEventType::Button && ev.pressed) {
+      if ((ev.id == MCU_BTN_VALUE_PUSH || ev.id == MCU_BTN_WRITE) && boot_picker_row_ >= 0 && boot_picker_row_ < total) select_boot_live_set(boot_picker_ids_[boot_picker_row_]);
+      else if (ev.id == MCU_BTN_EXIT) close_boot_live_set_picker();
+    }
+    return;
+  }
   if (picker_open_) {
     if (ev.type == PanelEventType::Encoder && ev.id == MCU_CTRL_VALUE_ENCODER) {
       int32_t total = static_cast<int32_t>(picker_param_ids_.size());
@@ -1179,12 +1202,17 @@ void SettingsView::build_display_detail() {
     if (on_config_changed_) on_config_changed_(c);
   });
 
-  // 11. Boot into
+  // 11. Boot into (Story 8.9). Last sound used / Start of setlist / Default Live Set; with sysd the choice is a patch (the default Live Set through a picker).
   lv_obj_t* card_bi = create_setting_card_helper(display_container_, 824, 72);
   lv_obj_t* lbl_bi = lv_label_create(card_bi);
   lv_label_set_text(lbl_bi, tr("settings.display.boot_into").c_str());
   lv_obj_add_style(lbl_bi, Theme::style_text(), LV_PART_MAIN);
-  lv_obj_align(lbl_bi, LV_ALIGN_LEFT_MID, 8, 0);
+  lv_obj_align(lbl_bi, LV_ALIGN_LEFT_MID, 8, -10);
+
+  lbl_boot_default_ = lv_label_create(card_bi);
+  lv_label_set_text(lbl_boot_default_, "");
+  lv_obj_add_style(lbl_boot_default_, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_align(lbl_boot_default_, LV_ALIGN_LEFT_MID, 8, 14);
 
   seg_boot_into_.create(card_bi, {
     tr("settings.display.boot_last"),
@@ -1194,7 +1222,17 @@ void SettingsView::build_display_detail() {
   lv_obj_align(seg_boot_into_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
   seg_boot_into_.set_selected_index(cfg.boot_into);
   seg_boot_into_.set_on_change([this](int32_t idx) {
+    if (applying_sysd_) return;
     auto& c = SystemConfig::instance();
+    if (sysd_) {
+      // sysd is the single source of truth: Default Live Set needs a Live Set, so the picker comes first; the other two are a patch with only the mode.
+      if (idx == 2) {
+        open_boot_live_set_picker();
+      } else {
+        sysd_->request_boot_into(static_cast<uint8_t>(idx), std::string());
+      }
+      return;
+    }
     c.boot_into = static_cast<uint8_t>(idx);
     c.save_to_file();
     if (on_config_changed_) on_config_changed_(c);
@@ -1540,23 +1578,184 @@ void SettingsView::poll_sysd() {
   while (sysd_->poll(ev)) {
     auto& c = SystemConfig::instance();
     if (ev.kind == SysdConfigSender::Event::Kind::Config) {
-      const bool changed = c.clock_source != ev.clock_source;
+      const bool changed = ev.has_clock_source && c.clock_source != ev.clock_source;
       const bool first = !sysd_reported_;
       sysd_reported_ = true;
-      c.clock_source = ev.clock_source;  // the cache of sysd's value
-      if (changed) c.save_to_file();
+      if (ev.has_clock_source) c.clock_source = ev.clock_source;  // the cache of sysd's value
+      bool boot_changed = false;
+      if (ev.has_boot_into) {  // Story 8.9: the cache of sysd's Boot into
+        boot_changed = c.boot_into != ev.boot_into || boot_default_id_ != ev.default_live_set_id;
+        c.boot_into = ev.boot_into;
+        boot_default_id_ = ev.default_live_set_id;
+      }
+      if (changed || boot_changed) c.save_to_file();
       applying_sysd_ = true;
-      if (midi_clock_container_) seg_clock_source_.set_selected_index(static_cast<int32_t>(ev.clock_source));
+      if (midi_clock_container_ && ev.has_clock_source) seg_clock_source_.set_selected_index(static_cast<int32_t>(ev.clock_source));
+      if (ev.has_boot_into) seg_boot_into_.set_selected_index(static_cast<int32_t>(ev.boot_into));
       applying_sysd_ = false;
-      if ((changed || first) && on_config_changed_) on_config_changed_(c);  // the first report always, so the rest of the ui shows sysd's value even when equal to the cache
+      update_boot_default_label();
+      if ((changed || boot_changed || first) && on_config_changed_) on_config_changed_(c);  // the first report always, so the rest of the ui shows sysd's value even when equal to the cache
     } else {
       // The change did not reach sysd (absent, refused): the control goes back to the last value sysd reported, and the player is told.
       applying_sysd_ = true;
-      if (midi_clock_container_) seg_clock_source_.set_selected_index(static_cast<int32_t>(c.clock_source));
+      if (ev.setting == SysdConfigSender::Event::Setting::BootInto) {
+        seg_boot_into_.set_selected_index(static_cast<int32_t>(c.boot_into));
+      } else if (midi_clock_container_) {
+        seg_clock_source_.set_selected_index(static_cast<int32_t>(c.clock_source));
+      }
       applying_sysd_ = false;
-      if (on_notice_) on_notice_(tr(ev.unreachable ? "notice.clock_source_unreachable" : "notice.clock_source_refused"));
+      if (on_notice_) {
+        if (ev.setting == SysdConfigSender::Event::Setting::BootInto) on_notice_(tr(ev.unreachable ? "notice.boot_into_unreachable" : "notice.boot_into_refused"));
+        else on_notice_(tr(ev.unreachable ? "notice.clock_source_unreachable" : "notice.clock_source_refused"));
+      }
     }
   }
+}
+
+// ---- Story 8.9: Boot into, the default Live Set picker -----------------------------------------------------------------------------------------------
+
+void SettingsView::set_live_set_choices(std::vector<LiveSetChoice> choices) {
+  live_set_choices_ = std::move(choices);
+  update_boot_default_label();
+  if (boot_picker_open_) rebuild_boot_picker_rows();
+}
+
+void SettingsView::update_from_setlists_reply(const ws::v1::SetlistsReply& reply) {
+  std::vector<LiveSetChoice> c;
+  for (const auto& e : reply.all_live_sets())
+    if (!e.missing()) c.push_back({e.live_set_id(), e.name()});
+  set_live_set_choices(std::move(c));
+}
+
+std::vector<LiveSetChoice> SettingsView::all_live_set_choices() const {
+  std::vector<LiveSetChoice> out = live_set_choices_;
+  if (!state_live_set_.id.empty()) {
+    bool known = false;
+    for (const LiveSetChoice& c : out) known = known || c.id == state_live_set_.id;
+    if (!known) out.push_back(state_live_set_);
+  }
+  return out;
+}
+
+void SettingsView::update_boot_default_label() {
+  if (!lbl_boot_default_) return;
+  const auto& c = SystemConfig::instance();
+  std::string text;
+  if (c.boot_into == 2 && !boot_default_id_.empty()) {
+    std::string name = boot_default_id_;
+    for (const LiveSetChoice& ch : all_live_set_choices())
+      if (ch.id == boot_default_id_) name = ch.name;
+    text = tr("settings.display.boot_default_is");
+    const std::size_t at = text.find("%s");
+    if (at != std::string::npos) text.replace(at, 2, name);
+  }
+  lv_label_set_text(lbl_boot_default_, text.c_str());
+}
+
+void SettingsView::create_boot_picker_modal() {
+  const auto& p = Theme::current();
+  const auto& sp = Theme::spacing();
+  lv_obj_t* content = skeleton_.content_area();
+
+  boot_picker_backdrop_ = lv_obj_create(content);
+  lv_obj_set_size(boot_picker_backdrop_, 1024, 488);
+  lv_obj_set_pos(boot_picker_backdrop_, 0, 0);
+  lv_obj_set_scrollable(boot_picker_backdrop_, false);
+  lv_obj_set_style_bg_color(boot_picker_backdrop_, p.bg, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(boot_picker_backdrop_, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_set_style_border_width(boot_picker_backdrop_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(boot_picker_backdrop_, 0, LV_PART_MAIN);
+  lv_obj_set_hidden(boot_picker_backdrop_, true);
+
+  boot_picker_modal_ = lv_obj_create(boot_picker_backdrop_);
+  lv_obj_set_size(boot_picker_modal_, 560, 420);
+  lv_obj_center(boot_picker_modal_);
+  lv_obj_set_scrollable(boot_picker_modal_, false);
+  lv_obj_set_style_bg_color(boot_picker_modal_, p.surface, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(boot_picker_modal_, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(boot_picker_modal_, p.line_strong, LV_PART_MAIN);
+  lv_obj_set_style_border_width(boot_picker_modal_, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(boot_picker_modal_, Theme::radius().lg, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(boot_picker_modal_, sp.space_3, LV_PART_MAIN);
+
+  boot_picker_title_ = lv_label_create(boot_picker_modal_);
+  lv_label_set_text(boot_picker_title_, tr("settings.display.boot_picker_title").c_str());
+  lv_obj_add_style(boot_picker_title_, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(boot_picker_title_, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  boot_picker_list_ = lv_obj_create(boot_picker_modal_);
+  lv_obj_set_size(boot_picker_list_, 536, 340);
+  lv_obj_set_pos(boot_picker_list_, 0, 44);
+  lv_obj_set_scrollable(boot_picker_list_, true);
+  lv_obj_set_style_bg_opa(boot_picker_list_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(boot_picker_list_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(boot_picker_list_, 0, LV_PART_MAIN);
+
+  boot_picker_empty_ = lv_label_create(boot_picker_modal_);
+  lv_label_set_text(boot_picker_empty_, tr("settings.display.boot_picker_empty").c_str());
+  lv_obj_add_style(boot_picker_empty_, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_align(boot_picker_empty_, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_hidden(boot_picker_empty_, true);
+}
+
+void SettingsView::rebuild_boot_picker_rows() {
+  boot_picker_rows_.clear();
+  boot_picker_ids_.clear();
+  if (!boot_picker_list_) return;
+  lv_obj_clean(boot_picker_list_);
+  const auto& sp = Theme::spacing();
+  const std::vector<LiveSetChoice> choices = all_live_set_choices();
+  int32_t y = 0;
+  for (const LiveSetChoice& ch : choices) {
+    auto row = std::make_unique<ListRow>();
+    row->create(boot_picker_list_, 516, sp.touch_target_min);
+    row->set_title(ch.name.empty() ? ch.id : ch.name);
+    // Two different markers: the NOW PLAYING badge is the Live Set that sounds; the current default is the pre-selected row and carries the "Default" meta.
+    row->set_now_playing(ch.id == state_live_set_.id);
+    if (ch.id == boot_default_id_) row->set_meta(tr("settings.display.boot_default_marker"));
+    const std::string id = ch.id;
+    row->set_on_select([this, id](ListRow*) {
+      for (size_t i = 0; i < boot_picker_ids_.size(); ++i) boot_picker_row_ = boot_picker_ids_[i] == id ? static_cast<int32_t>(i) : boot_picker_row_;
+    });
+    row->set_on_confirm([this, id](ListRow*) { select_boot_live_set(id); });
+    if (row->container()) {
+      lv_obj_set_pos(row->container(), 0, y);
+      y += sp.touch_target_min + sp.space_2;
+    }
+    boot_picker_ids_.push_back(ch.id);
+    boot_picker_rows_.push_back(std::move(row));
+  }
+  boot_picker_row_ = 0;
+  for (size_t i = 0; i < boot_picker_ids_.size(); ++i)
+    if (boot_picker_ids_[i] == boot_default_id_) boot_picker_row_ = static_cast<int32_t>(i);
+  for (int32_t i = 0; i < static_cast<int32_t>(boot_picker_rows_.size()); ++i) boot_picker_rows_[i]->set_selected(i == boot_picker_row_);
+  if (boot_picker_empty_) lv_obj_set_hidden(boot_picker_empty_, !boot_picker_ids_.empty());
+}
+
+void SettingsView::open_boot_live_set_picker() {
+  if (on_request_live_sets_) on_request_live_sets_();  // the list refreshes when the engine's reply arrives (set_live_set_choices rebuilds the open picker)
+  rebuild_boot_picker_rows();
+  boot_picker_open_ = true;
+  if (boot_picker_backdrop_) lv_obj_set_hidden(boot_picker_backdrop_, false);
+}
+
+void SettingsView::close_boot_live_set_picker() {
+  const bool was_open = boot_picker_open_;
+  boot_picker_open_ = false;
+  if (boot_picker_backdrop_) lv_obj_set_hidden(boot_picker_backdrop_, true);
+  if (was_open) {  // nothing chosen: the control shows what sysd has
+    applying_sysd_ = true;
+    seg_boot_into_.set_selected_index(static_cast<int32_t>(SystemConfig::instance().boot_into));
+    applying_sysd_ = false;
+  }
+}
+
+void SettingsView::select_boot_live_set(const std::string& live_set_id) {
+  if (live_set_id.empty()) return;
+  boot_picker_open_ = false;
+  if (boot_picker_backdrop_) lv_obj_set_hidden(boot_picker_backdrop_, true);
+  // The choice is saved at once through sysd (mode and id in one patch: sysd refuses DEFAULT_LIVE_SET without an id); the control shows what sysd reports.
+  if (sysd_) sysd_->request_boot_into(2, live_set_id);
 }
 
 }  // namespace velora::ui

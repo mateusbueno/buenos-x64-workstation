@@ -10,6 +10,7 @@
 #include <cstring>
 #include <string_view>
 
+#include "velora/host/live_set_store.hpp"  // is_canonical_uuid
 #include "velora/host/sysd_config_client.hpp"  // default_config()
 
 namespace velora::sysd {
@@ -26,6 +27,10 @@ bool valid_live_set_id(const std::string& id) {
   }
   return true;
 }
+
+// Story 8.9: a Live Set id that is set now is the Live Set store's id format (a canonical UUID); empty clears it. A file written before this (legacy
+// [A-Za-z0-9_-]{1,64} values) still loads: valid_live_set_id() above is the loading rule, strict_live_set_id() the rule for patches and for the DEFAULT mode.
+bool strict_live_set_id(const std::string& id) { return id.empty() || host::liveset::is_canonical_uuid(id); }
 
 bool reject(Rejection& why, ws::v1::ErrorCode code, const char* field, const char* reason, const std::string& message) {
   why.code = code;
@@ -66,10 +71,10 @@ bool check_pedal(const ws::v1::PedalCalibration& p, const char* field, Rejection
   return true;
 }
 
-bool check_id(const std::string& id, Rejection& why) {
-  if (!valid_live_set_id(id))
+bool check_id(const std::string& id, bool strict, Rejection& why) {
+  if (strict ? !strict_live_set_id(id) : !valid_live_set_id(id))
     return reject(why, ws::v1::ERROR_CODE_INVALID_CONFIG, "boot_into.default_live_set_id", "bad_live_set_id",
-                  "default_live_set_id is empty or 1..64 characters of [A-Za-z0-9_-]");
+                  strict ? "default_live_set_id is empty or a Live Set id (a lowercase UUID)" : "default_live_set_id is empty or 1..64 characters of [A-Za-z0-9_-]");
   return true;
 }
 
@@ -77,8 +82,9 @@ bool check_boot_into(const ws::v1::BootIntoConfig& b, Rejection& why) {
   const int m = static_cast<int>(b.mode());
   if (m == 0 || !ws::v1::BootIntoMode_IsValid(m))
     return reject(why, ws::v1::ERROR_CODE_UNKNOWN_ENUM_VALUE, "boot_into.mode", "unknown_enum_value", "boot_into.mode is not a known value");
-  if (!check_id(b.default_live_set_id(), why)) return false;
-  if (b.mode() == ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET && b.default_live_set_id().empty())
+  const bool def = b.mode() == ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET;
+  if (!check_id(b.default_live_set_id(), def, why)) return false;  // a legacy id may stay while another mode is on; DEFAULT_LIVE_SET needs a real Live Set id
+  if (def && b.default_live_set_id().empty())
     return reject(why, ws::v1::ERROR_CODE_INVALID_CONFIG, "boot_into.default_live_set_id", "missing_live_set_id",
                   "Boot into DEFAULT_LIVE_SET needs a default_live_set_id");
   return true;
@@ -105,7 +111,7 @@ bool check_patch_fields(const ws::v1::ConfigPatch& p, Rejection& why) {
     const ws::v1::BootIntoPatch& b = p.boot_into();
     if (b.has_mode() && (b.mode() == 0 || !ws::v1::BootIntoMode_IsValid(static_cast<int>(b.mode()))))
       return reject(why, ws::v1::ERROR_CODE_UNKNOWN_ENUM_VALUE, "boot_into.mode", "unknown_enum_value", "boot_into.mode is not a known value");
-    if (b.has_default_live_set_id() && !check_id(b.default_live_set_id(), why)) return false;
+    if (b.has_default_live_set_id() && !check_id(b.default_live_set_id(), true, why)) return false;
   }
   return true;
 }
@@ -280,6 +286,11 @@ void ConfigStore::load() {
       p->set_min(0);
       p->set_max(0);
     }
+  }
+  // Story 8.9: DEFAULT_LIVE_SET with an id that is not a Live Set id (a legacy value, or none) cannot name a target: the file loads as LAST_SOUND (the id is kept).
+  if (norm.boot_into().mode() == ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET && (norm.boot_into().default_live_set_id().empty() || !strict_live_set_id(norm.boot_into().default_live_set_id()))) {
+    log("sysd: config file: boot_into DEFAULT_LIVE_SET with default_live_set_id '" + norm.boot_into().default_live_set_id() + "' that is not a Live Set id; loaded as LAST_SOUND");
+    norm.mutable_boot_into()->set_mode(ws::v1::BOOT_INTO_MODE_LAST_SOUND);
   }
   if (!valid_config(norm, &why)) {
     set_aside(".corrupt");

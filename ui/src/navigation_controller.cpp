@@ -261,6 +261,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     }
   });
 
+  settings_view_.set_on_request_live_sets([this]() { request_live_set_choices(); });
   settings_view_.set_on_notice([this](const std::string& msg) { notice_toast_.show(msg, ""); });
   settings_view_.set_on_config_changed([this](const SystemConfig& c) {
     show_clock_source(c.clock_source);  // follows sysd's value
@@ -496,7 +497,18 @@ void NavigationController::set_pending_edits(bool pending, bool has_timbre, cons
   performance_view_.set_live_set(performance_view_.live_set_name(), 0, pending);
 }
 
+bool NavigationController::request_live_set_choices() {
+  ws::v1::ClientMessage msg;
+  msg.set_request_id(104);
+  msg.mutable_get_setlists()->set_include_all_live_sets(true);
+  return command_fn_ && command_fn_(msg);
+}
+
 void NavigationController::update_from_state(const ws::v1::State& state) {
+  if (state.has_setlists() && state.setlists().available() && state.setlists().library_revision() != live_set_choices_revision_) {
+    live_set_choices_revision_ = state.setlists().library_revision();  // the Live Set list may have changed: ask again
+    request_live_set_choices();
+  }
   if (current_surface_ == SurfaceId::Boot) {
     if (state.loading().progress() > 0.0f) {
       boot_view_.set_progress(state.loading().progress());

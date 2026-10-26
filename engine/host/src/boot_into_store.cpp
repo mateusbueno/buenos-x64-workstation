@@ -161,6 +161,12 @@ void BootIntoTracker::mark_dirty(const Pointer& p) {
   dirty_ = true;
 }
 
+void BootIntoTracker::seed(const Pointer& p) {
+  if (!valid_pointer(p)) return;
+  observed_ = p;
+  have_observed_ = true;
+}
+
 void BootIntoTracker::observe(const Pointer& p) {
   if (!valid_pointer(p)) return;
   if (have_observed_ && observed_ == p) return;

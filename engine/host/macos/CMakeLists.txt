@@ -101,3 +101,10 @@ target_link_libraries(engine_host_sysd_smoke PRIVATE velora_sysdctl_client)
 add_dependencies(engine_host_sysd_smoke engine-host velora-sysd velora-sysdctl)
 add_test(NAME engine_host_sysd_smoke COMMAND engine_host_sysd_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-sysd> $<TARGET_FILE:velora-sysdctl>)
 set_tests_properties(engine_host_sysd_smoke PROPERTIES TIMEOUT 120)
+
+# Story 8.9: boot into the target (sysd boot_into + the Boot-into pointer) with the real engine-host, velora-sysd and velora-sysdctl. --no-audio.
+add_executable(engine_host_boot_smoke engine_host_boot_smoke.cpp)
+target_link_libraries(engine_host_boot_smoke PRIVATE velora_control)
+add_dependencies(engine_host_boot_smoke engine-host velora-sysd velora-sysdctl)
+add_test(NAME engine_host_boot_smoke COMMAND engine_host_boot_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-sysd> $<TARGET_FILE:velora-sysdctl> ${_ehs_dir}/switch ${_ehs_dir}/root ${_ehs_dir}/scenes.liveset)
+set_tests_properties(engine_host_boot_smoke PROPERTIES TIMEOUT 180)

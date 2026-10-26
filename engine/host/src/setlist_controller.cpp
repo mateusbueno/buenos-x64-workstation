@@ -642,6 +642,14 @@ bool SetlistController::run(const ClientMessage& msg, ws::v1::ServerMessage& rep
           if (e) x->set_name(e->name);
         }
       }
+      if (msg.get_setlists().include_all_live_sets()) {  // Story 8.9: All Live Sets, in the order stepping and the boot fallback use
+        for (const CatalogEntry& e : all_sorted()) {
+          ws::v1::SetlistEntry* x = r->add_all_live_sets();
+          x->set_live_set_id(e.id);
+          x->set_name(e.name);
+          x->set_missing(false);
+        }
+      }
       ok = true;
       break;
     }

@@ -438,6 +438,7 @@ message NextLiveSet {}                                            // reply StepR
 message PreviousLiveSet {}                                        // reply StepReply, or START_OF_SETLIST / EMPTY_SETLIST / LIVE_SET_LOAD_FAILED errors
 message GetSetlists {
   string setlist_id = 1;                                          // "" = summaries only; else also the ordered entries of that setlist (NO_SUCH_SETLIST)
+  bool include_all_live_sets = 2;                                 // Story 8.9: also fill SetlistsReply.all_live_sets (All Live Sets, for the Boot into picker)
 }
 
 message CreatedReply { string id = 1; string name = 2; bool not_durable = 3; }
@@ -466,6 +467,7 @@ message SetlistsReply {
   SetlistStatus status = 3;
   string detail_setlist_id = 4;          // the setlist `entries` belongs to ("" when GetSetlists named none)
   repeated SetlistEntry entries = 5;
+  repeated SetlistEntry all_live_sets = 6;  // Story 8.9: every Live Set in the catalog in All Live Sets order (name, case-insensitive ASCII, then id); only with include_all_live_sets; missing = false
 }
 
 // --- Story 4.9: edits, Write and the part commands that give them something to edit -----------------------------------------------------
@@ -629,7 +631,7 @@ message PedalCalibration {
 
 message BootIntoConfig {
   BootIntoMode mode = 1;
-  string default_live_set_id = 2;      // empty, or 1..64 characters of [A-Za-z0-9_-] (a Live Set id); required (non-empty) with DEFAULT_LIVE_SET
+  string default_live_set_id = 2;      // empty, or a Live Set id (a canonical lowercase UUID, Story 8.9; a legacy 1..64 [A-Za-z0-9_-] value already stored still loads, and with DEFAULT_LIVE_SET loads as LAST_SOUND); a UUID is required with DEFAULT_LIVE_SET
 }
 
 // The configuration sysd publishes. A field the reader does not know is ignored; a field absent from the wire has the default documented above.

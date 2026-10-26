@@ -58,6 +58,8 @@ class UiApp {
   std::mutex pending_mutex_;
   bool has_pending_state_{false};
   ws::v1::State pending_state_;
+  bool has_pending_setlists_{false};  // Story 8.9: the latest SetlistsReply (All Live Sets for the Boot into picker), applied on the UI thread
+  ws::v1::SetlistsReply pending_setlists_;
 };
 
 }  // namespace velora::ui

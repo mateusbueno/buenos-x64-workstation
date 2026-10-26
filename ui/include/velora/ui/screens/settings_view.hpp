@@ -2,6 +2,7 @@
 
 #include <lvgl.h>
 #include <string>
+#include <memory>
 #include <vector>
 #include <functional>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include "ws_v1.pb.h"
 #include "velora/ui/screens/surface_skeleton.hpp"
 #include "velora/ui/panel_event.hpp"
+#include "velora/ui/widgets/list_row.hpp"
 #include "velora/ui/widgets/segmented_control.hpp"
 #include "velora/ui/system_config.hpp"
 #include "velora/ui/sysd_config_sender.hpp"
@@ -40,6 +42,12 @@ struct InstalledLibraryInfo {
   bool in_use{false};
 };
 
+// A Live Set the Boot into picker can offer (Story 8.9).
+struct LiveSetChoice {
+  std::string id;
+  std::string name;
+};
+
 struct AssignableParamItem {
   uint32_t param_id{0};
   std::string name;
@@ -69,6 +77,19 @@ class SettingsView {
   // shows what sysd reports: SystemConfig::clock_source is only a cache of that value. poll_sysd() (UI thread, every tick) applies the reports.
   void set_sysd_sender(SysdConfigSender* sender) { sysd_ = sender; }
   void poll_sysd();
+  // Story 8.9: the Live Sets (All Live Sets, in the order to show) the Default Live Set picker lists. The Live Set that sounds (State) is always offered too.
+  void set_live_set_choices(std::vector<LiveSetChoice> choices);
+  void update_from_setlists_reply(const ws::v1::SetlistsReply& reply);  // the engine's answer to GetSetlists{include_all_live_sets}: all_live_sets are the choices
+  void set_on_request_live_sets(std::function<void()> cb) { on_request_live_sets_ = std::move(cb); }  // asks the engine for them (when the picker opens)
+  // Boot into with a sysd sender: Last sound used / Start of setlist are a patch with the mode only; Default Live Set opens the picker (open_boot_live_set_picker) and
+  // the choice is a patch with the mode and the id. The default Live Set id shown is the one sysd reported.
+  void open_boot_live_set_picker();
+  void close_boot_live_set_picker();
+  bool is_boot_picker_open() const noexcept { return boot_picker_open_; }
+  int32_t boot_picker_selected_row() const noexcept { return boot_picker_row_; }
+  size_t boot_picker_row_count() const noexcept { return boot_picker_ids_.size(); }
+  void select_boot_live_set(const std::string& live_set_id);  // the picker's choice: asks sysd (mode DEFAULT_LIVE_SET + id) and closes the picker
+  const std::string& default_live_set_id() const noexcept { return boot_default_id_; }  // sysd's value
   using NoticeCallback = std::function<void(const std::string& message)>;
   void set_on_notice(NoticeCallback cb) { on_notice_ = std::move(cb); }
 
@@ -138,7 +159,7 @@ class SettingsView {
   // Picker modal
   void open_param_picker(size_t slot_idx);
   void close_param_picker();
-  bool is_picker_open() const noexcept { return picker_open_; }
+  bool is_picker_open() const noexcept { return picker_open_ || boot_picker_open_; }
   void select_param_in_picker(uint32_t param_id);
   int32_t picker_selected_row() const noexcept { return picker_selected_row_; }
 
@@ -168,6 +189,10 @@ class SettingsView {
 
   void create_picker_modal();
   void update_picker_ui();
+  void create_boot_picker_modal();
+  void rebuild_boot_picker_rows();
+  void update_boot_default_label();
+  std::vector<LiveSetChoice> all_live_set_choices() const;
 
   WsClient* client_{nullptr};
   SurfaceSkeleton skeleton_;
@@ -239,6 +264,21 @@ class SettingsView {
   SegmentedControl seg_panel_guard_;
   SegmentedControl seg_reduced_motion_;
   SegmentedControl seg_boot_into_;
+  lv_obj_t* lbl_boot_default_{nullptr};
+  // Story 8.9: the default Live Set picker (a modal of List Rows)
+  bool boot_picker_open_{false};
+  int32_t boot_picker_row_{0};
+  lv_obj_t* boot_picker_backdrop_{nullptr};
+  lv_obj_t* boot_picker_modal_{nullptr};
+  lv_obj_t* boot_picker_title_{nullptr};
+  lv_obj_t* boot_picker_list_{nullptr};
+  lv_obj_t* boot_picker_empty_{nullptr};
+  std::vector<std::unique_ptr<ListRow>> boot_picker_rows_;
+  std::vector<std::string> boot_picker_ids_;
+  std::vector<LiveSetChoice> live_set_choices_;
+  std::function<void()> on_request_live_sets_;
+  LiveSetChoice state_live_set_;  // the Live Set that sounds, from State
+  std::string boot_default_id_;   // sysd's default_live_set_id (cache)
 
   // Keyboard & Pedals UI
   lv_obj_t* keyboard_pedals_container_{nullptr};

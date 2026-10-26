@@ -96,3 +96,7 @@ deferred:
 Summary: Boot-into pointer store (CRC text file, atomic write with fault hooks), dirty/idle-safe tracker, RT held-note/pedal publishing, wiring in engine-host. Boot-time read is Story 8.9.
 Verification: targeted ctest all pass; core deps check passes.
 Residual risks: RTSan not run; import-verify signal not connected.
+
+## Story 8.9 follow-up note
+
+The frozen pointer format cannot represent "no scene recalled": the engine-host tick records a Live Set on its base as scene 0, and a LAST_SOUND boot (Story 8.9) recalls scene 1.

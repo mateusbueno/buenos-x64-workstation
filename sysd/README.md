@@ -51,8 +51,8 @@ bytes; HelloAck feature `config.v1`). The socket is created 0600.
 them; sysd answers every engine command the same way): the servers are not mixed.
 
 Typed errors (nothing changes, nothing is pushed): unknown / unspecified enum value -> `UNKNOWN_ENUM_VALUE` (`details.field`); pedal min or max above 4095 ->
-`OUT_OF_RANGE`; pedal `min >= max` (0/0 means uncalibrated), a calibrated pedal whose `max - min` is under 256 counts (`details.reason = span_too_small`, `details.min_span`; Story 3.11), a bad Live Set id (empty, or 1..64 characters of `[A-Za-z0-9_-]`) or Boot into DEFAULT_LIVE_SET
-without an id -> `INVALID_CONFIG` (new, 41; `details.field`, `details.reason`); an empty patch -> `INVALID_COMMAND` (`reason=empty_patch`); persist failures as above.
+`OUT_OF_RANGE`; pedal `min >= max` (0/0 means uncalibrated), a calibrated pedal whose `max - min` is under 256 counts (`details.reason = span_too_small`, `details.min_span`; Story 3.11), a bad Live Set id (a patch's `default_live_set_id` must be empty or a canonical lowercase UUID, the Live Set store's id format; Story 8.9) or Boot into DEFAULT_LIVE_SET
+without a UUID id -> `INVALID_CONFIG` (new, 41; `details.field`, `details.reason`); an empty patch -> `INVALID_COMMAND` (`reason=empty_patch`); persist failures as above.
 
 `revision` is persisted and strictly increases with every change; SetConfig is serialised under one mutex (single writer), so two concurrent SetConfig never
 interleave. Every reply and push is produced inside the call that made the change, so subscribers get the config well within 100 ms (the service tests assert
@@ -131,6 +131,23 @@ velora-sysdctl --socket /run/velora/sysd.sock set sustain 500,3800              
   them from the next pedal frame (a held pedal is re-mapped at once), no restart. **Persistence** is sysd's file (tests: `sysd_pedal_calibration_test`, real sysd in a temp dir, restarted).
 - sysd absent: the engine runs uncalibrated in the raw direction; a calibration then ends `SYSD_UNAVAILABLE` and stores nothing.
 
+## Boot into (Story 8.9): how `boot_into` flows
+
+`boot_into {mode, default_live_set_id}` (LAST_SOUND default / START_OF_SETLIST / DEFAULT_LIVE_SET) says where the unit starts after power-on.
+
+- **ui -> sysd**: Settings > Display & Language > Boot into (Segmented Control: Last sound used / Start of setlist / Default Live Set) asks through the same `SysdConfigSender`
+  (`request_boot_into`): the first two are a patch with only `boot_into.mode`; Default Live Set opens a List Row picker of All Live Sets (the engine answers `GetSetlists{include_all_live_sets}` with `all_live_sets`, asked when the picker opens and when the setlist library revision changes; the Live Set that sounds is marked NOW PLAYING and the current default carries a "Default" meta) and the choice is one patch with the
+  mode and the id, saved at once. The row shows the value sysd reports; a request that cannot be delivered or is refused is a notice and the row goes back.
+- **sysd -> engine**: at start only (a change applies at the next boot). `engine-host --data-dir` reads the first config with a **bounded wait**
+  (`boottarget::kSysdBootWaitMs`, 1500 ms, a short-lived client of its own); without an answer in time the boot uses the defaults (LAST_SOUND) and is logged; "never stalls" holds up to that bound, which adds to the boot time when sysd is absent (Story 8.10) and a sysd that starts after the engine boots LAST_SOUND (order the units with `After=velora-sysd.service`). The
+  engine's long-lived client still delivers the config to its callback afterwards.
+- **Resolution** (`velora/host/boot_target.hpp`, pure, deterministic; the Boot-into pointer of Story 8.8 is the other input): LAST_SOUND = the pointer's Live Set and scene with its setlist
+  loaded; START_OF_SETLIST = the first Live Set of the pointer's setlist at scene 1 with that setlist loaded; DEFAULT_LIVE_SET = `default_live_set_id` at scene 1 with no setlist
+  loaded. A missing, deleted or invalid target, no / corrupt pointer, a deleted or empty setlist all end on the first Live Set of All Live Sets (the stepping order), each reason
+  logged (`boot target: ...`); an empty library gets an empty new Live Set. A missing library is not a fallback: the Live Set loads and the affected parts show Missing library.
+- **Pointer**: the tracker starts after the target is applied and the boot position is its baseline (`BootIntoTracker::seed`), so the stored pointer is not overwritten by it; only
+  a real user change makes it dirty. Details and tests: `engine/host/README.md` (Boot target).
+
 ## Deployment and limits (read before relying on it)
 
 - The socket is created **0600**: `engine` and `ui` must run as the sysd user, or the deployment must decide a group arrangement (not done here).
@@ -139,13 +156,13 @@ velora-sysdctl --socket /run/velora/sysd.sock set sustain 500,3800              
 - The N-1 stamp path in `ConfigStore::apply()` and `migrate()` both consult `slot_good`; they must stay consistent (one probe, one meaning).
 - Config values received by the client are **not validated** on the engine side: sysd validates, but consumers (Stories 3.6, 3.11, 7.7, 8.9) must treat what they
   read defensively (unknown enum values, a calibration that is not min < max, a Live Set id that no longer exists).
-- Deferred on purpose: the persist (fsync) runs on the server's poll thread; the Live Set id format stays `[A-Za-z0-9_-]{1,64}` until Story 8.9 tightens it to a
-  UUID. (Story 3.11 fixed the minimum span of a pedal calibration: 256 counts, validated by sysd and again by the engine, which treats a narrower range as uncalibrated.)
+- Deferred on purpose: the persist (fsync) runs on the server's poll thread. (Story 8.9 tightened `default_live_set_id` to a UUID: patches refuse anything else; a legacy
+  `[A-Za-z0-9_-]{1,64}` value already stored still loads, and with DEFAULT_LIVE_SET it loads as LAST_SOUND with a logged note, the id kept. Story 3.11 fixed the minimum span of a pedal calibration: 256 counts, validated by sysd and again by the engine, which treats a narrower range as uncalibrated.)
 - `velora-sysdctl` waits up to 10 s per request (`VELORA_SYSDCTL_TIMEOUT_MS` overrides).
 
 ## Not covered here
 
-- Behaviour exists for clock source (7.7), velocity curve (3.6) and pedals (3.11); Boot into (8.9) is only logged by the engine wiring.
+- Behaviour exists for clock source (7.7), velocity curve (3.6), pedals (3.11) and Boot into (8.9).
 - The ui `SystemConfig` JSON (`ui/src/system_config.cpp`: theme, language, brightness, ...) is **not migrated**: it stays in the ui for now. Moving it into
   `SysdConfig` (and the ui reading it from sysd) is a follow-up.
 - The `ui` as a client of sysd (this foundation delivers the engine client and the CLI).

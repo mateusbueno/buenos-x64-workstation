@@ -100,6 +100,9 @@ class BootIntoTracker {
 
   // The current position changed: dirty in memory, no file access. Ignored when invalid (no Live Set) or identical to what is already pending.
   void mark_dirty(const Pointer& p);
+  // Story 8.9: the position the engine BOOTED on is the baseline, not a change: it is recorded as already seen, nothing becomes dirty, so the stored pointer is
+  // left exactly as it was until a real user change (a boot that fell back, or START_OF_SETLIST / DEFAULT_LIVE_SET, never rewrites it by itself).
+  void seed(const Pointer& p);
   // Polled from the control tick with the current position: marks dirty when it differs from the last one seen.
   void observe(const Pointer& p);
 
