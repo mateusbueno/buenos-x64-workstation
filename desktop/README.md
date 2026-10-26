@@ -64,7 +64,64 @@ glyph in warn when the timbre's library is missing, and an `OFF` tag instead of 
 - **Deferred.** Accessibility: the ◆ tooltip (`title`) is mouse-only (its text is the `aria-label`'s sibling, not reachable by keyboard focus); the grids' `role="row"` elements use
   `display: contents`, which some WKWebView versions drop from the accessibility tree (to be checked on the target webview). `State.edits.dirty_live_set_ids` lists at most 128 Live Sets, so a Live
   Set that does not sound and is past that cap may lose its ◆. A Pro unit's 16 parts: the first 8 are shown with a note (the reply carries all 16: `LiveSetViewReply.part_count`); a 16-part Studio layout is a later story. Add timbre (Story 9.11) is a
-  disabled placeholder with a tooltip. Setlist editing is Story 9.13. The category of a part comes from the bundle's `category` file (formatlib), so a protected library whose bundle has none shows no category.
+  disabled placeholder with a tooltip. Setlist editing is the Setlists view below (Story 9.13). The category of a part comes from the bundle's `category` file (formatlib), so a protected library whose bundle has none shows no category.
 
 Try it without a unit: serve `desktop/src` over http with a stub for `window.__TAURI__` (`core.invoke` answering `device_status`, `device_state` and `device_request`; `event.listen` for
 `device://status` / `device://state`) and open it in a browser; this is how the page was checked visually (stage and studio themes, pt-BR, keyboard, deltas, error banner, offline fallback).
+
+## Setlists view (Story 9.13)
+
+While the unit is **paired**, SETLISTS > **Manage setlists** (sidebar, disabled with the offline hint otherwise) opens the Setlists view in the main area: the setlists on the left
+(name, tag chips, Live Set count, missing count, a **LOADED** marker) and, for the selected one, its Live Sets in order on the right (name, a `missing` flag for entries whose Live Set no
+longer exists: kept, flagged, removable, never in the way of reordering). Choosing a Live Set in the sidebar, or **Close**, goes back to the Live Set view.
+
+- **What it does.** Create / rename / delete / reorder setlists; add (from All Live Sets), remove and reorder Live Sets inside a setlist; move a Live Set to another setlist or position;
+  create a Live Set (8 empty parts, one scene) and optionally add it to the selected setlist; create / rename / delete tags and set a setlist's tags (at most 8). Every change is the **same
+  ws.v1 control-thread command the unit's screen sends** (`CreateSetlist`, `RenameSetlist`, `ReorderSetlists`, `DeleteSetlist`, `AddLiveSetToSetlist`, `RemoveLiveSetFromSetlist`,
+  `ReorderLiveSetsInSetlist`, `CreateLiveSet`, `CreateTag`, `RenameTag`, `DeleteTag`, `SetSetlistTags`; `GetSetlists` reads) and is persisted by the engine exactly as the unit persists it.
+  It never sends `LoadSetlist`, `UnloadSetlist`, a step, a Jump, a Recall, a Write or `DeleteLiveSet`: **removing a Live Set from a setlist never deletes the Live Set**, and deleting a
+  setlist never deletes its Live Sets. Every message it sends has a row in the bridge's message table (`liveset.v1`, routed to the engine; the bridge serves that table only to a paired computer), and `setlists_view.test.js` checks that; the stand-in engine used by the tests also throws on any other message name, so every test asserts at run time that no Load / Step / Jump / Recall / Write was sent.
+- **Optimistic, rolled back, always converged.** Reorders, renames, removals and tag changes show at once, are sent one command at a time (a queue), and are restored from a snapshot when
+  the reply is an error (typed, shown inline: limit reached with its numbers, name refused, order no longer valid, ...). After the last queued change the library is **read again**
+  (`GetSetlists` with the selected setlist and All Live Sets), so the view always ends on the engine's order. A read reply that arrives while a change is pending is dropped. The error of a
+  refused command stays until the next change succeeds (a good re-read clears only a read error). While open, `State.setlists.library_revision` / the loaded setlist move the view to a
+  throttled re-read (the selection is kept while the setlist still exists), so a change made on the unit shows up.
+- **Full permutations.** `ReorderSetlists` carries all setlist ids and `ReorderLiveSetsInSetlist` the whole ordered list, never a partial one (the engine refuses those with
+  `INVALID_ORDER`; the tests send one on purpose).
+- **Move to another setlist is two commands.** `AddLiveSetToSetlist` (target, at the start with `index: 0`, or at the end with no index) **then** `RemoveLiveSetFromSetlist` (source). The
+  engine has no atomic move (the unit's setlist screen, `ui/src/screens/setlist_view.cpp`, has no cross-setlist move to copy), so if the Add succeeds and the Remove fails the Live Set is in **both** setlists (never in neither); the
+  view says so ("partial move") and the re-read shows exactly that. A Live Set the target already holds is listed disabled when the view knows it (it knows the selected setlist and the ones it
+  moved into); otherwise the engine's `DUPLICATE_LIVE_SET_IN_SETLIST` is shown.
+- **Names.** Trimmed client-side, then 1..64 UTF-8 **bytes**, valid text, no control characters (the store's rule); limits 100 setlists, 64 tags, 256 Live Sets per setlist, 8 tags per setlist
+  (`LIMITS` in `setlists_view.js`). Violations of the name rule are shown in the dialog and never sent; the other limits are checked from what was last read and the engine stays the authority
+  (its typed error is shown). Names from the device are drawn with `textContent` only.
+- **Keyboard.** Both lists are `role="listbox"` with a roving tabindex: Up / Down / Home / End move the focus, **Enter / Space select** (a setlist shows its Live Sets; a Live Set becomes the target
+  of Move to... and Remove), **Alt+Up / Alt+Down move the focused row** (setlist or Live Set), F2 renames a setlist, Delete or Backspace (the Delete key of a Mac's main keyboard) deletes a setlist / removes a Live Set (both ask first, Cancel has the
+  focus; the focus then lands on the row now at that place, or on the list's button when it is empty), **Alt+M** (or the context-menu key / Shift+F10) opens **Move to...** on a Live Set, a labelled `role="menu"` (Up / Down / Home / End, Enter, Escape returns the focus): positions of
+  this setlist, then "Setlist: at the start / at the end" for every other setlist. **Add Live Set...** is the same kind of menu over the Live Sets not yet in the setlist. Dialogs
+  (`role="dialog"`, `aria-modal`) trap Tab and close on Escape. Every result is announced in the polite live region ("Moved Song X to position 3 of 12", "Moved X to Y", "Already first", ...);
+  errors are a `role="alert"`.
+- **Mouse.** HTML5 drag and drop: every row is `draggable` and has a handle glyph labelled "Drag to reorder X" (a `role="img"` label, not a control: **Alt+Up / Alt+Down and Move to... are the real non-mouse equivalents**); a 2 px accent line shows the gap the row would land in (before /
+  after the row under the pointer), and a Live Set dropped on another setlist's row (dashed outline) moves it to the end of that setlist. A drop on the gap next to itself sends nothing. A render
+  that arrives under a drag in progress is deferred until it ends.
+- **Layout and strings.** Sizes in rem, token colours, the global 2 px focus ring; rows wrap and the two columns become one when the main area is narrower than two 22 rem columns (written to avoid horizontal scroll; **not verified at 200 % text**). Every string is a `studio.setlists.*` key in en / es / pt-BR (`locale/*.json`, embedded in `src/catalogs.js`; `tests/catalogs.test.js` checks that every key the two modules
+  use exists in all three).
+- **Code.** `src/setlists_view.js` (pure: limits, name validation, ordering and permutation helpers, `moveTargets`, request builders, `parseReply`, `errorMessage`, `SetlistsController`),
+  `src/setlists_dom.js` (`SetlistsView`: lists, keyboard, drag and drop, menus, dialogs, tag editor), wired in `src/app.js` (`setlistsCtl`, `openSetlistsView`). Tests: `cd desktop && node --test tests`
+  (`setlists_view.test.js` against `tests/support/fake_engine.js`, a stand-in with the store's limits and typed errors; `setlists_dom.test.js` with a DOM shim: keyboard moves, drag simulation,
+  hostile names, dialogs, tags, disabled state); `cargo test setlist` (the page's JSON for every command maps onto the real `ClientMessage`, and the replies come back as the JSON it parses);
+  `ctest -R engine_host_bridge` (the real engine through the real bridge: create, rename, reorder, tag, add / remove, create Live Set with the Rust client and the C++ client, then **an engine restart
+  on the same data directory** and a read-back; it fails when the engine lists fewer than two setlists, so an empty read can not pass).
+- **Deferred.** Loading / stepping a setlist and Live Set editing stay out of this view (Stories 9.9-9.12). No undo. A Live Set's membership in setlists other than the ones this session has
+  read is not known up front (the engine's duplicate error covers it). Drag and drop is mouse only (touch / pen drags rely on the webview's HTML5 support); the keyboard and Move to... are the
+  equivalent for everything else. Tags have no colour (the store has none).
+
+Smoke-viewed (not a full visual check) in the browser pane at about 800 px wide, dark theme, against a stub: the list layout, Alt+Down with its live-region text, the Move to menu and the tag dialog. Not checked in the real Tauri webview, in the light theme or at 200 % text. To repeat it without a unit: serve `desktop/src` over http with a stub for `window.__TAURI__` whose `device_request` is answered by `tests/support/fake_engine.js` (paired status, a State with
+`setlists.library_revision`), open it, then SETLISTS > Manage setlists.
+
+- **Tauri and drag and drop.** On Windows, Tauri's native file-drop handler (`dragDropEnabled`, on by default) swallows HTML5 drag events in the webview, so mouse reordering needs
+  `"dragDropEnabled": false` on the window in `tauri.conf.json` (not set here: it is a Windows-only concern and the keyboard path works everywhere). Not tested on Windows.
+- **Also deferred (Story 9.13 review):** a warning when the setlist being deleted is the loaded one on the unit; `select()` clears the shown entries before its read, so a failed read leaves an
+  empty list (with the error) until the next refresh; `inert` / `aria-hidden` on the page behind a dialog or menu (focus is trapped, screen-reader virtual cursors are not); the `dragleave`
+  flicker of the drop indicator in WebKit; a right-click context menu (the keyboard has Alt+M / the context-menu key); bidirectional and zero-width characters in names (the store accepts them,
+  the view draws them as given); two announcements in one tick (the live region keeps only the last).

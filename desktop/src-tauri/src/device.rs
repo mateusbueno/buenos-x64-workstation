@@ -1244,6 +1244,74 @@ mod tests {
         assert_eq!(serde_json::to_value(&e).unwrap()["body"]["Error"]["code"], ErrorCode::NoSuchLiveSet as i32);
     }
 
+    /// Story 9.13: every setlist command Studio's Setlists view sends, as the JSON the page builds (setlists_view.js `req`), maps onto the real ClientMessage (absent `index`
+    /// = append), and the replies it reads (SetlistsReply with tag ids and missing counts, CreatedReply, a typed Error with details) come back as the JSON it parses.
+    #[test]
+    fn setlist_messages_map_to_json() {
+        use crate::ws_v1::{CreatedReply, SetlistEntry, SetlistSummary, SetlistTagInfo, SetlistsReply};
+        let parse = |v: serde_json::Value| -> ClientMessage { serde_json::from_value(v).expect("the page's JSON must map onto a ClientMessage") };
+        assert!(matches!(parse(serde_json::json!({"body": {"CreateSetlist": {"name": "A"}}})).body, Some(CBody::CreateSetlist(ref m)) if m.name == "A"));
+        assert!(matches!(parse(serde_json::json!({"body": {"RenameSetlist": {"id": "s", "name": "B"}}})).body, Some(CBody::RenameSetlist(ref m)) if m.id == "s" && m.name == "B"));
+        assert!(matches!(parse(serde_json::json!({"body": {"ReorderSetlists": {"ids": ["b", "a"]}}})).body, Some(CBody::ReorderSetlists(ref m)) if m.ids == vec!["b", "a"]));
+        assert!(matches!(parse(serde_json::json!({"body": {"DeleteSetlist": {"id": "s"}}})).body, Some(CBody::DeleteSetlist(ref m)) if m.id == "s"));
+        assert!(matches!(parse(serde_json::json!({"body": {"AddLiveSetToSetlist": {"setlist_id": "s", "live_set_id": "l"}}})).body, Some(CBody::AddLiveSetToSetlist(ref m)) if m.index.is_none()));
+        assert!(matches!(parse(serde_json::json!({"body": {"AddLiveSetToSetlist": {"setlist_id": "s", "live_set_id": "l", "index": 0}}})).body, Some(CBody::AddLiveSetToSetlist(ref m)) if m.index == Some(0)));
+        assert!(matches!(parse(serde_json::json!({"body": {"RemoveLiveSetFromSetlist": {"setlist_id": "s", "live_set_id": "l"}}})).body, Some(CBody::RemoveLiveSetFromSetlist(_))));
+        assert!(matches!(parse(serde_json::json!({"body": {"ReorderLiveSetsInSetlist": {"setlist_id": "s", "live_set_ids": ["x", "y"]}}})).body, Some(CBody::ReorderLiveSetsInSetlist(ref m)) if m.live_set_ids.len() == 2));
+        assert!(matches!(parse(serde_json::json!({"body": {"CreateLiveSet": {"name": "L"}}})).body, Some(CBody::CreateLiveSet(_))));
+        assert!(matches!(parse(serde_json::json!({"body": {"CreateTag": {"name": "T"}}})).body, Some(CBody::CreateTag(_))));
+        assert!(matches!(parse(serde_json::json!({"body": {"RenameTag": {"id": "t", "name": "U"}}})).body, Some(CBody::RenameTag(_))));
+        assert!(matches!(parse(serde_json::json!({"body": {"DeleteTag": {"id": "t"}}})).body, Some(CBody::DeleteTag(_))));
+        assert!(matches!(parse(serde_json::json!({"body": {"SetSetlistTags": {"setlist_id": "s", "tag_ids": ["t"]}}})).body, Some(CBody::SetSetlistTags(ref m)) if m.tag_ids == vec!["t"]));
+        assert!(matches!(parse(serde_json::json!({"body": {"GetSetlists": {"setlist_id": "s", "include_all_live_sets": true}}})).body, Some(CBody::GetSetlists(ref m)) if m.include_all_live_sets));
+        // Replies.
+        let reply = ServerMessage {
+            request_id: 3,
+            revision: 9,
+            body: Some(SBody::SetlistsReply(SetlistsReply {
+                setlists: vec![SetlistSummary { id: "s1".into(), name: "Friday".into(), tag_ids: vec!["t1".into()], live_set_count: 3, missing_count: 1, loaded: true }],
+                tags: vec![SetlistTagInfo { id: "t1".into(), name: "Gig".into() }],
+                status: Some(crate::ws_v1::SetlistStatus { available: true, loaded_setlist_id: "s1".into(), library_revision: 41, ..Default::default() }),
+                detail_setlist_id: "s1".into(),
+                entries: vec![SetlistEntry { live_set_id: "l1".into(), name: "Alpha".into(), missing: false }, SetlistEntry { live_set_id: "l2".into(), name: String::new(), missing: true }],
+                all_live_sets: vec![SetlistEntry { live_set_id: "l1".into(), name: "Alpha".into(), missing: false }],
+            })),
+        };
+        let back = ServerMessage::decode(reply.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(back, reply);
+        let j = serde_json::to_value(&back).unwrap();
+        let v = &j["body"]["SetlistsReply"];
+        assert_eq!(v["setlists"][0]["tag_ids"][0], "t1");
+        assert_eq!(v["setlists"][0]["live_set_count"], 3);
+        assert_eq!(v["setlists"][0]["missing_count"], 1);
+        assert_eq!(v["setlists"][0]["loaded"], true);
+        assert_eq!(v["tags"][0]["name"], "Gig");
+        assert_eq!(v["status"]["library_revision"], 41);
+        assert_eq!(v["status"]["loaded_setlist_id"], "s1");
+        assert_eq!(v["detail_setlist_id"], "s1");
+        assert_eq!(v["entries"][1]["missing"], true);
+        assert_eq!(v["all_live_sets"][0]["live_set_id"], "l1");
+        let created = serde_json::to_value(ServerMessage { request_id: 4, revision: 0, body: Some(SBody::CreatedReply(CreatedReply { id: "new".into(), name: "N".into(), not_durable: true })) }).unwrap();
+        assert_eq!(created["body"]["CreatedReply"]["id"], "new");
+        assert_eq!(created["body"]["CreatedReply"]["not_durable"], true);
+        let mut details = std::collections::HashMap::new();
+        details.insert("limit_name".to_string(), "tags_per_setlist".to_string());
+        details.insert("limit".to_string(), "8".to_string());
+        let e = serde_json::to_value(ServerMessage {
+            request_id: 5,
+            revision: 0,
+            body: Some(SBody::Error(crate::ws_v1::Error { code: ErrorCode::LimitReached as i32, message: "limit".into(), details })),
+        })
+        .unwrap();
+        assert_eq!(e["body"]["Error"]["code"], ErrorCode::LimitReached as i32);
+        assert_eq!(e["body"]["Error"]["code"], 29);
+        assert_eq!(e["body"]["Error"]["details"]["limit_name"], "tags_per_setlist");
+        // the ErrorCode numbers setlists_view.js switches on
+        for (c, n) in [(ErrorCode::NoSuchLiveSet, 20), (ErrorCode::NoSuchSetlist, 22), (ErrorCode::NoSuchTag, 23), (ErrorCode::DuplicateLiveSetInSetlist, 24), (ErrorCode::InvalidName, 25), (ErrorCode::LimitReached, 29), (ErrorCode::LiveSetInUse, 30), (ErrorCode::InvalidOrder, 31), (ErrorCode::LiveSetNotInSetlist, 32), (ErrorCode::StorageFailed, 33)] {
+            assert_eq!(c as i32, n);
+        }
+    }
+
     /// Against a REAL bridge (sysd --bridge-port ... with a real engine-host). Skipped unless VELORA_TEST_BRIDGE=host:port and VELORA_TEST_PAIRING_CODE are set.
     #[test]
     fn real_bridge_round_trip() {
@@ -1296,8 +1364,76 @@ mod tests {
                 assert_eq!(c.latest_state().map(|s| s["revision"].clone()), rev_before);
             }
         }
+        real_setlists_flow(&c);
         eprintln!("real_bridge_round_trip: status {:?}", c.status());
         c.disconnect();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// Story 9.13 against a REAL bridge and engine (called by real_bridge_round_trip with its paired client: the bridge's pairing window closes at the first pairing, so
+    /// there is one client): the commands of the Setlists view, sent as the page's JSON, then read back. The setlist it leaves behind ("Studio Smoke Setlist": Studio
+    /// Smoke B then Studio Smoke A, tagged "Studio Smoke Tag") is what the C++ smoke checks after restarting the engine.
+    fn real_setlists_flow(c: &DeviceClient) {
+        // JSON in, JSON out: exactly what window.veloraDevice.request does.
+        let call = |v: serde_json::Value| -> serde_json::Value {
+            let m: ClientMessage = serde_json::from_value(v).expect("page JSON maps onto a ClientMessage");
+            serde_json::to_value(c.request(m, Duration::from_secs(5)).expect("a reply")).unwrap()
+        };
+        let created = |v: serde_json::Value| -> String {
+            let r = call(v);
+            r["body"]["CreatedReply"]["id"].as_str().unwrap_or_else(|| panic!("expected CreatedReply, got {}", r)).to_string()
+        };
+        let ok = |v: serde_json::Value| {
+            let r = call(v);
+            assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        };
+        let read = |setlist: &str| call(serde_json::json!({"body": {"GetSetlists": {"setlist_id": setlist, "include_all_live_sets": true}}}))["body"]["SetlistsReply"].clone();
+        let la = created(serde_json::json!({"body": {"CreateLiveSet": {"name": "Studio Smoke A"}}}));
+        let lb = created(serde_json::json!({"body": {"CreateLiveSet": {"name": "Studio Smoke B"}}}));
+        let sl = created(serde_json::json!({"body": {"CreateSetlist": {"name": "Studio Smoke Draft"}}}));
+        let other = created(serde_json::json!({"body": {"CreateSetlist": {"name": "Studio Smoke Other"}}}));
+        ok(serde_json::json!({"body": {"AddLiveSetToSetlist": {"setlist_id": sl, "live_set_id": la}}}));
+        ok(serde_json::json!({"body": {"AddLiveSetToSetlist": {"setlist_id": sl, "live_set_id": lb, "index": 0}}})); // at index 0
+        let r = read(&sl);
+        assert_eq!(r["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect::<Vec<_>>(), vec!["Studio Smoke B", "Studio Smoke A"]);
+        // a duplicate and an unknown setlist are typed errors the page shows inline
+        let dup = call(serde_json::json!({"body": {"AddLiveSetToSetlist": {"setlist_id": sl, "live_set_id": la}}}));
+        assert_eq!(dup["body"]["Error"]["code"], 24);
+        let unknown = call(serde_json::json!({"body": {"RenameSetlist": {"id": "no-such", "name": "x"}}}));
+        assert_eq!(unknown["body"]["Error"]["code"], 22);
+        // the full permutation: Live Sets, then setlists
+        ok(serde_json::json!({"body": {"ReorderLiveSetsInSetlist": {"setlist_id": sl, "live_set_ids": [la, lb]}}}));
+        ok(serde_json::json!({"body": {"ReorderLiveSetsInSetlist": {"setlist_id": sl, "live_set_ids": [lb, la]}}}));
+        let bad = call(serde_json::json!({"body": {"ReorderLiveSetsInSetlist": {"setlist_id": sl, "live_set_ids": [lb]}}}));
+        assert_eq!(bad["body"]["Error"]["code"], 31); // never partial
+        let all_ids: Vec<String> = read("")["setlists"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap().to_string()).collect();
+        assert!(all_ids.len() >= 2, "the engine lists the setlists just created");
+        let mut rev = all_ids.clone();
+        rev.reverse();
+        ok(serde_json::json!({"body": {"ReorderSetlists": {"ids": rev}}}));
+        assert_eq!(read("")["setlists"][0]["id"], serde_json::json!(rev[0]));
+        // a cross-setlist move as Studio does it: Add to the target, then Remove from the source
+        ok(serde_json::json!({"body": {"AddLiveSetToSetlist": {"setlist_id": other, "live_set_id": la}}}));
+        ok(serde_json::json!({"body": {"RemoveLiveSetFromSetlist": {"setlist_id": sl, "live_set_id": la}}}));
+        assert_eq!(read(&other)["entries"][0]["name"], "Studio Smoke A");
+        ok(serde_json::json!({"body": {"AddLiveSetToSetlist": {"setlist_id": sl, "live_set_id": la}}}));
+        ok(serde_json::json!({"body": {"RemoveLiveSetFromSetlist": {"setlist_id": other, "live_set_id": la}}}));
+        // tags
+        let tag = created(serde_json::json!({"body": {"CreateTag": {"name": "Studio Smoke Tag draft"}}}));
+        ok(serde_json::json!({"body": {"RenameTag": {"id": tag, "name": "Studio Smoke Tag"}}}));
+        ok(serde_json::json!({"body": {"SetSetlistTags": {"setlist_id": sl, "tag_ids": [tag]}}}));
+        ok(serde_json::json!({"body": {"RenameSetlist": {"id": sl, "name": "Studio Smoke Setlist"}}}));
+        ok(serde_json::json!({"body": {"DeleteSetlist": {"id": other}}}));
+        let r = read(&sl);
+        let mine = r["setlists"].as_array().unwrap().iter().find(|s| s["id"] == serde_json::json!(sl)).expect("the setlist is listed");
+        assert_eq!(mine["name"], "Studio Smoke Setlist");
+        assert_eq!(mine["tag_ids"], serde_json::json!([tag]));
+        assert_eq!(mine["live_set_count"], 2);
+        assert_eq!(mine["missing_count"], 0);
+        assert!(r["tags"].as_array().unwrap().iter().any(|t| t["name"] == "Studio Smoke Tag"));
+        assert!(!r["setlists"].as_array().unwrap().iter().any(|s| s["id"] == serde_json::json!(other)));
+        assert_eq!(r["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect::<Vec<_>>(), vec!["Studio Smoke B", "Studio Smoke A"]);
+        // the Live Sets are still there after the removals (a removal never deletes a Live Set)
+        assert!(r["all_live_sets"].as_array().unwrap().iter().any(|l| l["name"] == "Studio Smoke A"));
+        eprintln!("real_bridge_setlists_round_trip: ok, {} setlists", r["setlists"].as_array().unwrap().len());
     }
 }

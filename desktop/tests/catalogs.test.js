@@ -27,3 +27,24 @@ test("every studio.* key of the locale files is embedded (so the page can show i
     for (const k of Object.keys(read(lang)).filter((x) => x.startsWith("studio."))) assert.ok(k in CATALOGS[lang], `${lang}: ${k} is not embedded`);
   }
 });
+
+// Story 9.13: every locale key the Setlists view can ask for (literals in its two modules, plus the keys built from a limit name) exists in all three catalogs.
+test("every studio.* key used by the Setlists view exists in en, es and pt-BR", () => {
+  const keys = new Set(["studio.setlists.err.limit_setlists", "studio.setlists.err.limit_tags", "studio.setlists.err.limit_live_sets_per_setlist", "studio.setlists.err.limit_tags_per_setlist"]);
+  for (const f of ["setlists_view.js", "setlists_dom.js"]) {
+    const src = fs.readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8");
+    for (const m of src.matchAll(/"(studio\.[a-z0-9_.]+)"/g)) if (!m[1].endsWith("_")) keys.add(m[1]);
+  }
+  assert.ok(keys.size > 60);
+  for (const lang of Object.keys(CATALOGS)) for (const k of keys) assert.ok(k in CATALOGS[lang], `${lang}: ${k}`);
+  // the index.html button and the app wiring use these too
+  for (const k of ["studio.sidebar.manage_setlists", "studio.offline.hint"]) for (const lang of Object.keys(CATALOGS)) assert.ok(k in CATALOGS[lang], `${lang}: ${k}`);
+});
+
+// Printf-style parity: every translation takes the same %d / %s placeholders, in the same order, as the English text (the app fills them positionally).
+test("placeholder sequences (%d / %s) are identical in en, es and pt-BR", () => {
+  const seq = (t) => (t.match(/%[ds]/g) || []).join("");
+  for (const k of Object.keys(CATALOGS.en)) {
+    for (const lang of ["es", "pt-BR"]) assert.equal(seq(CATALOGS[lang][k]), seq(CATALOGS.en[k]), `${lang}: ${k}`);
+  }
+});

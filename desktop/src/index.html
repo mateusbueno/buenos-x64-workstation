@@ -49,6 +49,8 @@
       <nav class="sidebar" id="sidebar-region" tabindex="0" aria-label="Sidebar Navigation">
         <section class="sidebar-section">
           <h2 class="sidebar-heading" data-i18n="studio.sidebar.setlists">SETLISTS</h2>
+          <!-- Story 9.13: opens the Setlists view in the main area (enabled only while a Velora is paired) -->
+          <button type="button" class="sidebar-item manage" id="sidebar-manage-setlists" data-i18n="studio.sidebar.manage_setlists" disabled>Manage setlists</button>
           <div id="sidebar-setlists-list">
             <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_setlists">No setlists offline</div>
           </div>
@@ -84,6 +86,9 @@
             <button type="button" class="btn" id="btn-offline-settings" data-i18n="studio.sidebar.settings">Settings</button>
           </div>
         </div>
+
+        <!-- Story 9.13: the Setlists view (shown from SETLISTS > Manage setlists while paired; built by setlists_dom.js) -->
+        <section class="setlists-view" id="setlists-view" aria-label="Setlists" hidden></section>
 
         <!-- Live Set Part Editor Container -->
         <div class="editor-container" id="editor-container" style="display: none;">

@@ -17,6 +17,8 @@ import {
   setlistRows,
   setlistsRequest,
 } from "./live_set_view.js";
+import { SetlistsController } from "./setlists_view.js";
+import { SetlistsView } from "./setlists_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -245,6 +247,8 @@ window.addEventListener("DOMContentLoaded", () => {
     langSelect.addEventListener("change", (e) => {
       localeMgr.setOverride(e.target.value);
       renderEditor();
+      updateManageButton();
+      if (setlistsUi.view) { setlistsUi.view.setLabels(); setlistsUi.view.render(); } // Story 9.13: the Setlists view follows the language
     });
   }
 
@@ -868,6 +872,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderPairedEditor() {
+    if (setlistsUi.open) return; // the Setlists view (Story 9.13) owns the main area until a Live Set is chosen or it is closed
     buildLiveGrids();
     setGridLabels(liveEls.scenes, liveEls.parts, tr); // follows a language change
     document.getElementById("offline-empty-card").style.display = "none";
@@ -1100,15 +1105,78 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function selectLiveSet(id) {
+    closeSetlistsView(false); // choosing a Live Set in the sidebar goes back to the Live Set view
     liveCtl.select(id).then(() => updateSidebarMarkers());
     updateSidebarMarkers();
   }
+
+  // ---- Setlists view (Story 9.13) -----------------------------------------------------------------------------------------------------------------------
+  // SETLISTS > "Manage setlists" opens a view in the main area: the setlists and the Live Sets of the selected one, with create / rename / delete / reorder (Alt+Up and
+  // Alt+Down, "Move to...", drag and drop), Add / Remove / New Live Set and tags. Every change is the same ws.v1 control-thread command the unit's own screen sends
+  // (setlists_view.js: optimistic, rolled back on an error, read again afterwards); setlists_dom.js draws it. It never loads, steps or edits a Live Set.
+  const setlistsUi = { open: false, view: null };
+  const setlistsCtl = new SetlistsController({
+    request: (r) => window.veloraDevice.request(r),
+    onChange: () => { if (setlistsUi.view) setlistsUi.view.render(); },
+    onError: (e) => { if (setlistsUi.view) setlistsUi.view.showError(e); },
+    onAnnounce: (m) => quietAnnounce(tr(m.key, ...m.args)),
+    onNotice: (m) => { if (setlistsUi.view) setlistsUi.view.showNotice(m); },
+    missingLabel: () => tr("studio.sidebar.entry_missing"),
+  });
+  const manageBtn = document.getElementById("sidebar-manage-setlists");
+
+  function updateManageButton() {
+    if (!manageBtn) return;
+    const on = pairedReal();
+    manageBtn.disabled = !on;
+    manageBtn.title = on ? "" : tr("studio.offline.hint"); // offline / unpaired: disabled with the existing offline hint
+  }
+
+  function ensureSetlistsView() {
+    if (setlistsUi.view) return;
+    setlistsUi.view = new SetlistsView({
+      doc: document,
+      host: document.getElementById("setlists-view"),
+      tr,
+      controller: setlistsCtl,
+      announce: quietAnnounce,
+      onClose: () => closeSetlistsView(true),
+    });
+  }
+
+  function openSetlistsView() {
+    if (!pairedReal()) return;
+    ensureSetlistsView();
+    setlistsUi.open = true;
+    document.getElementById("offline-empty-card").style.display = "none";
+    liveEls.container.style.display = "none";
+    setlistsUi.view.show();
+    setlistsCtl.refreshNow();
+    setlistsUi.view.title.focus();
+  }
+
+  function hideSetlistsView() {
+    if (!setlistsUi.open) return;
+    setlistsUi.open = false;
+    if (setlistsUi.view) setlistsUi.view.hide();
+  }
+
+  function closeSetlistsView(focusSidebar) {
+    if (!setlistsUi.open) return;
+    hideSetlistsView();
+    renderEditor();
+    if (focusSidebar && manageBtn) manageBtn.focus();
+  }
+
+  manageBtn?.addEventListener("click", openSetlistsView);
+  updateManageButton();
 
   // What every State push does for the view: the model follows it at once; the sidebar follows the setlists' revision (throttled) and the sounding Live Set; and the
   // first time a Live Set sounds with nothing selected, that one is shown.
   function onDeviceState(st) {
     if (!st || !pairedReal()) return;
     liveCtl.onState(st);
+    if (setlistsUi.open) setlistsCtl.onState(st);
     const setlists = st.setlists || {};
     const key = `${setlists.library_revision || 0}/${setlists.loaded_setlist_id || ""}`;
     const playing = st.live_set_loaded ? st.live_set_id || "" : "";
@@ -1120,7 +1188,7 @@ window.addEventListener("DOMContentLoaded", () => {
       sidebar.playingId = playing;
       updateSidebarMarkers();
     }
-    if (!liveCtl.liveSetId && !liveCtl.pendingId && playing && sidebar.autoTried !== playing) {
+    if (!setlistsUi.open && !liveCtl.liveSetId && !liveCtl.pendingId && playing && sidebar.autoTried !== playing) {
       sidebar.autoTried = playing; // once per sounding Live Set: a refused read does not turn into a request per push
       selectLiveSet(playing);
     }
@@ -1272,6 +1340,8 @@ window.addEventListener("DOMContentLoaded", () => {
       currentDeviceState = null;
       deviceStore.state = null; // a State from before the outage is never shown again
       liveCtl.reset();
+      hideSetlistsView(); // the Setlists view is disabled without a paired device
+      setlistsCtl.reset();
       sidebar.setlists = [];
       sidebar.all = [];
       sidebar.entries.clear();
@@ -1281,6 +1351,7 @@ window.addEventListener("DOMContentLoaded", () => {
       sidebar.autoTried = "";
       renderEditor(); // the existing offline card (and any loaded backup)
     }
+    updateManageButton();
     deviceStore.statusListeners.forEach((cb) => { try { cb(st); } catch (e) { /* a listener never breaks the link */ } });
     if (paired) markLiveEdit(false); // refreshes the Write button state for the simulated data
     if (st.status !== "unpaired") {

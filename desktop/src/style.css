@@ -1260,3 +1260,237 @@ nav.jump a:hover {
 .sidebar-item:disabled {
   cursor: default;
 }
+
+/* ---- Story 9.13: the Setlists view. Sizes in rem, tokens only (check_no_color_literals), the 2px focus ring is the global :focus-visible rule. No horizontal scroll at 200% text:
+   rows wrap, the columns stack when the main area is narrower than two 22rem columns. ---- */
+.setlists-view {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  margin-bottom: auto; /* the main area centres its content vertically: this view starts at the top */
+  gap: var(--spacing-2);
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.sv-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+}
+
+.sv-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); /* two columns when the main area is wide enough, one otherwise */
+  gap: var(--spacing-3);
+  align-items: start;
+}
+
+.sv-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  min-width: 0;
+}
+
+.sv-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+
+.sv-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+
+.sv-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spacing-1) var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
+  background-color: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  color: var(--text);
+  font-size: var(--font-desktop-body);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.sv-row.on {
+  background-color: var(--raised);
+  border-left: 2px solid var(--accent);
+}
+
+.sv-row.missing {
+  border-style: dashed;
+}
+
+.sv-row.dragging {
+  opacity: 0.5;
+}
+
+/* The drop indicator: a 2px accent line on the gap the item would land in (never colour alone: the line is also a position change), or an outline on a setlist that takes a Live Set. */
+.sv-row.drop-before {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+
+.sv-row.drop-after {
+  box-shadow: 0 2px 0 0 var(--accent);
+}
+
+.sv-row.drop-into {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+.sv-handle {
+  color: var(--muted);
+  cursor: grab;
+}
+
+.sv-pos {
+  color: var(--muted);
+  min-width: 1.5rem;
+}
+
+.sv-name {
+  flex: 1 1 8rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.sv-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-1);
+}
+
+.sv-chip {
+  padding: 0 var(--spacing-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-desktop-sm);
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+}
+
+.sv-meta {
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+}
+
+.sv-loaded {
+  color: var(--accent);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+}
+
+.sv-empty, .sv-note {
+  color: var(--muted);
+  font-size: var(--font-desktop-body);
+}
+
+.sv-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  z-index: 1000;
+}
+
+.sv-dialog, .sv-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3);
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--muted);
+  border-radius: var(--radius-desktop-sm);
+}
+
+.sv-menu {
+  gap: 0;
+  padding: var(--spacing-1);
+}
+
+.sv-menu-item {
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--radius-desktop-sm);
+  font-size: var(--font-desktop-body);
+  cursor: pointer;
+}
+
+.sv-menu-item:hover:not([aria-disabled="true"]), .sv-menu-item:focus {
+  background-color: var(--raised);
+}
+
+.sv-menu-item[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.sv-menu-sep {
+  height: 1px;
+  margin: var(--spacing-1) 0;
+  background-color: var(--line);
+}
+
+.sv-dialog-title {
+  margin: 0;
+  font-size: var(--font-desktop-body);
+  font-weight: 600;
+}
+
+.sv-dialog-body, .sv-tags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.sv-dialog label, .sv-check {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.sv-dialog label.sv-check, .sv-check {
+  flex-direction: row;
+  align-items: center;
+}
+
+.sv-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-1);
+}
+
+.sv-tag-row .sv-check {
+  flex: 1 1 8rem;
+}
+
+.sv-tag-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--spacing-1);
+}
+
+.sidebar-item.manage {
+  font-weight: 600;
+}

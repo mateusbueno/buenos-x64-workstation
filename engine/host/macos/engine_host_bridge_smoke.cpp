@@ -341,7 +341,147 @@ int main(int argc, char** argv) {
     CHECK(rc == 0);
     CHECK(slurp(d + "/studio.log").find("status: Paired") != std::string::npos);
     CHECK(slurp(d + "/studio.log").find("view of \"Smoke Set\": 8 parts") != std::string::npos);  // Story 9.8: the Rust client read the Live Set created above through GetLiveSetView
+    CHECK(slurp(d + "/studio.log").find("real_bridge_setlists_round_trip: ok") != std::string::npos);  // Story 9.13: the Rust client ran the Setlists view's commands and read them back
     if (rc != 0 || g_fail) std::printf("---- studio.log ----\n%s\n", slurp(d + "/studio.log").c_str());
+  }
+  // Story 9.13: the Setlists view's commands through the bridge to the real engine, then an engine restart on the same data directory: everything persisted exactly as the
+  // device persists it. (The Rust client above did the same with the page's JSON; this part does not need cargo, so the persistence check never goes vacuous.)
+  {
+    Tcp c;
+    CHECK(c.open(port2));
+    CHECK(c.hello("smoke-mac", token).hello_ack().paired());
+    auto call = [&](ws::v1::ClientMessage m) {
+      const std::uint64_t id = c.send(std::move(m));
+      ws::v1::ServerMessage r;
+      for (int i = 0; i < 10; ++i) {
+        if (!c.recv(r, 5000)) break;
+        if (r.request_id() == id) return r;
+      }
+      return ws::v1::ServerMessage();
+    };
+    auto create = [&](const char* kind, const std::string& name) {
+      ws::v1::ClientMessage m;
+      if (std::string(kind) == "setlist") m.mutable_create_setlist()->set_name(name);
+      else if (std::string(kind) == "live_set") m.mutable_create_live_set()->set_name(name);
+      else m.mutable_create_tag()->set_name(name);
+      auto r = call(m);
+      CHECK(r.has_created_reply() && !r.created_reply().id().empty());
+      return r.created_reply().id();
+    };
+    auto expect_ack = [&](ws::v1::ClientMessage m) {
+      auto r = call(std::move(m));
+      CHECK(r.has_ack());
+    };
+    const std::string la = create("live_set", "Persist A"), lb = create("live_set", "Persist B"), lc = create("live_set", "Persist C");
+    const std::string s1 = create("setlist", "Persist draft"), s2 = create("setlist", "Persist second");
+    {
+      ws::v1::ClientMessage m;
+      m.mutable_rename_setlist()->set_id(s1);
+      m.mutable_rename_setlist()->set_name("Persist Show");
+      expect_ack(m);
+    }
+    for (const std::string& id : {la, lb, lc}) {
+      ws::v1::ClientMessage m;
+      m.mutable_add_live_set_to_setlist()->set_setlist_id(s1);
+      m.mutable_add_live_set_to_setlist()->set_live_set_id(id);
+      expect_ack(m);
+    }
+    {  // reorder: the full permutation C, A, B (a partial one is refused)
+      ws::v1::ClientMessage bad;
+      bad.mutable_reorder_live_sets_in_setlist()->set_setlist_id(s1);
+      bad.mutable_reorder_live_sets_in_setlist()->add_live_set_ids(lc);
+      auto r = call(bad);
+      CHECK(r.has_error() && r.error().code() == ws::v1::ERROR_CODE_INVALID_ORDER);
+      ws::v1::ClientMessage m;
+      m.mutable_reorder_live_sets_in_setlist()->set_setlist_id(s1);
+      for (const std::string& id : {lc, la, lb}) m.mutable_reorder_live_sets_in_setlist()->add_live_set_ids(id);
+      expect_ack(m);
+    }
+    {  // the setlists themselves: second first
+      ws::v1::ClientMessage m;
+      ws::v1::ClientMessage g;
+      g.mutable_get_setlists();
+      const auto lr = call(g);
+      CHECK(lr.has_setlists_reply() && lr.setlists_reply().setlists_size() >= 2);
+      m.mutable_reorder_setlists()->add_ids(s2);
+      for (const auto& s : lr.setlists_reply().setlists()) if (s.id() != s2) m.mutable_reorder_setlists()->add_ids(s.id());
+      expect_ack(m);
+    }
+    const std::string tag = create("tag", "Persist Tag");
+    {
+      ws::v1::ClientMessage m;
+      m.mutable_set_setlist_tags()->set_setlist_id(s1);
+      m.mutable_set_setlist_tags()->add_tag_ids(tag);
+      expect_ack(m);
+    }
+    {  // DeleteTag cascades: a tag set on the second setlist, then deleted, leaves the setlist without it
+      const std::string doomed = create("tag", "Persist Doomed");
+      ws::v1::ClientMessage m;
+      m.mutable_set_setlist_tags()->set_setlist_id(s2);
+      m.mutable_set_setlist_tags()->add_tag_ids(doomed);
+      expect_ack(m);
+      ws::v1::ClientMessage d;
+      d.mutable_delete_tag()->set_id(doomed);
+      expect_ack(d);
+    }
+    {  // move B to the second setlist as Studio does (Add, then Remove): the Live Set file stays
+      ws::v1::ClientMessage a;
+      a.mutable_add_live_set_to_setlist()->set_setlist_id(s2);
+      a.mutable_add_live_set_to_setlist()->set_live_set_id(lb);
+      a.mutable_add_live_set_to_setlist()->set_index(0);
+      expect_ack(a);
+      ws::v1::ClientMessage r;
+      r.mutable_remove_live_set_from_setlist()->set_setlist_id(s1);
+      r.mutable_remove_live_set_from_setlist()->set_live_set_id(lb);
+      expect_ack(r);
+    }
+    // The engine restarts on the same data directory (the bridge reconnects to it).
+    stop(epid);
+    epid = spawn({engine, "--no-audio", "--duration", "120", "--socket", esock, "--data-dir", d + "/edata", "--library-root", d + "/lib"}, d + "/engine2.log");
+    bool back = false;
+    ws::v1::ServerMessage lr;
+    CHECK(wait_for(
+        [&] {
+          Tcp t;
+          if (!t.open(port2)) return false;
+          if (!t.hello("smoke-mac", token).hello_ack().paired()) return false;
+          ws::v1::ClientMessage g;
+          g.mutable_get_setlists()->set_setlist_id(s1);
+          g.mutable_get_setlists()->set_include_all_live_sets(true);
+          const std::uint64_t id = t.send(g);
+          for (int i = 0; i < 5; ++i) {
+            if (!t.recv(lr, 3000)) return false;
+            if (lr.request_id() == id) return back = lr.has_setlists_reply();
+          }
+          return false;
+        },
+        60000));
+    CHECK(back);
+    if (back) {
+      const auto& rep = lr.setlists_reply();
+      CHECK(rep.setlists_size() >= 2);  // vacuity guard: an engine that lost its setlists (or an empty read) fails here
+      const ws::v1::SetlistSummary* mine = nullptr;
+      for (const auto& s : rep.setlists()) if (s.id() == s1) mine = &s;
+      CHECK(mine != nullptr);
+      if (mine) {
+        CHECK(mine->name() == "Persist Show" && mine->live_set_count() == 2 && mine->missing_count() == 0 && mine->tag_ids_size() == 1 && mine->tag_ids(0) == tag);
+      }
+      CHECK(rep.setlists_size() >= 2 && rep.setlists(0).id() == s2);  // the setlist order persisted
+      CHECK(rep.entries_size() == 2 && rep.entries(0).live_set_id() == lc && rep.entries(1).live_set_id() == la);  // C, A: the reorder and the move persisted
+      bool tag_listed = false, b_kept = false;
+      for (const auto& t : rep.tags()) tag_listed = tag_listed || (t.id() == tag && t.name() == "Persist Tag");
+      for (const auto& l : rep.all_live_sets()) b_kept = b_kept || l.live_set_id() == lb;
+      CHECK(tag_listed && b_kept);
+      bool doomed_listed = false;
+      for (const auto& t : rep.tags()) doomed_listed = doomed_listed || t.name() == "Persist Doomed";
+      CHECK(!doomed_listed);
+      for (const auto& sl : rep.setlists()) if (sl.id() == s2) CHECK(sl.tag_ids_size() == 0);  // the cascade persisted
+      if (std::getenv("VELORA_STUDIO_CARGO_TEST")) {  // the Rust client's setlist (checked only when it ran)
+        bool smoke = false;
+        for (const auto& s : rep.setlists()) smoke = smoke || (s.name() == "Studio Smoke Setlist" && s.live_set_count() == 2 && s.tag_ids_size() == 1);
+        CHECK(smoke);
+      }
+    }
   }
   // The engine goes away: a connected client is told (typed error, request_id 0) and closed; the bridge itself stays up.
   {
