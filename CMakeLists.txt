@@ -57,6 +57,13 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME core_deps_purity_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_core_deps.py
                    --self-test)
+  # Story 4.1 (AD-27): nothing branches on the tier ID outside the profile table
+  add_test(NAME tier_branching_check
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_tier_branching.py
+                   --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME tier_branching_check_selftest
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_tier_branching.py
+                   --self-test)
   # Story 2.17: UI strings lint check
   add_test(NAME ui_strings_lint
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_ui_strings.py
