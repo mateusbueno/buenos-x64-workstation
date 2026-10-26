@@ -277,6 +277,13 @@ Story 5.6 grows `library_api.proto` additively (catalog, `ImportRequest` / `Impo
 handshake and commands and discards replies, so it works unchanged against the extended service (the new handshake features and the extra server messages are ignored by it). The UI and Studio reach the import
 API through the same Library API over the same socket (Epic 5 surfaces); nothing in the engine process writes the catalog or `/data/lib`.
 
+### sysd config client (Foundation: sysd config service)
+
+`SysdConfigClient` (`velora/host/sysd_config_client.hpp`) receives the system config (clock source, velocity curve, pedal calibration, Boot into) that `sysd` owns, over ws.v1 on
+sysd's Unix socket (`SubscribeConfig`). All I/O is on its own thread (reconnect with backoff while sysd is absent); the control thread calls `tick()` and the callback runs there once per
+revision, with a revision guard. Without sysd the engine runs on `default_config()`; the last-known config is kept when sysd goes away. `engine-host --sysd-socket PATH` wires it (default off);
+the engine's own control server does not serve the config messages (`ERROR_CODE_INVALID_COMMAND`). See `sysd/README.md`.
+
 ## macOS only (`macos/`, built only when `APPLE`)
 
 - `CoreAudioLineIn` (Story 2.7, `ports::LineInSource`): optional capture of the default CoreAudio input device as 48 kHz stereo float into a lock-free ring that the engine drains once per block; mixed into the

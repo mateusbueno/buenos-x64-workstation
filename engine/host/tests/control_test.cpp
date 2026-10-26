@@ -461,6 +461,18 @@ static void test_invalid_commands() {
     auto m = hello();
     expect(m, ws::v1::ERROR_CODE_INVALID_COMMAND, "hello after hello");
   }
+  // Foundation (sysd config service): the system config belongs to sysd, never to this server. Its messages get the existing unknown-command answer and change nothing.
+  {
+    ws::v1::ClientMessage g;
+    g.mutable_get_config();
+    expect(g, ws::v1::ERROR_CODE_INVALID_COMMAND, "GetConfig on the engine");
+    ws::v1::ClientMessage st;
+    st.mutable_set_config()->mutable_patch()->set_clock_source(ws::v1::CLOCK_SOURCE_USB);
+    expect(st, ws::v1::ERROR_CODE_INVALID_COMMAND, "SetConfig on the engine");
+    ws::v1::ClientMessage sb;
+    sb.mutable_subscribe_config()->set_enable(true);
+    expect(sb, ws::v1::ERROR_CODE_INVALID_COMMAND, "SubscribeConfig on the engine");
+  }
   // malformed protobuf: error, connection survives
   {
     CHECK(c.write_all(Client::frame(std::string("\xff\xff\xff\xff\x07garbage", 12))));

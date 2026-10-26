@@ -66,6 +66,10 @@ enum ErrorCode {
   ERROR_CODE_NOT_ORGAN_PART = 39;      // SelectOrganPart for a part that is not an organ
   // Story 3.12: panel LEDs. A refused command changes nothing and sends no frame.
   ERROR_CODE_UNKNOWN_LED = 40;         // SetLed named a led_id that mcu/common/MCU-ID-MAP.md section 8 does not have (details: led_id)
+  // Foundation: sysd config service. Spoken by velora-sysd only; the engine's control server answers the config messages with ERROR_CODE_INVALID_COMMAND.
+  ERROR_CODE_INVALID_CONFIG = 41;      // SetConfig: a value that is individually in range but not valid (pedal min >= max, bad Live Set id, DEFAULT_LIVE_SET without an id);
+                                       // details: field, reason. Nothing changes. Unknown enum values answer ERROR_CODE_UNKNOWN_ENUM_VALUE, values out of range ERROR_CODE_OUT_OF_RANGE,
+                                       // an empty patch ERROR_CODE_INVALID_COMMAND, a config that could not be persisted ERROR_CODE_STORAGE_FAILED / ERROR_CODE_STORAGE_FULL
 }
 
 message Error {
@@ -584,6 +588,95 @@ message SetLed {
   uint32 arg = 3;                        // 0..255: colour index for single LEDs, fill position for rings
 }
 
+// --- sysd config (Foundation: sysd config service; served by velora-sysd, never by the engine) ------------------------------------------
+// The system configuration is owned by sysd (AR17, AR39, AD-12) and reaches the engine and the ui at start and on change. These messages are the
+// whole of its protocol: the stories that add a setting (clock source 7.7, velocity curve 3.6, pedal calibration 3.11, Boot into 8.9) add behaviour
+// that consumes the published Config; they need no protocol change beyond adding a field to Config / ConfigPatch (additive, numbers never reused).
+enum ClockSource {
+  CLOCK_SOURCE_UNSPECIFIED = 0;        // never valid in a SetConfig
+  CLOCK_SOURCE_INTERNAL = 1;           // default
+  CLOCK_SOURCE_DIN = 2;
+  CLOCK_SOURCE_USB = 3;
+}
+
+enum VelocityCurve {
+  VELOCITY_CURVE_UNSPECIFIED = 0;
+  VELOCITY_CURVE_NORMAL = 1;           // default
+  VELOCITY_CURVE_LIGHT = 2;
+  VELOCITY_CURVE_HEAVY = 3;
+  VELOCITY_CURVE_FIXED = 4;
+}
+
+enum PedalPolarity {
+  PEDAL_POLARITY_UNSPECIFIED = 0;      // not fixed by the player: the polarity detected at boot (Story 3.8) is used
+  PEDAL_POLARITY_NORMALLY_OPEN = 1;
+  PEDAL_POLARITY_NORMALLY_CLOSED = 2;
+}
+
+enum BootIntoMode {
+  BOOT_INTO_MODE_UNSPECIFIED = 0;
+  BOOT_INTO_MODE_LAST_SOUND = 1;       // default
+  BOOT_INTO_MODE_START_OF_SETLIST = 2;
+  BOOT_INTO_MODE_DEFAULT_LIVE_SET = 3; // needs a default_live_set_id
+}
+
+// Raw pedal range as the MCU reports it (12 bit, mcu/common/MCU-ID-MAP.md section 6). min == max == 0 means "not calibrated".
+message PedalCalibration {
+  uint32 min = 1;                      // 0..4095
+  uint32 max = 2;                      // 0..4095; calibrated values need min < max
+  PedalPolarity polarity = 3;
+}
+
+message BootIntoConfig {
+  BootIntoMode mode = 1;
+  string default_live_set_id = 2;      // empty, or 1..64 characters of [A-Za-z0-9_-] (a Live Set id); required (non-empty) with DEFAULT_LIVE_SET
+}
+
+// The configuration sysd publishes. A field the reader does not know is ignored; a field absent from the wire has the default documented above.
+message Config {
+  ClockSource clock_source = 1;
+  VelocityCurve velocity_curve = 2;
+  PedalCalibration sustain = 3;
+  PedalCalibration expression = 4;
+  BootIntoConfig boot_into = 5;
+}
+
+// Field-wise patches: only the scalar fields that are present change, the others keep their stored value (so setting only a pedal's polarity, or only the
+// Live Set id of Boot into, never clears its other fields). Same field numbers and wire types as PedalCalibration / BootIntoConfig.
+message PedalPatch {
+  optional uint32 min = 1;
+  optional uint32 max = 2;
+  optional PedalPolarity polarity = 3;
+}
+
+message BootIntoPatch {
+  optional BootIntoMode mode = 1;
+  optional string default_live_set_id = 2;
+}
+
+// A partial update: only the fields that are present change (a present sub-message changes only its present fields). The result is validated as a whole.
+message ConfigPatch {
+  optional ClockSource clock_source = 1;
+  optional VelocityCurve velocity_curve = 2;
+  optional PedalPatch sustain = 3;
+  optional PedalPatch expression = 4;
+  optional BootIntoPatch boot_into = 5;
+}
+
+message GetConfig {}
+message SetConfig {
+  ConfigPatch patch = 1;
+}
+message SubscribeConfig {              // after this the full Config is pushed at once and again on every change (request_id 0)
+  bool enable = 1;
+}
+
+message ConfigReply {
+  Config config = 1;
+  uint64 revision = 2;                 // strictly increasing with every change, persisted: it survives a sysd restart
+  bool not_durable = 3;                // SetConfig only: the new file is in place but the directory sync failed (applied, may be lost on power loss)
+}
+
 message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
   oneof body {
@@ -632,6 +725,9 @@ message ClientMessage {
     MoveFader move_fader = 52;
     GetDiagnostics get_diagnostics = 53;  // Story 1.21
     SetLed set_led = 54;                  // Story 3.12
+    GetConfig get_config = 55;            // sysd config service (velora-sysd only)
+    SetConfig set_config = 56;
+    SubscribeConfig subscribe_config = 57;
   }
 }
 
@@ -665,5 +761,6 @@ message ServerMessage {
     WriteReply write_reply = 22;          // Story 4.9
     DiagnosticsReply diagnostics_reply = 23;  // Story 1.21
     PanelEvent panel_event = 24;          // Story 3.10: pushed (request_id 0) to subscribers
+    ConfigReply config_reply = 25;        // sysd config service: GetConfig / SetConfig reply, and the push to SubscribeConfig subscribers (request_id 0)
   }
 }

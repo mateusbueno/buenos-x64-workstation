@@ -93,3 +93,11 @@ if(VELORA_DEV_KEY_PROVIDER)
   add_test(NAME engine_host_factory_smoke COMMAND engine_host_factory_smoke $<TARGET_FILE:engine-host>)
   set_tests_properties(engine_host_factory_smoke PROPERTIES TIMEOUT 180)
 endif()
+
+# Foundation: sysd config service. The real binaries together: engine-host --sysd-socket started BEFORE velora-sysd, velora-sysdctl changes, sysd restarted.
+# The engine never fails or blocks without sysd; the config is applied on connect and on every change, once per revision. --no-audio.
+add_executable(engine_host_sysd_smoke engine_host_sysd_smoke.cpp)
+target_link_libraries(engine_host_sysd_smoke PRIVATE velora_sysdctl_client)
+add_dependencies(engine_host_sysd_smoke engine-host velora-sysd velora-sysdctl)
+add_test(NAME engine_host_sysd_smoke COMMAND engine_host_sysd_smoke $<TARGET_FILE:engine-host> $<TARGET_FILE:velora-sysd> $<TARGET_FILE:velora-sysdctl>)
+set_tests_properties(engine_host_sysd_smoke PROPERTIES TIMEOUT 120)

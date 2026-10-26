@@ -81,3 +81,13 @@ Story 6.5 (protected libraries in the engine) adds, additive: the read field `St
 Story 1.21 (in-RAM diagnostics) adds, additively: the command `GetDiagnostics` (`ClientMessage.get_diagnostics = 53`, after Hello; before Hello it is `HANDSHAKE_REQUIRED`) answered by `ServerMessage.diagnostics_reply = 23` (`DiagnosticsReply`): the counters `xrun` (block renders over their deadline plus device-reported xruns), `voice_steal`, `voice_exhausted` (the voice arbiter's totals), `stream_underrun` (stays 0 until streaming feeds it), `uptime_ms`, and two `Histogram`s, `render_time` (block render duration) and `latency` (event host timestamp to onset), each `edges_us` (upper edges in microseconds, exclusive) plus `counts` (one more than edges: the last bin is the overflow bin). The RT side updates them with relaxed atomics only (`engine/core/include/velora/core/diagnostics.hpp`); the control thread serializes the reply; nothing is written to disk. The dev CLI `velora-diag --socket PATH` (`tools/diag`) prints them (exit 1 and a message on stderr when the socket is unreachable).
 
 Story 8.12 adds one additive error code to `library_api.proto`: `LIBRARY_ERROR_CODE_RECONCILING` (19). While the librarian runs its startup reconcile pass it answers the handshake but refuses every command with it (`details.reason=reconciling`, nothing changed); the client retries shortly. Semantics: `librarian/README.md` ("Startup ordering, summary and boot bound").
+
+## sysd config (Foundation: sysd config service)
+
+- `ws_v1.proto` carries the system-config messages (additive): enums `ClockSource`, `VelocityCurve`, `PedalPolarity`, `BootIntoMode`; messages `PedalCalibration`,
+  `BootIntoConfig`, `Config`, the field-wise `PedalPatch` / `BootIntoPatch` and `ConfigPatch` (only the scalar fields present change; a patch never clears fields it does not name; the merged result is validated), `GetConfig` (ClientMessage 55), `SetConfig` (56), `SubscribeConfig` (57), `ConfigReply` (ServerMessage 25) and
+  `ERROR_CODE_INVALID_CONFIG = 41`. They are spoken by `velora-sysd` only; the engine's control server answers them with `ERROR_CODE_INVALID_COMMAND`.
+- `sysd_config.proto` is the persisted `SysdConfig` (`schema_version` = 1, `revision`, the ws.v1 `Config`), written only by sysd to `<data>/config/sysd_config.pb`.
+  Same rules as the other persisted forms: addition only, numbers never reused (`reserved` on retirement), readers accept N and N-1, unknown fields are kept.
+- Both are built with the engine/host protobuf code (`engine/host/CMakeLists.txt`). Details, validation rules and how a story adds a field: `sysd/README.md`.
+

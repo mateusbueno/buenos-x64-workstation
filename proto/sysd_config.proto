@@ -1,0 +1,18 @@
+// SysdConfig: the persisted form of the system configuration owned by sysd (Foundation: sysd config service; AR17, AR39, AD-12, NFR44).
+// One file, `<data>/config/sysd_config.pb`, written only by velora-sysd (single writer, atomic replace), read by any release at version N or N-1.
+// Package velora.sysd.v1 (the file format, distinct from the ws.v1 wire protocol, whose Config message it embeds so that a setting is defined once).
+// Rules, as live_set.proto: the schema only grows by addition and field numbers are never reused (retire a field by `reserved`); schema_version is bumped
+// only for a change an old reader cannot survive; readers accept N and N-1, refuse every other value with a typed reason (sysd then serves defaults) and
+// keep the fields they do not know on re-write. Serialisation is deterministic (no map fields), so read -> write of an unchanged file is byte-identical.
+// The ui SystemConfig JSON (theme, language, brightness, ...) does NOT live here yet: moving it is a follow-up (see sysd/README.md).
+syntax = "proto3";
+
+package velora.sysd.v1;
+
+import "ws_v1.proto";  // Config
+
+message SysdConfig {
+  uint32 schema_version = 1;           // 1 .. N; 0 or a value outside {N-1, N} is refused
+  uint64 revision = 2;                 // the config revision: strictly increasing, survives a restart
+  ws.v1.Config config = 3;
+}

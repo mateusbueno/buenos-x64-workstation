@@ -819,6 +819,11 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
         }
         break;
       }
+      case B::kGetConfig:  // the system config belongs to sysd (AR17): never served here, the same refusal as any command this server does not speak
+      case B::kSetConfig:
+      case B::kSubscribeConfig:
+        fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "system config commands are served by sysd, not by the engine");
+        break;
       case B::kHello:
         fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "handshake already done on this connection");
         break;

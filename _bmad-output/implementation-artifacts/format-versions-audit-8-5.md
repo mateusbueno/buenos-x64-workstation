@@ -15,7 +15,8 @@ Tests set N=2 (or 3) to exercise N-1 where the shipping N is 1.
 | MCU frame protocol (`MCU_PROTOCOL_VERSION`, major.minor nibbles) | `0x10` | N, N-1 major accepted, major 0 and N+1 rejected (`mcu_version_accepted`) | frames carry no free-form fields; unknown types are counted and dropped | `MCU_EV_VERSION_REJECTED` / `Event::kVersionRejected` | `mcu/common/tests/mcu_frame_test.cpp`, `mcu_wrapper_test`, `format_versions_test` (host decoder at 2.1) | already met |
 | sysd / ui config (`ui/src/system_config.cpp`, `schema_version`) | **gap closed**: `kConfigSchemaVersion = 1` | **gap closed**: was no check at all; now N, N-1 load (N-1 reported `migrated`, held as N), refused files change nothing | **gap closed**: unknown top-level members were dropped on save; now kept verbatim | `ConfigLoadStatus::TooOld / TooNew / ParseError` | `ui/tests/config_version_test.cpp`, `compat_config_test` | closed here |
 | Boot-into pointer (`boot_into_store`) | n/a, a fixed tiny record | not versioned | n/a | n/a | `boot_into_tests` | out of scope (no schema) |
-| sysd daemon config / RAUC mark-good | do not exist in this repo | | | | | **deferred** (dev-board work): no schema invented; the probe interface is `migration::SlotProbe` |
+| sysd daemon config (`proto/sysd_config.proto`, `sysd/`) | `sysd::kSchemaVersion = 1` | N, N-1 (`sysd::min_readable_version`); N-1 loaded read-only, rewritten as N only by `ConfigStore::migrate()` through the migration runner after the slot probe | protobuf unknown fields kept (file, Config, pedals) | `LoadReason::kTooOld / kTooNew / kCorrupt / kInvalidContent` (defaults + logged reason) | `sysd_config_tests` (N = 1 and N = 2/3) | added by the sysd config foundation |
+| RAUC mark-good | does not exist in this repo | | | | | **deferred** (dev-board work): the probe interface is `migration::SlotProbe`; sysd takes it as `StoreOptions::slot_good` |
 
 ## Gaps closed in this story
 

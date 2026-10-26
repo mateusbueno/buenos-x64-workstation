@@ -49,6 +49,7 @@
 #include "velora/host/scene_controller.hpp"
 #include "velora/host/setlist_controller.hpp"
 #include "velora/host/setlist_store.hpp"
+#include "velora/host/sysd_config_client.hpp"
 #ifdef VELORA_ENGINE_DEV_KEYS
 #include "velora/host/dev_key_provider.hpp"
 #include "velora/host/protected_head_provider.hpp"
@@ -68,7 +69,7 @@ int main(int argc, char** argv) {
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false, no_audio = false;
-  std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path;
+  std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path, sysd_socket;
   std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
   bool factory_live_sets_required = false;      // --factory-live-sets-required: a failed import is fatal
   std::string factory_live_sets_path;            // Story 6.9 (dev builds): the signed factory Live Set file imported on first boot
@@ -128,6 +129,8 @@ int main(int argc, char** argv) {
       virtual_panel_path = argv[++i];  // Story 3.10: the Mac virtual panel mapping file (a USB MIDI control surface becomes the panel)
     } else if (!std::strcmp(argv[i], "--library-socket") && i + 1 < argc) {
       library_socket = argv[++i];  // Story 4.11: tell the librarian service which Live Set became active and when the engine is performing
+    } else if (!std::strcmp(argv[i], "--sysd-socket") && i + 1 < argc) {
+      sysd_socket = argv[++i];  // Foundation: the system config (clock source, velocity curve, pedals, Boot into) comes from sysd at start and on change
     } else {
       std::fprintf(stderr,
                    "usage: engine-host [--duration SECONDS] [--socket PATH] [--config engine-dev.json] [--line-in] [--no-audio (dev/test only)]\n"
@@ -146,6 +149,8 @@ int main(int argc, char** argv) {
 #endif
                    "                   [--virtual-panel MAP.json]   (Story 3.10: a mapping file (engine/host/dev/virtual-panel.json) turns the faders, knobs and buttons of a MIDI control surface\n"
                    "                                                 into panel MCU frames for the panel reader; wheels reach the keyboard-on parts, BUTTON frames reach subscribed ui clients)\n"
+                   "                   [--sysd-socket PATH]   (the sysd config service (velora-sysd): the engine runs on the defaults until sysd answers, applies the config on connect and on every\n"
+                   "                                           change, keeps the last one when sysd goes away; sysd absent never stops the engine; default off)\n"
                    "                   [--library-socket PATH [--library-playing-idle-ms N]]   (report the active Live Set and the performing state to the librarian service's Library API;\n"
                    "                                                                           performing = a note within the last N ms, default 3000; default off)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
@@ -509,6 +514,23 @@ int main(int argc, char** argv) {
     library_client->start();
     std::printf("library: Library API client on %s (reconnects when the librarian service is down)\n", library_socket.c_str());
   }
+  // Foundation: the sysd config client. Its worker thread owns all I/O (reconnect with backoff while sysd is absent); the callback runs on the control
+  // thread, from the control tick, once per revision. The stories that give a setting its behaviour (clock source 7.7, velocity curve 3.6, pedals 3.11,
+  // Boot into 8.9) consume the Config here; this wiring only logs it.
+  std::unique_ptr<host::SysdConfigClient> sysd_client;
+  if (!sysd_socket.empty()) {
+    host::SysdConfigClientOptions so;
+    so.socket_path = sysd_socket;
+    sysd_client = std::make_unique<host::SysdConfigClient>(so);
+    sysd_client->set_callback([](const ws::v1::Config& c, std::uint64_t revision) {
+      std::printf("sysd config: revision %llu clock_source=%s velocity_curve=%s boot_into=%s\n", (unsigned long long)revision,
+                  ws::v1::ClockSource_Name(c.clock_source()).c_str(), ws::v1::VelocityCurve_Name(c.velocity_curve()).c_str(),
+                  ws::v1::BootIntoMode_Name(c.boot_into().mode()).c_str());
+      std::fflush(stdout);
+    });
+    sysd_client->start();
+    std::printf("sysd: config client on %s (defaults until sysd answers; reconnects when sysd is down)\n", sysd_socket.c_str());
+  }
   // Story 3.12: a ws.v1 SetLed goes to the panel reader, the only writer of the panel link (control thread -> reader's thread-safe set_led).
   if (panel_reader) plane.set_led_sink([pr = panel_reader.get()](std::uint8_t id, std::uint8_t b, std::uint8_t a) { pr->set_led(id, b, a, host::macos::now_ns()); });
   host::ControlServer control(plane, socket_path);
@@ -551,8 +573,9 @@ int main(int argc, char** argv) {
       bp.import_verifying = [] { return false; };
       boot_tracker = std::make_unique<host::bootinto::BootIntoTracker>(*boot_store, std::move(bp));
     }
-    control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string(), bt = boot_tracker.get(), scn = scenes.get(), pt = &panel_tick]() mutable {
+    control.set_tick([sw, sc, ed, pl = &plane, lc = library_client.get(), last = std::string(), bt = boot_tracker.get(), scn = scenes.get(), pt = &panel_tick, sy = sysd_client.get()]() mutable {
       if (*pt) (*pt)();
+      if (sy) sy->tick();  // the sysd config callback, once per revision (non-blocking)
       if (lc && !sw->sounding_id().empty() && sw->sounding_id() != last) {
         last = sw->sounding_id();
         lc->report_active(last);
@@ -571,8 +594,12 @@ int main(int argc, char** argv) {
       const bool d = pl->take_content_changed();  // Story 6.5: an I/O edge thread reported a damaged block of a protected library: push State.content
       return a || b || c || d;
     });
-  } else if (panel_tick) {
-    control.set_tick(panel_tick);
+  } else if (panel_tick || sysd_client) {
+    control.set_tick([pt = panel_tick, sy = sysd_client.get()]() mutable {
+      const bool r = pt ? pt() : false;
+      if (sy) sy->tick();
+      return r;
+    });
   }
   if (setlists) {
     // The server thread is the control thread: the single-writer stores (opened on this thread) are handed over to it before it serves a command.

@@ -36,6 +36,8 @@ add_subdirectory(tools/factory-release)
 add_subdirectory(tools/registry)
 add_subdirectory(tools/spikes)
 add_subdirectory(tools/diag)
+add_subdirectory(tools/sysdctl)
+add_subdirectory(sysd)
 add_subdirectory(ui)
 # Story 8.5: the engine corpus gate does not open the config .json files of tests/compat; the ui gate does. Both must exist in every configuration.
 if(NOT TARGET compat_config_test OR NOT TARGET compat_corpus_test)
