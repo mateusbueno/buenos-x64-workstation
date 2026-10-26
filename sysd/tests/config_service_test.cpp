@@ -264,7 +264,7 @@ void test_concurrent_set_config() {
   for (int t = 0; t < kThreads; ++t) {
     ts.emplace_back([&, t] {
       for (int k = 0; k < kPer; ++k) {
-        const unsigned mx = 2 + static_cast<unsigned>(t * kPer + k);  // distinct: every call changes the config
+        const unsigned mx = 300 + static_cast<unsigned>(t * kPer + k);  // distinct: every call changes the config
         std::vector<sd::Outbound> out;
         r.svc->handle(static_cast<sd::ConnId>(t + 1), set_sustain_max(1000 + k, mx).SerializeAsString(), out);
         for (const sd::Outbound& o : out) {

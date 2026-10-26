@@ -244,6 +244,9 @@ void test_validation() {
   expect_rejected("min > max", pedal_patch(false, 900, 100), E::ERROR_CODE_INVALID_CONFIG, "min_not_below_max");
   expect_rejected("max above resolution", pedal_patch(true, 0, 4096), E::ERROR_CODE_OUT_OF_RANGE);
   expect_rejected("min above resolution", pedal_patch(true, 5000, 6000), E::ERROR_CODE_OUT_OF_RANGE);
+  // Story 3.11: a calibrated range needs at least 256 counts of travel (255 is refused, 256 is the smallest accepted; 0 / 0 stays "uncalibrated").
+  expect_rejected("span 255", pedal_patch(true, 100, 355), E::ERROR_CODE_INVALID_CONFIG, "span_too_small");
+  expect_rejected("span 1", pedal_patch(false, 4094, 4095), E::ERROR_CODE_INVALID_CONFIG, "span_too_small");
   expect_rejected("pedal polarity enum", pedal_patch(true, 1, 2, static_cast<ws::v1::PedalPolarity>(7)), E::ERROR_CODE_UNKNOWN_ENUM_VALUE);
   expect_rejected("boot mode unspecified", boot_patch(ws::v1::BOOT_INTO_MODE_UNSPECIFIED, ""), E::ERROR_CODE_UNKNOWN_ENUM_VALUE);
   expect_rejected("boot mode out of enum", boot_patch(static_cast<ws::v1::BootIntoMode>(9), ""), E::ERROR_CODE_UNKNOWN_ENUM_VALUE);
@@ -259,8 +262,8 @@ void test_validation() {
   {  // a boundary that is valid
     TmpDir d;
     sd::ConfigStore s(opts(d));
-    CHECK(s.apply(pedal_patch(true, 0, 1)).status == sd::ApplyStatus::kApplied);
-    CHECK(s.apply(pedal_patch(false, 4094, 4095)).status == sd::ApplyStatus::kApplied);
+    CHECK(s.apply(pedal_patch(true, 0, 256)).status == sd::ApplyStatus::kApplied);
+    CHECK(s.apply(pedal_patch(false, 3839, 4095)).status == sd::ApplyStatus::kApplied);
     CHECK(s.apply(boot_patch(ws::v1::BOOT_INTO_MODE_DEFAULT_LIVE_SET, std::string(64, 'z'))).status == sd::ApplyStatus::kApplied);
   }
 }
@@ -306,6 +309,23 @@ void test_load_corrupt_and_invalid() {
     spit(cfg_file(d2), file_bytes(sd::kSchemaVersion, 7, c2));
     sd::ConfigStore s2(opts(d2));
     CHECK(s2.load_reason() == sd::LoadReason::kInvalidContent && s2.config().clock_source() == ws::v1::CLOCK_SOURCE_INTERNAL);
+  }
+  {  // Story 3.11: a legacy pedal span of 1..255 counts does not void the file: the pedal becomes 0 / 0 (polarity kept), everything else loads
+    TmpDir d;
+    ws::v1::Config c = velora::host::default_config();
+    c.set_clock_source(ws::v1::CLOCK_SOURCE_USB);
+    c.mutable_sustain()->set_min(100);
+    c.mutable_sustain()->set_max(200);
+    c.mutable_sustain()->set_polarity(ws::v1::PEDAL_POLARITY_NORMALLY_CLOSED);
+    c.mutable_expression()->set_min(500);
+    c.mutable_expression()->set_max(3000);
+    spit(cfg_file(d), file_bytes(sd::kSchemaVersion, 7, c));
+    sd::ConfigStore s(opts(d));
+    CHECK(s.load_reason() == sd::LoadReason::kLoaded && s.config().clock_source() == ws::v1::CLOCK_SOURCE_USB);
+    CHECK(s.config().sustain().min() == 0 && s.config().sustain().max() == 0 && s.config().sustain().polarity() == ws::v1::PEDAL_POLARITY_NORMALLY_CLOSED);
+    CHECK(s.config().expression().min() == 500 && s.config().expression().max() == 3000);
+    CHECK(!exists(cfg_file(d) + ".corrupt"));
+    expect_rejected("legacy span still refused as a patch", pedal_patch(true, 100, 200), ws::v1::ERROR_CODE_INVALID_CONFIG, "span_too_small");
   }
 }
 
@@ -443,7 +463,7 @@ void test_unknown_fields_round_trip() {
   sd::ConfigStore s(opts(d));
   CHECK(s.load_reason() == sd::LoadReason::kLoaded);
   CHECK(s.apply(clock_patch(ws::v1::CLOCK_SOURCE_USB)).status == sd::ApplyStatus::kApplied);
-  CHECK(s.apply(pedal_patch(true, 10, 200)).status == sd::ApplyStatus::kApplied);  // replaces min/max of the pedal that holds an unknown field
+  CHECK(s.apply(pedal_patch(true, 10, 300)).status == sd::ApplyStatus::kApplied);  // replaces min/max of the pedal that holds an unknown field
   velora::sysd::v1::SysdConfig g;
   CHECK(g.ParseFromString(slurp(cfg_file(d))));
   CHECK(g.GetReflection()->GetUnknownFields(g).field_count() == 1 && g.GetReflection()->GetUnknownFields(g).field(0).number() == 900);
@@ -580,7 +600,7 @@ void test_real_process_kills() {
   unsigned prev = 0;  // sustain max: every write changes it, so every write reaches the disk layer
   for (int i = 0; i < 24; ++i) {
     const ls::Stage at = stages[i % 4];
-    const unsigned next = 100 + static_cast<unsigned>(i);
+    const unsigned next = 400 + static_cast<unsigned>(i);
     const pid_t pid = ::fork();
     if (pid == 0) {
       sd::StoreOptions o;

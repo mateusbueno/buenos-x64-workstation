@@ -519,7 +519,22 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   const bool edit_cmd = msg.body_case() == B::kSetPartTimbre || msg.body_case() == B::kWriteLiveSet || msg.body_case() == B::kSetAssignSlot ||
                         msg.body_case() == B::kClearAssignSlot;
   const bool fader_cmd = msg.body_case() == B::kSetFaderMode || msg.body_case() == B::kSelectOrganPart || msg.body_case() == B::kMoveFader;
-  if (edit_cmd) {
+  const bool pedal_cmd = msg.body_case() == B::kStartPedalCalibration || msg.body_case() == B::kFinishPedalCalibration || msg.body_case() == B::kCancelPedalCalibration;
+  if (pedal_cmd) {
+    // Pedal calibration (Story 3.11): the PedalCalibrator owns the work (measurement on the panel reader, the write to sysd) and answers with a typed reply.
+    if (!pedal_handler_) {
+      f.details["reason"] = "pedal_calibration_unavailable";
+      fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "pedal calibration is not available: the engine has no panel reader");
+    } else {
+      HandlerFailure hf;
+      ok = pedal_handler_->run(msg, reply, hf);
+      if (!ok) {
+        f.code = hf.code;
+        f.message = hf.message;
+        f.details = hf.details;
+      }
+    }
+  } else if (edit_cmd) {
     // Edits and Write (Story 4.9): the EditSession owns the work and answers with typed errors.
     if (!edit_handler_) {
       fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "edits are not available: the engine was started without a Live Set directory");
@@ -780,6 +795,9 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kSetFaderMode:
       case B::kSelectOrganPart:
       case B::kMoveFader:
+      case B::kStartPedalCalibration:
+      case B::kFinishPedalCalibration:
+      case B::kCancelPedalCalibration:
         break;  // handled before the snapshot is copied
       case B::kSetEncoderMode: {  // Story 4.10: a UMP on the control lane, in order with the encoder steps; the plane remembers what it commanded
         const ws::v1::EncoderMode m = msg.set_encoder_mode().mode();

@@ -116,6 +116,32 @@ void PanelReader::sync_parts_and_flush() {
   const std::uint16_t mask = parts_.mask();
   const std::uint16_t joined = static_cast<std::uint16_t>(mask & ~last_mask_), left = static_cast<std::uint16_t>(last_mask_ & ~mask);
   last_mask_ = mask;
+  // Story 3.11: when the LAST keyboard-on part leaves while the sustain pedal is held, a pedal-up would reach nobody and the held state would outlive it:
+  // one CC 64 = 0 on a part that left is owed (the router takes it as the keyboard's pedal-up for every part). (With other parts still on the keyboard
+  // the router's pedal-up reaches every part by itself, and a zero on one channel would release the others' pedal.)
+  if (mask != 0) sustain_zero_owed_ = false;
+  else if (left && pedals_[0].ch.has_value() && pedals_[0].ch.value() != 0) {
+    sustain_zero_owed_ = true;
+    sustain_zero_ch_ = static_cast<std::uint32_t>(__builtin_ctz(left));
+    pedals_[0].pending = false;
+  }
+  if (sustain_zero_owed_ && emit(core::make_control_change(cfg_.group, sustain_zero_ch_, core::Ump::kControllerSustain, 0), last_out_ns_, false)) {
+    sustain_zero_owed_ = false;
+    ++c_.sustain_ccs;
+  }
+  // Story 3.11: a part that joined the keyboard takes the current pedal values (the pedals are physical, like the wheels).
+  if (joined) {
+    for (std::size_t i = 0; i < 2; ++i) {
+      PedalRt& p = pedals_[i];
+      if (!p.ch.has_value()) continue;
+      p.owed = static_cast<std::uint16_t>(p.owed | (joined & mask));
+      if (joined & mask) {
+        p.pending = true;
+        c_.pedal_replays += static_cast<std::uint64_t>(__builtin_popcount(joined & mask));
+      }
+      flush_pedal(p, i == 0 ? PedalId::kSustain : PedalId::kExpression, last_out_ns_, true, last_out_ns_);
+    }
+  }
   // Channels owed a wheel UMP: parts that joined (the current value), parts that left (centre / zero), and the ones whose UMP was shed.
   if (have_pitch_) pending_pitch_ = static_cast<std::uint16_t>(pending_pitch_ | joined | left);
   if (have_mod_) pending_mod_ = static_cast<std::uint16_t>(pending_mod_ | joined | left);
@@ -183,6 +209,18 @@ void PanelReader::poll(std::uint64_t now_ns) {
     link_.poll(now_ns);
   }
   sync_parts_and_flush();
+  // Story 3.11: a pedal value held back by the one-per-block throttle (or by a full queue) goes out now, as the latest value.
+  refresh_pedal_config(std::max(now_ns, last_out_ns_), true);
+  flush_pending_pedals(now_ns, true);
+}
+
+void PanelReader::flush_pending_pedals(std::uint64_t now, bool host_stamp) {
+  for (std::size_t i = 0; i < 2; ++i) {
+    if (!pedals_[i].pending) continue;
+    const PedalId id = i == 0 ? PedalId::kSustain : PedalId::kExpression;
+    // A poll's host time stamps the UMP (kept in order); bytes just received stamp it with the last device time (not later than the frames still to be decoded).
+    flush_pedal(pedals_[i], id, host_stamp && now > last_out_ns_ ? order(now) : last_out_ns_, false, now);
+  }
 }
 
 void PanelReader::on_bytes(const std::uint8_t* data, std::size_t len, std::uint64_t rx_ns) {
@@ -194,6 +232,8 @@ void PanelReader::on_bytes(const std::uint8_t* data, std::size_t len, std::uint6
   frames_.clear();
   decoder_.feed(data, len, &frames_, nullptr);
   for (const mcu::Frame& f : frames_) handle(f, rx_ns);
+  // Story 3.11: a new throttle window has started (measured in device time, the time the UMPs are stamped with): the trailing value of the last burst goes out.
+  if (!frames_.empty()) flush_pending_pedals(last_out_ns_, false);
 }
 
 void PanelReader::handle(const mcu::Frame& f, std::uint64_t rx_ns) {
@@ -287,13 +327,92 @@ void PanelReader::on_control(const mcu::Control& c, std::uint64_t t) {
     return;
   }
   // Fader, encoder, pedal: a raw panel control event. Encoders 1..8 also produce the existing encoder step event of Story 4.10.
-  const bool is_pedal = kind == "pedal" || kind == "pedal_switch";  // pedals use the note headroom of the queue (never shed with the controllers)
+  const bool is_pedal = kind == "pedal";  // pedals use the note headroom of the queue (never shed with the controllers)
+  if (c.id == mcu_ids::controls::PEDAL_SWITCH) {
+    on_pedal_switch(c, t);
+    ++c_.raw_controls;
+    return;
+  }
   emit(core::make_panel_control_event(c.id, c.value), t, !is_pedal);
   ++c_.raw_controls;
+  if (c.id == mcu_ids::controls::PEDAL_SUSTAIN || c.id == mcu_ids::controls::PEDAL_EXPRESSION) {
+    const bool sustain = c.id == mcu_ids::controls::PEDAL_SUSTAIN;
+    const PedalId id = sustain ? PedalId::kSustain : PedalId::kExpression;
+    pedal_probe_.observe(id, c.value);  // raw, before polarity and calibration
+    refresh_pedal_config(t, false);
+    on_pedal(pedals_[sustain ? 0 : 1], id, c.value, t);
+    return;
+  }
   if (kind == "encoder" && c.id >= mcu_ids::controls::ENCODER_1 && c.id <= mcu_ids::controls::ENCODER_8) {
     emit(core::make_encoder_step_event(c.id - mcu_ids::controls::ENCODER_1, mcu::control_delta(c)), t);
     ++c_.encoder_steps;
   }
+}
+
+}  // namespace velora::host
+
+namespace velora::host {
+
+// Story 3.11. The pedal's mapped value goes to every part that sounds with the keyboard as CC 64 (sustain) / CC 11 (expression), 32-bit, in the note
+// headroom lane. At most one UMP per part per pedal_emit_interval_ns: a value that arrives sooner replaces the pending one and goes out with a later
+// frame or poll(); a UMP the queue could not take stays owed and is retried with the latest value.
+void PanelReader::on_pedal(PedalRt& p, PedalId id, std::uint16_t raw, std::uint64_t t) {
+  if (p.ch.update(raw, pedal_settings_.get(id))) {
+    if (p.pending && p.owed) ++c_.pedal_coalesced;
+    p.owed = parts_.mask();
+    p.pending = p.owed != 0;
+    if (!p.pending) ++c_.pedal_no_parts;  // remembered: a part that joins the keyboard takes the value
+  } else {
+    ++c_.pedal_jitter;
+  }
+  flush_pedal(p, id, t, false, t);
+}
+
+void PanelReader::flush_pedal(PedalRt& p, PedalId id, std::uint64_t t, bool force, std::uint64_t now) {
+  if (!p.pending) return;
+  p.owed = static_cast<std::uint16_t>(p.owed & parts_.mask());  // a part that left the keyboard is not owed anything
+  if (!p.owed) {
+    p.pending = false;
+    return;
+  }
+  if (!force && p.emitted && (now < p.last_emit_ns || now - p.last_emit_ns < cfg_.pedal_emit_interval_ns)) return;
+  const std::uint32_t cc = id == PedalId::kSustain ? core::Ump::kControllerSustain : core::Ump::kControllerExpression;
+  for (std::uint32_t ch = 0; ch < 16; ++ch) {
+    if (!(p.owed & (1u << ch))) continue;
+    if (!emit(core::make_control_change(cfg_.group, ch, cc, p.ch.value()), t, false)) continue;  // stays owed
+    p.owed = static_cast<std::uint16_t>(p.owed & ~(1u << ch));
+    ++(id == PedalId::kSustain ? c_.sustain_ccs : c_.expression_ccs);
+  }
+  if (!p.owed) {
+    p.pending = false;
+    p.emitted = true;
+    p.last_emit_ns = t;
+  }
+}
+
+// A new calibration / polarity from sysd re-maps the last raw value at once (no restart, no new frame needed).
+void PanelReader::refresh_pedal_config(std::uint64_t t, bool needs_order) {
+  const std::uint32_t v = pedal_settings_.version();
+  for (std::size_t i = 0; i < 2; ++i) {
+    PedalRt& p = pedals_[i];
+    if (p.applied_version == v) continue;
+    p.applied_version = v;
+    const PedalId id = i == 0 ? PedalId::kSustain : PedalId::kExpression;
+    if (p.ch.remap(pedal_settings_.get(id))) {
+      p.owed = parts_.mask();
+      p.pending = p.owed != 0;
+      if (p.pending) flush_pedal(p, id, needs_order ? order(t) : t, true, t);  // a poll's host time goes through order(): stamps never go backwards
+    }
+  }
+}
+
+void PanelReader::on_pedal_switch(const mcu::Control& c, std::uint64_t t) {
+  const bool closed = switch_closed(c.value, pedal_settings_.get(PedalId::kSwitch).direction);
+  emit(core::make_panel_control_event(c.id, closed ? 1 : 0), t, false);  // normalised: 1 = closed (pressed) whatever the wiring
+  if (closed == switch_closed_) return;
+  switch_closed_ = closed;
+  ++c_.pedal_switch_events;
+  if (sink_) sink_(PanelButtonEvent{c.id, closed, t});
 }
 
 }  // namespace velora::host

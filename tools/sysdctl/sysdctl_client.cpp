@@ -157,6 +157,56 @@ bool Connection::set(const ws::v1::ConfigPatch& patch, ws::v1::ConfigReply& out,
   return true;
 }
 
+namespace {
+bool pedal_reply(Connection& c, ws::v1::ClientMessage m, ws::v1::PedalCalibrationReply& out, std::string& err) {
+  ws::v1::ServerMessage rep;
+  if (!c.call(std::move(m), rep, err)) return false;
+  if (!rep.has_pedal_calibration_reply()) {
+    err = rep.has_error() ? ws::v1::ErrorCode_Name(rep.error().code()) + ": " + rep.error().message() : "unexpected reply";
+    return false;
+  }
+  out = rep.pedal_calibration_reply();
+  return true;
+}
+}  // namespace
+
+bool Connection::start_pedal_calibration(ws::v1::PedalKind pedal, ws::v1::PedalCalibrationReply& out, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_start_pedal_calibration()->set_pedal(pedal);
+  return pedal_reply(*this, std::move(m), out, err);
+}
+
+bool Connection::finish_pedal_calibration(std::uint64_t run_token, ws::v1::PedalCalibrationReply& out, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_finish_pedal_calibration()->set_run_token(run_token);
+  return pedal_reply(*this, std::move(m), out, err);
+}
+
+bool Connection::cancel_pedal_calibration(std::uint64_t run_token, ws::v1::PedalCalibrationReply& out, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_cancel_pedal_calibration()->set_run_token(run_token);
+  return pedal_reply(*this, std::move(m), out, err);
+}
+
+std::string format_pedal_result(const ws::v1::PedalCalibrationReply& r) {
+  using R = ws::v1::PedalCalibrationResult;
+  const std::string range = " (measured min " + std::to_string(r.min()) + ", max " + std::to_string(r.max()) + ")";
+  switch (r.result()) {
+    case R::PEDAL_CALIBRATION_RESULT_COLLECTING: return "measuring";
+    case R::PEDAL_CALIBRATION_RESULT_STORED:
+      return "stored: min " + std::to_string(r.min()) + " max " + std::to_string(r.max()) + " (config revision " + std::to_string(r.config_revision()) + ")" +
+             (r.not_durable() ? " [not durable: sysd's directory sync failed]" : "");
+    case R::PEDAL_CALIBRATION_RESULT_CANCELLED: return "cancelled: nothing stored";
+    case R::PEDAL_CALIBRATION_RESULT_NO_MOVEMENT: return "no movement: the pedal did not move, nothing stored" + (r.min() || r.max() ? range : std::string());
+    case R::PEDAL_CALIBRATION_RESULT_TOO_SMALL_SPAN: return "refused: the travel is under 256 counts, nothing stored" + range;
+    case R::PEDAL_CALIBRATION_RESULT_TIMED_OUT: return "timed out: the calibration window (60 s) elapsed, nothing stored";
+    case R::PEDAL_CALIBRATION_RESULT_NOT_RUNNING: return "not running: no calibration to finish";
+    case R::PEDAL_CALIBRATION_RESULT_SYSD_UNAVAILABLE: return "sysd unavailable: nothing stored" + (r.detail().empty() ? std::string() : " (" + r.detail() + ")") + range;
+    case R::PEDAL_CALIBRATION_RESULT_SYSD_REFUSED: return "sysd refused: nothing stored (" + r.detail() + ")" + range;
+    default: return "unspecified result";
+  }
+}
+
 bool Connection::subscribe(bool enable, std::string& err) {
   ws::v1::ClientMessage m;
   m.mutable_subscribe_config()->set_enable(enable);

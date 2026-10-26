@@ -26,6 +26,10 @@ class Connection {
   // False with `err` when the server answers an error (err = "CODE: message"), `error` then holds it.
   bool set(const ws::v1::ConfigPatch& patch, ws::v1::ConfigReply& out, std::string& err, ws::v1::Error* error = nullptr);
   bool subscribe(bool enable, std::string& err);
+  // Story 3.11 (against the ENGINE's socket): StartPedalCalibration / FinishPedalCalibration / CancelPedalCalibration. False with `err` for a typed error reply.
+  bool start_pedal_calibration(ws::v1::PedalKind pedal, ws::v1::PedalCalibrationReply& out, std::string& err);
+  bool finish_pedal_calibration(std::uint64_t run_token, ws::v1::PedalCalibrationReply& out, std::string& err);
+  bool cancel_pedal_calibration(std::uint64_t run_token, ws::v1::PedalCalibrationReply& out, std::string& err);
   // The next pushed message (request_id 0), from the queue or the socket, waiting up to timeout_ms. False on timeout / loss.
   bool next_push(ws::v1::ServerMessage& out, int timeout_ms);
 
@@ -39,5 +43,7 @@ class Connection {
 };
 
 std::string format(const ws::v1::Config& c, std::uint64_t revision);
+// One line for a calibration result ("stored: min 120 max 3890 (config revision 4)", "refused: too small a span ...").
+std::string format_pedal_result(const ws::v1::PedalCalibrationReply& r);
 
 }  // namespace velora::sysdctl

@@ -37,6 +37,9 @@ constexpr std::uint32_t kSampleRate = 48000;
 //
 // Sustain pedal (CC 64, value >= half range = down): a note off while the pedal is down (CC 64 value >= 64, i.e. >= 0x80000000 in 32 bits) is deferred to
 // the pedal-up event; the arbiter treats such voices as pedal-sustained (protected from stealing).
+// Half pedal (Story 3.11): the CC 64 value is ALSO delivered, as a controller, to the engines of the parts it applies to: before the hold when the pedal goes
+// down, AFTER the deferred releases when it comes up (a normal lift releases held notes at the instrument's own rate). The sample engine damps the release of a voice that is released while the pedal sits below the hold threshold (SampleEngine::half_pedal_scale).
+// The arbiter's behaviour is unchanged: it still only sees the binary state.
 struct EmittedNoteEvent {
   std::uint64_t frame = 0;       // absolute frame since start/reset (clock().frames() + in_block_frame)
   std::uint8_t part = 0;         // part / channel index
@@ -248,7 +251,7 @@ class BlockRenderer {
   void apply_part_note(std::uint32_t channel, std::uint32_t note, std::uint32_t velocity16, bool on, std::uint32_t type_id,
                        bool from_arp = false) noexcept VELORA_NONBLOCKING;
   void apply_keyboard_note(const Ump& ump) noexcept VELORA_NONBLOCKING;
-  void apply_keyboard_sustain(bool down) noexcept VELORA_NONBLOCKING;
+  void apply_keyboard_sustain(bool down, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
   // Controllers other than the pedal (Story 5.2): UMP control change -> the part's engine (CcState of the sample engine).
   void apply_controller(const Ump& ump) noexcept VELORA_NONBLOCKING;
   // The raw controller path: `channel` is the part (outside a Live Set) or the keyboard source (in one, fanned out to every part that

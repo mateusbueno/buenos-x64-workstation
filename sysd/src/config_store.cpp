@@ -56,6 +56,11 @@ bool check_pedal(const ws::v1::PedalCalibration& p, const char* field, Rejection
   }
   if (!(p.min() == 0 && p.max() == 0) && p.min() >= p.max())  // 0/0 = "not calibrated"
     return reject(why, ws::v1::ERROR_CODE_INVALID_CONFIG, field, "min_not_below_max", std::string(field) + " needs min < max");
+  // Story 3.11: a calibrated range narrower than kMinPedalSpan counts cannot give a usable travel (a pedal that was barely moved): refused.
+  if (p.max() > p.min() && p.max() - p.min() < kMinPedalSpan) {
+    why.details["min_span"] = std::to_string(kMinPedalSpan);
+    return reject(why, ws::v1::ERROR_CODE_INVALID_CONFIG, field, "span_too_small", std::string(field) + " needs max - min of at least 256 counts");
+  }
   if (!ws::v1::PedalPolarity_IsValid(static_cast<int>(p.polarity())))
     return reject(why, ws::v1::ERROR_CODE_UNKNOWN_ENUM_VALUE, field, "unknown_enum_value", std::string(field) + " polarity is not a known value");
   return true;
@@ -264,7 +269,18 @@ void ConfigStore::load() {
     return use_defaults(LoadReason::kTooNew, "schema_version " + std::to_string(v) + ", this release reads " + std::to_string(min_readable_version(n)) + ".." + std::to_string(n));
   }
   Rejection why;
-  const ws::v1::Config norm = normalized(f.config());
+  ws::v1::Config norm = normalized(f.config());
+  // Story 3.11: a file written before the minimum span existed may hold a pedal range of 1..255 counts. That is not a reason to void the whole file: the pedal is
+  // normalised to uncalibrated (0 / 0, polarity kept) and the rest of the config loads. The span rule still applies to every patch (the merged result).
+  for (const char* which : {"sustain", "expression"}) {
+    ws::v1::PedalCalibration* p = which[0] == 's' ? norm.mutable_sustain() : norm.mutable_expression();
+    if (p->max() > p->min() && p->max() <= kPedalMax && p->max() - p->min() < kMinPedalSpan) {
+      log(std::string("sysd: config file: ") + which + " calibration " + std::to_string(p->min()) + ".." + std::to_string(p->max()) + " is narrower than " +
+          std::to_string(kMinPedalSpan) + " counts; treated as uncalibrated");
+      p->set_min(0);
+      p->set_max(0);
+    }
+  }
   if (!valid_config(norm, &why)) {
     set_aside(".corrupt");
     return use_defaults(LoadReason::kInvalidContent, why.details["field"] + " " + why.details["reason"]);

@@ -210,15 +210,19 @@ void test_raw_controls() {
   r.feed(mcu::make_delta(ids::VALUE_ENCODER, 3), t + 3 * kMs);  // VALUE: raw only
   CHECK(r.out.size() == 1 && static_cast<std::int16_t>(core::panel_control_value16(r.out[0].ump)) == 3);
   r.out.clear();
-  // pedals: raw events with ID and value, nothing interpreted
+  // pedals: raw events with ID and value (Story 3.10; since Story 3.11 the sustain / expression frames also produce controller UMPs, the switch is normalised:
+  // the raw events are the assignable-controller ones)
   r.control(ids::PEDAL_SUSTAIN, 4095, t + 4 * kMs);
   r.control(ids::PEDAL_EXPRESSION, 17, t + 5 * kMs);
   r.control(ids::PEDAL_SWITCH, 1, t + 6 * kMs);
-  CHECK(r.out.size() == 3);
-  if (r.out.size() == 3) {
-    CHECK(core::panel_control_id(r.out[0].ump) == ids::PEDAL_SUSTAIN && core::panel_control_value16(r.out[0].ump) == 4095);
-    CHECK(core::panel_control_id(r.out[1].ump) == ids::PEDAL_EXPRESSION && core::panel_control_value16(r.out[1].ump) == 17);
-    CHECK(core::panel_control_id(r.out[2].ump) == ids::PEDAL_SWITCH && core::panel_control_value16(r.out[2].ump) == 1);
+  std::vector<StampedUmp> raws;
+  for (const StampedUmp& s : r.out)
+    if (s.ump.is_assignable_controller()) raws.push_back(s);
+  CHECK(raws.size() == 3);
+  if (raws.size() == 3) {
+    CHECK(core::panel_control_id(raws[0].ump) == ids::PEDAL_SUSTAIN && core::panel_control_value16(raws[0].ump) == 4095);
+    CHECK(core::panel_control_id(raws[1].ump) == ids::PEDAL_EXPRESSION && core::panel_control_value16(raws[1].ump) == 17);
+    CHECK(core::panel_control_id(raws[2].ump) == ids::PEDAL_SWITCH && core::panel_control_value16(raws[2].ump) == 1);
   }
   CHECK(r.reader->counters().raw_controls == 6 && r.reader->counters().encoder_steps == 1);
   // an unknown control ID (a valid frame, an ID the map does not have) is dropped and counted; the reader goes on

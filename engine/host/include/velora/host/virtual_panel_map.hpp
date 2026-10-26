@@ -148,6 +148,9 @@ class VirtualPanelLeds {
 class VirtualPanelUmpSink final : public ports::UmpSink {
  public:
   VirtualPanelUmpSink(VirtualPanel& panel, ports::UmpSink& downstream) noexcept : panel_(panel), downstream_(downstream) {}
+  // Called with the host time at the start of every incoming UMP batch, on the thread that feeds the panel reader: engine-host points it at PanelReader::poll()
+  // (the reader's state is single-threaded, so poll() must run here and not on the control tick). Set before MIDI runs.
+  void set_tick(std::function<void(std::uint64_t host_ns)> tick) { tick_ = std::move(tick); }
   void on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override {
     on_ump_port(ports::MidiPortKind::kUsb, words, count, host_ns);
   }
@@ -156,6 +159,7 @@ class VirtualPanelUmpSink final : public ports::UmpSink {
  private:
   VirtualPanel& panel_;
   ports::UmpSink& downstream_;
+  std::function<void(std::uint64_t)> tick_;
 };
 
 }  // namespace velora::host

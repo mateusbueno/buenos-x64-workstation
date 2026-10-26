@@ -20,6 +20,7 @@
 
 #include "velora/core/engine.hpp"
 #include "velora/core/sample_bank.hpp"
+#include "velora/core/ump.hpp"
 #include "velora/core/worker_pool.hpp"
 #include "velora/ports/sample_source.hpp"
 
@@ -159,6 +160,21 @@ class SampleEngine final : public Engine {
   // Story 6.5: times a voice met a damaged block (a rising edge per voice: it faded out for that block). Written by the audio thread, readable anywhere.
   std::uint64_t content_integrity_events() const noexcept override { return integrity_events_.load(std::memory_order_relaxed); }
   std::uint32_t region_count() const noexcept { return default_bank_ ? static_cast<std::uint32_t>(default_bank_->regions.size()) : 0u; }
+
+  // Story 3.11, half-pedal damping. The "half-pedal zone" is the pedal in (0, hold threshold): below half travel. At exactly half the note switches from the
+  // maximum damping (just under: 10x longer) to held (design limitation: revisit with a real pedal). The release of a voice that is released while the sustain pedal (CC 64, `cc64` in CC units 0..127, fractional for MIDI 2.0
+  // resolution) sits BELOW the hold threshold (63.5, the arbiter's "pedal down": >= 0x80000000 in 32 bits) is slowed: its release TIME is multiplied by
+  // 1 / scale, scale = 1 - (1 - kHalfPedalMinScale) * min(1, cc64 / 63.5), i.e. a straight line from 1 (pedal up: the instrument's own release, unchanged) down to
+  // kHalfPedalMinScale (0.1: ten times longer) just before the pedal holds the note; this is the felt damper lifting off the strings. At or above the threshold the notes
+  // are held by the arbiter and the law does not apply (scale 1: a panic or a steal releases at the normal rate). Applied once, when the release begins; a voice that is
+  // already releasing keeps its rate; release-trigger voices and the fast steal release are not touched. A binary CC 64 (0 or 127) gives scale 1, so the default is unchanged.
+  static constexpr float kHalfPedalHoldCc = static_cast<float>(127.0 * Ump::kSustainDownThreshold32 / 4294967295.0);  // 63.5: the arbiter's threshold in CC units
+  static constexpr float kHalfPedalMinScale = 0.1f;
+  static float half_pedal_scale(float cc64) noexcept {
+    if (!(cc64 > 0.0f)) return 1.0f;
+    if (cc64 >= kHalfPedalHoldCc) return 1.0f;
+    return 1.0f - (1.0f - kHalfPedalMinScale) * (cc64 / kHalfPedalHoldCc);
+  }
 
   // Envelope states, exposed for tests (order matters: >= kRelease means released).
   enum class EnvState : std::uint8_t { kDelay, kAttack, kHold, kDecay, kSustain, kRelease, kFadeout, kDone };

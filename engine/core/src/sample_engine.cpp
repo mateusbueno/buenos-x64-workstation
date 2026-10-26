@@ -560,7 +560,11 @@ EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t 
       v.key_up = true;  // one_shot ignores the note off
       continue;
     }
-    if (!env_release(v.env, r)) v.active = false;
+    if (!env_release(v.env, r)) {
+      v.active = false;
+    } else if (const float scale = half_pedal_scale(cc_[channel][64]); scale < 1.0f) {
+      v.env.release_rate = std::pow(v.env.release_rate, scale);  // Story 3.11: half-pedal damping (see half_pedal_scale)
+    }
   }
 
   // Release-trigger regions: the note-on velocity, a fresh random draw.

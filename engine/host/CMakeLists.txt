@@ -18,6 +18,7 @@ add_library(velora_host STATIC
   src/drift_clock.cpp
   src/keybed_reader.cpp
   src/panel_reader.cpp
+  src/pedal_processor.cpp
   src/virtual_panel_map.cpp)
 add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
@@ -65,6 +66,7 @@ add_library(velora_control STATIC
   src/edit_session.cpp
   src/fader_bindings.cpp
   src/migration_runner.cpp
+  src/pedal_calibrator.cpp
   src/sysd_config_client.cpp)
 add_library(velora::control ALIAS velora_control)
 target_include_directories(velora_control PUBLIC include "${VELORA_PB_DIR}" "${VELORA_GENERATED_DIR}/host")
@@ -341,6 +343,12 @@ add_executable(panel_reader_test tests/panel_reader_test.cpp)
 target_link_libraries(panel_reader_test PRIVATE velora_host)
 add_test(NAME panel_reader_test COMMAND panel_reader_test)
 set_tests_properties(panel_reader_test PROPERTIES TIMEOUT 300)
+
+# Pedals (Story 3.11): mapping, polarity, calibration, the reader's CC 64 / CC 11 / switch path, the calibration routine and its ws.v1 routing.
+add_executable(pedal_test tests/pedal_test.cpp)
+target_link_libraries(pedal_test PRIVATE velora_control)
+add_test(NAME pedal_test COMMAND pedal_test)
+set_tests_properties(pedal_test PROPERTIES TIMEOUT 120)
 
 add_executable(virtual_panel_map_test tests/virtual_panel_map_test.cpp)
 target_link_libraries(virtual_panel_map_test PRIVATE velora_host)

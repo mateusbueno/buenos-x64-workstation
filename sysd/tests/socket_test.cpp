@@ -319,7 +319,7 @@ void test_concurrent_clients_real_sockets() {
       for (int k = 0; k < kPer; ++k) {
         ws::v1::ConfigPatch p;
         p.mutable_expression()->set_min(1);
-        p.mutable_expression()->set_max(2 + static_cast<std::uint32_t>(c * kPer + k));
+        p.mutable_expression()->set_max(300 + static_cast<std::uint32_t>(c * kPer + k));
         ws::v1::ConfigReply r;
         if (!conn.set(p, r, err)) {
           ++failures;
@@ -499,6 +499,7 @@ struct FakeSysd {
   std::vector<std::vector<std::pair<std::uint64_t, ws::v1::ClockSource>>> scripts;  // one per connection
   std::atomic<int> conns{0};
   std::atomic<bool> hang{false};  // accept and never answer
+  std::atomic<bool> close_on_request{false};  // after the script, drop the connection when the client sends anything (Story 3.11: kLost)
 
   bool start(const std::string& p) {
     path = p;
@@ -575,7 +576,10 @@ struct FakeSysd {
       char b[16];
       while (!stop.load()) {  // hold until the client leaves or the test ends
         pollfd p2{fd, POLLIN, 0};
-        if (::poll(&p2, 1, 20) == 1 && ::recv(fd, b, sizeof b, 0) <= 0) break;
+        if (::poll(&p2, 1, 20) == 1) {
+          const ssize_t n = ::recv(fd, b, sizeof b, 0);
+          if (n <= 0 || close_on_request.load()) break;
+        }
       }
       ::close(fd);
     }
@@ -632,6 +636,47 @@ void test_client_revision_guard() {
   (void)sizeof(CS);
 }
 
+// Story 3.11: SysdConfigClient::set_config() against a sysd that never answers (kTimeout), while another write is in flight (kBusy), and one that drops the
+// connection (kLost); not connected is typed too. Nothing is retried.
+void test_set_config_failures() {
+  TmpDir t;
+  const std::string sock = t.path + "/p.sock";
+  FakeSysd fake;
+  fake.scripts = {{{1, ws::v1::CLOCK_SOURCE_INTERNAL}}};
+  CHECK(fake.start(sock));
+  hc::SysdConfigClientOptions o;
+  o.socket_path = sock;
+  o.backoff_min_ms = 5;
+  o.backoff_max_ms = 20;
+  hc::SysdConfigClient client(o);
+  ws::v1::ConfigPatch patch;
+  patch.mutable_sustain()->set_min(100);
+  patch.mutable_sustain()->set_max(900);
+  CHECK(client.set_config(patch, 100).status == hc::SysdSetResult::Status::kNotConnected);  // not started
+  client.start();
+  CHECK(wait_for([&] { return client.connected(); }));
+  auto t0 = Clock::now();
+  CHECK(client.set_config(patch, 200).status == hc::SysdSetResult::Status::kTimeout);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+  CHECK(ms >= 150 && ms < 1500);
+  // busy: one write waits for an answer that never comes, a second one is refused at once
+  hc::SysdSetResult::Status first = hc::SysdSetResult::Status::kOk;
+  std::thread a([&] { first = client.set_config(patch, 600).status; });
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  t0 = Clock::now();
+  CHECK(client.set_config(patch, 600).status == hc::SysdSetResult::Status::kBusy);
+  CHECK(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count() < 100);
+  a.join();
+  CHECK(first == hc::SysdSetResult::Status::kTimeout);
+  // lost: sysd drops the connection when the request arrives
+  fake.close_on_request.store(true);
+  CHECK(wait_for([&] { return client.connected(); }));
+  t0 = Clock::now();
+  CHECK(client.set_config(patch, 3000).status == hc::SysdSetResult::Status::kLost);
+  CHECK(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count() < 2500);
+  client.stop();
+}
+
 void test_client_never_blocks() {
   TmpDir t;
   const std::string sock = t.path + "/h.sock";
@@ -665,6 +710,7 @@ int main() {
   test_concurrent_clients_real_sockets();
   test_client_sysd_absent_then_appears();
   test_client_revision_guard();
+  test_set_config_failures();
   test_client_never_blocks();
   test_velocity_curve_via_sysd();
   if (g_fail) {

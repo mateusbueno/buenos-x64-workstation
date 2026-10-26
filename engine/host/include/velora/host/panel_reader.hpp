@@ -3,6 +3,9 @@
 //   panel MCU bytes -> StreamDecoder -> CONTROL / BUTTON frames -> device time (drift-tracked, the keybed reader's TimeSyncLink)
 //     CONTROL pitch / mod wheel -> pitch bend / CC 1 UMP for EVERY keyboard-on part   -> HostEventQueue (SPSC) -> RT plane
 //     CONTROL fader / encoder / pedal -> raw panel control event (+ the encoder step event for encoders 1..8) -> HostEventQueue
+//     CONTROL pedals (Story 3.11): sustain -> CC 64 (32-bit, continuous), expression -> CC 11 UMP for EVERY keyboard-on part, polarity and calibration applied
+//       (pedal_processor.hpp), at most one UMP per pedal per part per audio block (coalesced to the latest), in the note headroom lane (never shed);
+//       the switch pedal -> a normalised raw event (value 1 = closed) and a PanelButtonEvent (id PEDAL_SWITCH, pressed = closed) through the button sink
 //     BUTTON -> PanelButtonEvent (id, pressed, device ns) -> the button sink (ws.v1 PanelEvent push); nothing goes to the RT plane
 //
 // The reader touches the RT plane only through the HostEventQueue (StampedUmp with host_ns, CLOCK_MONOTONIC_RAW ns). Every time it needs "now"
@@ -28,6 +31,7 @@
 #include "velora/host/drift_clock.hpp"
 #include "velora/host/mcu_frame.hpp"
 #include "velora/host/midi_ingest.hpp"
+#include "velora/host/pedal_processor.hpp"
 
 namespace velora::host {
 
@@ -62,6 +66,9 @@ struct PanelReaderConfig {
   std::uint64_t sync_fast_interval_ns = 100'000'000;
   std::size_t sync_fast_samples = 16;
   std::uint64_t sync_timeout_ns = 500'000'000;
+  // Story 3.11: a pedal emits at most one controller UMP per part per this interval (one audio block: kBlockFrames / kSampleRate = 64 / 48000 s); a value that
+  // arrives sooner is kept and sent, as the latest one, with the next frame or poll() after the interval.
+  std::uint64_t pedal_emit_interval_ns = 1'333'333;
 };
 
 struct PanelReaderCounters {
@@ -78,10 +85,17 @@ struct PanelReaderCounters {
   std::uint64_t buttons_delivered = 0, buttons_unsunk = 0;  // BUTTON frames given to the sink / with no sink set
   std::uint64_t sync_requests = 0, sync_replies = 0, missed_syncs = 0, sync_stray = 0, sync_rejected = 0, unsynced_events = 0;
   std::uint64_t clock_clamps = 0;                      // converted times raised to keep events in order
-  std::uint64_t queue_full = 0, controllers_dropped = 0;
+  std::uint64_t queue_full = 0, controllers_dropped = 0;  // queue_full counts every refused push, a pedal UMP that is retried (kept owed) counts each time
   std::uint64_t mcu_resets = 0;
   std::uint64_t leds_sent = 0, leds_replayed = 0;      // LED_SET frames written for set_led() / replayed after a panel HELLO
   std::uint64_t leds_unlinked = 0, leds_rejected = 0;  // LED states stored with no TX hook / set_led() calls with an unknown id
+  // Story 3.11 (UMP counts are per part).
+  std::uint64_t sustain_ccs = 0, expression_ccs = 0;   // CC 64 / CC 11 UMPs queued
+  std::uint64_t pedal_no_parts = 0;                    // a continuous pedal moved while no part had its keyboard on: nothing emitted (a joining part takes the value)
+  std::uint64_t pedal_coalesced = 0;                   // pedal values replaced by a newer one before they were sent (the one-per-block throttle)
+  std::uint64_t pedal_replays = 0;                     // pedal values sent to a part that joined the keyboard, or re-sent after a full queue
+  std::uint64_t pedal_switch_events = 0;               // switch pedal changes published (raw event + button sink)
+  std::uint64_t pedal_jitter = 0;                      // raw pedal values absorbed by the hysteresis (no output change)
 };
 
 // One LED of the stored state (MCU-ID-MAP.md section 8): brightness 0..255, arg = colour index or ring fill.
@@ -112,7 +126,9 @@ class PanelReader {
 
   // Bytes from the MCU link, received at host time `rx_ns` (CLOCK_MONOTONIC_RAW ns).
   void on_bytes(const std::uint8_t* data, std::size_t len, std::uint64_t rx_ns);
-  // Periodic housekeeping: sends TIME_SYNC requests, counts missed syncs.
+  // Periodic housekeeping: sends TIME_SYNC requests, counts missed syncs, and sends the pedal values the one-per-block throttle held back. Call it periodically
+  // (every few ms) ON THE INPUT THREAD (the one that calls on_bytes): the pedal state is single-threaded, so it must not be called from the control tick. A held-back
+  // value is also sent by the next on_bytes() once its window has passed, but without frames and without poll() the trailing value of a burst would wait.
   void poll(std::uint64_t now_ns);
 
   // Story 3.12: sets one panel LED. Thread-safe. Returns false (nothing stored, nothing sent) for an id the ID map has no LED for. The state is stored even with
@@ -121,6 +137,11 @@ class PanelReader {
   // The stored state of one LED (nullopt: the id is not an LED, or it was never set). Thread-safe.
   std::optional<LedValue> led(std::uint8_t id) const;
   static bool is_led_id(std::uint8_t id) noexcept;
+
+  // Story 3.11: the pedal configuration (polarity, calibration; the sysd config callback on the control thread writes it, applied from the next frame, no
+  // restart) and the calibration probe (the control thread arms it and reads the measured raw min / max; the input thread feeds it).
+  PedalSettings& pedal_settings() noexcept { return pedal_settings_; }
+  PedalCalibrationProbe& pedal_probe() noexcept { return pedal_probe_; }
 
   PanelReaderCounters counters() const;
   const DriftClock& clock() const noexcept { return link_.clock(); }
@@ -139,6 +160,21 @@ class PanelReader {
   // Wheels: the current value is kept so that a UMP shed near a full queue, a part that joins the keyboard and a panel restart never leave a stale bend.
   void emit_wheel(bool pitch, std::uint16_t channels, std::uint32_t value32, std::uint64_t t);
   void sync_parts_and_flush();
+  // Story 3.11.
+  struct PedalRt {
+    PedalChannel ch;
+    std::uint32_t applied_version = 0;
+    bool pending = false;           // a value is owed to `owed` channels
+    std::uint16_t owed = 0;
+    bool emitted = false;
+    std::uint64_t last_emit_ns = 0;
+  };
+  void on_pedal(PedalRt& p, PedalId id, std::uint16_t raw, std::uint64_t t);
+  void on_pedal_switch(const mcu::Control& c, std::uint64_t t);
+  // `t` stamps the UMPs, `now` is the time the throttle window is measured at (the frame's device time, or the host time of a poll / of the bytes just received).
+  void flush_pedal(PedalRt& p, PedalId id, std::uint64_t t, bool force, std::uint64_t now);
+  void flush_pending_pedals(std::uint64_t now, bool host_stamp);
+  void refresh_pedal_config(std::uint64_t t, bool needs_order);
   std::uint64_t order(std::uint64_t t);
 
   HostEventQueue& out_;
@@ -164,6 +200,12 @@ class PanelReader {
   std::uint64_t last_now_ns_ = 0;
   std::uint64_t leds_sent_ = 0, leds_replayed_ = 0, leds_unlinked_ = 0, leds_rejected_ = 0;
   bool have_tx_ = false;
+  PedalSettings pedal_settings_;
+  PedalCalibrationProbe pedal_probe_;
+  PedalRt pedals_[2];  // sustain, expression
+  bool switch_closed_ = false;
+  bool sustain_zero_owed_ = false;  // every keyboard-on part left while the sustain pedal was held: one CC 64 = 0 is owed so the pedal-up is never lost
+  std::uint32_t sustain_zero_ch_ = 0;
 };
 
 }  // namespace velora::host

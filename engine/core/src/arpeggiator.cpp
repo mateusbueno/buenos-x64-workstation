@@ -227,7 +227,7 @@ void Arpeggiator::remove_unheld_notes() noexcept {
 
 void Arpeggiator::handle_sustain_cc(std::uint32_t value32, std::uint32_t frame, EventBuffer& out) noexcept {
   const bool was_down = sustain_pedal_down_;
-  sustain_pedal_down_ = value32 >= 0x80000000u;
+  sustain_pedal_down_ = Ump::sustain_down(value32);
   if (was_down && !sustain_pedal_down_ && config_.enabled && !config_.latch) {
     remove_unheld_notes();
     if (held_count_ == 0) {
@@ -404,7 +404,7 @@ void Arpeggiator::process_input(const Ump& ump, std::uint32_t frame, const Trans
       }
     } else {
       if (is_sustain_cc(ump)) {
-        sustain_pedal_down_ = ump.controller_value32() >= 0x80000000u;
+        sustain_pedal_down_ = Ump::sustain_down(ump.controller_value32());
       }
       out.push(ump, frame);
     }
@@ -469,7 +469,7 @@ void Arpeggiator::process_block(const EventBuffer& in, const TransportClock& clo
           }
         } else {
           if (is_sustain_cc(u)) {
-            sustain_pedal_down_ = u.controller_value32() >= 0x80000000u;
+            sustain_pedal_down_ = Ump::sustain_down(u.controller_value32());
           }
           out.push(u, in[i].target_frame);
         }
@@ -492,7 +492,7 @@ void Arpeggiator::process_block(const EventBuffer& in, const TransportClock& clo
           }
         } else {
           if (is_sustain_cc(u)) {
-            sustain_pedal_down_ = u.controller_value32() >= 0x80000000u;
+            sustain_pedal_down_ = Ump::sustain_down(u.controller_value32());
           }
           out.push(u, f);
         }

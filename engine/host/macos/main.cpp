@@ -44,6 +44,7 @@
 #include "velora/host/live_set_switcher.hpp"
 #include "velora/host/midi_ingest.hpp"
 #include "velora/host/panel_reader.hpp"
+#include "velora/host/pedal_calibrator.hpp"
 #include "velora/host/virtual_panel_map.hpp"
 #include "velora/host/render_driver.hpp"
 #include "velora/host/scene_controller.hpp"
@@ -71,6 +72,7 @@ int main(int argc, char** argv) {
   bool want_line_in = false, no_audio = false;
   std::string din_source;  // Story 7.7: a CoreMIDI source whose name contains this is the DIN input (Mac only; the board's DIN UART adapter tags kDin itself)
   std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path, sysd_socket;
+  host::PedalDirection switch_direction = host::PedalDirection::kNormal;  // Story 3.11
   std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
   bool factory_live_sets_required = false;      // --factory-live-sets-required: a failed import is fatal
   std::string factory_live_sets_path;            // Story 6.9 (dev builds): the signed factory Live Set file imported on first boot
@@ -132,6 +134,14 @@ int main(int argc, char** argv) {
       library_socket = argv[++i];  // Story 4.11: tell the librarian service which Live Set became active and when the engine is performing
     } else if (!std::strcmp(argv[i], "--din-source") && i + 1 < argc) {
       din_source = argv[++i];
+    } else if (!std::strcmp(argv[i], "--switch-polarity") && i + 1 < argc) {
+      const std::string v = argv[++i];  // Story 3.11: the footswitch's wiring; sysd has no field for it (Story 3.8's detection will supply it)
+      if (v == "closed") switch_direction = host::PedalDirection::kInverted;
+      else if (v == "open" || v == "auto") switch_direction = host::PedalDirection::kNormal;
+      else {
+        std::fprintf(stderr, "engine-host: --switch-polarity open|closed|auto\n");
+        return 2;
+      }
     } else if (!std::strcmp(argv[i], "--sysd-socket") && i + 1 < argc) {
       sysd_socket = argv[++i];  // Foundation: the system config (clock source, velocity curve, pedals, Boot into) comes from sysd at start and on change
     } else {
@@ -156,6 +166,7 @@ int main(int argc, char** argv) {
                    "                                           the port the sysd clock_source selects and ignored from the other)\n"
                    "                   [--sysd-socket PATH]   (the sysd config service (velora-sysd): the engine runs on the defaults until sysd answers, applies the config on connect and on every\n"
                    "                                           change, keeps the last one when sysd goes away; sysd absent never stops the engine; default off)\n"
+                   "                   [--switch-polarity open|closed|auto]   (Story 3.11: the footswitch pedal's wiring: closed = normally closed, inverted; default raw)\n"
                    "                   [--library-socket PATH [--library-playing-idle-ms N]]   (report the active Live Set and the performing state to the librarian service's Library API;\n"
                    "                                                                           performing = a note within the last N ms, default 3000; default off)\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
@@ -489,6 +500,9 @@ int main(int argc, char** argv) {
     panel_reader->set_tx([pl](const std::uint8_t* data, std::size_t len) { pl->on_bytes(data, len); });
     virtual_panel->start();
     panel_sink = std::make_unique<host::VirtualPanelUmpSink>(*virtual_panel, ingest);
+    // Story 3.11: the reader's housekeeping (time sync, pedal values held back by the throttle) runs with every UMP batch, on the thread that feeds on_bytes().
+    // (Only packets from the control surface wake it: a trailing pedal value of a burst is sent by the next packet or frame; a dedicated timer on that thread is a follow-up.)
+    panel_sink->set_tick([pr](std::uint64_t ns) { pr->poll(ns); });
     std::printf("virtual panel: %s\n", virtual_panel_path.c_str());
   }
   ports::UmpSink& midi_sink = panel_sink ? static_cast<ports::UmpSink&>(*panel_sink) : static_cast<ports::UmpSink&>(ingest);
@@ -532,7 +546,9 @@ int main(int argc, char** argv) {
     host::SysdConfigClientOptions so;
     so.socket_path = sysd_socket;
     sysd_client = std::make_unique<host::SysdConfigClient>(so);
-    sysd_client->set_callback([ing = &ingest, rend = renderer.get(), vc = &velocity_curves, first = true](const ws::v1::Config& c, std::uint64_t revision) mutable {
+    sysd_client->set_callback([ing = &ingest, rend = renderer.get(), vc = &velocity_curves, pr = panel_reader.get(), sw = switch_direction, first = true](const ws::v1::Config& c, std::uint64_t revision) mutable {
+      // Story 3.11: the pedal polarity and calibration reach the panel reader's pedal processor, applied from the next pedal frame (no restart).
+      if (pr) host::apply_pedal_config(c, pr->pedal_settings(), sw);
       // Story 7.7: the clock source takes effect at the next block, without touching a voice. An unknown value keeps the last applied one.
       const core::ClockSource before = ing->clock_source();
       if (host::apply_clock_source(c, *ing, *rend)) {
@@ -553,6 +569,17 @@ int main(int argc, char** argv) {
   }
   // Story 3.12: a ws.v1 SetLed goes to the panel reader, the only writer of the panel link (control thread -> reader's thread-safe set_led).
   if (panel_reader) plane.set_led_sink([pr = panel_reader.get()](std::uint8_t id, std::uint8_t b, std::uint8_t a) { pr->set_led(id, b, a, host::macos::now_ns()); });
+  // Story 3.11: pedal calibration commands (ws.v1 StartPedalCalibration / FinishPedalCalibration / CancelPedalCalibration): the raw measurement is the panel
+  // reader's, the result is written to sysd. Without a panel reader the commands answer a typed error.
+  std::unique_ptr<host::PedalCalibrator> pedal_calibrator;
+  if (panel_reader) {
+    host::PedalCalibrator::Writer writer;
+    if (sysd_client) writer = [c = sysd_client.get()](const ws::v1::ConfigPatch& p) { return c->set_config(p, 400); };  // the control thread waits at most ~400 ms for sysd (an async Finish with a WRITING result is the proper follow-up)
+    pedal_calibrator = std::make_unique<host::PedalCalibrator>(panel_reader->pedal_probe(), std::move(writer), [] { return host::macos::now_ns(); });
+    plane.set_pedal_handler(pedal_calibrator.get());
+    // The pedals start uncalibrated and in the raw direction (the footswitch with its --switch-polarity wiring); sysd's config replaces this when it arrives.
+    host::apply_pedal_config(host::default_config(), panel_reader->pedal_settings(), switch_direction);
+  }
   host::ControlServer control(plane, socket_path);
   panel_push.store(&control, std::memory_order_release);
   // Teardown order: `control` is destroyed before `midi` (declared earlier), and the CoreMIDI thread must never reach a destroyed server. On every exit

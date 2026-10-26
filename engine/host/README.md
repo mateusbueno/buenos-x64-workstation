@@ -323,6 +323,42 @@ the engine's own control server does not serve the config messages (`ERROR_CODE_
   after the slowest release time, then re-strike 90 ms after the open: velocity timed from the open); (4) a custom spec with a release contact below the top no longer needs
   `release_pair = false` (the default is false). `host_unit_test`: an external note off normalises to release velocity 0.
 
+### Pedals: polarity, half-pedal calibration and expression (Story 3.11: FR42, AR39)
+
+Panel CONTROL frames of the three pedals (`PEDAL_SUSTAIN` 0x28 and `PEDAL_EXPRESSION` 0x29, 12 bit continuous; `PEDAL_SWITCH` 0x2A, 1 bit) are interpreted by the panel reader's pedal path
+(`pedal_processor.hpp`, `PanelReader`); everything runs on the panel input thread, allocation free, and the raw panel control event of Story 3.10 is still published (Epic 4 binds it).
+
+- **Polarity**: after normalisation every pedal reports "pressed = higher". `PedalPolarity` NORMALLY_OPEN or UNSPECIFIED = the raw direction; NORMALLY_CLOSED inverts (a switch reads closed on raw 0). Two continuous sustain
+  pedals of opposite direction, and normally-open / normally-closed switches, give the same output (tests). There is no boot-time detection yet (Story 3.8): unspecified is the raw direction.
+- **Calibration**: the calibrated raw range `[min, max]` (sysd `PedalCalibration`) maps to the full continuous 32-bit range: halfway is half. `0 / 0`, `min >= max`, a span under 256 counts or a value above 4095 is
+  uncalibrated and uses the full 0..4095. Constants (`pedal_processor.hpp`): a dead zone of `max(4, span / 64)` counts at each end (63 counts of the uncalibrated range), so a resting pedal reads exactly `0` and a fully
+  pressed one exactly `0xFFFFFFFF`, with the travel between rescaled linearly (clamped, monotonic); a move under 2 counts from the last accepted raw value is ignored unless it enters or leaves an end state.
+- **Sustain**: a MIDI 2.0 CC 64 (32 bit, continuous) UMP in device time to every keyboard-on part, in the **note headroom lane** (never shed with the controllers). **Expression**: CC 11, the same way.
+  At most **one UMP per pedal per part per audio block** (`pedal_emit_interval_ns`, 64 / 48000 s): a value that arrives sooner replaces the pending one and the latest goes out with the next frame or `poll()`; a UMP a
+  completely full queue could not take stays owed and is re-sent with the latest value. No keyboard-on part: nothing is emitted and `pedal_no_parts` counts it; a part that joins the keyboard takes the current values
+  (`pedal_replays`). Counters: `sustain_ccs`, `expression_ccs`, `pedal_coalesced`, `pedal_jitter`.
+- **Switch**: published as the raw panel control event with the normalised value (1 = closed) and as a `PanelButtonEvent` (id PEDAL_SWITCH, pressed = closed) through the button sink, i.e. the ws.v1 `PanelEvent` push the ui's
+  footswitch handling (Story 4.36) already consumes; only changes are published (`pedal_switch_events`). Its wiring is `--switch-polarity open|closed|auto` (sysd has no field for it).
+- **Runtime config**: the sysd callback calls `apply_pedal_config` (`PedalSettings`, lock-free); the reader re-maps the last raw value on the next frame or poll, no restart.
+- **Half pedal in the sample engine**: the CC 64 value is delivered to the parts' engines; the arbiter still sees only the binary state (>= half = down, notes deferred; one named constant, `Ump::kSustainDownThreshold32`, is used by
+  the block renderer, the arpeggiator and the law), so a binary pedal is unchanged. The **half-pedal zone** is the pedal in (0, hold threshold), i.e. below half travel. The `SampleEngine` slows the release of a voice that is
+  released while the pedal is in that zone: release time x `1 / scale`, `scale = 1 - 0.9 * min(1, cc64 / 63.5)` (`half_pedal_scale`): pedal up gives the instrument's own release, just under half gives ten times longer.
+  **Design limitation**: at exactly 50% travel the note switches from "maximum damping" to "held" (raw 2047 vs 2048 of the uncalibrated range; the test documents the knife edge); there is no damping *at* mid travel. Revisit with a
+  real pedal. The value is applied once when a release begins and is delivered to the engines **after** the deferred releases of a pedal-up (and before the hold of a pedal-down): a normal pedal lift releases the held notes at
+  the instrument's own rate; only a note released later with the pedal in the half-pedal zone is damped. A controller UMP the engine ignores (CC 11 on every engine but the sample engine) increments the renderer's `ignored_events`
+  counter. Render test: `pedal_half_pedal_test` (up fastest, CC 32 < 40 < 56 < 63 monotonically longer, down held; the measured ratio follows the law; a pedal lift is not damped).
+- **Calibration routine** (`pedal_calibrator.hpp`): ws.v1 `StartPedalCalibration{pedal}` / `FinishPedalCalibration` / `CancelPedalCalibration` (control thread, `PedalCalibrator`). Start arms the reader's lock-free probe (the input
+  thread keeps the raw min / max in atomics; no lock on it); the player presses fully and releases; Finish validates (no movement, span < 256 counts: typed, config unchanged) and writes only `{min, max}` to sysd with
+  `SysdConfigClient::set_config()` (the worker thread does the socket I/O; the control thread waits at most 2-3 s; retry-free; typed `SysdSetResult`), which bumps the revision and pushes the config back. A calibration not
+  finished within 60 s ends `TIMED_OUT` at Finish. The Start reply carries a `run_token`; Finish / Cancel must present it (a second client's Start cannot be finished by the first). The write waits at most ~400 ms
+  (`engine-host`); making Finish asynchronous (a `WRITING` result, then the final one) is the proper follow-up. This design (measure on the engine, write from the engine) was chosen over watching raw values from `velora-sysdctl` because raw pedal values are not on the ws.v1 stream.
+  CLI: `velora-sysdctl --engine-socket PATH calibrate-pedal sustain|expression [--seconds N]` (`sysd/README.md`).
+- **Tests**: `pedal_test` (mapping, polarity, switch, coalescing, queue pressure, runtime change, probe, calibrator, ws.v1 routing), `sysd_pedal_calibration_test` (real sysd + the virtual panel's frames end to end, persistence across
+  a restart, refusals, sysd absent), `pedal_half_pedal_test` (render), the sysd validation in `sysd_config_tests`.
+- **Deferred**: real pedals on the prototype (the ADC range, noise and the NO / NC wiring of the actual pedals are not measured); the Settings row (Story 10.2); boot-time polarity detection (Story 3.8); a sysd field for the
+  footswitch wiring; the calibration window is only checked when Finish arrives (no timer); `PanelReader::poll()` must run on the input thread (engine-host calls it with every UMP batch of the virtual panel, so the trailing
+  value of a burst waits for the next packet or frame; a dedicated timer on that thread is a follow-up).
+
 ### Clock source and DIN / USB clock inputs (Story 7.7: FR76, AR39, AR17)
 
 - `MidiIngest::on_ump_port(MidiPortKind, ...)` stamps every packet on arrival (input edge thread, device time) and tags it `kUsb` or `kDin` (`StampedUmp::port`).

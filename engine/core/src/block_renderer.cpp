@@ -369,7 +369,7 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     } else if (ump.is_control_change()) {
       const std::uint32_t cc = ump.controller_index();
       if (cc == Ump::kControllerSustain) {
-        input_pedal_down_ = ump.controller_value32() >= 0x80000000u;
+        input_pedal_down_ = Ump::sustain_down(ump.controller_value32());
       } else if (cc == 120 || cc == 123) {  // all sound off / all notes off: that channel's keys are up (a lost note off must not stick)
         const std::size_t base = static_cast<std::size_t>(ump.channel() & 0xFu) * 128u;
         for (std::size_t n = 0; n < 128; ++n) {
@@ -397,22 +397,31 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     return;
   }
   if (ump.group() == 0 && ump.is_control_change() && ump.controller_index() == Ump::kControllerSustain) {
-    const bool down = ump.controller_value32() >= 0x80000000u;  // MIDI value 64 of 0..127 scaled to 32 bits
+    const std::uint32_t v32 = ump.controller_value32();
+    const bool down = Ump::sustain_down(v32);  // MIDI value 64 of 0..127 scaled to 32 bits
     if (router_.active()) {
-      apply_keyboard_sustain(down);
+      apply_keyboard_sustain(down, v32);
       return;
     }
     keyboard_pedal_down_ = down;  // kept in step on every pedal path, so a switch sees the physical pedal
     const std::uint32_t ch = ump.channel();
+    // Story 3.11: the continuous value reaches the engines BEFORE the release it may trigger when the pedal goes down (nothing is released), and AFTER the deferred
+    // releases when it comes up: those notes were held (the engine's last value was >= the threshold, scale 1), so a normal pedal lift releases them at the
+    // instrument's own rate; only a note released later, with the pedal in the half-pedal zone, is damped.
+    if (down) deliver_cc(ch, Ump::kControllerSustain, v32);
     if (ch < params::kPartCount) {
       arps_[ch].set_sustain_pedal(down);
       if (custom_processors_[ch] == nullptr && arps_[ch].enabled()) {
         arbiter_.set_sustain(ch, false);
+        if (!down) deliver_cc(ch, Ump::kControllerSustain, v32);
         return;
       }
     }
     arbiter_.set_sustain(ch, down);
-    if (!down) release_deferred(ch);
+    if (!down) {
+      release_deferred(ch);
+      deliver_cc(ch, Ump::kControllerSustain, v32);
+    }
     return;
   }
   if (ump.group() == 0 && ump.is_pitch_bend()) {  // Story 3.10
@@ -530,9 +539,12 @@ void BlockRenderer::apply_keyboard_note(const Ump& ump) noexcept {
 }
 
 // Sustain pedal in a Live Set: down reaches the parts with the keyboard on, up reaches every part (and lets its deferred releases go).
-void BlockRenderer::apply_keyboard_sustain(bool down) noexcept {
+void BlockRenderer::apply_keyboard_sustain(bool down, std::uint32_t value32) noexcept {
   keyboard_pedal_down_ = down;
+  keyboard_cc_[Ump::kControllerSustain] = value32;  // replayed to a part that begins to listen (a Live Set switch)
+  keyboard_cc_seen_[Ump::kControllerSustain] = true;
   for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+    if (down && router_.pedal_down_target(p)) deliver_cc(p, Ump::kControllerSustain, value32);  // Story 3.11: before the hold; for "up" it follows the release (below)
     arps_[p].set_sustain_pedal(down);
     if (down) {
       if (router_.pedal_down_target(p)) {
@@ -542,6 +554,7 @@ void BlockRenderer::apply_keyboard_sustain(bool down) noexcept {
     } else {
       arbiter_.set_sustain(p, false);
       release_deferred(p);
+      deliver_cc(p, Ump::kControllerSustain, value32);  // after the release: the deferred notes were held, so they release at the instrument's own rate
     }
   }
 }
@@ -801,7 +814,7 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
       const std::uint32_t f = pending_[i].target_frame;
       const Ump& u = pending_[i].ump;
       if (u.group() == 0 && u.is_control_change() && u.controller_index() == Ump::kControllerSustain) {
-        const bool down = u.controller_value32() >= 0x80000000u;
+        const bool down = Ump::sustain_down(u.controller_value32());
         if (router_.active()) {
           for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
             if (uses_proc[p] && custom_processors_[p] == nullptr && (!down || router_.pedal_down_target(p))) {

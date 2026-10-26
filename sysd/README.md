@@ -24,6 +24,7 @@ rename, directory fsync) with its stage hook for fault injection.
 | `schema_version` N | loaded |
 | `schema_version` N-1 | loaded; never rewritten on read. A SetConfig keeps the N-1 stamp (so a rollback to the previous firmware still reads it) until the Story 8.5 migration runner (`ConfigStore::migrate()`, `migration_unit()`; called at start and to be called again on the RAUC mark-good event) rewrites it as N, only after the slot probe says good |
 | too old / unknown major / oversize / unreadable | defaults + a logged typed reason (`too_old` / `too_new` / `too_large` / `unreadable`); the file is untouched on read. Before the first write replaces it, a hard link keeps its bytes as `sysd_config.pb.<reason>` (`.N` suffix when that name exists: an aside is never overwritten; rename is the fallback where links are unsupported). The primary stays in place until the atomic replace succeeds, so a failed replace or a crash between the two steps leaves it untouched |
+| a pedal range of 1..255 counts (written before Story 3.11's minimum span) | the file is **not** voided: that pedal is read as uncalibrated (min = max = 0, polarity kept) with a logged note and everything else loads; the span rule applies to patches (the merged result), not to loading |
 | corrupt bytes / invalid values | defaults + logged reason (`corrupt`, `invalid_content`); the bad file is renamed `sysd_config.pb.corrupt` (`.1`, `.2`, ... for later ones: two corruptions in a row keep both) |
 | kill at any write stage | the replace is an atomic rename, so the next start reads the old file or the new one, never a half-written one (tests kill at each stage, simulated and with real process kills). A crash may leave a stale `sysd_config.pb.tmp`, which the next write replaces; this does not protect against media corruption, which loads as `corrupt` (above) |
 
@@ -50,7 +51,7 @@ bytes; HelloAck feature `config.v1`). The socket is created 0600.
 them; sysd answers every engine command the same way): the servers are not mixed.
 
 Typed errors (nothing changes, nothing is pushed): unknown / unspecified enum value -> `UNKNOWN_ENUM_VALUE` (`details.field`); pedal min or max above 4095 ->
-`OUT_OF_RANGE`; pedal `min >= max` (0/0 means uncalibrated), a bad Live Set id (empty, or 1..64 characters of `[A-Za-z0-9_-]`) or Boot into DEFAULT_LIVE_SET
+`OUT_OF_RANGE`; pedal `min >= max` (0/0 means uncalibrated), a calibrated pedal whose `max - min` is under 256 counts (`details.reason = span_too_small`, `details.min_span`; Story 3.11), a bad Live Set id (empty, or 1..64 characters of `[A-Za-z0-9_-]`) or Boot into DEFAULT_LIVE_SET
 without an id -> `INVALID_CONFIG` (new, 41; `details.field`, `details.reason`); an empty patch -> `INVALID_COMMAND` (`reason=empty_patch`); persist failures as above.
 
 `revision` is persisted and strictly increases with every change; SetConfig is serialised under one mutex (single writer), so two concurrent SetConfig never
@@ -110,6 +111,26 @@ velora-sysdctl --socket /run/velora/sysd.sock get
   real sysd on a temp dir, restarted). Without sysd the engine runs on Normal.
 - Details of the curves, the calibration and the release velocity: `engine/host/README.md`.
 
+## Pedals (Story 3.11): how `sustain` / `expression` flow
+
+`sustain` and `expression` (`{min, max, polarity}` on the raw 12-bit pedal range) have behaviour now. Polarity: UNSPECIFIED and NORMALLY_OPEN keep the raw direction (pressed =
+raw rises), NORMALLY_CLOSED inverts it (pressed = raw falls); `0 / 0` is uncalibrated (the full 0..4095). The footswitch pedal has no sysd field: its wiring is the engine flag
+`--switch-polarity open|closed|auto` until Story 3.8's detection supplies it. How the engine maps, emits and calibrates: `engine/host/README.md`, "Pedals".
+
+```
+velora-sysdctl --engine-socket /run/velora/engine.sock calibrate-pedal sustain        # press the pedal fully, release, press Enter
+velora-sysdctl --engine-socket /run/velora/engine.sock calibrate-pedal expression --seconds 8   # finish after 8 s instead of waiting for Enter
+velora-sysdctl --socket /run/velora/sysd.sock set sustain ,,closed                    # only the polarity (normally closed); min / max are kept
+velora-sysdctl --socket /run/velora/sysd.sock set sustain 500,3800                    # a range by hand (min < max, span >= 256)
+```
+
+- **Measurement stays on the engine** (it owns the panel reader): `calibrate-pedal` talks to the **engine's** ws.v1 socket (`--engine-socket`), not to sysd. The engine writes the
+  result to sysd with a `SetConfig` patch holding only that pedal's `min` and `max`, so the stored polarity survives a recalibration.
+- sysd validates the whole config as always: a degenerate range is refused with `INVALID_CONFIG` / `span_too_small` and nothing changes (the engine also refuses it first, typed, before writing).
+- **sysd -> engine**: the config callback (control thread) calls `host::apply_pedal_config`, which stores the calibration and polarity lock-free in the reader's `PedalSettings`; the input thread uses
+  them from the next pedal frame (a held pedal is re-mapped at once), no restart. **Persistence** is sysd's file (tests: `sysd_pedal_calibration_test`, real sysd in a temp dir, restarted).
+- sysd absent: the engine runs uncalibrated in the raw direction; a calibration then ends `SYSD_UNAVAILABLE` and stores nothing.
+
 ## Deployment and limits (read before relying on it)
 
 - The socket is created **0600**: `engine` and `ui` must run as the sysd user, or the deployment must decide a group arrangement (not done here).
@@ -119,12 +140,12 @@ velora-sysdctl --socket /run/velora/sysd.sock get
 - Config values received by the client are **not validated** on the engine side: sysd validates, but consumers (Stories 3.6, 3.11, 7.7, 8.9) must treat what they
   read defensively (unknown enum values, a calibration that is not min < max, a Live Set id that no longer exists).
 - Deferred on purpose: the persist (fsync) runs on the server's poll thread; the Live Set id format stays `[A-Za-z0-9_-]{1,64}` until Story 8.9 tightens it to a
-  UUID; Story 3.11 decides a minimum span for a calibration.
+  UUID. (Story 3.11 fixed the minimum span of a pedal calibration: 256 counts, validated by sysd and again by the engine, which treats a narrower range as uncalibrated.)
 - `velora-sysdctl` waits up to 10 s per request (`VELORA_SYSDCTL_TIMEOUT_MS` overrides).
 
 ## Not covered here
 
-- Behaviour exists for clock source (7.7) and velocity curve (3.6); pedals (3.11) and Boot into (8.9) are only logged by the engine wiring.
+- Behaviour exists for clock source (7.7), velocity curve (3.6) and pedals (3.11); Boot into (8.9) is only logged by the engine wiring.
 - The ui `SystemConfig` JSON (`ui/src/system_config.cpp`: theme, language, brightness, ...) is **not migrated**: it stays in the ui for now. Moving it into
   `SysdConfig` (and the ui reading it from sysd) is a follow-up.
 - The `ui` as a client of sysd (this foundation delivers the engine client and the CLI).

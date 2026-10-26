@@ -132,6 +132,14 @@ class FaderHandler {
   virtual void on_snapshot_published(const core::Snapshot& snap) = 0;
 };
 
+// Pedal calibration (Story 3.11): the plane routes StartPedalCalibration / FinishPedalCalibration / CancelPedalCalibration to this seam (the PedalCalibrator
+// implements it). On success fills reply.pedal_calibration_reply (a calibration that did not store anything is still a successful, typed reply). Control thread only.
+class PedalCalibrationHandler {
+ public:
+  virtual ~PedalCalibrationHandler() = default;
+  virtual bool run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& reply, HandlerFailure& err) = 0;
+};
+
 class ControlPlane {
  public:
   using Clock = std::function<std::uint64_t()>;  // host time in ns, the same clock the MIDI adapter stamps with
@@ -174,6 +182,8 @@ class ControlPlane {
   // Fader commands (Story 4.12): the FaderController registers itself here (and unregisters in its destructor). Control thread only.
   void set_fader_handler(FaderHandler* h) noexcept { fader_handler_ = h; }
   FaderHandler* fader_handler() const noexcept { return fader_handler_; }
+  // Pedal calibration (Story 3.11): the PedalCalibrator registers itself here (and unregisters in its destructor). Control thread only.
+  void set_pedal_handler(PedalCalibrationHandler* h) noexcept { pedal_handler_ = h; }
   // Panel LEDs (Story 3.12): where a validated SetLed goes (the engine's PanelReader::set_led, the only writer of the panel link). The id is already checked
   // against the ID map, brightness / arg are 0..255. With no sink (no panel attached) a valid SetLed is acknowledged and dropped. Set before the server runs.
   using LedSink = std::function<void(std::uint8_t led_id, std::uint8_t brightness, std::uint8_t arg)>;
@@ -268,6 +278,7 @@ class ControlPlane {
   SetlistHandler* setlist_handler_ = nullptr;
   EditHandler* edit_handler_ = nullptr;
   FaderHandler* fader_handler_ = nullptr;
+  PedalCalibrationHandler* pedal_handler_ = nullptr;
   LedSink led_sink_;
   std::uint32_t fence_seq_ = 0;
   std::uint64_t program_generation_ = 0;

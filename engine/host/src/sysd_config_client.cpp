@@ -135,10 +135,12 @@ int connect_unix(const std::string& path, const std::atomic<bool>& stop, int wak
   return fd;
 }
 
-void drain(int fd) {
+// True when something was read (a wake-up).
+bool drain(int fd) {
   char buf[64];
-  while (::read(fd, buf, sizeof buf) > 0) {
-  }
+  bool any = false;
+  while (::read(fd, buf, sizeof buf) > 0) any = true;
+  return any;
 }
 
 }  // namespace
@@ -243,6 +245,7 @@ void SysdConfigClient::run() {
       const bool got_config = session(fd);
       ::close(fd);
       connected_.store(false);
+      fail_request(SysdSetResult::Status::kLost);
       if (got_config) backoff = opts_.backoff_min_ms;  // only a session that delivered a valid Config resets the backoff: a server that accepts and says nothing keeps backing off
       if (stop_.load()) break;
     }
@@ -283,7 +286,8 @@ bool SysdConfigClient::session(int fd) {
       }
       pollfd pf[2] = {{fd, POLLIN, 0}, {wake_[0], POLLIN, 0}};
       ::poll(pf, 2, wait);
-      drain(wake_[0]);
+      const bool woke = drain(wake_[0]);
+      if (woke && timeout_ms < 0 && !(pf[0].revents & (POLLIN | POLLHUP | POLLERR))) return 0;  // a set_config() (or stop) wants the worker
       if (pf[0].revents & (POLLIN | POLLHUP | POLLERR)) {
         char buf[4096];
         const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
@@ -313,9 +317,89 @@ bool SysdConfigClient::session(int fd) {
     ws::v1::ServerMessage in;
     const int r = read_frame(in, -1);
     if (r < 0) return conn.have;
-    if (in.has_config_reply()) on_config(in.config_reply(), conn);
-    else if (in.has_error() && in.request_id() == 2) return conn.have;  // sysd refused the subscription: drop and retry later
+    if (stop_.load()) return conn.have;
+    service_request(fd);
+    if (r == 0) continue;
+    if (in.has_config_reply()) {
+      on_config(in.config_reply(), conn);
+      if (in.request_id() >= 100) {
+        SysdSetResult res;
+        res.status = SysdSetResult::Status::kOk;
+        res.revision = in.config_reply().revision();
+        res.not_durable = in.config_reply().not_durable();
+        res.config = in.config_reply().config();
+        finish_request(in.request_id(), std::move(res));
+      }
+    } else if (in.has_error() && in.request_id() == 2) {
+      return conn.have;  // sysd refused the subscription: drop and retry later
+    } else if (in.has_error() && in.request_id() >= 100) {
+      SysdSetResult res;
+      res.status = SysdSetResult::Status::kRefused;
+      res.code = in.error().code();
+      const auto it = in.error().details().find("reason");
+      if (it != in.error().details().end()) res.reason = it->second;
+      else res.reason = in.error().message();
+      finish_request(in.request_id(), std::move(res));
+    }
   }
+}
+
+void SysdConfigClient::service_request(int fd) {
+  std::string data;
+  std::uint64_t id = 0;
+  {
+    std::lock_guard<std::mutex> lk(req_mu_);
+    if (!req_.active || !req_.queued || req_.done) return;
+    req_.queued = false;
+    data = frame(req_.msg);
+    id = req_.id;
+  }
+  if (!send_all(fd, data, 2000)) {
+    SysdSetResult res;
+    res.status = SysdSetResult::Status::kLost;
+    finish_request(id, std::move(res));
+  }
+}
+
+void SysdConfigClient::finish_request(std::uint64_t id, SysdSetResult&& res) {
+  std::lock_guard<std::mutex> lk(req_mu_);
+  if (!req_.active || req_.done || req_.id != id) return;  // a late answer of an abandoned request
+  req_.res = std::move(res);
+  req_.done = true;
+  req_cv_.notify_all();
+}
+
+void SysdConfigClient::fail_request(SysdSetResult::Status st) {
+  std::lock_guard<std::mutex> lk(req_mu_);
+  if (!req_.active || req_.done) return;
+  req_.res = SysdSetResult{};
+  req_.res.status = st;
+  req_.done = true;
+  req_cv_.notify_all();
+}
+
+SysdSetResult SysdConfigClient::set_config(const ws::v1::ConfigPatch& patch, int timeout_ms) {
+  SysdSetResult res;
+  if (!connected_.load(std::memory_order_relaxed) || !running_.load(std::memory_order_relaxed)) return res;  // kNotConnected
+  std::unique_lock<std::mutex> lk(req_mu_);
+  if (req_.active) {
+    res.status = SysdSetResult::Status::kBusy;
+    return res;
+  }
+  req_ = Request{};
+  req_.active = true;
+  req_.queued = true;
+  req_.id = next_req_id_++;
+  req_.msg.set_request_id(req_.id);
+  *req_.msg.mutable_set_config()->mutable_patch() = patch;
+  const std::uint64_t id = req_.id;
+  const char b = 1;
+  [[maybe_unused]] const ssize_t w = ::write(wake_[1], &b, 1);
+  const bool got = req_cv_.wait_for(lk, std::chrono::milliseconds(std::max(1, timeout_ms)), [&] { return req_.done && req_.id == id; });
+  if (got) res = std::move(req_.res);
+  else res.status = SysdSetResult::Status::kTimeout;
+  req_ = Request{};  // not active any more: a late answer to `id` is ignored
+  return res;
 }
 
 }  // namespace velora::host

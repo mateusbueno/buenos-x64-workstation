@@ -19,6 +19,11 @@ struct Ump {
   static constexpr std::uint32_t kStatusControlChange = 0xB;
   static constexpr std::uint32_t kStatusPitchBend = 0xE;  // MIDI 2.0 pitch bend: word1 = unsigned 32-bit value, centre 0x80000000 (Story 3.10)
   static constexpr std::uint32_t kControllerModulation = 1;
+  // The one definition of "sustain pedal down" (Story 3.11): CC 64 >= this (MIDI value 64 of 0..127 scaled to 32 bits, i.e. half travel) holds notes. The block
+  // renderer, the arpeggiator and the sample engine's half-pedal law (kHalfPedalHoldCc) all use it.
+  static constexpr std::uint32_t kSustainDownThreshold32 = 0x80000000u;
+  static constexpr bool sustain_down(std::uint32_t value32) noexcept { return value32 >= kSustainDownThreshold32; }
+  static constexpr std::uint32_t kControllerExpression = 11;  // Story 3.11
   static constexpr std::uint32_t kControllerSustain = 64;
   static constexpr std::uint32_t kPitchBendCentre32 = 0x80000000u;
 

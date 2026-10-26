@@ -553,6 +553,7 @@ bool VirtualPanel::on_midi_pitch_bend(int channel, std::uint32_t value32, std::u
 // ---- VirtualPanelUmpSink ------------------------------------------------------------------------------------------
 
 void VirtualPanelUmpSink::on_ump_port(ports::MidiPortKind port, const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept {
+  if (tick_) tick_(host_ns);  // the reader's housekeeping (PanelReader::poll) on the same thread as its on_bytes()
   std::size_t i = 0;
   while (i < count) {
     const std::uint32_t mt = words[i] >> 28;

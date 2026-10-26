@@ -34,6 +34,7 @@ namespace velora::sysd {
 
 constexpr std::uint32_t kSchemaVersion = 1;      // N of this release
 constexpr std::size_t kMaxFileBytes = 4096;
+constexpr std::uint32_t kMinPedalSpan = 256;      // Story 3.11: a calibrated pedal range needs max - min >= 256 counts
 constexpr std::uint32_t kPedalMax = 4095;        // 12-bit pedal range (mcu/common/MCU-ID-MAP.md section 6)
 constexpr std::size_t kMaxLiveSetIdBytes = 64;
 inline constexpr const char* kFileName = "sysd_config.pb";

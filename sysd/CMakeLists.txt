@@ -30,4 +30,10 @@ target_link_libraries(sysd_socket_tests PRIVATE velora_sysd_service velora_sysdc
 add_test(NAME sysd_socket_tests COMMAND sysd_socket_tests)
 set_tests_properties(sysd_socket_tests PROPERTIES TIMEOUT 180)
 
+# Story 3.11: pedal calibration end to end (a real sysd on a temp directory, the virtual panel's frames, the calibration commands, persistence).
+add_executable(sysd_pedal_calibration_test tests/pedal_calibration_test.cpp)
+target_link_libraries(sysd_pedal_calibration_test PRIVATE velora_sysd_service velora_sysdctl_client)
+add_test(NAME sysd_pedal_calibration_test COMMAND sysd_pedal_calibration_test)
+set_tests_properties(sysd_pedal_calibration_test PROPERTIES TIMEOUT 180)
+
 # The end-to-end smoke (velora-sysd + velora-sysdctl + engine-host --no-audio --sysd-socket) is engine/host/macos/engine_host_sysd_smoke.cpp (engine-host is Apple-only).

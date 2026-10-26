@@ -70,6 +70,12 @@ target_link_libraries(live_set_cc_test PRIVATE velora_offline)
 target_compile_definitions(live_set_cc_test PRIVATE OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME live_set_cc_test COMMAND live_set_cc_test)
 
+# --- Story 3.11: half-pedal damping of a sample instrument through the Live Set renderer (name matches "pedal") ---
+add_executable(pedal_half_pedal_test tests/pedal_half_pedal_test.cpp)
+target_link_libraries(pedal_half_pedal_test PRIVATE velora_offline)
+target_compile_definitions(pedal_half_pedal_test PRIVATE OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME pedal_half_pedal_test COMMAND pedal_half_pedal_test)
+
 # --- Story 1.18: parallel voice render, 1 vs 3 worker threads bit-identical in the offline renderer (name matches "parallel") ---
 add_executable(parallel_voices_test tests/parallel_voices_test.cpp)
 target_link_libraries(parallel_voices_test PRIVATE velora_offline)

@@ -895,10 +895,10 @@ void test_cc_path_and_fan_out_through_the_block_loop() {
     rig.cc(0, 1, 20);
     rig.run(1);
     CHECK(rig.sample.part_cc(0, 1) == 20.0f && rig.sample.part_cc(2, 1) == 0.0f);
-    // The sustain pedal is not a CcState controller and still works.
+    // The sustain pedal still works through the arbiter; since Story 3.11 its continuous value is also kept in the CcState (half-pedal damping reads it).
     rig.cc(0, 64, 127);
     rig.run(1);
-    CHECK(rig.sample.part_cc(0, 64) == 0.0f);
+    CHECK(rig.sample.part_cc(0, 64) == 127.0f && rig.sample.part_cc(2, 64) == 0.0f);  // the part with the keyboard off is not reached by a pedal down
   }
   // A registry-mapped controller keeps its meaning (a parameter event) and the addressed part's CcState follows it as well.
   {

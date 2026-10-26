@@ -162,6 +162,11 @@ int main(int argc, char** argv) {
   // sysdctl watch prints the config now and exits after COUNT pushes.
   CHECK(run({ctl, "--socket", ssock, "watch", "1"}, out, err) == 0 && slurp(out).find("clock_source: CLOCK_SOURCE_USB") != std::string::npos);
   CHECK(run({ctl, "--socket", d + "/none.sock", "get"}, out, err) == 1);
+  // Story 3.11: the calibration command reaches the engine's control plane; this engine has no panel reader (no --virtual-panel), so it is a typed refusal, nothing
+  // changes (the measurement itself is tested with the reader in pedal_test and sysd_pedal_calibration_test). A bad pedal name is a usage error.
+  CHECK(run({ctl, "--socket", ssock, "--engine-socket", esock, "calibrate-pedal", "sustain", "--seconds", "1"}, out, err) == 1 &&
+        slurp(err).find("no panel reader") != std::string::npos);
+  CHECK(run({ctl, "--engine-socket", esock, "calibrate-pedal", "volume", "--seconds", "1"}, out, err) == 2);
   cleanup();
   std::printf(g_fail ? "engine_host_sysd_smoke: FAILED\n" : "engine_host_sysd_smoke: ok\n");
   return g_fail ? 1 : 0;

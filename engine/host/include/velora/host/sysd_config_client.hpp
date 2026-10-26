@@ -15,6 +15,7 @@
 // Absent sysd. The client runs the engine with the defaults (config() = default_config() until a Config arrived) and keeps the last-known Config when the
 // connection drops. It never makes the engine fail to start.
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -48,6 +49,25 @@ bool velocity_curve_from_config(ws::v1::VelocityCurve c, VelocityCurve& out) noe
 // unchanged. Control thread. True when it applied (an unknown value keeps the last curve).
 bool apply_velocity_curve(const ws::v1::Config& c, VelocityCurveHolder& holder);
 
+// Story 3.11: the typed result of SysdConfigClient::set_config().
+struct SysdSetResult {
+  enum class Status : std::uint8_t {
+    kOk = 0,         // sysd applied the patch (or it changed nothing): `config` / `revision` are sysd's reply
+    kNotConnected,   // no sysd connection at the moment of the call: nothing was sent
+    kBusy,           // another set_config() is in flight (one at a time): nothing was sent
+    kTimeout,        // no answer within the timeout: unknown whether sysd applied it
+    kRefused,        // sysd answered an error: `code` / `reason` (details.reason); nothing changed
+    kLost,           // the connection dropped before the answer
+  };
+  Status status = Status::kNotConnected;
+  ws::v1::ErrorCode code = ws::v1::ERROR_CODE_UNSPECIFIED;
+  std::string reason;
+  std::uint64_t revision = 0;
+  bool not_durable = false;
+  ws::v1::Config config;
+  bool ok() const noexcept { return status == Status::kOk; }
+};
+
 struct SysdConfigClientOptions {
   std::string socket_path;
   std::string client_name = "engine-host";
@@ -77,6 +97,11 @@ class SysdConfigClient {
   ws::v1::Config config() const;
   std::uint64_t revision() const;
 
+  // Story 3.11: writes a ConfigPatch to sysd (SetConfig) on the worker's connection and waits for the typed answer, at most `timeout_ms`. Called from the control
+  // thread (it blocks it for up to the timeout, never the RT plane); all socket I/O stays on the worker thread. Retry-free: a failure is reported, nothing is
+  // re-sent. One request at a time. The reply's Config also goes through the revision guard like a push (the callback sees it once, from tick()).
+  SysdSetResult set_config(const ws::v1::ConfigPatch& patch, int timeout_ms = 2000);
+
   bool connected() const noexcept { return connected_.load(std::memory_order_relaxed); }
   std::uint64_t connects() const noexcept { return connects_.load(std::memory_order_relaxed); }    // completed handshakes
   std::uint64_t received() const noexcept { return received_.load(std::memory_order_relaxed); }    // Config messages accepted by the revision guard
@@ -95,6 +120,9 @@ class SysdConfigClient {
     std::uint64_t last = 0;
   };
   void on_config(const ws::v1::ConfigReply& r, Conn& conn);
+  void service_request(int fd);                                   // worker: sends a queued set_config()
+  void finish_request(std::uint64_t id, SysdSetResult&& res);     // worker: fulfils the in-flight one (id must match)
+  void fail_request(SysdSetResult::Status st);                    // worker: the connection ended
 
   SysdConfigClientOptions opts_;
   Callback callback_;
@@ -105,6 +133,16 @@ class SysdConfigClient {
   bool pending_ = false;
   ws::v1::Config pending_config_;
   std::uint64_t pending_revision_ = 0;
+  struct Request {
+    bool active = false, queued = false, done = false;
+    std::uint64_t id = 0;
+    ws::v1::ClientMessage msg;
+    SysdSetResult res;
+  };
+  std::mutex req_mu_;
+  std::condition_variable req_cv_;
+  Request req_;
+  std::uint64_t next_req_id_ = 100;
   std::thread thread_;
   std::atomic<bool> stop_{false}, running_{false}, connected_{false};
   int wake_[2] = {-1, -1};

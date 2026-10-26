@@ -677,6 +677,49 @@ message ConfigReply {
   bool not_durable = 3;                // SetConfig only: the new file is in place but the directory sync failed (applied, may be lost on power loss)
 }
 
+// --- pedal calibration (Story 3.11; served by the ENGINE's control plane, which measures the raw pedal and writes the result to sysd) ---------------
+// The player presses the pedal fully and releases it between Start and Finish. The engine keeps the raw 12-bit minimum and maximum it saw (it owns the panel
+// reader); Finish validates them (max - min >= 256 counts) and stores them in the sysd config (revision + 1); the pedal then maps over that range.
+enum PedalKind {
+  PEDAL_KIND_UNSPECIFIED = 0;          // never valid
+  PEDAL_KIND_SUSTAIN = 1;
+  PEDAL_KIND_EXPRESSION = 2;
+}
+
+message StartPedalCalibration {
+  PedalKind pedal = 1;                 // unspecified / unknown -> ERROR_CODE_UNKNOWN_ENUM_VALUE. Starting while another calibration runs replaces it
+}
+message FinishPedalCalibration {       // ends the running calibration: validates the measured range and stores it in sysd
+  uint64 run_token = 1;                // the run_token of the Start reply; another one while a run is active -> ERROR_CODE_INVALID_COMMAND (details.reason = wrong_run_token)
+}
+message CancelPedalCalibration {       // ends the running calibration; nothing is stored
+  uint64 run_token = 1;                // as for Finish
+}
+
+enum PedalCalibrationResult {
+  PEDAL_CALIBRATION_RESULT_UNSPECIFIED = 0;
+  PEDAL_CALIBRATION_RESULT_COLLECTING = 1;     // Start: the engine is measuring
+  PEDAL_CALIBRATION_RESULT_STORED = 2;         // Finish: min / max were written to sysd (revision in the reply)
+  PEDAL_CALIBRATION_RESULT_CANCELLED = 3;      // Cancel (or a Start that replaced a running calibration); config unchanged
+  PEDAL_CALIBRATION_RESULT_NO_MOVEMENT = 4;    // Finish: the pedal never moved (no frame, or min == max); config unchanged
+  PEDAL_CALIBRATION_RESULT_TOO_SMALL_SPAN = 5; // Finish: max - min below 256 counts (min / max report what was measured); config unchanged
+  PEDAL_CALIBRATION_RESULT_TIMED_OUT = 6;      // Finish after the calibration window (60 s) elapsed; config unchanged
+  PEDAL_CALIBRATION_RESULT_NOT_RUNNING = 7;    // Finish / Cancel with no calibration running
+  PEDAL_CALIBRATION_RESULT_SYSD_UNAVAILABLE = 8;  // the engine has no sysd link (or it is down / answered too late): nothing stored
+  PEDAL_CALIBRATION_RESULT_SYSD_REFUSED = 9;      // sysd rejected the values (detail = error code and reason); nothing stored
+}
+
+message PedalCalibrationReply {
+  PedalCalibrationResult result = 1;
+  PedalKind pedal = 2;
+  uint32 min = 3;                      // measured raw minimum (Finish; 0 otherwise)
+  uint32 max = 4;                      // measured raw maximum
+  uint64 config_revision = 5;          // STORED: the sysd config revision after the write
+  bool not_durable = 6;                // STORED: sysd applied the change but its directory sync failed
+  uint64 run_token = 8;                // COLLECTING (Start reply): identifies the run; Finish / Cancel must carry it, so a second client's Start cannot be finished by the first
+  string detail = 7;                   // SYSD_REFUSED / SYSD_UNAVAILABLE: what sysd said
+}
+
 message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
   oneof body {
@@ -728,6 +771,9 @@ message ClientMessage {
     GetConfig get_config = 55;            // sysd config service (velora-sysd only)
     SetConfig set_config = 56;
     SubscribeConfig subscribe_config = 57;
+    StartPedalCalibration start_pedal_calibration = 58;   // Story 3.11 (engine control plane)
+    FinishPedalCalibration finish_pedal_calibration = 59;
+    CancelPedalCalibration cancel_pedal_calibration = 60;
   }
 }
 
@@ -762,5 +808,6 @@ message ServerMessage {
     DiagnosticsReply diagnostics_reply = 23;  // Story 1.21
     PanelEvent panel_event = 24;          // Story 3.10: pushed (request_id 0) to subscribers
     ConfigReply config_reply = 25;        // sysd config service: GetConfig / SetConfig reply, and the push to SubscribeConfig subscribers (request_id 0)
+    PedalCalibrationReply pedal_calibration_reply = 26;  // Story 3.11: the reply to StartPedalCalibration / FinishPedalCalibration / CancelPedalCalibration
   }
 }

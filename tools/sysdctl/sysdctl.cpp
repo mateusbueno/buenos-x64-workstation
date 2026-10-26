@@ -4,13 +4,19 @@
 //   velora-sysdctl [--socket PATH] watch [COUNT]                         (prints the config now and on every change, COUNT pushes then exits; default forever)
 // Fields: clock_source (internal|din|usb), velocity_curve (normal|light|heavy|fixed), sustain / expression ("MIN,MAX[,open|closed|auto]", parts may be empty),
 //         boot_into (last_sound|start_of_setlist|default_live_set), default_live_set_id (ID).
-// Exit: 0 ok, 1 sysd unreachable or the request was refused (typed error on stderr), 2 usage.
+//   velora-sysdctl [--socket PATH] --engine-socket PATH calibrate-pedal sustain|expression [--seconds N]
+//                                                       (Story 3.11: asks the ENGINE (its ws.v1 socket) to measure the pedal's raw range while you press it fully
+//                                                        and release it, then stores min / max in sysd. Waits for Enter, or N seconds with --seconds)
+// Exit: 0 ok (calibrate-pedal: stored), 1 sysd unreachable or the request was refused (typed error on stderr), 2 usage.
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <string>
+#include <thread>
 
 #include "sysdctl_client.hpp"
 
@@ -69,11 +75,54 @@ int timeout_ms() {
   return v > 0 ? static_cast<int>(v) : 10000;
 }
 
+// Story 3.11: the calibration routine against the engine's socket. Exit 0 only when the result was stored.
+int calibrate_pedal(const std::string& engine_socket, const std::string& pedal_name, long seconds) {
+  ws::v1::PedalKind kind = ws::v1::PEDAL_KIND_UNSPECIFIED;
+  if (lower(pedal_name) == "sustain") kind = ws::v1::PEDAL_KIND_SUSTAIN;
+  else if (lower(pedal_name) == "expression") kind = ws::v1::PEDAL_KIND_EXPRESSION;
+  else return 2;
+  if (engine_socket.empty()) {
+    std::fprintf(stderr, "velora-sysdctl: calibrate-pedal needs --engine-socket PATH (the engine's ws.v1 socket)\n");
+    return 2;
+  }
+  velora::sysdctl::Connection e;
+  std::string err;
+  if (!e.open(engine_socket, err, timeout_ms())) {
+    std::fprintf(stderr, "velora-sysdctl: engine: %s\n", err.c_str());
+    return 1;
+  }
+  ws::v1::PedalCalibrationReply r;
+  if (!e.start_pedal_calibration(kind, r, err)) {
+    std::fprintf(stderr, "velora-sysdctl: %s\n", err.c_str());
+    return 1;
+  }
+  const std::uint64_t token = r.run_token();
+  std::printf("Press the %s pedal fully down, then release it.%s\n", pedal_name.c_str(), seconds > 0 ? "" : " Press Enter when done.");
+  std::fflush(stdout);
+  if (seconds > 0) {
+    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+  } else {
+    std::string line;
+    if (!std::getline(std::cin, line)) {  // no terminal: do not leave the engine collecting
+      (void)e.cancel_pedal_calibration(token, r, err);
+      std::fprintf(stderr, "velora-sysdctl: no input: %s\n", velora::sysdctl::format_pedal_result(r).c_str());
+      return 1;
+    }
+  }
+  if (!e.finish_pedal_calibration(token, r, err)) {
+    std::fprintf(stderr, "velora-sysdctl: %s\n", err.c_str());
+    return 1;
+  }
+  std::printf("%s\n", velora::sysdctl::format_pedal_result(r).c_str());
+  return r.result() == ws::v1::PEDAL_CALIBRATION_RESULT_STORED ? 0 : 1;
+}
+
 int usage() {
   std::fprintf(stderr,
                "usage: velora-sysdctl [--socket PATH] get\n"
                "       velora-sysdctl [--socket PATH] set FIELD VALUE [FIELD VALUE ...]\n"
                "       velora-sysdctl [--socket PATH] watch [COUNT]\n"
+               "       velora-sysdctl --engine-socket PATH calibrate-pedal sustain|expression [--seconds N]\n"
                "fields: clock_source internal|din|usb; velocity_curve normal|light|heavy|fixed; sustain|expression MIN,MAX[,open|closed|auto];\n"
                "        boot_into last_sound|start_of_setlist|default_live_set; default_live_set_id ID\n");
   return 2;
@@ -88,8 +137,25 @@ int main(int argc, char** argv) {
     socket = argv[i + 1];
     i += 2;
   }
+  std::string engine_socket;
+  if (i + 1 < argc && !std::strcmp(argv[i], "--engine-socket")) {
+    engine_socket = argv[i + 1];
+    i += 2;
+  }
+  if (i + 1 < argc && !std::strcmp(argv[i], "--socket")) {  // either order
+    socket = argv[i + 1];
+    i += 2;
+  }
   if (i >= argc) return usage();
   const std::string cmd = argv[i++];
+  if (cmd == "calibrate-pedal") {
+    if (i >= argc) return usage();
+    const std::string pedal = argv[i++];
+    long seconds = 0;
+    if (i + 1 < argc && !std::strcmp(argv[i], "--seconds")) seconds = std::strtol(argv[i + 1], nullptr, 10);
+    const int rc = calibrate_pedal(engine_socket, pedal, seconds);
+    return rc == 2 ? usage() : rc;
+  }
   velora::sysdctl::Connection c;
   std::string err;
   if (cmd != "get" && cmd != "set" && cmd != "watch") return usage();
