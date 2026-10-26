@@ -64,7 +64,7 @@ bool normalise_packet(const std::uint32_t* words, std::size_t count, std::size_t
   return false;
 }
 
-void MidiIngest::on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept {
+void MidiIngest::on_ump_port(ports::MidiPortKind port, const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept {
   while (count > 0) {
     const std::uint32_t w0 = words[0];
     const std::uint32_t mt = w0 >> 28;
@@ -89,6 +89,31 @@ void MidiIngest::on_ump(const std::uint32_t* words, std::size_t count, std::uint
       continue;
     }
 
+    // Realtime clock (Story 7.7): only the selected port's group 0 0xF8 / 0xFA / 0xFB / 0xFC reach the follower, stamped here on arrival (input edge thread).
+    if (mt == core::Ump::kMessageTypeSystemRealTime) {
+      const std::uint32_t sb = (w0 >> 16) & 0xFF;
+      if (sb == core::Ump::kStatusTimingClock || sb == core::Ump::kStatusStart || sb == core::Ump::kStatusContinue || sb == core::Ump::kStatusStop) {
+        const core::ClockSource cs = clock_source_.load(std::memory_order_acquire);
+        const bool selected = (cs == core::ClockSource::kDin && port == ports::MidiPortKind::kDin) ||
+                              (cs == core::ClockSource::kUsb && port == ports::MidiPortKind::kUsb);
+        if (!selected) {
+          counters_.clock_dropped.fetch_add(1, std::memory_order_relaxed);
+        } else if (((w0 >> 24) & 0xF) != 0) {  // only group 0 (the RT plane's rule): a multi-cable device's other groups would double the tick rate
+          counters_.clock_dropped_group.fetch_add(1, std::memory_order_relaxed);
+        } else if (sb == core::Ump::kStatusTimingClock && queue_.size() + kNoteHeadroom >= HostEventQueue::capacity()) {
+          counters_.clock_dropped_full.fetch_add(1, std::memory_order_relaxed);  // like controllers: ticks never take the slots kept for notes (Start / Continue / Stop do)
+        } else if (queue_.push(StampedUmp{core::Ump{w0, 0}, host_ns, port})) {
+          last_stamp_ns_.store(host_ns, std::memory_order_relaxed);
+          counters_.clock_forwarded.fetch_add(1, std::memory_order_relaxed);
+        } else {
+          counters_.queue_full.fetch_add(1, std::memory_order_relaxed);
+        }
+        words += need;
+        count -= need;
+        continue;
+      }
+    }
+
     std::size_t used = 0;
     core::Ump u;
     if (normalise_packet(words, count, used, u)) {
@@ -98,7 +123,7 @@ void MidiIngest::on_ump(const std::uint32_t* words, std::size_t count, std::uint
       const bool is_pedal = u.is_control_change() && u.controller_index() == core::Ump::kControllerSustain;
       if (!is_note_class && !is_pedal && queue_.size() + kNoteHeadroom >= HostEventQueue::capacity()) {
         counters_.controllers_dropped.fetch_add(1, std::memory_order_relaxed);
-      } else if (queue_.push(StampedUmp{u, host_ns})) {
+      } else if (queue_.push(StampedUmp{u, host_ns, port})) {
         last_stamp_ns_.store(host_ns, std::memory_order_relaxed);
         const bool raw_controller = u.is_control_change() && u.controller_index() != core::Ump::kControllerSustain;
         (u.is_assignable_controller() ? counters_.params : raw_controller ? counters_.controllers : counters_.notes)

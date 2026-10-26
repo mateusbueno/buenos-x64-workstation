@@ -1,4 +1,7 @@
 #include <cassert>
+#include <deque>
+#include <string>
+#include <vector>
 #include <iostream>
 #include <lvgl.h>
 
@@ -276,6 +279,74 @@ void test_story_10_7_and_10_8_locales_and_pseudo_localization() {
   std::cout << "[PASS] test_story_10_7_and_10_8_locales_and_pseudo_localization\n";
 }
 
+// Story 7.7: the Clock source control writes through the sysd seam and shows the value sysd reports.
+namespace {
+struct FakeSysd : SysdConfigSender {
+  std::vector<ClockSourceMode> requests;
+  std::deque<Event> events;
+  void request_clock_source(ClockSourceMode m) override { requests.push_back(m); }
+  bool poll(Event& out) override {
+    if (events.empty()) return false;
+    out = events.front();
+    events.pop_front();
+    return true;
+  }
+  void report(ClockSourceMode m) {
+    Event e;
+    e.kind = Event::Kind::Config;
+    e.clock_source = m;
+    events.push_back(e);
+  }
+  void fail(const char* why) {
+    Event e;
+    e.kind = Event::Kind::Failed;
+    e.error = why;
+    events.push_back(e);
+  }
+};
+}  // namespace
+
+void test_story_7_7_clock_source_through_sysd() {
+  SystemConfig& cfg = SystemConfig::instance();
+  cfg.clock_source = ClockSourceMode::Internal;
+  SettingsView view(nullptr);
+  assert(view.create(lv_screen_active()));
+  FakeSysd sysd;
+  std::vector<std::string> notices;
+  int changed = 0;
+  view.set_sysd_sender(&sysd);
+  view.set_on_notice([&](const std::string& m) { notices.push_back(m); });
+  view.set_on_config_changed([&](const SystemConfig&) { ++changed; });
+  view.select_section(SettingsSection::MidiClock);
+
+  // A change is a request to sysd (a patch with the clock source only); the local value is not touched until sysd reports it.
+  view.seg_clock_source().set_selected_index(static_cast<int32_t>(ClockSourceMode::USB));
+  assert(sysd.requests.size() == 1 && sysd.requests[0] == ClockSourceMode::USB);
+  assert(cfg.clock_source == ClockSourceMode::Internal && changed == 0);
+  sysd.report(ClockSourceMode::USB);
+  view.poll_sysd();
+  assert(cfg.clock_source == ClockSourceMode::USB && changed == 1);
+  assert(view.seg_clock_source().selected_index() == static_cast<int32_t>(ClockSourceMode::USB));
+  assert(sysd.requests.size() == 1);  // applying a report is not a user change
+
+  // sysd changes the value on its own (another client, a restart): the control follows, nothing is sent.
+  sysd.report(ClockSourceMode::DIN);
+  view.poll_sysd();
+  assert(cfg.clock_source == ClockSourceMode::DIN && view.seg_clock_source().selected_index() == static_cast<int32_t>(ClockSourceMode::DIN));
+  assert(sysd.requests.size() == 1 && notices.empty());
+
+  // A change that does not reach sysd: the control goes back to the last known value and the player gets a notice.
+  view.seg_clock_source().set_selected_index(static_cast<int32_t>(ClockSourceMode::Internal));
+  assert(sysd.requests.size() == 2);
+  sysd.fail("cannot connect");
+  view.poll_sysd();
+  assert(cfg.clock_source == ClockSourceMode::DIN);
+  assert(view.seg_clock_source().selected_index() == static_cast<int32_t>(ClockSourceMode::DIN));
+  assert(notices.size() == 1 && !notices[0].empty());
+  cfg.clock_source = ClockSourceMode::Internal;
+  std::cout << "[PASS] test_story_7_7_clock_source_through_sysd\n";
+}
+
 int main() {
   lv_init();
   Locale::instance().initialize("", "en");
@@ -291,6 +362,7 @@ int main() {
   test_story_10_4_and_10_5_brightness_and_quick_path();
   test_story_10_6_large_text_and_reduced_motion();
   test_story_10_7_and_10_8_locales_and_pseudo_localization();
+  test_story_7_7_clock_source_through_sysd();
 
   std::cout << "All Epic 10 tests passed successfully!\n";
   return 0;

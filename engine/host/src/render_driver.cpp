@@ -29,6 +29,14 @@ void RenderDriver::record_render_time(std::chrono::steady_clock::time_point t0) 
   renderer_.diagnostics_rt().record_render(ns, frames_to_ns(c.block_frames, c.sample_rate));
 }
 
+bool RenderDriver::stale_clock(const Lane& lane, const StampedUmp& e) const noexcept {
+  if (&lane != &midi_ || e.ump.message_type() != core::Ump::kMessageTypeSystemRealTime) return false;
+  const std::uint32_t sb = e.ump.status_byte();
+  if (sb != core::Ump::kStatusTimingClock && sb != core::Ump::kStatusStart && sb != core::Ump::kStatusContinue && sb != core::Ump::kStatusStop) return false;
+  const core::ClockSource cs = renderer_.clock_source();
+  return !((cs == core::ClockSource::kDin && e.port == ports::MidiPortKind::kDin) || (cs == core::ClockSource::kUsb && e.port == ports::MidiPortKind::kUsb));
+}
+
 void RenderDriver::drain(Lane& lane, std::uint64_t block_start_ns) noexcept {
   if (!lane.queue) return;
   // A beyond-horizon event is held (with everything behind it) until it is within the horizon, so
@@ -36,6 +44,10 @@ void RenderDriver::drain(Lane& lane, std::uint64_t block_start_ns) noexcept {
   for (;;) {
     if (!lane.has_held) {
       if (!lane.queue->pop(lane.held)) break;
+      if (stale_clock(lane, lane.held)) {  // queued before a source switch: never reaches the follower
+        counters_.clock_stale.fetch_add(1, std::memory_order_relaxed);
+        continue;
+      }
       lane.has_held = true;
       lane.counted = false;
     }
@@ -46,6 +58,12 @@ void RenderDriver::drain(Lane& lane, std::uint64_t block_start_ns) noexcept {
     if (&lane == &control_ && core::is_fence_event(lane.held.ump) && !lane.fence_waited) {
       lane.fence_waited = true;
       break;
+    }
+    if (stale_clock(lane, lane.held)) {  // re-checked on every pass, so an event held beyond the horizon across a switch is dropped, and the lane behind it flows
+      counters_.clock_stale.fetch_add(1, std::memory_order_relaxed);
+      lane.has_held = false;
+      lane.fence_waited = false;
+      continue;
     }
     const MappedEvent m = mapper_.map(lane.held.host_ns, block_start_ns);
     if (m.timing == EventTiming::kBeyondHorizon) {

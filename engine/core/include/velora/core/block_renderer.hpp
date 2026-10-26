@@ -167,13 +167,19 @@ class BlockRenderer {
 
   // --- External MIDI Clock Follower (Story 7.6) -----------------------------------------------------------------
   void set_clock_source(ClockSource source) noexcept VELORA_NONBLOCKING {
-    clock_source_.store(source, std::memory_order_release);
-    if (source != ClockSource::kInternal) {
-      follower_.reset();
-    }
+    // Story 7.7: callable from the control thread while the RT plane renders. The follower belongs to the RT thread, so it is reset there, at the start of the
+    // next block (the flag), never from here; no voice is touched and the block in flight finishes on the old source.
+    // The source and a reset epoch live in ONE atomic word (low 8 bits source, the rest the epoch), so the RT thread reads both in a single load and cannot see a
+    // new source with an old epoch or the reverse: it resets the follower once per epoch change. Only a switch to an external source bumps the epoch.
+    std::uint32_t old = clock_word_.load(std::memory_order_relaxed);
+    std::uint32_t next;
+    do {
+      const std::uint32_t epoch = old >> 8;
+      next = ((source != ClockSource::kInternal ? epoch + 1 : epoch) << 8) | static_cast<std::uint32_t>(source);
+    } while (!clock_word_.compare_exchange_weak(old, next, std::memory_order_acq_rel, std::memory_order_relaxed));
   }
   ClockSource clock_source() const noexcept VELORA_NONBLOCKING {
-    return clock_source_.load(std::memory_order_acquire);
+    return static_cast<ClockSource>(clock_word_.load(std::memory_order_acquire) & 0xFFu);
   }
   ClockFollower& clock_follower() noexcept VELORA_NONBLOCKING { return follower_; }
   const ClockFollower& clock_follower() const noexcept VELORA_NONBLOCKING { return follower_; }
@@ -295,7 +301,8 @@ class BlockRenderer {
   SnapshotExchange exchange_;
   Mixer mixer_{exchange_};
   TransportClock clock_;
-  std::atomic<ClockSource> clock_source_{ClockSource::kInternal};
+  std::atomic<std::uint32_t> clock_word_{0};  // source (low 8 bits) | reset epoch << 8
+  std::uint32_t rt_clock_epoch_ = 0;          // the epoch the follower was last reset for (RT thread only)
   ClockFollower follower_;
   LastValueTable last_;
   const Snapshot* held_ = nullptr;

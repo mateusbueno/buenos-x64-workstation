@@ -552,7 +552,7 @@ bool VirtualPanel::on_midi_pitch_bend(int channel, std::uint32_t value32, std::u
 
 // ---- VirtualPanelUmpSink ------------------------------------------------------------------------------------------
 
-void VirtualPanelUmpSink::on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept {
+void VirtualPanelUmpSink::on_ump_port(ports::MidiPortKind port, const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept {
   std::size_t i = 0;
   while (i < count) {
     const std::uint32_t mt = words[i] >> 28;
@@ -584,7 +584,7 @@ void VirtualPanelUmpSink::on_ump(const std::uint32_t* words, std::size_t count, 
     } catch (...) {  // a sink callback threw: the packet is passed on rather than lost
       taken = false;
     }
-    if (!taken) downstream_.on_ump(words + i, n, host_ns);
+    if (!taken) downstream_.on_ump_port(port, words + i, n, host_ns);
     i += n;
   }
 }

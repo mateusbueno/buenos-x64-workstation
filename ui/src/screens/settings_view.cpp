@@ -1372,8 +1372,15 @@ void SettingsView::build_midi_clock_detail() {
   lv_obj_align(seg_clock_source_.container(), LV_ALIGN_RIGHT_MID, -8, 0);
   seg_clock_source_.set_selected_index(static_cast<int32_t>(cfg.clock_source));
   seg_clock_source_.set_on_change([this](int32_t idx) {
+    if (applying_sysd_) return;
     auto& c = SystemConfig::instance();
-    c.clock_source = static_cast<ClockSourceMode>(idx);
+    const auto mode = static_cast<ClockSourceMode>(idx);
+    if (sysd_) {
+      // sysd is the single source of truth (Story 7.7): ask it, and let its report update the cache and the rest of the ui. Sound is never involved.
+      sysd_->request_clock_source(mode);
+      return;
+    }
+    c.clock_source = mode;
     c.save_to_file();
     if (on_config_changed_) on_config_changed_(c);
   });
@@ -1523,6 +1530,32 @@ void SettingsView::update_conditional_rows() {
   const auto& cfg = SystemConfig::instance();
   if (card_aftertouch_) {
     lv_obj_set_hidden(card_aftertouch_, !cfg.aftertouch_available);
+  }
+}
+
+
+void SettingsView::poll_sysd() {
+  if (!sysd_) return;
+  SysdConfigSender::Event ev;
+  while (sysd_->poll(ev)) {
+    auto& c = SystemConfig::instance();
+    if (ev.kind == SysdConfigSender::Event::Kind::Config) {
+      const bool changed = c.clock_source != ev.clock_source;
+      const bool first = !sysd_reported_;
+      sysd_reported_ = true;
+      c.clock_source = ev.clock_source;  // the cache of sysd's value
+      if (changed) c.save_to_file();
+      applying_sysd_ = true;
+      if (midi_clock_container_) seg_clock_source_.set_selected_index(static_cast<int32_t>(ev.clock_source));
+      applying_sysd_ = false;
+      if ((changed || first) && on_config_changed_) on_config_changed_(c);  // the first report always, so the rest of the ui shows sysd's value even when equal to the cache
+    } else {
+      // The change did not reach sysd (absent, refused): the control goes back to the last value sysd reported, and the player is told.
+      applying_sysd_ = true;
+      if (midi_clock_container_) seg_clock_source_.set_selected_index(static_cast<int32_t>(c.clock_source));
+      applying_sysd_ = false;
+      if (on_notice_) on_notice_(tr(ev.unreachable ? "notice.clock_source_unreachable" : "notice.clock_source_refused"));
+    }
   }
 }
 

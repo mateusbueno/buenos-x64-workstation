@@ -304,6 +304,11 @@ add_executable(host_tests tests/host_test.cpp)
 target_link_libraries(host_tests PRIVATE velora_host)
 add_test(NAME host_tests COMMAND host_tests)
 
+add_executable(clock_source_tests tests/clock_source_test.cpp)
+target_link_libraries(clock_source_tests PRIVATE velora_control velora_host velora_core)
+add_test(NAME clock_source_tests COMMAND clock_source_tests)
+set_tests_properties(clock_source_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
+
 add_executable(host_unit_tests tests/host_unit_test.cpp)
 target_link_libraries(host_unit_tests PRIVATE velora_host)
 add_test(NAME host_unit_tests COMMAND host_unit_tests)

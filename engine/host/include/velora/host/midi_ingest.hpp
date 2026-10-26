@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "velora/core/clock_follower.hpp"
 #include "velora/core/param_events.hpp"
 #include "velora/core/spsc_queue.hpp"
 #include "velora/core/ump.hpp"
@@ -15,6 +16,7 @@ namespace velora::host {
 struct StampedUmp {
   core::Ump ump{};
   std::uint64_t host_ns = 0;
+  ports::MidiPortKind port = ports::MidiPortKind::kUsb;  // Story 7.7: the input port kind it arrived on (stamped with the arrival time, on the input edge thread)
 };
 
 // MIDI thread (single producer) -> audio thread (single consumer).
@@ -60,6 +62,10 @@ struct MidiIngestCounters {
   std::atomic<std::uint64_t> sysex_dropped{0};  // SysEx packets dropped because sysex queue was full
   std::atomic<std::uint64_t> ignored{0};        // messages that are not notes, controllers, pedal or sysex (or truncated packets)
   std::atomic<std::uint64_t> queue_full{0};     // dropped because the audio side is behind
+  std::atomic<std::uint64_t> clock_forwarded{0};  // Story 7.7: realtime clock messages (F8 / FA / FB / FC) of the selected port, queued for the follower
+  std::atomic<std::uint64_t> clock_dropped_group{0};  // selected-port clock in a group other than 0 (multi-cable devices would double the rate)
+  std::atomic<std::uint64_t> clock_dropped_full{0};   // Timing Clock shed because the queue had only note headroom left
+  std::atomic<std::uint64_t> clock_dropped{0};    // Story 7.7: realtime clock messages of the other port (or any, with Internal) that were ignored
 };
 
 // UmpSink that normalises, stamps and queues events. Runs on the MIDI adapter thread.
@@ -67,7 +73,15 @@ class MidiIngest final : public ports::UmpSink {
  public:
   explicit MidiIngest(HostEventQueue& q, SysexPacketQueue* sysex_q = nullptr) noexcept
       : queue_(q), sysex_queue_(sysex_q) {}
-  void on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override;
+  void on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override {
+    on_ump_port(ports::MidiPortKind::kUsb, words, count, host_ns);
+  }
+  void on_ump_port(ports::MidiPortKind port, const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override;
+
+  // Story 7.7: the clock source in force. With kDin only DIN clock (0xF8 / 0xFA / 0xFB / 0xFC) is forwarded, with kUsb only USB clock, with kInternal none; clock of
+  // another port is dropped and counted. Notes and controllers of both ports always pass. Any thread (the control thread sets it, the input thread reads it).
+  void set_clock_source(core::ClockSource s) noexcept { clock_source_.store(s, std::memory_order_release); }
+  core::ClockSource clock_source() const noexcept { return clock_source_.load(std::memory_order_acquire); }
   const MidiIngestCounters& counters() const noexcept { return counters_; }
   std::uint64_t last_stamp_ns() const noexcept { return last_stamp_ns_.load(std::memory_order_relaxed); }
 
@@ -78,6 +92,7 @@ class MidiIngest final : public ports::UmpSink {
   HostEventQueue& queue_;
   SysexPacketQueue* sysex_queue_{nullptr};
   MidiIngestCounters counters_;
+  std::atomic<core::ClockSource> clock_source_{core::ClockSource::kInternal};
   std::atomic<std::uint64_t> last_stamp_ns_{0};
 };
 

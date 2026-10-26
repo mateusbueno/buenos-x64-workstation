@@ -69,6 +69,7 @@ int main(int argc, char** argv) {
   std::string socket_path = "/tmp/velora-engine.sock";
   std::string config_path = VELORA_DEV_CONFIG_DEFAULT;
   bool want_line_in = false, no_audio = false;
+  std::string din_source;  // Story 7.7: a CoreMIDI source whose name contains this is the DIN input (Mac only; the board's DIN UART adapter tags kDin itself)
   std::string live_set_path, library_root, live_set_dir, data_dir, library_socket, virtual_panel_path, sysd_socket;
   std::string trust_list_path, dev_device_key;  // Story 6.5 (dev builds): protected libraries
   bool factory_live_sets_required = false;      // --factory-live-sets-required: a failed import is fatal
@@ -129,6 +130,8 @@ int main(int argc, char** argv) {
       virtual_panel_path = argv[++i];  // Story 3.10: the Mac virtual panel mapping file (a USB MIDI control surface becomes the panel)
     } else if (!std::strcmp(argv[i], "--library-socket") && i + 1 < argc) {
       library_socket = argv[++i];  // Story 4.11: tell the librarian service which Live Set became active and when the engine is performing
+    } else if (!std::strcmp(argv[i], "--din-source") && i + 1 < argc) {
+      din_source = argv[++i];
     } else if (!std::strcmp(argv[i], "--sysd-socket") && i + 1 < argc) {
       sysd_socket = argv[++i];  // Foundation: the system config (clock source, velocity curve, pedals, Boot into) comes from sysd at start and on change
     } else {
@@ -149,6 +152,8 @@ int main(int argc, char** argv) {
 #endif
                    "                   [--virtual-panel MAP.json]   (Story 3.10: a mapping file (engine/host/dev/virtual-panel.json) turns the faders, knobs and buttons of a MIDI control surface\n"
                    "                                                 into panel MCU frames for the panel reader; wheels reach the keyboard-on parts, BUTTON frames reach subscribed ui clients)\n"
+                   "                   [--din-source NAME]   (Story 7.7: the CoreMIDI source whose name contains NAME is the DIN input, every other source is USB; clock is followed from\n"
+                   "                                           the port the sysd clock_source selects and ignored from the other)\n"
                    "                   [--sysd-socket PATH]   (the sysd config service (velora-sysd): the engine runs on the defaults until sysd answers, applies the config on connect and on every\n"
                    "                                           change, keeps the last one when sysd goes away; sysd absent never stops the engine; default off)\n"
                    "                   [--library-socket PATH [--library-playing-idle-ms N]]   (report the active Live Set and the performing state to the librarian service's Library API;\n"
@@ -452,6 +457,7 @@ int main(int argc, char** argv) {
   } line_in_guard{*renderer, audio};
   host::macos::CoreMidiInput midi;
   std::string err;
+  midi.set_din_source(din_source);
   // Story 3.10: the Mac virtual panel. A MIDI control surface's mapped CCs / notes / pitch bend become panel MCU frames fed to the panel reader (the same
   // reader the panel MCU's UART feeds on the SoC); the reader's UMP joins the MIDI lane (the CoreMIDI thread stays its only producer) and BUTTON frames are
   // pushed to subscribed ui clients over ws.v1. Everything the map does not name goes on to the ingest unchanged.
@@ -522,7 +528,15 @@ int main(int argc, char** argv) {
     host::SysdConfigClientOptions so;
     so.socket_path = sysd_socket;
     sysd_client = std::make_unique<host::SysdConfigClient>(so);
-    sysd_client->set_callback([](const ws::v1::Config& c, std::uint64_t revision) {
+    sysd_client->set_callback([ing = &ingest, rend = renderer.get(), first = true](const ws::v1::Config& c, std::uint64_t revision) mutable {
+      // Story 7.7: the clock source takes effect at the next block, without touching a voice. An unknown value keeps the last applied one.
+      const core::ClockSource before = ing->clock_source();
+      if (host::apply_clock_source(c, *ing, *rend)) {
+        if (first || ing->clock_source() != before)
+          std::printf("clock source: %s applied (follower and port filter)\n", ws::v1::ClockSource_Name(c.clock_source()).c_str());
+        first = false;
+      } else
+        std::printf("sysd config: clock_source %d not applied (kept %d)\n", static_cast<int>(c.clock_source()), static_cast<int>(ing->clock_source()));
       std::printf("sysd config: revision %llu clock_source=%s velocity_curve=%s boot_into=%s\n", (unsigned long long)revision,
                   ws::v1::ClockSource_Name(c.clock_source()).c_str(), ws::v1::VelocityCurve_Name(c.velocity_curve()).c_str(),
                   ws::v1::BootIntoMode_Name(c.boot_into().mode()).c_str());

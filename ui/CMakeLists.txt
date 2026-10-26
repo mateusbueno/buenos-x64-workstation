@@ -40,6 +40,7 @@ add_library(velora_ui
   src/locale.cpp
   src/ws_client.cpp
   src/led_driver.cpp
+  src/sysd_config_sender.cpp
   src/screens/shell_view.cpp
   src/screens/surface_skeleton.cpp
   src/screens/effects_view.cpp
@@ -81,6 +82,7 @@ target_include_directories(velora_ui PUBLIC
 target_link_libraries(velora_ui PUBLIC
   lvgl
   velora_control
+  velora_sysdctl_client
   velora_mcu_common
   velora_format
   Threads::Threads
@@ -228,6 +230,12 @@ add_executable(epic10_settings_test tests/epic10_settings_test.cpp)
 target_link_libraries(epic10_settings_test PRIVATE velora_ui)
 add_test(NAME epic10_settings_test COMMAND epic10_settings_test)
 set_tests_properties(epic10_settings_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")
+
+add_executable(sysd_sender_test tests/sysd_sender_test.cpp)
+target_link_libraries(sysd_sender_test PRIVATE velora_ui)
+add_dependencies(sysd_sender_test velora-sysd)
+add_test(NAME sysd_sender_test COMMAND sysd_sender_test $<TARGET_FILE:velora-sysd>)
+set_tests_properties(sysd_sender_test PROPERTIES TIMEOUT 120)
 
 add_executable(epic12_fm_va_test tests/epic12_fm_va_test.cpp)
 target_link_libraries(epic12_fm_va_test PRIVATE velora_ui)

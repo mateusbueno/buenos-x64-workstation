@@ -22,6 +22,7 @@ struct AppOptions {
   float scale{1.0f};    // Window scaling factor for desktop (1.0 = 1024x600)
   std::string start_surface;  // dev: performance|launcher|effects|setlist|browser|scenes|part|settings|library|import
   std::string screenshot_path;  // dev: save a BMP after ~1s and exit
+  std::string sysd_socket;    // Story 7.7: the sysd config service socket; empty = the clock source stays a local setting
   int start_section{0};       // dev: initial section for settings/part surfaces
 };
 
@@ -49,6 +50,7 @@ class UiApp {
   std::unique_ptr<IDisplayAdapter> adapter_;
   WsClient ws_client_;
   ShellView shell_view_;
+  std::unique_ptr<SysdConfigSender> sysd_sender_;  // Story 7.7 (before nav_controller_: destroyed after it)
   std::unique_ptr<NavigationController> nav_controller_;
 
   bool rebuild_pending_{false};

@@ -148,7 +148,10 @@ class VirtualPanelLeds {
 class VirtualPanelUmpSink final : public ports::UmpSink {
  public:
   VirtualPanelUmpSink(VirtualPanel& panel, ports::UmpSink& downstream) noexcept : panel_(panel), downstream_(downstream) {}
-  void on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override;
+  void on_ump(const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override {
+    on_ump_port(ports::MidiPortKind::kUsb, words, count, host_ns);
+  }
+  void on_ump_port(ports::MidiPortKind port, const std::uint32_t* words, std::size_t count, std::uint64_t host_ns) noexcept override;
 
  private:
   VirtualPanel& panel_;

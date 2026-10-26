@@ -77,6 +77,22 @@ HEAVY / FIXED; sustain and expression `{min, max, polarity}` on the 12-bit pedal
    migration runner;
 3. adds a CLI field to `velora-sysdctl` if it wants one.
 
+## Clock source (Story 7.7): how `clock_source` flows
+
+`clock_source` (INTERNAL / DIN / USB, default INTERNAL) is the first setting with behaviour. sysd stays the single owner and the single source of truth:
+
+- **ui -> sysd**: Settings > MIDI & Clock > Clock source asks through the injectable `SysdConfigSender` (`ui/include/velora/ui/sysd_config_sender.hpp`); the real
+  one (`ui --sysd-socket PATH`) uses the blocking `velora_sysdctl_client` on a worker thread (the UI loop never waits), sends a `SetConfig` patch with only
+  `clock_source`, subscribes to config pushes and reports what sysd says. The control shows the value sysd reported; the local `SystemConfig` JSON field is only
+  a cache of it. A request that cannot be delivered or is refused comes back as a notice and the control returns to the last reported value. Without
+  `--sysd-socket` the ui keeps the old local behaviour.
+- **sysd -> engine**: the `SysdConfigClient` callback (control thread) calls `host::apply_clock_source`: the MIDI ingest's port filter first, then
+  `BlockRenderer::set_clock_source` (an atomic; the RT plane resets the follower at its next block; no voice is touched). Until sysd answers, or when it is absent,
+  the engine stays on INTERNAL (or on the last applied value); an unknown value is not applied.
+- The ui sender's destructor joins its worker, which is bounded by the connect / reply timeouts (2 s) plus a 100 ms poll, so closing the ui can take up to that long
+  while sysd is hung.
+- **Persistence**: the value lives in `sysd_config.pb`, so it is restored on restart (tests: `sysd_sender_test`, `engine_host_sysd_smoke`).
+
 ## Deployment and limits (read before relying on it)
 
 - The socket is created **0600**: `engine` and `ui` must run as the sysd user, or the deployment must decide a group arrangement (not done here).

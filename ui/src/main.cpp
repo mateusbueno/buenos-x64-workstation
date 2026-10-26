@@ -20,6 +20,8 @@ int main(int argc, char** argv) {
     std::string arg = argv[i];
     if (arg == "--socket" && i + 1 < argc) {
       opts.socket_path = argv[++i];
+    } else if (arg == "--sysd-socket" && i + 1 < argc) {
+      opts.sysd_socket = argv[++i];
     } else if (arg == "--locale" && i + 1 < argc) {
       opts.locale = argv[++i];
     } else if (arg == "--headless") {
@@ -37,6 +39,7 @@ int main(int argc, char** argv) {
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: ui [options]\n"
                 << "  --socket <path>     Unix domain socket path (default: /tmp/velora-engine.sock)\n"
+                << "  --sysd-socket <path>  sysd config service socket (the Clock source setting is asked of sysd and shows its value)\n"
                 << "  --locale <lang>     UI locale code (en, pt-BR, es; default: en)\n"
                 << "  --scale <float>     Display zoom / scale factor (default: 1.0 -> 1024x600)\n"
                 << "  --surface <name>    Dev: open directly on a surface (settings, part, scenes, ...)\n"

@@ -21,6 +21,9 @@
 #include <string>
 #include <thread>
 
+#include "velora/core/block_renderer.hpp"
+#include "velora/core/clock_follower.hpp"
+#include "velora/host/midi_ingest.hpp"
 #include "ws_v1.pb.h"
 
 namespace velora::host {
@@ -28,6 +31,14 @@ namespace velora::host {
 // The configuration an engine runs with before sysd answered (and that sysd serves when it has no valid file): INTERNAL, NORMAL, pedals uncalibrated,
 // Boot into LAST_SOUND.
 ws::v1::Config default_config();
+
+// Story 7.7: the engine's clock source for a sysd value. False (and `out` untouched) for UNSPECIFIED or a value this build does not know: a consumer treats the
+// config defensively and keeps what it had.
+bool clock_source_from_config(ws::v1::ClockSource s, core::ClockSource& out) noexcept;
+
+// Story 7.7: applies the config's clock source without interrupting sound: the ingest's port filter first (the input edge thread stops forwarding the old
+// port's clock), then the renderer (an atomic; the RT plane resets the follower at its next block, no voice is touched). Control thread. True when it applied.
+bool apply_clock_source(const ws::v1::Config& c, MidiIngest& ingest, core::BlockRenderer& renderer) noexcept;
 
 struct SysdConfigClientOptions {
   std::string socket_path;

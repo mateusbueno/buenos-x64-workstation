@@ -18,6 +18,7 @@ struct RenderCounters {
   std::atomic<std::uint64_t> deferred{0};          // mapped beyond this block, carried forward
   std::atomic<std::uint64_t> beyond_horizon{0};    // events held (once each) until within the horizon
   std::atomic<std::uint64_t> renderer_rejected{0}; // BlockRenderer queue full -> dropped
+  std::atomic<std::uint64_t> clock_stale{0};       // Story 7.7: realtime clock of a port the clock source no longer selects (dropped at pop time / before submit)
   std::atomic<std::uint32_t> last_frame{0};        // frame of the most recent mapped event
 };
 
@@ -52,6 +53,8 @@ class RenderDriver final : public ports::BlockSink {
   };
   void record_render_time(std::chrono::steady_clock::time_point t0) noexcept VELORA_NONBLOCKING;
   void drain(Lane& lane, std::uint64_t block_start_ns) noexcept VELORA_NONBLOCKING;
+  // Story 7.7: an external clock message (0xF8/FA/FB/FC) of the MIDI lane whose port is not the renderer's current clock source.
+  bool stale_clock(const Lane& lane, const StampedUmp& e) const noexcept VELORA_NONBLOCKING;
 
   core::BlockRenderer& renderer_;
   TimeMapper mapper_;

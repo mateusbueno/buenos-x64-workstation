@@ -28,12 +28,20 @@ class CoreMidiInput final : public ports::MidiInput {
 
   MIDIProtocolID protocol() const noexcept { return protocol_; }
 
+  // Story 7.7: a source whose name (CoreMIDI name or display name) contains `name` (case-insensitive) is tagged kDin; every other source (USB, virtual) is kUsb.
+  // Lets DIN be exercised on a Mac. The board's DIN UART adapter (not implemented here) tags its packets kDin itself: it calls UmpSink::on_ump_port(kDin, ...)
+  // with the arrival time it stamps in its own reader thread. Set before open() / rescan(); a source already connected keeps its tag.
+  void set_din_source(std::string name) { din_name_ = std::move(name); }
+  std::size_t din_sources() const noexcept { return din_count_; }
+
  private:
   ports::UmpSink* sink_ = nullptr;
   MIDIClientRef client_ = 0;
   MIDIPortRef port_ = 0;
   MIDIProtocolID protocol_ = kMIDIProtocol_2_0;
   std::set<MIDIEndpointRef> connected_;  // control thread only
+  std::string din_name_;
+  std::size_t din_count_ = 0;
 };
 
 }  // namespace velora::host::macos

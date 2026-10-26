@@ -66,6 +66,10 @@ bool UiApp::build_navigation() {
   if (!nav_controller_->initialize(lv_screen_active())) {
     return false;
   }
+  if (!options_.sysd_socket.empty()) {
+    if (!sysd_sender_) sysd_sender_ = make_socket_sysd_sender(options_.sysd_socket);
+    nav_controller_->set_sysd_sender(sysd_sender_.get());
+  }
   nav_controller_->set_on_language_changed([this]() { rebuild_pending_ = true; });
   if (!options_.headless && dynamic_cast<SdlAdapter*>(adapter_.get())) nav_controller_->enable_led_view();  // Story 3.12: the simulator shows the panel LEDs
 

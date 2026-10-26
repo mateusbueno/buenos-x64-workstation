@@ -36,6 +36,13 @@ NavigationController::NavigationController(WsClient* client)
 
 NavigationController::~NavigationController() = default;
 
+// Story 7.7 / 7.8: the Top Bar tempo (`♩ 72 · DIN`) and the read-only Part tempo name the source in force.
+void NavigationController::show_clock_source(ClockSourceMode m) {
+  const char* name = m == ClockSourceMode::DIN ? "DIN" : m == ClockSourceMode::USB ? "USB" : "Internal";
+  performance_view_.set_clock_source(name);
+  part_view_.set_clock_source(name, m != ClockSourceMode::Internal);
+}
+
 namespace {
 constexpr uint8_t kLedPart[8] = {MCU_LED_PART_SCENE_LED_1, MCU_LED_PART_SCENE_LED_2, MCU_LED_PART_SCENE_LED_3, MCU_LED_PART_SCENE_LED_4,
                                  MCU_LED_PART_SCENE_LED_5, MCU_LED_PART_SCENE_LED_6, MCU_LED_PART_SCENE_LED_7, MCU_LED_PART_SCENE_LED_8};
@@ -254,7 +261,9 @@ bool NavigationController::initialize(lv_obj_t* parent) {
     }
   });
 
+  settings_view_.set_on_notice([this](const std::string& msg) { notice_toast_.show(msg, ""); });
   settings_view_.set_on_config_changed([this](const SystemConfig& c) {
+    show_clock_source(c.clock_source);  // follows sysd's value
     performance_view_.set_touch_mode(c.touch_mode);
     performance_view_.set_long_press_time_ms(c.long_press_ms);
     set_write_hold_ms(c.write_hold_ms);
@@ -272,6 +281,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   SystemConfig::instance().load_from_file();
   const auto& init_cfg = SystemConfig::instance();
   applied_language_ = init_cfg.language;
+  show_clock_source(init_cfg.clock_source);  // the cached value until sysd reports (Story 7.7)
   performance_view_.set_touch_mode(init_cfg.touch_mode);
   performance_view_.set_long_press_time_ms(init_cfg.long_press_ms);
   set_write_hold_ms(init_cfg.write_hold_ms);
@@ -843,6 +853,7 @@ void NavigationController::tick(uint32_t elapsed_ms) {
   if (connected && !was_connected_) led_driver_.resend_all();
   was_connected_ = connected;
   notice_toast_.tick(elapsed_ms);
+  settings_view_.poll_sysd();
   import_view_.tick(elapsed_ms);
   boot_view_.tick(elapsed_ms);
 }

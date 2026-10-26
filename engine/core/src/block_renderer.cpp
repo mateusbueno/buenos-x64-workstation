@@ -428,7 +428,7 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     return;
   }
   if (ump.group() == 0 && ump.is_system_realtime()) {
-    if (clock_source_.load(std::memory_order_relaxed) == ClockSource::kInternal) {
+    if (clock_source() == ClockSource::kInternal) {
       ++ignored_;
     }
     return;
@@ -686,7 +686,7 @@ WorkerPool::StartResult BlockRenderer::set_parallel_voice_render(std::uint32_t t
 }
 
 float BlockRenderer::tempo_bpm() const noexcept {
-  if (clock_source_.load(std::memory_order_acquire) != ClockSource::kInternal) {
+  if (clock_source() != ClockSource::kInternal) {
     return follower_.tempo_bpm();
   }
   const params::ParamDef* d = params::find(params::kTempoBpm);
@@ -731,7 +731,12 @@ void BlockRenderer::process_block(const OutputBuses& out) noexcept {
     for (std::uint32_t i = 0; i < kBlockFrames; ++i) out.aux_left[i] = out.aux_right[i] = 0.0f;
   adopt_generation();
   drain_queue();
-  const ClockSource cs = clock_source_.load(std::memory_order_acquire);
+  const std::uint32_t clock_word = clock_word_.load(std::memory_order_acquire);  // source and epoch together
+  const ClockSource cs = static_cast<ClockSource>(clock_word & 0xFFu);
+  if ((clock_word >> 8) != rt_clock_epoch_) {  // a source change (Story 7.7): re-lock cleanly, on the RT thread, once per change
+    rt_clock_epoch_ = clock_word >> 8;
+    follower_.reset();
+  }
   if (cs != ClockSource::kInternal) {
     for (std::size_t i = 0; i < pending_count_ && pending_[i].target_frame < kBlockFrames; ++i) {
       const Ump& u = pending_[i].ump;

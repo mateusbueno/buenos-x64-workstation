@@ -284,6 +284,30 @@ sysd's Unix socket (`SubscribeConfig`). All I/O is on its own thread (reconnect 
 revision, with a revision guard. Without sysd the engine runs on `default_config()`; the last-known config is kept when sysd goes away. `engine-host --sysd-socket PATH` wires it (default off);
 the engine's own control server does not serve the config messages (`ERROR_CODE_INVALID_COMMAND`). See `sysd/README.md`.
 
+### Clock source and DIN / USB clock inputs (Story 7.7: FR76, AR39, AR17)
+
+- `MidiIngest::on_ump_port(MidiPortKind, ...)` stamps every packet on arrival (input edge thread, device time) and tags it `kUsb` or `kDin` (`StampedUmp::port`).
+  Realtime clock (0xF8 Clock, 0xFA Start, 0xFB Continue, 0xFC Stop) is forwarded to the RT plane (through the same SPSC queue, group normalised to 0) only when
+  it comes from the port the clock source selects; the other port's clock, and all external clock with INTERNAL, is dropped and counted
+  (`counters().clock_dropped`; forwarded: `clock_forwarded`). Notes, controllers and SysEx of both ports pass as before.
+- `host::apply_clock_source(config, ingest, renderer)` (in the `SysdConfigClient` callback, control thread) sets the ingest filter, then
+  `BlockRenderer::set_clock_source`. The renderer resets the follower on the RT thread at its next block when the source changes (never from the caller's thread);
+  switching to INTERNAL clears `clock_lost`. A missing sysd keeps the last applied value (default INTERNAL); an unknown value is not applied. Clock already queued
+  from the old port when the source changes is dropped by `RenderDriver::drain` (midi lane): at pop time, and again on every pass before submit (so an event held
+  beyond the horizon across a switch goes too), counted in `RenderCounters::clock_stale`. Only events already in the renderer's `pending_` for the block being built
+  can survive a switch (an arbitrary thread race between the check and the submit is the same one block).
+- Only group 0 clock is forwarded (the RT plane's rule; a multi-cable device's other groups would double the tick rate): other groups are counted in
+  `clock_dropped_group`. Timing Clock obeys the same note-headroom shedding as controllers (`clock_dropped_full`); Start / Continue / Stop are always queued.
+- The source and a reset epoch are one atomic word in `BlockRenderer`, so the RT thread reads both in one load and resets the follower once per change.
+- `--din-source` is a substring match on the endpoint name or display name (256-byte buffer, longer names do not match): every endpoint of a multi-port device
+  whose name contains NAME is DIN (sibling endpoints included, so pick a distinctive NAME). A source already connected keeps its tag (restart to change it).
+- CoreMIDI: USB and virtual sources are `kUsb`; `engine-host --din-source NAME` tags the source whose name or display name contains NAME (case-insensitive) as
+  `kDin`, so DIN can be exercised on a Mac. **Board hook (not implemented, deferred):** the DIN UART adapter calls `UmpSink::on_ump_port(MidiPortKind::kDin, ...)` from
+  its own reader thread with its arrival time; nothing else changes.
+- Tests: `clock_source_tests` (synthetic clock on both ports through the ingest into the renderer's follower with an arpeggio as the observer: every row of the
+  I/O matrix), `engine_host_sysd_smoke` (only checks that the real engine logs having applied INTERNAL, DIN and USB from a real sysd, once per change; the filter and follower
+  behaviour is covered by `clock_source_tests`, including through `RenderDriver` and the time mapper), `sysd_sender_test` (ui side, persistence).
+
 ## macOS only (`macos/`, built only when `APPLE`)
 
 - `CoreAudioLineIn` (Story 2.7, `ports::LineInSource`): optional capture of the default CoreAudio input device as 48 kHz stereo float into a lock-free ring that the engine drains once per block; mixed into the

@@ -133,6 +133,9 @@ int main(int argc, char** argv) {
   CHECK(slurp(out).find("clock_source: CLOCK_SOURCE_DIN") != std::string::npos && slurp(out).find("revision: 1") != std::string::npos);
   CHECK(wait_for([&] { return slurp(elog).find("sysd config: revision 1 clock_source=CLOCK_SOURCE_DIN velocity_curve=VELOCITY_CURVE_HEAVY") != std::string::npos; }));
   CHECK(run({ctl, "--socket", ssock, "get"}, out, err) == 0 && slurp(out).find("velocity_curve: VELOCITY_CURVE_HEAVY") != std::string::npos);
+  // Story 7.7: the engine applied the clock source of both configs (INTERNAL at first contact, then DIN).
+  CHECK(slurp(elog).find("clock source: CLOCK_SOURCE_INTERNAL applied") != std::string::npos);
+  CHECK(slurp(elog).find("clock source: CLOCK_SOURCE_DIN applied") != std::string::npos);
   // 4. A refused command (min >= max): typed error, exit 1, nothing changes, the engine is not told.
   CHECK(run({ctl, "--socket", ssock, "set", "sustain", "900,100"}, out, err) == 1);
   CHECK(slurp(err).find("ERROR_CODE_INVALID_CONFIG") != std::string::npos);
@@ -152,6 +155,8 @@ int main(int argc, char** argv) {
   CHECK(slurp(out).find("revision: 2") != std::string::npos && slurp(out).find("clock_source: CLOCK_SOURCE_DIN") != std::string::npos);  // persisted
   CHECK(run({ctl, "--socket", ssock, "set", "clock_source", "usb"}, out, err) == 0);
   CHECK(wait_for([&] { return slurp(elog).find("sysd config: revision 3 clock_source=CLOCK_SOURCE_USB") != std::string::npos; }));
+  CHECK(wait_for([&] { return slurp(elog).find("clock source: CLOCK_SOURCE_USB applied") != std::string::npos; }));
+  CHECK(count(slurp(elog), "clock source: CLOCK_SOURCE_DIN applied") == 1);  // the persisted DIN was not applied a second time
   CHECK(count(slurp(elog), "sysd config: revision") == applied + 1);  // only the new revision: 2 was not applied again
   CHECK(engine_alive());
   // sysdctl watch prints the config now and exits after COUNT pushes.

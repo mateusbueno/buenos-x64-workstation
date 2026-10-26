@@ -13,6 +13,25 @@
 
 namespace velora::host {
 
+bool clock_source_from_config(ws::v1::ClockSource s, core::ClockSource& out) noexcept {
+  switch (s) {
+    case ws::v1::CLOCK_SOURCE_INTERNAL: out = core::ClockSource::kInternal; return true;
+    case ws::v1::CLOCK_SOURCE_DIN: out = core::ClockSource::kDin; return true;
+    case ws::v1::CLOCK_SOURCE_USB: out = core::ClockSource::kUsb; return true;
+    default: return false;
+  }
+}
+
+bool apply_clock_source(const ws::v1::Config& c, MidiIngest& ingest, core::BlockRenderer& renderer) noexcept {
+  core::ClockSource cs;
+  if (!clock_source_from_config(c.clock_source(), cs)) return false;
+  if (ingest.clock_source() == cs && renderer.clock_source() == cs) return true;  // nothing to change (no follower reset for a repeated value)
+  ingest.set_clock_source(cs);
+  renderer.set_clock_source(cs);
+  return true;
+}
+
+
 namespace {
 
 constexpr std::uint32_t kMaxFrame = 65536;

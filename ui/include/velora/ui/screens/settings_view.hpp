@@ -11,6 +11,7 @@
 #include "velora/ui/panel_event.hpp"
 #include "velora/ui/widgets/segmented_control.hpp"
 #include "velora/ui/system_config.hpp"
+#include "velora/ui/sysd_config_sender.hpp"
 
 namespace velora::ui {
 
@@ -64,6 +65,12 @@ class SettingsView {
   void set_on_assign_changed(AssignSlotCallback cb) { on_assign_changed_ = std::move(cb); }
   void set_on_edit(EditCallback cb) { on_edit_ = std::move(cb); }
   void set_on_config_changed(ConfigChangeCallback cb) { on_config_changed_ = std::move(cb); }
+  // Story 7.7: the sysd seam (not owned; null = the clock source stays a local setting, as before sysd). With a sender the Clock source control asks sysd and
+  // shows what sysd reports: SystemConfig::clock_source is only a cache of that value. poll_sysd() (UI thread, every tick) applies the reports.
+  void set_sysd_sender(SysdConfigSender* sender) { sysd_ = sender; }
+  void poll_sysd();
+  using NoticeCallback = std::function<void(const std::string& message)>;
+  void set_on_notice(NoticeCallback cb) { on_notice_ = std::move(cb); }
 
   SegmentedControl& seg_theme() noexcept { return seg_theme_; }
   SegmentedControl& seg_language() noexcept { return seg_language_; }
@@ -247,6 +254,10 @@ class SettingsView {
   // MIDI & Clock UI
   lv_obj_t* midi_clock_container_{nullptr};
   SegmentedControl seg_clock_source_;
+  SysdConfigSender* sysd_{nullptr};
+  NoticeCallback on_notice_;
+  bool sysd_reported_{false};  // sysd has reported at least once
+  bool applying_sysd_{false};  // set while the control is moved by a sysd report / revert, so that is not taken for a user change
   SegmentedControl seg_midi_out_ch_;
   SegmentedControl seg_keybed_out_;
   SegmentedControl seg_midi_thru_;

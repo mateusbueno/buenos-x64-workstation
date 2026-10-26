@@ -107,6 +107,9 @@ class NavigationController {
   bool enable_led_view();
   LedView& led_view() noexcept { return led_view_; }
   // Test seams (default: the WsClient): whether the engine connection is up, and where a built ws.v1 command goes.
+  // Story 7.7: the sysd seam of the Settings Clock source control (not owned).
+  void show_clock_source(ClockSourceMode m);
+  void set_sysd_sender(SysdConfigSender* s) { settings_view_.set_sysd_sender(s); }
   void set_connected_probe(std::function<bool()> fn) { connected_fn_ = std::move(fn); }
   void set_command_sender(std::function<bool(const ws::v1::ClientMessage&)> fn) { command_fn_ = std::move(fn); }
   void resend_leds();  // the full LED state again (what the connection edge in tick() does)
