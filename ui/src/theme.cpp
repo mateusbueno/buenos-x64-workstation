@@ -149,6 +149,7 @@ void Theme::init_styles_if_needed() {
   lv_style_set_border_width(&s_style_hintbar, 1);
   lv_style_set_border_side(&s_style_hintbar, LV_BORDER_SIDE_TOP);
   lv_style_set_radius(&s_style_hintbar, 0);
+  lv_style_set_pad_all(&s_style_hintbar, 0);
 
   // Text styles
   lv_style_set_text_color(&s_style_text, p.text);

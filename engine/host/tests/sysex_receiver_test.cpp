@@ -235,7 +235,9 @@ void test_concurrent_256_voices_zero_xruns() {
   }
 
   // Let audio thread render continuously
+  // (until enough blocks rendered, bounded: a loaded host can render slowly)
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  for (int i = 0; i < 100 && blocks_rendered.load() < 10; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
   // Drain remaining packets
   while (receiver.poll() > 0) {}

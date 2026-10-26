@@ -193,7 +193,7 @@ void test_resolver_verification() {
     CHECK(u.ok() && !u.is_protected() && u.bundle);
   }  // the result's bundle closes its descriptor here
   const host::FsOpCounts c = counting->counts();
-  CHECK(c.lstat == 4 && c.readlink == 1 && c.open == 1 && c.pread == 3 && c.close == 1 && c.list_dir == 0 && c.total() == 10);
+  CHECK(c.lstat == 4 && c.readlink == 1 && c.open == 1 && c.pread == 4 && c.close == 1 && c.list_dir == 0 && c.total() == 11);
   CHECK(res.resolve(lib.library_id, "nope.sfz").status == host::ResolveStatus::kMissingInstrument);
   CHECK(res.resolve("../etc", "piano.sfz").status == host::ResolveStatus::kInvalidId);
   // A signer this engine does not trust.

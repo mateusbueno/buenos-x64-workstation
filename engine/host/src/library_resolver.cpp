@@ -190,7 +190,13 @@ ResolveResult LibraryResolver::resolve(std::string_view library_id,
   }
   // Check if it's a ParametricBundle ('VLPB')
   char magic[4]{};
-  if (size >= 4 && fs_->pread(fd, 0, magic, 4) == FsStatus::kOk && std::memcmp(magic, "VLPB", 4) == 0) {
+  if (size >= 4 && fs_->pread(fd, 0, magic, 4) != FsStatus::kOk) {
+    fs_->close(fd);
+    res.status = ResolveStatus::kBundleError;
+    res.bundle_error = format::Error::kIo;
+    return res;
+  }
+  if (size >= 4 && std::memcmp(magic, "VLPB", 4) == 0) {
     std::vector<uint8_t> pbuf(size);
     if (fs_->pread(fd, 0, pbuf.data(), size) == FsStatus::kOk) {
       fs_->close(fd);

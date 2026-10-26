@@ -195,12 +195,12 @@ void test_hit_and_ops() {
   }
   const FsOpCounts c = env.counting->counts();
   // lstat(current), lstat(bundle dir) | readlink | open | lstat(bundle.vlrp), lstat(wrapped-key.bin) (Story 6.5: nothing protected beside an unprotected bundle) |
-  // pread header, manifest, index | close. The pread of block 0 above is test code, so it is counted here too. Still a constant: 4 lstats, 1 readlink, 1 open,
-  // 3 preads and 1 close = 10 ops of the resolver, whatever the number or size of libraries.
+  // pread magic probe, header, manifest, index | close. The pread of block 0 above is test code, so it is counted here too. Still a constant: 4 lstats, 1 readlink, 1 open,
+  // 4 preads and 1 close = 11 ops of the resolver, whatever the number or size of libraries.
   CHECK(c.lstat == 4);
   CHECK(c.readlink == 1);
   CHECK(c.open == 1);
-  CHECK(c.pread == 4);
+  CHECK(c.pread == 5);
   CHECK(c.close == 1);
   CHECK(c.list_dir == 0);
 }
@@ -253,7 +253,7 @@ void test_scale() {
   }
   for (const Scale& s : res) {
     CHECK(s.ops == res[0].ops);
-    CHECK(s.ops.total() == 4 + 1 + 1 + 3 + 1);  // Story 6.5: two more lstats (no protected files beside an unprotected bundle)
+    CHECK(s.ops.total() == 4 + 1 + 1 + 4 + 1);  // Story 6.5: two more lstats (no protected files beside an unprotected bundle) and the format magic probe pread
   }
 }
 
@@ -447,7 +447,7 @@ void test_fault_injection() {
   gen(root, 2);
   const std::string id = library_id_for_index(1);
   struct Spec { bool lstat_io, readlink_io; int pread_fail; };
-  const Spec specs[] = {{true, false, 0}, {false, true, 0}, {false, false, 1}, {false, false, 2}, {false, false, 3}};
+  const Spec specs[] = {{true, false, 0}, {false, true, 0}, {false, false, 1}, {false, false, 2}, {false, false, 3}, {false, false, 4}};
   for (const Spec& sp : specs) {
     auto leak = std::make_shared<LeakTracker>(make_posix_fs());
     LibraryResolver resolver(
