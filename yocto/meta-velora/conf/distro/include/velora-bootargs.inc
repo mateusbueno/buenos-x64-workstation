@@ -4,5 +4,9 @@
 # TODO(Story 1.2): audio-related kernel arguments, if any, also come from Story 1.2.
 VELORA_BOOTARGS_RT ?= "isolcpus=managed_irq,domain,5-7 nohz_full=5-7 rcu_nocbs=5-7 threadirqs"
 # no swap: swapaccount irrelevant; systemd must not look for a resume/swap device
-VELORA_BOOTARGS_BASE ?= "noresume"
+# Story 6.11: the root slot is mounted read-only ("ro"; meta-rockchip's default "rw" is removed below).
+VELORA_BOOTARGS_BASE ?= "noresume ro"
 UBOOT_EXTLINUX_KERNEL_ARGS:append = " ${VELORA_BOOTARGS_BASE} ${VELORA_BOOTARGS_RT}"
+# Story 6.11: boot from root slot A by GPT partition name (wic --part-name rootfs.0 in files/wic/velora-nvme.wks); RAUC switches slots in Story 6.12.
+UBOOT_EXTLINUX_ROOT = "root=PARTLABEL=rootfs.0"
+UBOOT_EXTLINUX_KERNEL_ARGS:remove = "rw"

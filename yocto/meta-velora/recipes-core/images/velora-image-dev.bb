@@ -13,12 +13,13 @@ INCOMPATIBLE_LICENSE_EXCEPTIONS = "${VELORA_INCOMPATIBLE_LICENSE_EXCEPTIONS}"
 
 # ssh-server-openssh: sshd (key login only; root password stays locked, no debug-tweaks).
 # Authorised keys for dev access are provided at build time through VELORA_DEV_AUTHORIZED_KEYS_FILE (no keys in the repo).
-IMAGE_FEATURES = "ssh-server-openssh"
+IMAGE_FEATURES = "ssh-server-openssh read-only-rootfs"
 IMAGE_FEATURES:remove = "debug-tweaks empty-root-password allow-empty-password allow-root-login"
 
 IMAGE_INSTALL = " \
     packagegroup-core-boot \
     velora-system-config \
+    velora-service-users \
     systemd-networkd \
     libgcc \
     libstdc++ \
@@ -28,6 +29,10 @@ IMAGE_INSTALL = " \
 # The audio stack and tools in these packages are NOT allowed in the image (Story 1.4 AC, NFR27):
 # the flac/metaflac CLIs, libflac/libflac++ and libsndfile. A hard exclude makes the build fail if anything pulls them in.
 PACKAGE_EXCLUDE = "flac metaflac libflac libflac++ libsndfile1 libsndfile1-bin"
+
+# Disk layout (Story 6.11): the single committed wks (boot area, rootfs.0/rootfs.1 A/B slots, /data). Hard assignment: overrides
+# the meta-rockchip default (WKS_FILE ?= "rockchip.wks"). Found through the layer's files/wic/ directory (WKS_SEARCH_PATH).
+WKS_FILE = "velora-nvme.wks"
 
 # Journal/storage: nothing here enables swap or zram.
 IMAGE_LINGUAS = ""

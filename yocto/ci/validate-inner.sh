@@ -36,7 +36,7 @@ echo "== 4. dev image resolves (bitbake -g resolution) and dependency graph"
 if bb kas/velora-dev.yml -n velora-image-dev; then pass "velora-image-dev resolves (task graph resolves, bitbake -g)"; else fail "velora-image-dev dry run"; tail_log; fi
 GRAPH="$PROJ/.yocto-work/graph"; rm -rf "$GRAPH"; mkdir -p "$GRAPH"
 if $KAS shell yocto/kas/velora-dev.yml -c "cd $GRAPH && bitbake -g velora-image-dev" >"$LOGDIR/graph.log" 2>&1 && [ -s "$GRAPH/pn-buildlist" ]; then pass "bitbake -g velora-image-dev ($(wc -l < "$GRAPH/pn-buildlist") recipes)"; else fail "bitbake -g"; tail -n 25 "$LOGDIR/graph.log"; fi
-for r in linux-yocto systemd openssh busybox libgcc gcc-runtime velora-system-config os-release u-boot; do
+for r in linux-yocto systemd openssh busybox libgcc gcc-runtime velora-system-config velora-service-users volatile-binds os-release u-boot; do
   if grep -qx "$r" "$GRAPH/pn-buildlist" 2>/dev/null; then pass "image package set contains $r"; else fail "image package set lacks $r"; fi
 done
 for r in flac libsndfile1 libsndfile; do
@@ -54,7 +54,7 @@ if grep -qx libsndfile1 "$GRAPH2/pn-buildlist" 2>/dev/null; then pass "forbidden
 
 echo "== 5. resolved configuration (bitbake -e)"
 envdump() { $KAS shell yocto/kas/velora-dev.yml -c "bitbake -e $1" > "$LOGDIR/env-$1.txt" 2>&1; }
-envdump velora-image-dev; envdump os-release; envdump linux-yocto
+envdump velora-image-dev; envdump os-release; envdump linux-yocto; envdump volatile-binds
 ev() { grep -E "^$2=" "$LOGDIR/env-$1.txt" | head -1 | sed -E 's/^[^=]*="(.*)"$/\1/'; }
 chk() { # chk <description> <recipe> <var> <egrep-pattern>
   if ev "$2" "$3" | grep -Eq "$4"; then pass "$1"; else fail "$1 (got: $(ev "$2" "$3" | head -c 200))"; fi
@@ -75,10 +75,82 @@ chk "kernel is 6.18.x" linux-yocto LINUX_VERSION '^6\.18\.'
 chk "kernel SRC_URI has preempt-rt.cfg and velora-dev.cfg" linux-yocto SRC_URI 'preempt-rt\.cfg.*velora-dev\.cfg|velora-dev\.cfg.*preempt-rt\.cfg'
 
 chk "ROOTFS_POSTPROCESS_COMMAND runs velora_dev_authorized_keys" velora-image-dev ROOTFS_POSTPROCESS_COMMAND 'velora_dev_authorized_keys'
+chk "IMAGE_FEATURES has read-only-rootfs" velora-image-dev IMAGE_FEATURES '(^| )read-only-rootfs( |$)'
+chk "WKS_FILE = velora-nvme.wks" velora-image-dev WKS_FILE '^velora-nvme\.wks$'
+chk "WKS_FULL_PATH resolves to the layer's committed wks" velora-image-dev WKS_FULL_PATH 'meta-velora/files/wic/velora-nvme\.wks$'
+chk "extlinux root is PARTLABEL=rootfs.0" velora-image-dev UBOOT_EXTLINUX_ROOT '^root=PARTLABEL=rootfs\.0$'
+if ev velora-image-dev UBOOT_EXTLINUX_KERNEL_ARGS | grep -Eq '(^| )rw( |$)'; then fail "kernel args still contain rw"; else chk "kernel args mount root ro" velora-image-dev UBOOT_EXTLINUX_KERNEL_ARGS '(^| )ro( |$)'; fi
+chk "kernel args contain rootwait" velora-image-dev UBOOT_EXTLINUX_KERNEL_ARGS '(^| )rootwait( |$)'
+chk "kernel args contain rootfstype=ext4" velora-image-dev UBOOT_EXTLINUX_KERNEL_ARGS '(^| )rootfstype=ext4( |$)'
+chk "IMAGE_FSTYPES has wic" velora-image-dev IMAGE_FSTYPES '(^| )wic( |$)'
+chk "WKS_FILE_DEPENDS covers virtual/bootloader" velora-image-dev WKS_FILE_DEPENDS 'virtual/bootloader'
+chk "image installs velora-service-users" velora-image-dev IMAGE_INSTALL 'velora-service-users'
+chk "VOLATILE_BINDS maps /var/lib to tmpfs" volatile-binds VOLATILE_BINDS 'volatile/lib'
 echo "  -- generated SSH overlay (dummy key) parses with kas dump"
 echo "ssh-ed25519 AAAAdummykeyfortestsonly validate" > "$PROJ/.yocto-work/dummy_authorized_keys"
 bash "$PROJ/yocto/ci/make-ssh-overlay.sh" "$PROJ" "$PROJ/.yocto-work/dummy_authorized_keys" "$PROJ/.yocto-work/kas-ssh.yml"
 if $KAS dump "$PROJ/.yocto-work/kas-ssh.yml" > "$LOGDIR/ssh-dump.yml" 2>"$LOGDIR/ssh-dump.err" && grep -q "VELORA_DEV_AUTHORIZED_KEYS_FILE" "$LOGDIR/ssh-dump.yml"; then pass "kas dump of generated SSH overlay"; else fail "kas dump of generated SSH overlay"; tail -n 15 "$LOGDIR/ssh-dump.err"; fi
+
+echo "== 5b. disk layout (wic kickstart parser) and read-only root"
+# wic is a standalone tool in Wrynose (recipe wic_*.bb in the pinned openembedded-core, pinned there by SRCREV): fetch and unpack it
+# through bitbake (honours DL_DIR; needs network the first time, then the downloads cache).
+envdump wic-native
+WICS="$(ev wic-native S)"
+if $KAS shell yocto/kas/velora-dev.yml -c "bitbake wic-native -c unpack" >"$LOGDIR/wic-unpack.log" 2>&1 && [ -f "$WICS/src/wic/ksparser.py" ]; then pass "wic fetched and unpacked through bitbake (wic-native do_unpack, SRCREV $(ev wic-native SRCREV | head -c 12))"; else fail "cannot fetch/unpack wic through bitbake (wic-native do_unpack needs network access or a populated DL_DIR); see $LOGDIR/wic-unpack.log"; tail -n 10 "$LOGDIR/wic-unpack.log"; WICS=""; fi
+WKSFILE="$PROJ/yocto/meta-velora/files/wic/velora-nvme.wks"
+if [ -z "$WICS" ]; then fail "wks layout: wic not available"
+elif WICOUT=$(python3 -I "$PROJ/yocto/ci/check_wks.py" "$WICS/src" "$WKSFILE" "$LOGDIR/env-velora-image-dev.txt" 2>&1); then pass "wks parses with wic and has the required layout: ${WICOUT#wks checks: ok }"; else fail "wks layout"; echo "$WICOUT" | sed 's/^/  | /'; fi
+# self-test: each deliberately broken layout must be rejected with its specific message
+wks_variant() { # wks_variant <name> <expected message (fixed string)> <sed expression>
+  local bad="$PROJ/.yocto-work/bad.wks"
+  sed -e "$3" "$WKSFILE" > "$bad"
+  if cmp -s "$bad" "$WKSFILE"; then fail "wks variant '$1': the sed expression changed nothing"; return; fi
+  if [ -z "$WICS" ]; then fail "wks variant '$1': wic not available"; return; fi
+  if python3 -I "$PROJ/yocto/ci/check_wks.py" "$WICS/src" "$bad" "$LOGDIR/env-velora-image-dev.txt" >"$LOGDIR/badwks.log" 2>&1; then fail "wks variant '$1' was accepted"
+  elif grep -qF -- "$2" "$LOGDIR/badwks.log"; then pass "wks check rejects: $1"
+  else fail "wks variant '$1' failed, but not with '$2'"; sed 's/^/  | /' "$LOGDIR/badwks.log"; fi
+}
+wks_variant "slot B populated" "slot B must be unpopulated" 's/--fstype=none --part-name rootfs\.1/--fstype=ext4 --source rootfs --part-name rootfs.1/'
+wks_variant "unequal slots" "root slots must have identical fixed size" 's/^\(part  *--ondisk nvme0n1  *--fixed-size\) 2G/\1 1G/'
+wks_variant "/data without data=ordered" "/data fsoptions must include data=ordered" 's/,data=ordered//'
+wks_variant "/data without nosuid" "/data fsoptions must include nosuid" 's/nosuid,//'
+wks_variant "/data without has_journal" "/data must create an explicit ext4 journal" 's/ --mkfs-extraopts "-O has_journal"//'
+wks_variant "swap partition added" "wks contains a swap partition" 's/^bootloader/part swap --ondisk nvme0n1 --fstype=swap --size 1G\'$'\n''bootloader/'
+wks_variant "wrong partition table" "bootloader ptable must be gpt" 's/--ptable gpt/--ptable msdos/'
+wks_variant "boot area offset moved" "boot area partition loader2: offset" 's/--offset 16384s/--offset 16400s/'
+wks_variant "overlapping partitions" "overlap or wrong order" 's/--offset 32768s/--offset 30000s/'
+# the pinned stock fstab provides tmpfs for /run and /var/volatile
+BFSTAB="$PROJ/.yocto-work/layers/openembedded-core/meta/recipes-core/base-files/base-files/fstab"
+if grep -Eq '^tmpfs\s+/run\s+tmpfs' "$BFSTAB" && grep -Eq '^tmpfs\s+/var/volatile\s+tmpfs' "$BFSTAB"; then pass "base-files fstab: tmpfs on /run and /var/volatile"; else fail "base-files fstab lacks tmpfs /run or /var/volatile"; fi
+
+echo "== 5c. produced artefacts (do_install of base-files and our recipes; no image build)"
+# Only these three recipes are installed (plus pseudo-native for fakeroot): small, no cross toolchain. Our two recipes are run with -b because
+# they have no bbappends; base-files goes through the normal path so that our base-files_%.bbappend is applied.
+# hermetic: start from an empty TMPDIR (leftovers of an interrupted run break do_prepare_recipe_sysroot) and drop it afterwards to save disk
+rm -rf "$PROJ/.yocto-work/build/tmp"
+SYSREC="$PROJ/yocto/meta-velora/recipes-core/velora-system-config/velora-system-config_1.0.bb"
+USRREC="$PROJ/yocto/meta-velora/recipes-core/velora-service-users/velora-service-users_1.0.bb"
+if $KAS shell yocto/kas/velora-dev.yml -c "cd $PROJ/.yocto-work/scratch && bitbake base-files -c install && bitbake -b $SYSREC -c install && bitbake -b $USRREC -c install" >"$LOGDIR/install.log" 2>&1; then pass "do_install of base-files, velora-system-config, velora-service-users"; else fail "do_install of base-files/velora-system-config/velora-service-users"; grep -v 'Duplicate inclusion' "$LOGDIR/install.log" | tail -n 25 | sed 's/^/  | /'; fi
+WORK="$PROJ/.yocto-work/build/tmp/work"
+BFD=$(ls -d "$WORK"/*/base-files/*/image 2>/dev/null | head -1); SCD=$(ls -d "$WORK"/all-*/velora-system-config/*/image 2>/dev/null | head -1)
+fgrep_q() { grep -Eq "$2" "$1" 2>/dev/null; }
+if fgrep_q "$BFD/etc/fstab" '^tmpfs\s+/tmp\s+tmpfs\s+mode=1777,nodev,nosuid'; then pass "installed fstab: tmpfs /tmp (nodev,nosuid)"; else fail "installed fstab lacks the tmpfs /tmp line (dir: '$BFD')"; fi
+if fgrep_q "$BFD/etc/fstab" '^tmpfs\s+/run\s+tmpfs' && fgrep_q "$BFD/etc/fstab" '^tmpfs\s+/var/volatile\s+tmpfs'; then pass "installed fstab: stock tmpfs /run and /var/volatile"; else fail "installed fstab lacks tmpfs /run or /var/volatile"; fi
+if [ -d "$BFD/data" ]; then pass "installed rootfs content has the /data mount point"; else fail "/data missing in the base-files install dir"; fi
+T="$SCD/etc/tmpfiles.d/10-velora-data.conf"
+for spec in "lib 0755 velora-librarian" "catalog 0750 velora-librarian" "livesets 0750 velora-engine" "config 0755 velora-sysd"; do
+  set -- $spec
+  if fgrep_q "$T" "^d\s+/data/$1\s+$2\s+$3\s+$3\s"; then pass "installed tmpfiles.d: /data/$1 $2 $3:$3 (AD-9)"; else fail "installed tmpfiles.d lacks /data/$1 $2 $3:$3"; fi
+done
+if fgrep_q "$SCD/etc/systemd/journald.conf.d/10-velora.conf" '^Storage=volatile$' && fgrep_q "$SCD/etc/systemd/journald.conf.d/10-velora.conf" '^RuntimeMaxUse=[0-9]+[KMG]$'; then pass "installed journald drop-in: volatile and bounded"; else fail "installed journald drop-in is not volatile+bounded"; fi
+# static IDs: the useradd class turns USERADD_PARAM/GROUPADD_PARAM into the package preinst; check the resolved values
+envdump velora-service-users
+for spec in "engine 900" "librarian 901" "sysd 902"; do
+  set -- $spec
+  if grep -Fq -- "--gid $2 velora-$1;" <(grep -E '^GROUPADD_PARAM:velora-service-users=' "$LOGDIR/env-velora-service-users.txt") && grep -Fq -- "--uid $2 --gid $2 velora-$1;" <(grep -E '^USERADD_PARAM:velora-service-users=' "$LOGDIR/env-velora-service-users.txt"); then pass "resolved useradd/groupadd data: velora-$1 uid=gid=$2"; else fail "resolved useradd/groupadd data lacks velora-$1 uid=gid=$2"; fi
+done
+
+rm -rf "$PROJ/.yocto-work/build/tmp"
 
 echo "== 6. license policy"
 for pair in gpl3:GPL-3.0-only lgpl3:LGPL-3.0-only agpl3:AGPL-3.0-only; do

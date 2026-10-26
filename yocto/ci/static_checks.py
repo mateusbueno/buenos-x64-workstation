@@ -65,6 +65,38 @@ need("journal volatile", f"{CFG}/10-velora-journal.conf", r"^Storage=volatile$")
 need("journal RuntimeMaxUse", f"{CFG}/10-velora-journal.conf", r"^RuntimeMaxUse=\d+[KMG]$")
 need("journal RuntimeMaxFileSize", f"{CFG}/10-velora-journal.conf", r"^RuntimeMaxFileSize=\d+[KMG]$")
 need("networkd DHCP", f"{CFG}/20-velora-wired.network", r"^DHCP=yes$")
+# Story 6.11: read-only root, tmpfs runtime paths, /data layout, service users, data directories
+WKS = f"{M}/files/wic/velora-nvme.wks"
+need("image uses the committed wks", IMG, r'^WKS_FILE = "velora-nvme\.wks"')
+need("read-only-rootfs in the dev image", IMG, r'^IMAGE_FEATURES = ".*\bread-only-rootfs\b')
+need("service users in the image", IMG, r"^\s+velora-service-users \\$")
+BF = f"{M}/recipes-core/base-files/base-files_%.bbappend"
+need("tmpfs /tmp in fstab", BF, r"tmpfs\s+/tmp\s+tmpfs\s+mode=1777,nodev,nosuid")
+need("/data mount point in the rootfs", BF, r"install -d \$\{D\}/data")
+need("kernel args mount root read-only", f"{M}/conf/distro/include/velora-bootargs.inc", r'^VELORA_BOOTARGS_BASE \?= ".*\bro\b')
+need("kernel args drop rw", f"{M}/conf/distro/include/velora-bootargs.inc", r'^UBOOT_EXTLINUX_KERNEL_ARGS:remove = "rw"$')
+need("extlinux root is slot A", f"{M}/conf/distro/include/velora-bootargs.inc", r'^UBOOT_EXTLINUX_ROOT = "root=PARTLABEL=rootfs\.0"$')
+need("wks: /data options", WKS, r'^part /data .*--fstype=ext4 .*--fsoptions "[^"]*\bnodev\b[^"]*\bnosuid\b[^"]*\bdata=ordered\b')
+need("wks: slot A", WKS, r"^part /\s.*--part-name rootfs\.0 ")
+need("wks: slot B", WKS, r"^part\s+--ondisk.*--part-name rootfs\.1 ")
+USR = f"{M}/recipes-core/velora-service-users/velora-service-users_1.0.bb"
+need("service users via useradd class", USR, r"^inherit .*\buseradd\b")
+for u in ("velora-engine", "velora-librarian", "velora-sysd"):
+    i = {"velora-engine": 900, "velora-librarian": 901, "velora-sysd": 902}[u]
+    need(f"static uid for {u}", USR, rf"--uid {i} --gid {i} {u};")
+    need(f"static gid for {u}", USR, rf"--gid {i} {u};")
+need("GROUPADD_PARAM present", USR, r"^GROUPADD_PARAM:\$\{PN\} =")
+DATA = f"{CFG}/10-velora-data.conf"
+for path, mode, user in (("lib", "0755", "velora-librarian"), ("catalog", "0750", "velora-librarian"),
+                         ("livesets", "0750", "velora-engine"), ("config", "0755", "velora-sysd")):
+    need(f"/data/{path} owned by {user}", DATA, rf"^d\s+/data/{path}\s+{mode}\s+{user}\s+{user}\s")
+need("tmpfiles.d installed", REC, r"install -m 0644 \$\{UNPACKDIR\}/10-velora-data\.conf \$\{D\}\$\{sysconfdir\}/tmpfiles\.d/10-velora-data\.conf")
+need("tmpfiles.d in SRC_URI", REC, r"file://10-velora-data\.conf")
+need("system-config depends on the users", REC, r'^RDEPENDS:\$\{PN\} \+= "velora-service-users"')
+need("README: layout table", "README.md", r"(?m)^## Disk layout")
+need("README: data=ordered reason", "README.md", r"data=ordered")
+need("README: AD-9 table", "README.md", r"AD-9")
+need("README: boot/EROFS/fsck not done", "README.md", r"(?is)NOT done.*power")
 # every Velora image applies the policy
 imgs = list((root / M).rglob("velora-image-*.bb"))
 if not imgs:
@@ -82,7 +114,7 @@ need("coredump Storage=none", f"{CFG}/10-velora-coredump.conf", r"^Storage=none$
 need("DefaultLimitCORE=0", f"{CFG}/10-velora-limits.conf", r"^DefaultLimitCORE=0$")
 # ssh + debug uart, dev image only
 IMG = f"{M}/recipes-core/images/velora-image-dev.bb"
-need("ssh server", IMG, r'^IMAGE_FEATURES = "ssh-server-openssh"')
+need("ssh server", IMG, r'^IMAGE_FEATURES = "ssh-server-openssh[ "]')
 forbid("insecure root login in image features", IMG, r'^IMAGE_FEATURES(\s*\+?=|:append)[^\n]*(debug-tweaks|empty-root-password|allow-empty-password)')
 need("debug uart getty", D, r'^SERIAL_CONSOLES = "\d+;ttyS\d+"')
 # distro

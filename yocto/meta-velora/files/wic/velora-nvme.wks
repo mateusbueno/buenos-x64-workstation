@@ -1,0 +1,28 @@
+# Velora NVMe disk layout (Story 6.11). The ONE layout every Velora image build uses (WKS_FILE in the image recipes).
+# GPT. Sizes are explicit assumptions, reasoning in yocto/README.md ("Disk layout").
+#
+#   boot area   RK3588 loader partitions (idbloader, U-Boot env, U-Boot, ATF/OP-TEE); kernel + extlinux live in /boot of the active root slot
+#   rootfs.0    root slot A, ext4, populated, mounted read-only
+#   rootfs.1    root slot B, same size, NOT populated (filled by RAUC, Story 6.12)
+#   data        /data, ext4 journal, data=ordered, nodev,nosuid; the only persistent writable filesystem
+#
+# Boot area offsets follow meta-rockchip's rockchip.wks (RK3588 boot ROM contract); do not move them.
+# No swap partition (NFR: no swap, see README).
+
+part loader1   --ondisk nvme0n1 --offset 64s    --fixed-size 3552K --fstype=none --part-name loader1   --source rawcopy --sourceparams="file=${SPL_BINARY}"
+part v_storage --ondisk nvme0n1 --offset 7168s  --fixed-size 256K  --fstype=none --part-name v_storage
+part reserved  --ondisk nvme0n1 --offset 7680s  --fixed-size 192K  --fstype=none --part-name reserved
+part reserved1 --ondisk nvme0n1 --offset 8064s  --fixed-size 32K   --fstype=none --part-name reserved1
+part uboot_env --ondisk nvme0n1 --offset 8128s  --fixed-size 32K   --fstype=none --part-name uboot_env ${RK_UBOOT_ENV}
+part reserved2 --ondisk nvme0n1 --offset 8192s  --fixed-size 4096K --fstype=none --part-name reserved2
+part loader2   --ondisk nvme0n1 --offset 16384s --fixed-size 4096K --fstype=none --part-name loader2   --source rawcopy --sourceparams="file=u-boot.${UBOOT_SUFFIX}"
+part atf       --ondisk nvme0n1 --offset 24576s --fixed-size 4096K --fstype=none --part-name atf
+
+# Root slot A: populated from the image rootfs. Slot B: identical size, left empty on purpose.
+part /         --ondisk nvme0n1 --offset 32768s --fixed-size 2G --fstype=ext4 --label rootfs.0 --part-name rootfs.0 --active --source rootfs --part-type ${ROOT_DPS}
+part           --ondisk nvme0n1                 --fixed-size 2G --fstype=none --part-name rootfs.1 --part-type ${ROOT_DPS}
+
+# Persistent data. ext4 with an explicit journal in data=ordered mode (reason: README). wic writes the fstab line from --fsoptions.
+part /data     --ondisk nvme0n1 --fixed-size 4G --fstype=ext4 --label data --part-name data --fsoptions "defaults,nodev,nosuid,noatime,data=ordered" --mkfs-extraopts "-O has_journal"
+
+bootloader --ptable gpt
