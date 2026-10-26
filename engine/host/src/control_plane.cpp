@@ -247,6 +247,13 @@ void fill_from(const core::Snapshot& s, ws::v1::State* out, std::uint32_t part_c
     ps->set_part(part);
     ps->set_timbre_ref(pc.timbre_ref);
     ps->set_output(static_cast<ws::v1::PartOutput>(pc.output));
+    ps->set_volume(pc.volume);  // Story 9.8: what Studio's Live Set view follows from the pushes
+    ps->set_keyboard_on(pc.keyboard_on != 0);
+    ps->set_low_key(pc.low_key);
+    ps->set_high_key(pc.high_key);
+    ps->set_engine_type_id(pc.engine_type);
+    ps->set_part_state(static_cast<ws::v1::PartRunState>(static_cast<int>(pc.state)));
+    ps->set_view_fields(true);
     for (std::uint32_t i = 0; i < pc.insert_count; ++i) {
       ws::v1::InsertSlot* in = ps->add_inserts();
       in->set_type(static_cast<ws::v1::InsertType>(pc.inserts[i].type));
@@ -554,7 +561,21 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
                         msg.body_case() == B::kClearAssignSlot;
   const bool fader_cmd = msg.body_case() == B::kSetFaderMode || msg.body_case() == B::kSelectOrganPart || msg.body_case() == B::kMoveFader;
   const bool pedal_cmd = msg.body_case() == B::kStartPedalCalibration || msg.body_case() == B::kFinishPedalCalibration || msg.body_case() == B::kCancelPedalCalibration;
-  if (pedal_cmd) {
+  const bool view_cmd = msg.body_case() == B::kGetLiveSetView;
+  if (view_cmd) {
+    // The read-only Live Set view (Story 9.8): never changes anything, so `changed` stays false and the revision does not move.
+    if (!view_handler_) {
+      fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "the Live Set view is not available: the engine was started without a Live Set directory");
+    } else {
+      HandlerFailure hf;
+      ok = view_handler_->run(msg, reply, hf);
+      if (!ok) {
+        f.code = hf.code;
+        f.message = hf.message;
+        f.details = hf.details;
+      }
+    }
+  } else if (pedal_cmd) {
     // Pedal calibration (Story 3.11): the PedalCalibrator owns the work (measurement on the panel reader, the write to sysd) and answers with a typed reply.
     if (!pedal_handler_) {
       f.details["reason"] = "pedal_calibration_unavailable";
@@ -832,6 +853,7 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       case B::kStartPedalCalibration:
       case B::kFinishPedalCalibration:
       case B::kCancelPedalCalibration:
+      case B::kGetLiveSetView:
         break;  // handled before the snapshot is copied
       case B::kSetEncoderMode: {  // Story 4.10: a UMP on the control lane, in order with the encoder steps; the plane remembers what it commanded
         const ws::v1::EncoderMode m = msg.set_encoder_mode().mode();

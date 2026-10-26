@@ -1173,6 +1173,77 @@ mod tests {
         assert!(matches!(m.body, Some(CBody::RecallScene(ref r)) if r.index == 2));
     }
 
+    #[test]
+    fn live_set_view_messages_map_to_json_and_survive_the_wire() {
+        use crate::ws_v1::{LiveSetViewPart, LiveSetViewReply, LiveSetViewScene, PartRunState, PartState};
+        // The request the UI sends: GetLiveSetView as JSON, absent fields defaulted.
+        let m: ClientMessage = serde_json::from_value(serde_json::json!({"body": {"GetLiveSetView": {"live_set_id": "abc"}}})).unwrap();
+        assert!(matches!(m.body, Some(CBody::GetLiveSetView(ref g)) if g.live_set_id == "abc"));
+        // The reply: nothing in it is a u64 (the JSON numbers of the webview are doubles); ids are strings, counts and keys u32, volume f32.
+        let reply = ServerMessage {
+            request_id: 5,
+            revision: 12,
+            body: Some(SBody::LiveSetViewReply(LiveSetViewReply {
+                live_set_id: "ls-1".into(),
+                name: "Perfect".into(),
+                dirty: true,
+                sounding: false,
+                scenes: (0..8).map(|i| LiveSetViewScene { index: i, name: if i < 2 { format!("S{}", i) } else { String::new() }, empty: i >= 2 }).collect(),
+                parts: vec![
+                    LiveSetViewPart { index: 0, on: true, engine_type_id: 1, timbre_name: "Concert Grand".into(), category: 1, volume: 0.75, low_key: 36, high_key: 96, ..Default::default() },
+                    LiveSetViewPart { index: 2, on: false, engine_type_id: 2, category: 3, organ_registration: "88 8600 000".into(), high_key: 127, ..Default::default() },
+                    LiveSetViewPart { index: 3, on: true, engine_type_id: 1, missing_library: true, ..Default::default() },
+                    LiveSetViewPart { index: 6, on: true, engine_type_id: 1, empty: true, ..Default::default() },
+                ],
+                part_count: 4,
+                scene_count: 2,
+                factory: false,
+            })),
+        };
+        let bytes = reply.encode_to_vec();
+        let back = ServerMessage::decode(bytes.as_slice()).unwrap();
+        assert_eq!(back, reply);
+        let j = serde_json::to_value(&back).unwrap();
+        let v = &j["body"]["LiveSetViewReply"];
+        assert_eq!(v["name"], "Perfect");
+        assert_eq!(v["dirty"], true);
+        assert_eq!(v["scenes"].as_array().unwrap().len(), 8);
+        assert_eq!(v["scenes"][1]["name"], "S1");
+        assert_eq!(v["scenes"][5]["empty"], true);
+        assert_eq!(v["parts"][0]["timbre_name"], "Concert Grand");
+        assert_eq!(v["parts"][0]["volume"], 0.75);
+        assert_eq!(v["parts"][1]["organ_registration"], "88 8600 000");
+        assert_eq!(v["parts"][2]["missing_library"], true);
+        assert_eq!(v["parts"][3]["empty"], true);
+        // No u64 field exists in the reply: every number in the JSON is exact in a double (the largest values here are 127 and 12).
+        fn all_numbers_small(v: &serde_json::Value) -> bool {
+            match v {
+                serde_json::Value::Number(n) => n.as_f64().map(|f| f.abs() < 9007199254740992.0).unwrap_or(false),
+                serde_json::Value::Array(a) => a.iter().all(all_numbers_small),
+                serde_json::Value::Object(o) => o.values().all(all_numbers_small),
+                _ => true,
+            }
+        }
+        assert!(all_numbers_small(&j));
+        // The State fields Studio follows from pushes (additive PartState fields) are present in the State JSON, and a State from an older unit (no such fields) defaults.
+        let st = State {
+            parts: vec![PartState { part: 1, volume: 0.5, keyboard_on: true, low_key: 24, high_key: 100, engine_type_id: 3, part_state: PartRunState::MissingLibrary as i32, view_fields: true, ..Default::default() }],
+            ..Default::default()
+        };
+        let sj = serde_json::to_value(&st).unwrap();
+        assert_eq!(sj["parts"][0]["volume"], 0.5);
+        assert_eq!(sj["parts"][0]["keyboard_on"], true);
+        assert_eq!(sj["parts"][0]["view_fields"], true);
+        assert_eq!(sj["parts"][0]["part_state"], PartRunState::MissingLibrary as i32);
+        let old: State = serde_json::from_value(serde_json::json!({"parts": [{"part": 0}]})).unwrap();
+        assert_eq!(old.parts[0].volume, 0.0);
+        assert!(!old.parts[0].keyboard_on);
+        assert!(!old.parts[0].view_fields); // an older unit's State: Studio does not overlay such a part
+        // A typed error reply (unknown Live Set) is an ordinary ServerMessage whose body is Error.
+        let e = ServerMessage { request_id: 6, revision: 0, body: Some(SBody::Error(crate::ws_v1::Error { code: ErrorCode::NoSuchLiveSet as i32, ..Default::default() })) };
+        assert_eq!(serde_json::to_value(&e).unwrap()["body"]["Error"]["code"], ErrorCode::NoSuchLiveSet as i32);
+    }
+
     /// Against a REAL bridge (sysd --bridge-port ... with a real engine-host). Skipped unless VELORA_TEST_BRIDGE=host:port and VELORA_TEST_PAIRING_CODE are set.
     #[test]
     fn real_bridge_round_trip() {
@@ -1194,6 +1265,37 @@ mod tests {
         assert!(wait_for(|| state_events(&ev) >= 1), "no State event from the real engine");
         let r = c.request(get_state(), Duration::from_secs(5)).unwrap();
         assert!(matches!(r.body, Some(SBody::State(ref s)) if s.parts.len() >= 8));
+        // Story 9.8: the read-only Live Set view from a real engine: list the Live Sets (GetSetlists with All Live Sets), then read each back. Zero Live Sets or an Error
+        // body fails the test (the C++ smoke creates one first, and an engine with a data directory makes its own).
+        let lists = c
+            .request(ClientMessage { request_id: 0, body: Some(CBody::GetSetlists(crate::ws_v1::GetSetlists { setlist_id: String::new(), include_all_live_sets: true })) }, Duration::from_secs(5))
+            .unwrap();
+        let l = match lists.body {
+            Some(SBody::SetlistsReply(ref l)) => l,
+            ref other => panic!("expected SetlistsReply, got {:?}", other),
+        };
+        assert!(!l.all_live_sets.is_empty(), "the engine lists no Live Set: the smoke must create one first");
+        {
+            for first in l.all_live_sets.iter() {
+                let rev_before = c.latest_state().map(|s| s["revision"].clone());
+                let r = c
+                    .request(ClientMessage { request_id: 0, body: Some(CBody::GetLiveSetView(crate::ws_v1::GetLiveSetView { live_set_id: first.live_set_id.clone() })) }, Duration::from_secs(5))
+                    .unwrap();
+                match r.body {
+                    Some(SBody::LiveSetViewReply(ref v)) => {
+                        assert_eq!(v.live_set_id, first.live_set_id);
+                        assert_eq!(v.name, first.name);
+                        assert_eq!(v.scenes.len(), 8);
+                        assert!(v.parts.len() >= 8 && v.part_count as usize == v.parts.len());
+                        assert!(v.parts.iter().all(|p| p.volume >= 0.0 && p.volume <= 1.0));
+                        eprintln!("real_bridge_round_trip: view of {:?}: {} parts, {} scenes stored, dirty {}", v.name, v.parts.len(), v.scene_count, v.dirty);
+                    }
+                    other => panic!("expected LiveSetViewReply, got {:?}", other),
+                }
+                // Read-only: asking for a view moved nothing.
+                assert_eq!(c.latest_state().map(|s| s["revision"].clone()), rev_before);
+            }
+        }
         eprintln!("real_bridge_round_trip: status {:?}", c.status());
         c.disconnect();
         let _ = std::fs::remove_dir_all(&dir);

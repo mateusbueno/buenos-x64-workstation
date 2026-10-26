@@ -58,6 +58,7 @@ add_library(velora_control STATIC
   src/dev_config.cpp
   src/live_set_store.cpp
   src/live_set_loader.cpp
+  src/live_set_view.cpp
   src/factory_live_set.cpp
   src/scene_controller.cpp
   src/live_set_switcher.cpp
@@ -272,6 +273,13 @@ add_executable(edit_session_tests tests/edit_session_test.cpp)
 target_link_libraries(edit_session_tests PRIVATE velora_control)
 add_test(NAME edit_session_tests COMMAND edit_session_tests)
 set_tests_properties(edit_session_tests PROPERTIES TIMEOUT 300)
+
+# The read-only Live Set view for Velora Studio (Story 9.8): GetLiveSetView on the sounding and on other Live Sets, the edit overlay and the unsaved flag, missing
+# libraries, categories, organ registration, read-only guarantees (revision, generations, files, scene, sounding set untouched), Pro 16 parts, the State part fields.
+add_executable(live_set_view_tests tests/live_set_view_test.cpp)
+target_link_libraries(live_set_view_tests PRIVATE velora_control)
+add_test(NAME live_set_view_tests COMMAND live_set_view_tests)
+set_tests_properties(live_set_view_tests PROPERTIES TIMEOUT 300)
 
 # The control->RT fence beside a rendering RT thread without the sanitizer (macOS runs the logic); the RTSan build of it is below.
 add_executable(edit_rt_traffic_test tests/rtsan_edit_test.cpp)

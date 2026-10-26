@@ -1028,3 +1028,235 @@ nav.jump a:hover {
   justify-content: flex-end;
   gap: var(--spacing-2);
 }
+
+/* ---- Story 9.8: the real Live Set view (scenes, part strips, sidebar tree). Sizes in rem, tokens only, focus ring 2px (the global :focus-visible rule). ---- */
+[hidden] {
+  display: none !important;
+}
+
+.editor-container.live-real {
+  grid-template-rows: none;
+  grid-auto-rows: auto;
+  align-content: start;
+  gap: var(--spacing-2);
+}
+
+.editor-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-3);
+}
+
+/* The unsaved marker: warn colour, 1.125rem as in the mockup (a glyph with a text alternative, never colour alone). */
+.uns {
+  color: var(--warn);
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: help;
+}
+
+.live-error {
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-desktop-sm);
+  color: var(--warn);
+  font-size: var(--font-desktop-body);
+}
+
+.live-note {
+  color: var(--muted);
+  font-size: var(--font-desktop-body);
+}
+
+.scenes {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: var(--spacing-1);
+}
+
+.scenes > [role="row"], .live-strips > [role="row"] {
+  display: contents;
+}
+
+.scene-tile {
+  background-color: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  padding: 0.3rem var(--spacing-2);
+  font-size: var(--font-desktop-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.scene-tile.cur {
+  background-color: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+.scene-tile.empty {
+  border-style: dashed;
+  color: var(--muted);
+  background-color: transparent;
+}
+
+.live-strips {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: var(--spacing-1);
+}
+
+/* A part strip of the real view (the base look is `.st`): LED, name, category, meter, volume, zone. */
+.live-strips .st {
+  gap: 0.3rem;
+  border: 1px solid var(--line);
+}
+
+.live-strips .st.sel {
+  border-color: var(--accent);
+  border-width: 2px;
+  padding: calc(0.45rem - 1px) calc(0.6rem - 1px);
+}
+
+.st .h {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.st .led {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--led-on);
+  display: inline-block;
+}
+
+.st.off .led, .st.empty .led, .st.missing .led {
+  background: transparent;
+  border: 2px solid var(--line-strong);
+}
+
+.st.off .n, .st.off .c {
+  color: var(--muted);
+}
+
+.st .reg {
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.st .meter {
+  height: 0.3125rem;
+  background: var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.st .meter span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.st.off .meter span {
+  background: var(--line-strong);
+}
+
+.st .row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-1);
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+}
+
+.st .row > span {
+  white-space: nowrap;
+}
+
+.st .tag {
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 0.3rem;
+}
+
+.st.empty {
+  border-style: dashed;
+  border-color: var(--line-strong);
+  background: transparent;
+}
+
+.st.empty .n, .st .n.add {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.st .n.miss {
+  color: var(--warn);
+  font-weight: 600;
+  white-space: normal;
+}
+
+/* Sidebar: setlists and their Live Sets (Story 9.8). */
+.sidebar-item.sl-head {
+  font-weight: 600;
+}
+
+.sidebar-item.sub {
+  padding-left: 1.25rem;
+  color: var(--muted);
+}
+
+.sidebar-item.sub.on, .sidebar-item.sl-head.on {
+  background-color: var(--raised);
+  color: var(--text);
+  border-left: 2px solid var(--accent);
+}
+
+.sidebar-item.sub.playing .np {
+  color: var(--accent);
+}
+
+.sidebar-item .np {
+  margin-right: 0.35rem;
+}
+
+.sidebar-item .sl-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-item .sl-count {
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+  margin-left: var(--spacing-1);
+}
+
+.sidebar-item .sl-miss {
+  color: var(--warn);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+}
+
+.sidebar-item:disabled {
+  cursor: default;
+}

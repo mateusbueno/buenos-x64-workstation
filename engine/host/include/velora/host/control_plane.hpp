@@ -141,6 +141,14 @@ class PedalCalibrationHandler {
   virtual bool run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& reply, HandlerFailure& err) = 0;
 };
 
+// The read-only Live Set view for Velora Studio (Story 9.8): the plane routes GetLiveSetView to this seam (LiveSetViewService implements it). It must not
+// load, publish, recall, jump or write anything, and it never moves the revision. Control thread only.
+class ViewHandler {
+ public:
+  virtual ~ViewHandler() = default;
+  virtual bool run(const ws::v1::ClientMessage& msg, ws::v1::ServerMessage& reply, HandlerFailure& err) = 0;
+};
+
 class ControlPlane {
  public:
   using Clock = std::function<std::uint64_t()>;  // host time in ns, the same clock the MIDI adapter stamps with
@@ -180,6 +188,8 @@ class ControlPlane {
   void set_setlist_handler(SetlistHandler* h) noexcept { setlist_handler_ = h; }
   // Edits and Write (Story 4.9): the EditSession registers itself here (and unregisters in its destructor). Control thread only.
   void set_edit_handler(EditHandler* h) noexcept { edit_handler_ = h; }
+  // Read-only Live Set view (Story 9.8): the LiveSetViewService registers itself here (and unregisters in its destructor). Control thread only.
+  void set_view_handler(ViewHandler* h) noexcept { view_handler_ = h; }
   // Fader commands (Story 4.12): the FaderController registers itself here (and unregisters in its destructor). Control thread only.
   void set_fader_handler(FaderHandler* h) noexcept { fader_handler_ = h; }
   FaderHandler* fader_handler() const noexcept { return fader_handler_; }
@@ -288,6 +298,7 @@ class ControlPlane {
   EditHandler* edit_handler_ = nullptr;
   FaderHandler* fader_handler_ = nullptr;
   PedalCalibrationHandler* pedal_handler_ = nullptr;
+  ViewHandler* view_handler_ = nullptr;
   LedSink led_sink_;
   std::uint32_t fence_seq_ = 0;
   std::uint64_t program_generation_ = 0;

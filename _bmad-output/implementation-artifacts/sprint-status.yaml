@@ -230,7 +230,7 @@ development_status:
   9-5-velora-studio-app-shell-offline: done
   9-6-pairing-velora-studio-with-the-unit: backlog
   9-7-connection-states-version-mismatch-disconnect-and-reconnect: backlog
-  9-8-live-set-view-scenes-and-part-strips: backlog
+  9-8-live-set-view-scenes-and-part-strips: done
   9-9-part-editor-layout-with-studio-knobs: backlog
   9-10-live-edit-state-stale-edits-and-disconnect-mid-edit: backlog
   9-11-add-a-timbre-to-an-empty-part-from-velora-studio: backlog

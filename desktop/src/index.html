@@ -90,7 +90,12 @@
           <div class="editor-header">
             <div>
               <small class="setting-label" id="editor-subtitle">VELORA STUDIO</small>
-              <h1 class="editor-header-title" id="editor-title">Perfect</h1>
+              <div class="editor-title-row">
+                <h1 class="editor-header-title" id="editor-title">Perfect</h1>
+                <!-- Story 9.8: the unsaved-edits marker of the Live Set shown (warn colour); label and tooltip are set from the locale catalog -->
+                <span class="uns" id="live-set-dirty" role="img" aria-label="Unsaved changes" title="Unsaved changes" hidden>◆</span>
+                <small class="setting-label" id="live-set-meta" hidden></small>
+              </div>
             </div>
             <div class="actions-section">
               <span class="live-edit-tag" id="live-edit-badge" style="display: none;">◆ EDITED</span>
@@ -98,7 +103,14 @@
             </div>
           </div>
 
-          <!-- Part Strips (1-8) -->
+          <!-- Story 9.8: the real Live Set view (shown only while paired): inline error, 8 scene tiles, the 16-part note, 8 part strips. Both grids are
+               role="grid" with a roving tabindex (arrows move, Enter on a part selects it). -->
+          <div class="live-error" id="live-view-error" role="alert" hidden></div>
+          <div class="scenes" id="live-scenes" role="grid" aria-label="Scenes" hidden></div>
+          <div class="live-note" id="live-view-note" hidden></div>
+          <div class="live-strips" id="live-part-grid" role="grid" aria-label="Parts" hidden></div>
+
+          <!-- Part Strips (1-8): the simulated Live Set (offline / unpaired), as before -->
           <nav class="strips" id="editor-part-strips" aria-label="Part selection">
             <!-- Dynamic part strips -->
           </nav>

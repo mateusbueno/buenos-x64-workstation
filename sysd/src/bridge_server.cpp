@@ -94,6 +94,7 @@ const std::vector<BridgeServer::MessageRule>& BridgeServer::message_rules() {
       {B::kNextLiveSet, "next_live_set", "liveset.v1", R::kEngine, false},
       {B::kPreviousLiveSet, "previous_live_set", "liveset.v1", R::kEngine, false},
       {B::kGetSetlists, "get_setlists", "liveset.v1", R::kEngine, false},
+      {B::kGetLiveSetView, "get_live_set_view", "liveset.v1", R::kEngine, false},  // Story 9.8: READ-ONLY (never loads, publishes or recalls)
       {B::kWriteLiveSet, "write_live_set", "liveset.v1", R::kEngine, false},
       {B::kSetAssignSlot, "set_assign_slot", "liveset.v1", R::kEngine, false},
       {B::kClearAssignSlot, "clear_assign_slot", "liveset.v1", R::kEngine, false},

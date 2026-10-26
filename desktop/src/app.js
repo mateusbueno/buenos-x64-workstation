@@ -1,256 +1,23 @@
-// Velora Studio App Shell, Part Editor for FM & VA, Backup & Restore (Stories 9.5, 9.16, 9.17, 12.13)
+// Velora Studio App Shell, Part Editor for FM & VA, Backup & Restore (Stories 9.5, 9.16, 9.17, 12.13), Live Set view (Story 9.8)
 
-const CATALOGS = {
-  en: {
-    "studio.title_bar.app_name": "Velora Studio",
-    "studio.conn.no_device": "No Velora connected",
-    "studio.conn.connecting": "Connecting to your Velora…",
-    "studio.conn.unpaired": "Velora found: pairing required",
-    "studio.conn.version_mismatch": "Velora version not compatible",
-    "studio.conn.paired": "%s connected (the Live Sets shown are simulated for now)",
-    "studio.write.simulated": "Writing is disabled: the Live Sets shown are simulated until Studio reads them from the Velora.",
-    "studio.pair.ok": "Pair",
-    "studio.pair.cancel": "Cancel",
-    "studio.pair.failed": "Pairing failed: %s",
-    "studio.offline.hint_connecting": "Looking for your Velora…",
-    "studio.offline.hint_unpaired": "Enter the pairing code shown on your Velora to connect this computer.",
-    "studio.offline.hint_mismatch": "This Velora and Velora Studio do not speak a compatible protocol version. Update the app or the Velora.",
-    "studio.offline.hint_unreachable": "Your Velora is not reachable. Check the USB cable; Studio keeps trying.",
-    "studio.pair.prompt": "Enter the pairing code shown on your Velora:",
-    "studio.title_bar.btn_import": "Import",
-    "studio.title_bar.btn_backup": "Backup",
-    "studio.title_bar.btn_write": "Write to Velora",
-    "studio.sidebar.setlists": "SETLISTS",
-    "studio.sidebar.library": "LIBRARY",
-    "studio.sidebar.device": "DEVICE",
-    "studio.sidebar.empty_setlists": "No setlists offline",
-    "studio.sidebar.empty_library": "Library unavailable offline",
-    "studio.sidebar.storage": "Storage",
-    "studio.sidebar.firmware": "Firmware",
-    "studio.sidebar.backups": "Backups",
-    "studio.sidebar.settings": "Settings",
-    "studio.offline.title": "Organize sounds and manage your Velora 73",
-    "studio.offline.body": "Connect your Velora via USB to sync setlists, live sets, and library, or manage backups and local settings.",
-    "studio.offline.hint": "No device detected on USB ports.",
-    "studio.footer.no_backup_yet": "No backup yet",
-    "studio.footer.last_backup": "Last backup: %s",
-    "studio.settings.title": "Studio Settings",
-    "studio.settings.theme": "Theme",
-    "studio.settings.theme_system": "System (auto)",
-    "studio.settings.theme_stage": "Stage (dark)",
-    "studio.settings.theme_studio": "Studio (light)",
-    "studio.settings.language": "Language",
-    "studio.settings.lang_system": "System language",
-    "studio.settings.lang_en": "English",
-    "studio.settings.lang_es": "Español",
-    "studio.settings.lang_pt_br": "Português (Brasil)",
-    "studio.settings.close": "Close",
-    "studio.backup.success": "Backup completed successfully.",
-    "studio.backup.unsaved_warning": "Unsaved edits on the Velora are not in this backup",
-    "studio.backup.needs_newer_studio": "This backup needs a newer Velora Studio",
-    "studio.restore.title": "Restore from Backup",
-    "studio.restore.merge_label": "Merge",
-    "studio.restore.merge_desc": "Add and update from the backup; keep what the backup doesn't have",
-    "studio.restore.replace_label": "Replace",
-    "studio.restore.replace_desc": "Velora content becomes the backup",
-    "studio.restore.counts_summary": "%d setlists to add, %d to update, %d to remove · %d Live Sets to add, %d to update, %d to remove",
-    "studio.restore.replace_warning": "Replaces all Live Sets and setlists on the connected Velora with the contents of this backup. Any Live Sets not in this backup will be removed.",
-    "studio.restore.btn_confirm": "Restore",
-    "studio.restore.btn_cancel": "Cancel",
-    "studio.restore.success": "Restore completed successfully.",
-    "studio.offline.connect_reason": "Connect a Velora",
-    "studio.offline.backup_loaded": "Loaded backup: %s",
-    "studio.offline.save_backup": "Save Backup",
-    "studio.offline.backup_saved": "Backup saved successfully.",
-    "studio.offline.open_backup": "Open Backup (.velorabackup)",
-    "studio.part_editor.sound": "Sound",
-    "studio.part_editor.sound_groups": "Sound groups",
-    "studio.part_editor.brightness_label": "Brightness · KNOB 2",
-    "studio.part_editor.brightness_fm_note": "→ modulator levels %s",
-    "studio.part_editor.brightness_va_note": "→ filter cutoff",
-    "studio.part_editor.edit_envelope": "Edit envelope",
-    "studio.part_editor.firmware_mismatch_tag": "! Needs update %s",
-    "studio.part_editor.firmware_mismatch_title": "This timbre needs a newer firmware",
-    "studio.part_editor.firmware_mismatch_desc": "Velora 73 has firmware %s, which does not include this sound engine. The part stays silent on the Velora and nothing replaces it. Its settings stay in the Live Set.",
-    "studio.part_editor.btn_change_timbre": "Change timbre",
-    "studio.part_editor.btn_update_firmware": "Update firmware",
-    "studio.part_editor.live_edit_on": "LIVE EDIT ON",
-    "studio.part_editor.live_edit_edited": "STUDIO · ◆ EDITED",
-    "studio.part_editor.live_edit_clean": "STUDIO",
-    "studio.part_editor.streaming_ok": "STREAMING OK",
-    "studio.part_editor.amp_eq": "Amp envelope + EQ",
-    "studio.part_editor.effects": "Effects inserts + sends",
-    "studio.part_editor.zone_arp_assign": "Zone & keyboard · Arpeggiator · Assign",
-    "studio.part_editor.add_insert": "+ Add insert",
-    "studio.part_editor.written_to_velora": "Changes saved to Velora"
-  },
-  es: {
-    "studio.title_bar.app_name": "Velora Studio",
-    "studio.conn.no_device": "No hay ningún Velora conectado",
-    "studio.conn.connecting": "Conectando con su Velora…",
-    "studio.conn.unpaired": "Velora encontrado: se requiere emparejamiento",
-    "studio.conn.version_mismatch": "Versión de Velora no compatible",
-    "studio.conn.paired": "%s conectado (los Live Sets mostrados son simulados por ahora)",
-    "studio.write.simulated": "Escribir está desactivado: los Live Sets mostrados son simulados hasta que Studio los lea del Velora.",
-    "studio.pair.ok": "Emparejar",
-    "studio.pair.cancel": "Cancelar",
-    "studio.pair.failed": "Error de emparejamiento: %s",
-    "studio.offline.hint_connecting": "Buscando su Velora…",
-    "studio.offline.hint_unpaired": "Introduzca el código de emparejamiento que muestra su Velora para conectar este ordenador.",
-    "studio.offline.hint_mismatch": "Este Velora y Velora Studio no hablan una versión de protocolo compatible. Actualice la aplicación o el Velora.",
-    "studio.offline.hint_unreachable": "No se puede alcanzar su Velora. Compruebe el cable USB; Studio sigue intentándolo.",
-    "studio.pair.prompt": "Introduzca el código de emparejamiento que muestra su Velora:",
-    "studio.title_bar.btn_import": "Importar",
-    "studio.title_bar.btn_backup": "Copia de seguridad",
-    "studio.title_bar.btn_write": "Escribir en Velora",
-    "studio.sidebar.setlists": "SETLISTS",
-    "studio.sidebar.library": "BIBLIOTECA",
-    "studio.sidebar.device": "DISPOSITIVO",
-    "studio.sidebar.empty_setlists": "Sin setlists sin conexión",
-    "studio.sidebar.empty_library": "Biblioteca no disponible sin conexión",
-    "studio.sidebar.storage": "Almacenamiento",
-    "studio.sidebar.firmware": "Firmware",
-    "studio.sidebar.backups": "Copias de seguridad",
-    "studio.sidebar.settings": "Configuración",
-    "studio.offline.title": "Organice sonidos y gestione su Velora 73",
-    "studio.offline.body": "Conecte su Velora por USB para sincronizar setlists, live sets y biblioteca, o gestionar copias de seguridad y configuraciones locales.",
-    "studio.offline.hint": "No se detectó ningún dispositivo en los puertos USB.",
-    "studio.footer.no_backup_yet": "Aún no hay copias de seguridad",
-    "studio.footer.last_backup": "Última copia de seguridad: %s",
-    "studio.settings.title": "Configuración de Studio",
-    "studio.settings.theme": "Tema",
-    "studio.settings.theme_system": "Sistema (automático)",
-    "studio.settings.theme_stage": "Stage (oscuro)",
-    "studio.settings.theme_studio": "Studio (claro)",
-    "studio.settings.language": "Idioma",
-    "studio.settings.lang_system": "Idioma del sistema",
-    "studio.settings.lang_en": "Inglés",
-    "studio.settings.lang_es": "Español",
-    "studio.settings.lang_pt_br": "Portugués (Brasil)",
-    "studio.settings.close": "Cerrar",
-    "studio.backup.success": "Copia de seguridad completada con éxito.",
-    "studio.backup.unsaved_warning": "Los cambios no guardados en el Velora no están en esta copia de seguridad",
-    "studio.backup.needs_newer_studio": "Esta copia de seguridad requiere una versión más reciente de Velora Studio",
-    "studio.restore.title": "Restaurar desde copia de seguridad",
-    "studio.restore.merge_label": "Combinar (Merge)",
-    "studio.restore.merge_desc": "Añade y actualiza desde la copia; mantiene lo que no está en la copia",
-    "studio.restore.replace_label": "Reemplazar (Replace)",
-    "studio.restore.replace_desc": "El contenido de Velora se sustituye por la copia",
-    "studio.restore.counts_summary": "%d setlists a añadir, %d a actualizar, %d a eliminar · %d Live Sets a añadir, %d a actualizar, %d a eliminar",
-    "studio.restore.replace_warning": "Reemplaza todos los Live Sets y setlists en el Velora conectado con el contenido de esta copia. Se eliminarán los Live Sets que no estén en la copia.",
-    "studio.restore.btn_confirm": "Restaurar",
-    "studio.restore.btn_cancel": "Cancelar",
-    "studio.restore.success": "Restauración completada con éxito.",
-    "studio.offline.connect_reason": "Conecte un Velora",
-    "studio.offline.backup_loaded": "Copia de seguridad cargada: %s",
-    "studio.offline.save_backup": "Guardar copia de seguridad",
-    "studio.offline.backup_saved": "Copia de seguridad guardada con éxito.",
-    "studio.offline.open_backup": "Abrir copia (.velorabackup)",
-    "studio.part_editor.sound": "Sonido",
-    "studio.part_editor.sound_groups": "Grupos de sonido",
-    "studio.part_editor.brightness_label": "Brillo · KNOB 2",
-    "studio.part_editor.brightness_fm_note": "→ niveles de moduladores %s",
-    "studio.part_editor.brightness_va_note": "→ corte de filtro",
-    "studio.part_editor.edit_envelope": "Editar envolvente",
-    "studio.part_editor.firmware_mismatch_tag": "! Requiere actualización %s",
-    "studio.part_editor.firmware_mismatch_title": "Este timbre requiere un firmware más reciente",
-    "studio.part_editor.firmware_mismatch_desc": "Velora 73 tiene firmware %s, que no incluye este motor de sonido. La parte permanece en silencio en el Velora y nada la sustituye. Sus ajustes permanecen en el Live Set.",
-    "studio.part_editor.btn_change_timbre": "Cambiar timbre",
-    "studio.part_editor.btn_update_firmware": "Actualizar firmware",
-    "studio.part_editor.live_edit_on": "EDICIÓN EN VIVO ACTIVADA",
-    "studio.part_editor.live_edit_edited": "STUDIO · ◆ EDITADO",
-    "studio.part_editor.live_edit_clean": "STUDIO",
-    "studio.part_editor.streaming_ok": "STREAMING OK",
-    "studio.part_editor.amp_eq": "Envolvente de amplificador + EQ",
-    "studio.part_editor.effects": "Inserciones de efectos + envíos",
-    "studio.part_editor.zone_arp_assign": "Zona y teclado · Arpegiador · Asignar",
-    "studio.part_editor.add_insert": "+ Añadir inserción",
-    "studio.part_editor.written_to_velora": "Cambios guardados en Velora"
-  },
-  "pt-BR": {
-    "studio.title_bar.app_name": "Velora Studio",
-    "studio.conn.no_device": "Nenhum Velora conectado",
-    "studio.conn.connecting": "Conectando ao seu Velora…",
-    "studio.conn.unpaired": "Velora encontrado: pareamento necessário",
-    "studio.conn.version_mismatch": "Versão do Velora não compatível",
-    "studio.conn.paired": "%s conectado (os Live Sets exibidos são simulados por enquanto)",
-    "studio.write.simulated": "A escrita está desativada: os Live Sets exibidos são simulados até o Studio lê-los do Velora.",
-    "studio.pair.ok": "Parear",
-    "studio.pair.cancel": "Cancelar",
-    "studio.pair.failed": "Falha no pareamento: %s",
-    "studio.offline.hint_connecting": "Procurando seu Velora…",
-    "studio.offline.hint_unpaired": "Digite o código de pareamento exibido no seu Velora para conectar este computador.",
-    "studio.offline.hint_mismatch": "Este Velora e o Velora Studio não falam uma versão de protocolo compatível. Atualize o app ou o Velora.",
-    "studio.offline.hint_unreachable": "Seu Velora não está acessível. Verifique o cabo USB; o Studio continua tentando.",
-    "studio.pair.prompt": "Digite o código de pareamento exibido no seu Velora:",
-    "studio.title_bar.btn_import": "Importar",
-    "studio.title_bar.btn_backup": "Backup",
-    "studio.title_bar.btn_write": "Gravar no Velora",
-    "studio.sidebar.setlists": "SETLISTS",
-    "studio.sidebar.library": "BIBLIOTECA",
-    "studio.sidebar.device": "DISPOSITIVO",
-    "studio.sidebar.empty_setlists": "Nenhum setlist offline",
-    "studio.sidebar.empty_library": "Biblioteca indisponível offline",
-    "studio.sidebar.storage": "Armazenamento",
-    "studio.sidebar.firmware": "Firmware",
-    "studio.sidebar.backups": "Backups",
-    "studio.sidebar.settings": "Configurações",
-    "studio.offline.title": "Organize timbres e gerencie seu Velora 73",
-    "studio.offline.body": "Conecte seu Velora via USB para sincronizar setlists, live sets e biblioteca, ou gerenciar backups e configurações locais.",
-    "studio.offline.hint": "Nenhum dispositivo detectado nas portas USB.",
-    "studio.footer.no_backup_yet": "Nenhum backup ainda",
-    "studio.footer.last_backup": "Último backup: %s",
-    "studio.settings.title": "Configurações do Studio",
-    "studio.settings.theme": "Tema",
-    "studio.settings.theme_system": "Sistema (automático)",
-    "studio.settings.theme_stage": "Stage (escuro)",
-    "studio.settings.theme_studio": "Studio (claro)",
-    "studio.settings.language": "Idioma",
-    "studio.settings.lang_system": "Idioma do sistema",
-    "studio.settings.lang_en": "Inglês",
-    "studio.settings.lang_es": "Espanhol",
-    "studio.settings.lang_pt_br": "Português (Brasil)",
-    "studio.settings.close": "Fechar",
-    "studio.backup.success": "Backup concluído com sucesso.",
-    "studio.backup.unsaved_warning": "Edições não salvas no Velora não estão neste backup",
-    "studio.backup.needs_newer_studio": "Este backup precisa de uma versão mais nova do Velora Studio",
-    "studio.restore.title": "Restaurar a partir de Backup",
-    "studio.restore.merge_label": "Mesclar (Merge)",
-    "studio.restore.merge_desc": "Adiciona e atualiza do backup; mantém o que não está no backup",
-    "studio.restore.replace_label": "Substituir (Replace)",
-    "studio.restore.replace_desc": "O conteúdo do Velora passa a ser exatamente o backup",
-    "studio.restore.counts_summary": "%d setlists a adicionar, %d a atualizar, %d a remover · %d Live Sets a adicionar, %d a atualizar, %d a remover",
-    "studio.restore.replace_warning": "Substitui todos os Live Sets e setlists no Velora conectado pelo conteúdo deste backup. Quaisquer Live Sets ausentes no backup serão removidos.",
-    "studio.restore.btn_confirm": "Restaurar",
-    "studio.restore.btn_cancel": "Cancelar",
-    "studio.restore.success": "Restauração concluída com sucesso.",
-    "studio.offline.connect_reason": "Conecte um Velora",
-    "studio.offline.backup_loaded": "Backup carregado: %s",
-    "studio.offline.save_backup": "Salvar Backup",
-    "studio.offline.backup_saved": "Backup salvo com sucesso.",
-    "studio.offline.open_backup": "Abrir Backup (.velorabackup)",
-    "studio.part_editor.sound": "Som",
-    "studio.part_editor.sound_groups": "Grupos de som",
-    "studio.part_editor.brightness_label": "Brilho · KNOB 2",
-    "studio.part_editor.brightness_fm_note": "→ níveis de moduladores %s",
-    "studio.part_editor.brightness_va_note": "→ corte de filtro",
-    "studio.part_editor.edit_envelope": "Editar envelope",
-    "studio.part_editor.firmware_mismatch_tag": "! Precisa de atualização %s",
-    "studio.part_editor.firmware_mismatch_title": "Este timbre precisa de um firmware mais novo",
-    "studio.part_editor.firmware_mismatch_desc": "O Velora 73 possui o firmware %s, que não inclui este mecanismo de som. A parte permanece em silêncio no Velora e nada a substitui. As configurações permanecem no Live Set.",
-    "studio.part_editor.btn_change_timbre": "Mudar timbre",
-    "studio.part_editor.btn_update_firmware": "Atualizar firmware",
-    "studio.part_editor.live_edit_on": "EDIÇÃO AO VIVO ATIVA",
-    "studio.part_editor.live_edit_edited": "STUDIO · ◆ EDITADO",
-    "studio.part_editor.live_edit_clean": "STUDIO",
-    "studio.part_editor.streaming_ok": "STREAMING OK",
-    "studio.part_editor.amp_eq": "Envelope de amplificador + EQ",
-    "studio.part_editor.effects": "Inserts de efeitos + envios",
-    "studio.part_editor.zone_arp_assign": "Zona e teclado · Arpegiador · Atribuir",
-    "studio.part_editor.add_insert": "+ Adicionar insert",
-    "studio.part_editor.written_to_velora": "Alterações gravadas no Velora"
-  }
-};
+import { CATALOGS } from "./catalogs.js";
+import {
+  buildGrids,
+  categoryLabel,
+  partName,
+  setGridLabels,
+  updatePartCell,
+  updateSceneCell,
+} from "./live_set_dom.js";
+import {
+  LiveSetViewController,
+  allLiveSetRows,
+  createThrottledRunner,
+  entryRows,
+  setlistRows,
+  setlistsRequest,
+} from "./live_set_view.js";
+
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
 const FM_ALGORITHMS = [
@@ -428,6 +195,7 @@ window.addEventListener("DOMContentLoaded", () => {
   let selectedPartIndex = 1; // Default to Part 2 (FM) per Story 12.10
   let isConnected = true;
   let deviceLinkActive = false; // true once a real device address is configured: the connection UI then follows the real link
+  let deviceLinkPaired = false; // the real link is paired: the real Live Set view (Story 9.8) replaces the simulated Live Sets
   let deviceHasFmVa = true;
   let deviceFirmwareVersion = "1.4.0";
   let isDirty = false;
@@ -515,7 +283,8 @@ window.addEventListener("DOMContentLoaded", () => {
     const writeBtn = document.getElementById("btn-write");
     const footerStatus = document.getElementById("footer-live-edit-status");
 
-    if (badge) badge.style.display = isDirty ? "inline-block" : "none";
+    const real = pairedReal();
+    if (badge) badge.style.display = isDirty && !real ? "inline-block" : "none"; // paired: the real marker is the diamond after the Live Set name
     if (writeBtn && isConnected && deviceLinkActive) {
       writeBtn.disabled = true; // a real unit is connected but the editor still shows simulated Live Sets (until Stories 9.8 / 9.13): never write them
       writeBtn.title = localeMgr.tr("studio.write.simulated");
@@ -523,13 +292,15 @@ window.addEventListener("DOMContentLoaded", () => {
       writeBtn.disabled = !isDirty;
     }
     if (footerStatus) {
-      footerStatus.textContent = isDirty
+      const shownDirty = real ? !!(liveCtl.model && liveCtl.model.dirty) : isDirty;
+      footerStatus.textContent = shownDirty
         ? localeMgr.tr("studio.part_editor.live_edit_edited")
         : localeMgr.tr("studio.part_editor.live_edit_clean");
     }
+    if (real) return; // the real strips are drawn by the Live Set view (never edited from here)
 
     // Update active part strip indicator
-    const currentStrip = document.querySelector(`.st[data-part-idx="${selectedPartIndex}"]`);
+    const currentStrip = document.querySelector(`#editor-part-strips .st[data-part-idx="${selectedPartIndex}"]`);
     if (currentStrip) {
       const nameEl = currentStrip.querySelector(".n");
       if (nameEl) {
@@ -807,6 +578,11 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Render Full Studio Part Editor
   function renderEditor() {
+    if (pairedReal()) {
+      renderPairedEditor(); // Story 9.8: the real Live Set view; the part editor below it stays simulated until Story 9.9
+      return;
+    }
+    hideRealView();
     const dataSource = currentDeviceState || activeBackup;
     if (!dataSource || !dataSource.live_sets || dataSource.live_sets.length === 0) {
       document.getElementById("offline-empty-card").style.display = "flex";
@@ -916,6 +692,15 @@ window.addEventListener("DOMContentLoaded", () => {
     else if (selectedPartIndex === 6) { catName = "BRASS"; timbreName = "Brass Stab"; }
     else if (selectedPartIndex === 7) { catName = "VOICE"; timbreName = "Choir"; }
 
+    renderPartDetails(catName, timbreName, engineTypeId);
+    markLiveEdit(isDirty);
+  }
+
+  // The Part Editor header and the FM / VA cards for the selected part (simulated data until Story 9.9; the real view passes the real engine and names).
+  function renderPartDetails(catName, timbreName, engineTypeId) {
+    const isFmOrVa = engineTypeId === 3 || engineTypeId === 4;
+    const isMismatch = !deviceHasFmVa && isFmOrVa;
+
     document.getElementById("part-num-label").textContent = `PART ${selectedPartIndex + 1}`;
     document.getElementById("part-name-display").textContent = timbreName;
     document.getElementById("part-category-display").textContent = catName;
@@ -954,8 +739,6 @@ window.addEventListener("DOMContentLoaded", () => {
         updateJumpNavigation(0);
       }
     }
-
-    markLiveEdit(isDirty);
   }
 
   // Write to Velora persistence handler
@@ -1004,6 +787,344 @@ window.addEventListener("DOMContentLoaded", () => {
     selectedPartIndex = 0;
     renderEditor();
   });
+
+  // ---- Live Set view (Story 9.8) ---------------------------------------------------------------------------------------------------------------------
+  // While paired, the main area shows the real Live Set the player chose in the sidebar: header (name, unsaved diamond), 8 scene tiles, 8 part strips. The data is
+  // read from the unit with GetLiveSetView (read-only: selecting never sends Jump / Recall / Load) and the sounding Live Set follows the State pushes in place
+  // (live_set_view.js owns the model and the diffs, live_set_dom.js the cells; this section wires them to the page). The Part Editor below the strips stays
+  // simulated until Story 9.9, and Write stays disabled for real data (markLiveEdit). Unpaired / offline: the simulated Live Sets and offline card behave as before.
+  const fmt = (tpl, ...args) => {
+    let i = 0;
+    return tpl.replace(/%[ds]/g, () => String(args[i++]));
+  };
+  const tr = (key, ...args) => fmt(localeMgr.tr(key), ...args);
+  const liveEls = {
+    container: document.getElementById("editor-container"),
+    title: document.getElementById("editor-title"),
+    subtitle: document.getElementById("editor-subtitle"),
+    dirty: document.getElementById("live-set-dirty"),
+    meta: document.getElementById("live-set-meta"),
+    error: document.getElementById("live-view-error"),
+    scenes: document.getElementById("live-scenes"),
+    note: document.getElementById("live-view-note"),
+    parts: document.getElementById("live-part-grid"),
+    simStrips: document.getElementById("editor-part-strips"),
+  };
+  const liveUi = { grids: null, partListeners: new Set() };
+  const sidebar = { setlists: [], all: [], entries: new Map(), expanded: new Set(), key: null, error: "", firstLoad: true, playingId: "", autoTried: "" };
+
+  function buildLiveGrids() {
+    if (liveUi.grids) return;
+    liveUi.grids = buildGrids(document, liveEls.scenes, liveEls.parts, { onSelectPart: (i) => liveCtl.selectPart(i) });
+    setGridLabels(liveEls.scenes, liveEls.parts, tr);
+  }
+
+  function renderLiveHeader(m) {
+    liveEls.title.textContent = m.name;
+    liveEls.subtitle.textContent = tr("studio.live_set.eyebrow");
+    liveEls.dirty.hidden = !m.dirty;
+    liveEls.dirty.setAttribute("aria-label", tr("studio.live_set.unsaved"));
+    liveEls.dirty.title = tr("studio.live_set.unsaved_tooltip");
+    const meta = [tr("studio.live_set.parts_active", m.activeParts)];
+    if (m.sounding) meta.push(tr("studio.live_set.sounding"));
+    liveEls.meta.textContent = meta.join(" · ");
+    liveEls.meta.hidden = false;
+    liveEls.note.hidden = !m.hasMoreParts;
+    if (m.hasMoreParts) liveEls.note.textContent = tr("studio.live_set.parts_16_note", m.partCount);
+  }
+
+  // Draws a model. `changes` names what changed ({ header, scenes: [..], parts: [..] }): only those tiles are touched, so a delta never rebuilds the others, and
+  // the sidebar and the part editor are not redrawn for a header-only change (a dirty / sounding flip): markers move in place.
+  function renderLiveModel(m, changes) {
+    buildLiveGrids();
+    if (!pairedReal()) return;
+    liveEls.scenes.hidden = false;
+    liveEls.parts.hidden = false;
+    if (changes.header || changes.note) renderLiveHeader(m);
+    const g = liveUi.grids;
+    changes.scenes.forEach((i) => updateSceneCell(g.sceneCells[i], m.scenes[i], tr));
+    changes.parts.forEach((i) => updatePartCell(g.partCells[i], m.parts[i], { tr, selected: liveCtl.selectedPart === i }));
+    if (changes.header) markLiveEdit(isDirty); // the footer follows the real unsaved flag
+    if (changes.parts.includes(liveCtl.selectedPart)) renderRealPartDetails();
+    if (changes.header) updateSidebarMarkers();
+  }
+
+  const ALL_CHANGES = { header: true, note: true, scenes: [0, 1, 2, 3, 4, 5, 6, 7], parts: [0, 1, 2, 3, 4, 5, 6, 7] };
+
+  function showLiveError(e) {
+    liveEls.error.hidden = false;
+    liveEls.error.textContent = tr("studio.live_set.error_load", e.message || "");
+  }
+
+  function pairedReal() {
+    return deviceLinkActive && deviceLinkPaired;
+  }
+
+  function hideRealView() {
+    liveEls.container.classList.remove("live-real");
+    [liveEls.error, liveEls.scenes, liveEls.note, liveEls.parts, liveEls.dirty, liveEls.meta].forEach((el) => { el.hidden = true; });
+    liveEls.simStrips.style.display = "";
+    liveEls.subtitle.textContent = "VELORA STUDIO";
+  }
+
+  function renderPairedEditor() {
+    buildLiveGrids();
+    setGridLabels(liveEls.scenes, liveEls.parts, tr); // follows a language change
+    document.getElementById("offline-empty-card").style.display = "none";
+    liveEls.container.style.display = "grid";
+    liveEls.container.classList.add("live-real");
+    liveEls.simStrips.style.display = "none";
+    renderSidebarReal();
+    if (liveCtl.model) {
+      renderLiveModel(liveCtl.model, ALL_CHANGES);
+      renderRealPartDetails();
+    } else {
+      liveEls.title.textContent = liveCtl.pendingId ? tr("studio.live_set.loading") : "";
+      liveEls.subtitle.textContent = tr("studio.live_set.eyebrow");
+      liveEls.dirty.hidden = true;
+      liveEls.meta.hidden = true;
+      liveEls.note.hidden = true;
+      liveEls.scenes.hidden = true;
+      liveEls.parts.hidden = true;
+    }
+    markLiveEdit(isDirty);
+  }
+
+  // The Part Editor header and cards for the real selection: the engine and the names are the real ones, the parameter cards are still the simulated editor.
+  function renderRealPartDetails() {
+    const m = liveCtl.model;
+    const i = liveCtl.selectedPart;
+    if (!m || i < 0) return;
+    const p = m.parts[i];
+    selectedPartIndex = i;
+    const engineId = p.engine === "fm" ? 3 : p.engine === "va" ? 4 : p.engine === "organ" ? 2 : 1;
+    renderPartDetails(categoryLabel(p, tr), partName(p, tr), engineId);
+  }
+
+  // The polite live region: cleared first and set on a microtask, so the same text twice in a row is announced twice.
+  function quietAnnounce(message) {
+    const region = document.getElementById("live-region");
+    if (!region) return;
+    region.textContent = "";
+    queueMicrotask(() => { region.textContent = message; });
+  }
+
+  function onRealPartSelected(i, p) {
+    const g = liveUi.grids;
+    if (g && liveCtl.model) g.partCells.forEach((c, k) => updatePartCell(c, liveCtl.model.parts[k], { tr, selected: k === i }));
+    renderRealPartDetails();
+    if (p) {
+      const label = partName(p, tr);
+      const bare = p.status === "empty" || p.status === "missing" || p.status === "unavailable";
+      const cat = bare ? "" : categoryLabel(p, tr);
+      quietAnnounce(bare ? tr("studio.live_set.announce_part_plain", i + 1, label)
+        : p.status === "off" ? tr("studio.live_set.announce_part_off", i + 1, label, cat)
+        : tr("studio.live_set.announce_part", i + 1, label, cat, p.volumePct));
+    }
+    liveUi.partListeners.forEach((cb) => { try { cb(i, p, liveCtl.liveSetId); } catch (e) { /* a listener never breaks the view */ } });
+    document.dispatchEvent(new CustomEvent("velora:part-selected", { detail: { liveSetId: liveCtl.liveSetId, part: i, model: p } }));
+  }
+
+  const liveCtl = new LiveSetViewController({
+    request: (r) => window.veloraDevice.request(r),
+    onModel: renderLiveModel,
+    onError: showLiveError,
+    onSelectPart: onRealPartSelected,
+    onFetched: () => { liveEls.error.hidden = true; }, // the banner goes away only when a read succeeded
+    onLoading: (on) => {
+      if (on && !liveCtl.model) renderPairedEditor();
+      if (!on && !liveCtl.model) renderPairedEditor(); // a first read that failed: the "Reading the Live Set" title must not stay
+    },
+  });
+
+  // For Story 9.9 (Part Editor): the selection of the Live Set view.
+  window.veloraLiveSetView = {
+    get liveSetId() { return liveCtl.liveSetId; },
+    get selectedPart() { return liveCtl.selectedPart; },
+    get model() { return liveCtl.model; },
+    onPartSelected(cb) { liveUi.partListeners.add(cb); return () => liveUi.partListeners.delete(cb); },
+  };
+
+  // ---- sidebar: SETLISTS expands to the setlists and their Live Sets ----
+  // The tree is rebuilt when its DATA changes (setlists, entries, expansion) or the sounding Live Set changes; the selected / sounding markers of the rows are
+  // updated in place (updateSidebarMarkers). Reads go through a throttled single-flight runner (no request stream when the library revision keeps moving).
+  async function refreshSidebarTask() {
+    try {
+      const reply = await window.veloraDevice.request(setlistsRequest("", true));
+      const body = reply && reply.body;
+      if (body && body.SetlistsReply) {
+        sidebar.error = "";
+        sidebar.setlists = setlistRows(body.SetlistsReply);
+        sidebar.all = allLiveSetRows(body.SetlistsReply);
+        if (sidebar.firstLoad) {
+          sidebar.firstLoad = false;
+          sidebar.setlists.filter((s) => s.loaded).forEach((s) => sidebar.expanded.add(s.id));
+        }
+        const ids = new Set(sidebar.setlists.map((s) => s.id));
+        for (const id of [...sidebar.expanded]) if (id !== "__all__" && !ids.has(id)) sidebar.expanded.delete(id);
+        for (const id of sidebar.expanded) if (id !== "__all__") await loadEntries(id);
+      } else {
+        sidebar.error = String((body && body.Error && body.Error.message) || "no reply");
+      }
+    } catch (e) {
+      sidebar.error = String(e && e.message ? e.message : e);
+    }
+    renderSidebarReal();
+  }
+  const refreshSidebar = createThrottledRunner(refreshSidebarTask, { minMs: 400 });
+
+  async function loadEntries(setlistId) {
+    try {
+      const reply = await window.veloraDevice.request(setlistsRequest(setlistId, false));
+      const body = reply && reply.body;
+      if (body && body.SetlistsReply) sidebar.entries.set(setlistId, entryRows(body.SetlistsReply).rows);
+    } catch (e) { /* the group stays as it was; the next refresh retries */ }
+  }
+
+  function sidebarButton(key, cls, label) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sidebar-item " + cls;
+    b.dataset.key = key;
+    const span = document.createElement("span");
+    span.className = "sl-label";
+    span.textContent = label;
+    b.appendChild(span);
+    return b;
+  }
+
+  // Selected / sounding markers of one Live Set row, set in place.
+  function applyRowMarkers(b, row) {
+    const selected = row.id === liveCtl.liveSetId;
+    const playing = row.id === sidebar.playingId;
+    b.classList.toggle("on", selected);
+    b.classList.toggle("playing", playing);
+    if (selected) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
+    const np = b.querySelector(".np");
+    if (np) np.hidden = !playing;
+    b.setAttribute("aria-label", row.name + (playing ? `, ${tr("studio.sidebar.sounding_suffix")}` : "") + (row.missing ? `, ${tr("studio.sidebar.entry_missing")}` : ""));
+  }
+
+  function liveSetButton(group, row) {
+    const b = sidebarButton(`ls:${group}:${row.id}`, "sub", row.name);
+    b.dataset.ls = row.id;
+    b._row = row;
+    const np = document.createElement("span");
+    np.className = "np";
+    np.setAttribute("aria-hidden", "true");
+    np.textContent = "▸";
+    b.insertBefore(np, b.firstChild);
+    if (row.missing) {
+      b.disabled = true;
+      const miss = document.createElement("span");
+      miss.className = "sl-miss";
+      miss.textContent = tr("studio.sidebar.entry_missing");
+      b.appendChild(miss);
+    } else {
+      b.addEventListener("click", () => selectLiveSet(row.id));
+    }
+    applyRowMarkers(b, row);
+    return b;
+  }
+
+  function updateSidebarMarkers() {
+    if (!pairedReal()) return;
+    document.querySelectorAll("#sidebar-setlists-list [data-ls]").forEach((b) => applyRowMarkers(b, b._row));
+  }
+
+  function sidebarGroup(id, name, count, rows) {
+    const wrap = document.createElement("div");
+    wrap.className = "sl-group";
+    const open = sidebar.expanded.has(id);
+    const head = sidebarButton(`sl:${id}`, "sl-head", `${open ? "▾" : "▸"} ${name}`);
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    if (count !== null) {
+      const c = document.createElement("span");
+      c.className = "sl-count";
+      c.textContent = String(count);
+      head.appendChild(c);
+    }
+    head.addEventListener("click", async () => {
+      if (sidebar.expanded.has(id)) sidebar.expanded.delete(id); else sidebar.expanded.add(id);
+      renderSidebarReal();
+      if (sidebar.expanded.has(id) && id !== "__all__" && !sidebar.entries.has(id)) {
+        await loadEntries(id);
+        renderSidebarReal();
+      }
+    });
+    wrap.appendChild(head);
+    if (open) {
+      const kids = document.createElement("div");
+      kids.setAttribute("role", "group");
+      const list = rows || [];
+      if (list.length === 0) {
+        const hint = document.createElement("div");
+        hint.className = "sidebar-item empty-hint sub";
+        hint.textContent = tr("studio.sidebar.empty_entries");
+        kids.appendChild(hint);
+      }
+      list.forEach((row) => kids.appendChild(liveSetButton(id, row)));
+      wrap.appendChild(kids);
+    }
+    return wrap;
+  }
+
+  function renderSidebarReal() {
+    if (!pairedReal()) return;
+    const host = document.getElementById("sidebar-setlists-list");
+    const focusKey = document.activeElement && host.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+    host.textContent = "";
+    if (sidebar.error) {
+      const e = document.createElement("div");
+      e.className = "sidebar-item empty-hint";
+      e.textContent = tr("studio.sidebar.setlists_error", sidebar.error);
+      host.appendChild(e);
+    } else if (sidebar.setlists.length === 0 && sidebar.all.length === 0) {
+      const hint = document.createElement("div");
+      hint.className = "sidebar-item empty-hint";
+      hint.textContent = tr("studio.sidebar.empty_entries");
+      host.appendChild(hint);
+    }
+    sidebar.setlists.forEach((s) => host.appendChild(sidebarGroup(s.id, s.name, s.count, sidebar.entries.get(s.id))));
+    if (sidebar.all.length > 0) host.appendChild(sidebarGroup("__all__", tr("studio.sidebar.all_live_sets"), sidebar.all.length, sidebar.all));
+    const lib = document.getElementById("sidebar-livesets-list");
+    lib.textContent = "";
+    const hint = document.createElement("div");
+    hint.className = "sidebar-item empty-hint";
+    hint.textContent = tr("studio.sidebar.library_paired");
+    lib.appendChild(hint);
+    if (focusKey) {
+      const again = [...host.querySelectorAll("[data-key]")].find((b) => b.dataset.key === focusKey);
+      if (again && !again.disabled) again.focus();
+    }
+  }
+
+  function selectLiveSet(id) {
+    liveCtl.select(id).then(() => updateSidebarMarkers());
+    updateSidebarMarkers();
+  }
+
+  // What every State push does for the view: the model follows it at once; the sidebar follows the setlists' revision (throttled) and the sounding Live Set; and the
+  // first time a Live Set sounds with nothing selected, that one is shown.
+  function onDeviceState(st) {
+    if (!st || !pairedReal()) return;
+    liveCtl.onState(st);
+    const setlists = st.setlists || {};
+    const key = `${setlists.library_revision || 0}/${setlists.loaded_setlist_id || ""}`;
+    const playing = st.live_set_loaded ? st.live_set_id || "" : "";
+    if (key !== sidebar.key) {
+      sidebar.key = key;
+      refreshSidebar();
+    }
+    if (playing !== sidebar.playingId) {
+      sidebar.playingId = playing;
+      updateSidebarMarkers();
+    }
+    if (!liveCtl.liveSetId && !liveCtl.pendingId && playing && sidebar.autoTried !== playing) {
+      sidebar.autoTried = playing; // once per sounding Live Set: a refused read does not turn into a request per push
+      selectLiveSet(playing);
+    }
+  }
 
   // Query Tauri backend for initial connection status and device state
   if (window.__TAURI__?.core?.invoke) {
@@ -1133,16 +1254,31 @@ window.addEventListener("DOMContentLoaded", () => {
     const connEl = document.getElementById("connection-status");
     if (connEl) connEl.dataset.link = st.status;
     const becameConnected = paired && (!isConnected || !wasLinked);
+    const wasPaired = deviceLinkPaired;
     isConnected = paired;
+    deviceLinkPaired = paired;
     if (paired) {
       if (st.firmware_version) deviceFirmwareVersion = st.firmware_version;
-      if (becameConnected && window.__TAURI__?.core?.invoke) {
-        // The editor still shows the simulated Live Sets until Stories 9.8 / 9.13 map the real State.
-        window.__TAURI__.core.invoke("get_current_device_state").then((state) => { currentDeviceState = state; renderEditor(); }).catch(() => {});
+      // Story 9.8: the main area is the real Live Set view. The setlists are read again on every (re)pairing, and the Live Set that was shown is read again too
+      // (the unit may have changed while the link was down); the State store then feeds it.
+      if (!wasPaired || becameConnected) {
+        sidebar.key = null;
+        renderEditor();
+        if (liveCtl.liveSetId) liveCtl.select(liveCtl.liveSetId);
+        // No State is replayed here: the one in the store may be from before an outage. The first push after (re)pairing feeds the view (the client subscribes at once).
       }
       pairPromptedFor = null;
     } else {
       currentDeviceState = null;
+      deviceStore.state = null; // a State from before the outage is never shown again
+      liveCtl.reset();
+      sidebar.setlists = [];
+      sidebar.all = [];
+      sidebar.entries.clear();
+      sidebar.key = null;
+      sidebar.playingId = "";
+      sidebar.firstLoad = true;
+      sidebar.autoTried = "";
       renderEditor(); // the existing offline card (and any loaded backup)
     }
     deviceStore.statusListeners.forEach((cb) => { try { cb(st); } catch (e) { /* a listener never breaks the link */ } });
@@ -1224,9 +1360,10 @@ window.addEventListener("DOMContentLoaded", () => {
     window.__TAURI__.event.listen("device://state", (e) => {
       deviceStore.state = e.payload;
       deviceStore.stateListeners.forEach((cb) => { try { cb(e.payload); } catch (err) { /* ignore */ } });
+      onDeviceState(e.payload); // Story 9.8: the Live Set view follows the pushes in place
     });
     window.__TAURI__.core.invoke("device_status").then(applyDeviceStatus).catch(() => {});
-    window.__TAURI__.core.invoke("device_state").then((st) => { if (st) deviceStore.state = st; }).catch(() => {});
+    window.__TAURI__.core.invoke("device_state").then((st) => { if (st) { deviceStore.state = st; onDeviceState(st); } }).catch(() => {});
   }
 
   // Backup and Restore actions

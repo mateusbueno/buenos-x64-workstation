@@ -151,6 +151,23 @@ message PartState {
   PartOutput output = 4;
   optional float send_reverb = 5;    // initial send levels; also present in State.performance_init
   optional float send_delay = 6;
+  // Story 9.8 (additive): what Velora Studio's Live Set view needs to follow the sounding Live Set from State pushes (a scene recall and SetPartVolume publish a
+  // new generation, so these change with every delta). Always filled by the server; `engine_type_id` is the core engine id (0 none, 1 sample, 2 organ, 3 FM, 4 VA);
+  // `part_state` is why the part sounds or not (PART_RUN_STATE_*); `low_key` / `high_key` are the zone as played (0..127).
+  float volume = 7;                  // 0..1 part fader
+  bool keyboard_on = 8;              // false = the part receives no new notes ("OFF" in Studio)
+  uint32 low_key = 9;
+  uint32 high_key = 10;
+  uint32 engine_type_id = 11;
+  PartRunState part_state = 12;
+  bool view_fields = 13;             // always true from a unit that fills fields 7..12 (an older unit leaves them absent, which JSON / serde clients read as zeros: Studio overlays a part only when this is set)
+}
+
+enum PartRunState {
+  PART_RUN_STATE_READY = 0;              // the part sounds
+  PART_RUN_STATE_EMPTY_TIMBRE = 1;       // a sample part with no timbre
+  PART_RUN_STATE_MISSING_LIBRARY = 2;    // the timbre's library or instrument could not be resolved: silent, never a substitute
+  PART_RUN_STATE_ENGINE_NOT_AVAILABLE = 3;  // FM / VA / unknown engine this build does not have
 }
 
 // The structural state of one snapshot generation. Also the format of the dev configuration file
@@ -503,6 +520,43 @@ message GetSetlists {
   bool include_all_live_sets = 2;                                 // Story 8.9: also fill SetlistsReply.all_live_sets (All Live Sets, for the Boot into picker)
 }
 
+// --- Story 9.8: the read-only Live Set view for Velora Studio -----------------------------------------------------------------------------------------
+// GetLiveSetView answers LiveSetViewReply: one Live Set as Studio draws it (name, unsaved-edits flag, the 8 scene tiles, the parts), assembled from the stored
+// Live Set and, when the device holds unsaved edits for it, from that edited copy. It is READ-ONLY: it never loads, publishes, recalls or jumps anything, the
+// revision does not move and nothing is pushed. Errors: NO_SUCH_LIVE_SET (unknown id; details id), INVALID_COMMAND (empty id; no data directory), BUSY is never returned.
+message GetLiveSetView { string live_set_id = 1; }
+message LiveSetViewScene {
+  uint32 index = 1;                      // 0..7; always 8 entries are sent
+  string name = 2;                       // "" when empty
+  bool empty = 3;                        // no scene stored at this index
+}
+message LiveSetViewPart {
+  uint32 index = 1;                      // 0-based
+  bool empty = 2;                        // a sample part with no timbre ("+ Add timbre")
+  bool on = 3;                           // keyboard_on in the Live Set
+  uint32 engine_type_id = 4;             // 1 sample, 2 organ, 3 FM, 4 VA (as PartState.engine_type_id)
+  string timbre_name = 5;                // the library's instrument name; "" for empty, organ, FM / VA and missing-library parts (never another timbre's name)
+  uint32 category = 6;                   // category.proto id (0 = none / unknown); organ parts carry CATEGORY_ORGAN
+  float volume = 7;                      // 0..1
+  uint32 low_key = 8;                    // 0..127
+  uint32 high_key = 9;
+  string organ_registration = 10;        // organ parts: the nine drawbars as "88 8000 000" (16', 5 1/3' | 8', 4', 2 2/3', 2' | 1 3/5', 1 1/3', 1'); "" otherwise
+  bool missing_library = 11;             // the timbre's library or instrument cannot be resolved (library missing, instrument missing, bundle unreadable)
+  string unavailable_reason = 12;        // with missing_library: why, as the resolver names it (missing_library | missing_instrument | bundle_error | invalid_link | identity_mismatch |
+                                         // protected_downgrade | protected_unsupported | invalid_id); "" otherwise. Studio shows every one of them as "Missing library"
+}
+message LiveSetViewReply {
+  string live_set_id = 1;
+  string name = 2;
+  bool dirty = 3;                        // the device holds unsaved edits for this Live Set (the ◆)
+  bool sounding = 4;                     // this Live Set is the one that sounds right now
+  repeated LiveSetViewScene scenes = 5;  // exactly 8
+  repeated LiveSetViewPart parts = 6;    // the Live Set's parts: 8 on v1, 16 on Pro (Studio shows the first 8)
+  uint32 part_count = 7;                 // == parts_size()
+  uint32 scene_count = 8;                // scenes stored in the Live Set (0..8)
+  bool factory = 9;                      // a factory Live Set (read-only on the unit)
+}
+
 message CreatedReply { string id = 1; string name = 2; bool not_durable = 3; }
 message LoadSetlistReply { string setlist_id = 1; int32 position = 2; uint32 live_set_count = 3; }
 message StepReply {
@@ -840,6 +894,7 @@ message ClientMessage {
     CancelPedalCalibration cancel_pedal_calibration = 60;
     PairRequest pair_request = 61;        // sysd TCP bridge only
     LibraryRequest library = 62;          // sysd TCP bridge only: forwarded to the librarian
+    GetLiveSetView get_live_set_view = 63;  // Story 9.8 (engine control plane): read-only
   }
 }
 
@@ -877,5 +932,6 @@ message ServerMessage {
     PedalCalibrationReply pedal_calibration_reply = 26;  // Story 3.11: the reply to StartPedalCalibration / FinishPedalCalibration / CancelPedalCalibration
     PairReply pair_reply = 27;           // sysd TCP bridge only
     LibraryReply library_reply = 28;     // sysd TCP bridge only: a library reply or push (request_id as the client sent it, 0 for pushes)
+    LiveSetViewReply live_set_view_reply = 29;  // Story 9.8: the reply to GetLiveSetView
   }
 }

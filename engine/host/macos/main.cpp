@@ -43,6 +43,7 @@
 #include "velora/host/dev_config.hpp"
 #include "velora/host/fs_port.hpp"
 #include "velora/host/library_resolver.hpp"
+#include "velora/host/live_set_view.hpp"
 #include "velora/host/live_set_loader.hpp"
 #include "velora/host/library_client.hpp"
 #include "velora/host/live_set_switcher.hpp"
@@ -436,7 +437,8 @@ int main(int argc, char** argv) {
   std::unique_ptr<host::liveset::LiveSetStore> live_store;  // Story 4.6: sole writer of the Live Set files (create / delete Live Set commands)
   std::unique_ptr<host::setlist::SetlistStore> setlist_store;  // Story 4.6: sole writer of setlists, tags and the default ASSIGN map
   std::unique_ptr<host::SetlistController> setlists;           // Story 4.6: ws.v1 setlist commands and LIVE SET stepping; destroyed after the edit session
-  std::unique_ptr<host::EditSession> edits;                    // Story 4.9: edits in memory, the dirty flags and Write; destroyed first
+  std::unique_ptr<host::EditSession> edits;                    // Story 4.9: edits in memory, the dirty flags and Write; destroyed after the view service
+  std::unique_ptr<host::LiveSetViewService> live_view;         // Story 9.8: ws.v1 GetLiveSetView (read-only, for Velora Studio); destroyed first
   std::atomic<bool> audio_running{false};  // set once the audio stream starts; the loader refuses to run while it is true
   if (!live_set_path.empty() || bootstrap) {
     if (!renderer->bind_engine(sample) || !renderer->bind_engine(organ) || !renderer->bind_engine(fm) || !renderer->bind_engine(va)) {
@@ -575,6 +577,7 @@ int main(int argc, char** argv) {
       edits = std::make_unique<host::EditSession>(plane, *scenes, *live_store, setlist_store.get(), setlists.get(), switch_port.get(), eo);
       edits->attach(*loader);
       edits->attach(*switcher);
+      live_view = std::make_unique<host::LiveSetViewService>(plane, *live_store, resolver, edits.get(), switch_port.get());
       if (boot_resolved && !bootstrap) {
         // Story 8.9: the boot target's setlist and scene, applied before the control server serves anything. NO SETLIST is the state a Live Set loaded at start
         // leaves (nothing to do); a scene that does not exist keeps the Live Set as loaded.
@@ -928,6 +931,7 @@ int main(int argc, char** argv) {
   midi.close();
   panel_push.store(nullptr, std::memory_order_release);
   control.stop();
+  live_view.reset(); // Story 9.8: before the edit session it reads and the plane it registered with
   edits.reset();     // before the setlist controller, the scene controller and the plane it registered with
   setlists.reset();  // before the switcher and the plane it registered with
   switch_port.reset();

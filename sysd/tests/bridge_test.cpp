@@ -286,6 +286,11 @@ void engine_handler(const std::string& payload, std::vector<std::string>& replie
   if (m.has_get_state()) {
     r.mutable_state()->set_revision(7);
     r.mutable_state()->set_current_scene(3);
+  } else if (m.has_get_live_set_view()) {  // Story 9.8: the engine's read-only view
+    auto* v = r.mutable_live_set_view_reply();
+    v->set_live_set_id(m.get_live_set_view().live_set_id());
+    v->set_name("Fake view");
+    for (std::uint32_t i = 0; i < 8; ++i) v->add_scenes()->set_index(i);
   } else {
     r.mutable_ack();
   }
@@ -1178,6 +1183,41 @@ void test_unpaired_cap_and_pending_timeout() {
 
 }  // namespace
 
+// Story 9.8: GetLiveSetView is a paired READ through the "liveset.v1" feature, relayed to the engine with the client's request id; the table row names it as an
+// engine route (never denied, never local), an unpaired client gets NOT_PAIRED (the table loop above) and a client that did not negotiate the feature is refused.
+void test_live_set_view_is_a_paired_read() {
+  const auto* rule = sd::BridgeServer::rule_for(ws::v1::ClientMessage::kGetLiveSetView);
+  CHECK(rule != nullptr && std::string(rule->name) == "get_live_set_view" && std::string(rule->feature) == "liveset.v1");
+  CHECK(rule && rule->route == sd::BridgeServer::Route::kEngine && !rule->unpaired_allowed);
+  Rig r;
+  FakeUds eng;
+  eng.start(r.tmp.path + "/e.sock", false);
+  eng.handler = engine_handler;
+  CHECK(r.start([&](sd::BridgeOptions& o) {
+    o.engine_socket = eng.path;
+    o.dev_bypass_pairing = true;
+  }));
+  Client a;
+  CHECK(a.connect_to(r.port()));
+  a.hello(kAll, "mac-view");
+  ws::v1::ClientMessage m;
+  m.set_request_id(777);
+  m.mutable_get_live_set_view()->set_live_set_id("abc");
+  a.send(m);
+  ws::v1::ServerMessage rep;
+  CHECK(a.recv(rep) == 1 && rep.request_id() == 777 && rep.has_live_set_view_reply());
+  CHECK(rep.live_set_view_reply().live_set_id() == "abc" && rep.live_set_view_reply().name() == "Fake view" && rep.live_set_view_reply().scenes_size() == 8);
+  CHECK(eng.received.load() == 1);
+  Client b;  // negotiated no liveset.v1
+  CHECK(b.connect_to(r.port()));
+  b.hello({"snapshots.v1"}, "mac-view-2");
+  m.set_request_id(778);
+  b.send(m);
+  ws::v1::ServerMessage u;
+  CHECK(b.recv(u) == 1 && u.request_id() == 778 && u.has_error() && u.error().code() == ws::v1::ERROR_CODE_UNSUPPORTED_FEATURE && u.error().details().at("feature") == "liveset.v1");
+  CHECK(eng.received.load() == 1);  // nothing more reached the engine
+}
+
 int main() {
   ::signal(SIGPIPE, SIG_IGN);
   test_pairing_window_unit();
@@ -1194,6 +1234,7 @@ int main() {
   test_library_forwarding();
   test_config_in_process_and_shared_service();
   test_message_tables_are_total();
+  test_live_set_view_is_a_paired_read();
   test_unpaired_cap_and_pending_timeout();
   std::printf(g_fail ? "sysd_bridge_tests: FAILED (%d)\n" : "sysd_bridge_tests: ok\n", g_fail);
   return g_fail ? 1 : 0;

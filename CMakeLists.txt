@@ -96,6 +96,13 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME desktop_rust_test
              COMMAND ${CARGO_EXECUTABLE} test --manifest-path ${CMAKE_SOURCE_DIR}/desktop/src-tauri/Cargo.toml)
   endif()
+  # Story 9.8: the Studio Live Set view model (desktop/src/live_set_view.js, no DOM) is unit tested with node's own runner; skipped when node is not installed.
+  find_program(NODE_EXECUTABLE node)
+  if(NODE_EXECUTABLE)
+    add_test(NAME desktop_live_set_view_node_tests
+             COMMAND ${NODE_EXECUTABLE} --test tests
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/desktop)
+  endif()
   # Story 6.1 (AR34/NFR23): no private key material in the git index / working tree.
   add_test(NAME no_private_keys
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_no_private_keys.py

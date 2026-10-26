@@ -9,10 +9,13 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -163,7 +166,9 @@ int main(int argc, char** argv) {
   char dir[] = "/tmp/vbs-XXXXXX";
   if (!mkdtemp(dir)) return 2;
   const std::string d = dir, esock = d + "/e.sock", ssock = d + "/s.sock", elog = d + "/engine.log", slog = d + "/sysd.log";
-  pid_t epid = spawn({engine, "--no-audio", "--duration", "120", "--socket", esock}, elog);
+  // Story 9.8: the engine has a data directory (so it can create a Live Set and answer GetLiveSetView, the read-only view Velora Studio draws).
+  [[maybe_unused]] const int mk1 = ::mkdir((d + "/edata").c_str(), 0700), mk2 = ::mkdir((d + "/lib").c_str(), 0700);
+  pid_t epid = spawn({engine, "--no-audio", "--duration", "120", "--socket", esock, "--data-dir", d + "/edata", "--library-root", d + "/lib"}, elog);
   pid_t spid = -1;
   auto start_sysd = [&](int n) {
     const std::string log = d + "/sysd" + std::to_string(n) + ".log";
@@ -185,7 +190,18 @@ int main(int argc, char** argv) {
   const int port = start_sysd(1);
   CHECK(port > 0);
   CHECK(slurp(d + "/sysd1.log").find("WARNING: --pairing-code") != std::string::npos);  // the loud dev warning
-  // The engine takes a moment to listen.
+  // The engine takes a moment to listen (longer with a data directory: it makes its first Live Set), so wait for its own socket before anything is sent through the bridge.
+  CHECK(wait_for(
+      [&] {
+        const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        sockaddr_un a{};
+        a.sun_family = AF_UNIX;
+        std::strncpy(a.sun_path, esock.c_str(), sizeof a.sun_path - 1);
+        const bool up = ::connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0;
+        ::close(fd);
+        return up;
+      },
+      60000));
   CHECK(wait_for([&] {
     Tcp t;
     if (!t.open(port)) return false;
@@ -216,7 +232,41 @@ int main(int argc, char** argv) {
     gs.set_request_id(77);
     c.send(gs);
     CHECK(c.recv(r) && r.request_id() == 77 && r.has_state() && r.state().parts_size() >= 8);
-    const std::uint64_t base_rev = r.state().revision();
+    std::uint64_t base_rev = r.state().revision();
+    {  // Story 9.8: GetLiveSetView through the bridge to the real engine: a Live Set made over the same door, then read back, without moving anything.
+      ws::v1::ClientMessage cl;
+      cl.set_request_id(80);
+      cl.mutable_create_live_set()->set_name("Smoke Set");
+      c.send(cl);
+      CHECK(c.recv(r) && r.request_id() == 80 && r.has_created_reply());
+      const std::string id = r.created_reply().id();
+      gs.set_request_id(81);
+      c.send(gs);
+      CHECK(c.recv(r) && r.request_id() == 81 && r.has_state());
+      const std::uint64_t rev_before = r.state().revision();
+      ws::v1::ClientMessage gv;
+      gv.set_request_id(82);
+      gv.mutable_get_live_set_view()->set_live_set_id(id);
+      c.send(gv);
+      CHECK(c.recv(r) && r.request_id() == 82 && r.has_live_set_view_reply());
+      const auto& v = r.live_set_view_reply();
+      const bool view_dirty = v.dirty();
+      CHECK(v.live_set_id() == id && v.name() == "Smoke Set" && !v.dirty() && !v.sounding() && v.scenes_size() == 8 && v.scene_count() == 1 && v.parts_size() == 8);
+      CHECK(!v.scenes(0).empty() && v.scenes(1).empty());
+      bool all_empty = true;
+      for (const auto& p : v.parts()) all_empty = all_empty && p.empty() && p.on() && !p.missing_library() && p.timbre_name().empty();
+      CHECK(all_empty);
+      gv.set_request_id(83);
+      gv.mutable_get_live_set_view()->set_live_set_id("00000000-0000-4000-8000-000000000000");
+      c.send(gv);
+      CHECK(c.recv(r) && r.request_id() == 83 && r.has_error() && r.error().code() == ws::v1::ERROR_CODE_NO_SUCH_LIVE_SET);
+      gs.set_request_id(84);
+      c.send(gs);
+      CHECK(c.recv(r) && r.request_id() == 84 && r.has_state() && r.state().revision() == rev_before);  // read-only: the revision did not move
+      CHECK(r.state().live_set_id().empty() || r.state().live_set_id() != id);                           // and the unit does not sound it
+      base_rev = r.state().revision();
+      CHECK(!r.state().edits().current_dirty() && !view_dirty);  // a fresh unit shows no unsaved diamond (item: Studio displays it)
+    }
     // Subscribe: Ack with our id, then the current State pushed (id 0).
     ws::v1::ClientMessage sub;
     sub.set_request_id(78);
@@ -290,7 +340,8 @@ int main(int argc, char** argv) {
     const int rc = std::system(cmd.c_str());
     CHECK(rc == 0);
     CHECK(slurp(d + "/studio.log").find("status: Paired") != std::string::npos);
-    if (rc != 0) std::printf("---- studio.log ----\n%s\n", slurp(d + "/studio.log").c_str());
+    CHECK(slurp(d + "/studio.log").find("view of \"Smoke Set\": 8 parts") != std::string::npos);  // Story 9.8: the Rust client read the Live Set created above through GetLiveSetView
+    if (rc != 0 || g_fail) std::printf("---- studio.log ----\n%s\n", slurp(d + "/studio.log").c_str());
   }
   // The engine goes away: a connected client is told (typed error, request_id 0) and closed; the bridge itself stays up.
   {

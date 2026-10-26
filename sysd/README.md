@@ -242,7 +242,7 @@ every row except `Hello` and `PairRequest`, and also unknown bodies and the empt
 |---|---|
 | engine, `params.v1` (edits) | `set_insert_chain`, `set_send_levels`, `set_part_output`, `set_master_params`, `set_timbre_ref`, `set_performance_param`, `set_part_timbre`, `set_part_volume` |
 | engine, `snapshots.v1` / `subscribe.v1` (state) | `get_state`, `get_performance_values`, `get_diagnostics` / `subscribe` |
-| engine, `liveset.v1` (scenes, Live Sets, setlists, Write, the Live Set's ASSIGN map) | `recall_scene`, `next_scene`, `previous_scene`, `jump_to_live_set`, `cancel_load`, the setlist and tag commands, `create_live_set`, `delete_live_set`, `next_live_set`, `previous_live_set`, `get_setlists`, `write_live_set`, `set_assign_slot`, `clear_assign_slot` |
+| engine, `liveset.v1` (scenes, Live Sets, setlists, Write, the Live Set's ASSIGN map) | `recall_scene`, `next_scene`, `previous_scene`, `jump_to_live_set`, `cancel_load`, the setlist and tag commands, `create_live_set`, `delete_live_set`, `next_live_set`, `previous_live_set`, `get_setlists`, `get_live_set_view` (Story 9.8, read-only), `write_live_set`, `set_assign_slot`, `clear_assign_slot` |
 | config, `config.v1` (in process) | `get_config`, `set_config`, `subscribe_config` |
 | library, `library.v1` | `library` (allow-listed, below) |
 | **denied** (panel, pedals, encoders: hardware, not Studio's) | `set_led`, `move_fader`, `select_part`, `set_fader_mode`, `select_organ_part`, `set_encoder_mode`, `start_pedal_calibration`, `finish_pedal_calibration`, `cancel_pedal_calibration` |

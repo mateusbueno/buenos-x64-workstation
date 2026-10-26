@@ -100,3 +100,20 @@ Story 8.12 adds one additive error code to `library_api.proto`: `LIBRARY_ERROR_C
   (`ClientMessage.library = 62`) and `LibraryReply {payload}` (`ServerMessage.library_reply = 28`), which carry `library_api.proto` messages (only those on the bridge's library allow-list are forwarded); error codes `NOT_PAIRED` (42),
   `UNSUPPORTED_FEATURE` (43), `UPSTREAM_UNAVAILABLE` (44), `PAIRING_CODE_INVALID` (45), `PAIRING_CLOSED` (46). Feature names negotiated in Hello: `params.v1`, `snapshots.v1`,
   `subscribe.v1`, `liveset.v1`, `config.v1`, `library.v1`, `pairing.v1`. The engine never produces the new messages or codes.
+
+- Story 9.8 (additive; READ-ONLY, served by the **engine's** control plane, reached by Velora Studio through the sysd bridge): `GetLiveSetView {live_set_id}` (`ClientMessage.get_live_set_view = 63`, bridge feature `liveset.v1`, paired
+  clients only) answers `LiveSetViewReply` (`ServerMessage.live_set_view_reply = 29`): `live_set_id`, `name`, `dirty` (the device holds unsaved edits for it: the ◆), `sounding`, `factory`, exactly 8 `scenes`
+  (`index`, `name`, `empty`), the Live Set's `parts` (`LiveSetViewPart`: `index`, `empty`, `on`, `engine_type_id`, `timbre_name`, `category` (category.proto id, 0 none), `volume`, `low_key`, `high_key`,
+  `organ_registration` ("88 8000 000": nine drawbars as digits 0..8), `missing_library`), `part_count` (8, 16 on Pro) and `scene_count`. It is assembled from the stored Live Set or, when the edit
+  session holds a document for it (it sounds, or it has unsaved edits), from that edited copy; names and categories come from the library resolver (exact paths) and the bundle's `category` file; a part
+  whose library or instrument cannot be resolved is `missing_library` with an **empty** name (never another timbre's name). It never loads, publishes, recalls or jumps anything, never moves the revision and
+  pushes nothing (tests: `live_set_view_tests`, `engine_host_bridge_studio_smoke`). Errors: `NO_SUCH_LIVE_SET` (`details.id`), `LIVE_SET_LOAD_FAILED` (an unreadable file, `details.reason`),
+  `INVALID_COMMAND` (empty id, or an engine without a data directory). No u64 field is in the reply, so the Rust client's JSON mapping needs no string workaround.
+  `PartState` also gains `volume = 7`, `keyboard_on = 8`, `low_key = 9`, `high_key = 10`, `engine_type_id = 11` and `part_state = 12` (`PartRunState`: READY, EMPTY_TIMBRE, MISSING_LIBRARY,
+  ENGINE_NOT_AVAILABLE), always filled from the published generation, so State pushes carry what Studio follows live (a scene recall and `SetPartVolume` each publish a generation).
+  Later in the same story: `LiveSetViewPart.unavailable_reason = 12` (with `missing_library`: the resolver's name for why, e.g. `missing_library`, `missing_instrument`, `bundle_error`, `protected_unsupported`;
+  Studio shows them all as "Missing library"), `PartState.view_fields = 13` (true whenever fields 7..12 are filled; a client that reads an older unit's State as zeros checks it before overlaying). Error
+  details echo the id only when it is a canonical UUID (never an arbitrary client string); a 16-part file on a v1 unit is refused by the store (`LIVE_SET_LOAD_FAILED`), not truncated. **Cost control:** the
+  service keeps a bounded LRU (64) of resolved (library, instrument) names and categories on the control thread, validated by one `readlink` of the library's `current` link (a re-installed library misses);
+  failures are never cached. This was chosen over a per-connection interval because the bridge, not the engine, owns connections. A fresh unit shows no unsaved diamond (checked by `live_set_view_tests`
+  and the bridge smoke); the ◆ of a Live Set is exactly `State.edits` for the one that sounds.
