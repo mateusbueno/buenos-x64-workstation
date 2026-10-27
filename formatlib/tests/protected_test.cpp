@@ -455,6 +455,31 @@ void test_roundtrip_and_seeks(const std::string& fixture_dir) {
           re.value().verify_all() == Error::kNone);
     CHECK(re.ok() && re.value().instruments()[0].regions[1].sw.last == 26);
   }
+  // Story 13.3: trigger first / legato / release_key and `end` (format minor 2) round-trip through the protected format.
+  {
+    Source s4;
+    BundleWriter wt = make_writer(s4, true);
+    Region a;
+    a.trigger = TriggerMode::kFirst;
+    Region b;
+    b.trigger = TriggerMode::kLegato;
+    b.has_end = true;
+    b.end = 4000;
+    Region c;
+    c.trigger = TriggerMode::kReleaseKey;
+    Region d;
+    d.has_end = true;
+    d.end = 0;
+    for (const Region* r : {&a, &b, &c, &d}) CHECK_ERR(wt.add_region(0, *r), Error::kNone);
+    const Bytes bt = protect(wt, nonce1());
+    CHECK(L::get_u32(bt.data() + 4) == (kProtectedFormatVersion | (2u << 16)));
+    auto rt = ProtectedBundleReader::open_memory(bt, tk, test_key());
+    CHECK(rt.ok() && rt.value().info().format_minor == 2 && rt.value().verify_all() == Error::kNone);
+    if (rt.ok()) {
+      const auto& got = rt.value().instruments()[0].regions;
+      CHECK(got.size() == 6 && got[2] == a && got[3] == b && got[4] == c && got[5] == d && got[1].sw.last == 26);
+    }
+  }
   // An empty writer is a valid (zero block) protected bundle.
   {
     BundleWriter we;
@@ -660,7 +685,7 @@ void test_tamper() {
   {
     struct V { std::uint32_t word; Error want; };
     for (const V& v : {V{4u, Error::kUnsupportedVersion}, V{2u, Error::kNotProtected}, V{1u, Error::kNotProtected}, V{0u, Error::kUnsupportedVersion},
-                       V{3u | (2u << 16), Error::kUnsupportedVersion}, V{3u | (1u << 16), Error::kCorruptManifest}}) {
+                       V{3u | (3u << 16), Error::kUnsupportedVersion}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest}}) {
       Bytes b = good;
       for (int i = 0; i < 4; ++i) {
         b[4 + i] = static_cast<std::uint8_t>(v.word >> (8 * i));

@@ -20,10 +20,15 @@ enum class LoopMode : std::uint8_t {
   kLoopSustain = 3,     // loop_mode=loop_sustain
 };
 
+// kFirst, kLegato and kReleaseKey (Story 13.3) live in the trigger/end table of bundle format 2.2.
 enum class TriggerMode : std::uint8_t {
-  kAttack = 0,   // trigger=attack (default)
-  kRelease = 1,  // trigger=release
+  kAttack = 0,      // trigger=attack (default)
+  kRelease = 1,     // trigger=release (waits for the sustain pedal like the voice it follows)
+  kFirst = 2,       // trigger=first: note on while no other key is held
+  kLegato = 3,      // trigger=legato: note on while another key is held
+  kReleaseKey = 4,  // trigger=release_key: fires at the physical key up, sustain pedal or not
 };
+inline constexpr std::uint8_t kMaxTriggerMode = 4;
 
 // SFZ amplitude envelope (ampeg_*): times in seconds, start and sustain in percent.
 struct AmpEnvelope {
@@ -98,6 +103,10 @@ struct Region {
   std::uint64_t loop_start = 0, loop_end = 0;  // frames, loop_end inclusive as in SFZ
   AmpEnvelope ampeg;
   TriggerMode trigger = TriggerMode::kAttack;
+  // Story 13.3 (bundle format 2.2): `end` in frames, EXCLUSIVE: the last played frame is min(end, sample length) - 1. has_end = false: the
+  // region plays to the end of its sample (end == 0 then). has_end with end == 0: the region is disabled (it never plays).
+  bool has_end = false;
+  std::uint64_t end = 0;
   // Story 5.1 extension (bundle format 2.1).
   Keyswitch sw;
   Crossfade xf;
@@ -109,6 +118,9 @@ struct Region {
 // True when the region uses any Story 5.1 feature (keyswitch, CC crossfade, xf_cccurve other than
 // the default, filter), i.e. when it needs an extension record in the bundle.
 bool has_extension(const Region& r);
+
+// True when the region needs a record in the format 2.2 trigger/end table: a trigger other than attack/release, or `end`.
+bool has_trigger_extension(const Region& r);
 
 // Checks every range invariant of a region against its sample length (`sample_frames`). Returns
 // kNone or kInvalidArgument. Used by the writer, the reader (as kCorruptManifest) and the importer.

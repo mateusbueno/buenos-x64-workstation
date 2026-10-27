@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 #include "velora/core/block_renderer.hpp"
@@ -435,6 +436,310 @@ static void test_release_trigger() {
   CHECK(e.stop_voice(0, 60) == EngineStatus::kVoiceNotFound);
 }
 
+// --- Story 13.3: sample end, trigger=first / legato / release_key ----------------------------------------
+
+// A sample of `len` frames: 0.1 up to frame end-2, 0.3 at frame end-1 (the last frame a region with `end` may play), 5.0 from frame `end` on.
+static std::vector<float> end_probe(std::size_t len, std::size_t end) {
+  std::vector<float> x(len, 5.0f);
+  for (std::size_t i = 0; i < std::min(len, end); ++i) x[i] = i + 1 == end ? 0.3f : 0.1f;
+  return x;
+}
+static float peak(const Out& o) {
+  float p = 0.0f;
+  for (float v : o.l) p = std::max(p, std::fabs(v));
+  return p;
+}
+
+static void test_sample_end() {
+  const double G = mono_center_gain();
+  const std::size_t len = 1000;
+  // Truncated: end=100 of a 1000 frame sample. The last played frame is 99 (0.3); the 5.0 behind it is never heard.
+  {
+    TestInstrument ins;
+    ins.region(ins.add_sample(end_probe(len, 100)), 60, 60).has_end = true;
+    ins.regions.back().end = 100;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.start_voice(0, 60, v16(127)) == EngineStatus::kOk);
+    const Out o = render(e, 4000);
+    CHECK(peak(o) <= 0.3 * G + 1e-4 && peak(o) > 0.25 * G);
+    CHECK_NEAR(o.l[50], 0.1 * G, 1e-4);
+    CHECK(e.active_voices() == 0);  // the voice ended by itself after the 6 ms release
+    e.stop_voice(0, 60);
+  }
+  // end beyond the file: min(end, length) - 1 is the last frame, identical to a region without end (bit for bit).
+  // end equal to the length: the same.
+  {
+    const std::vector<float> data = end_probe(len, len);  // 0.1 ... 0.3 at the last frame
+    auto run = [&](bool has_end, std::uint64_t end) {
+      TestInstrument ins;
+      auto& r = ins.region(ins.add_sample(data), 60, 60);
+      r.has_end = has_end;
+      r.end = end;
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      e.start_voice(0, 60, v16(127));
+      return render(e, 3000);
+    };
+    const Out none = run(false, 0), equal = run(true, len), beyond = run(true, 5000), beyond_big = run(true, std::uint64_t(1) << 40);
+    CHECK(none.l == equal.l && none.r == equal.r);
+    CHECK(none.l == beyond.l && none.r == beyond.r);
+    CHECK(none.l == beyond_big.l);
+    CHECK(peak(none) > 0.25 * G && peak(none) <= 0.3 * G + 1e-4);
+    // One frame short of the length: the last played frame is len - 2 (0.1), so the 0.3 of the final frame is gone.
+    const Out shorter = run(true, len - 1);
+    CHECK(peak(shorter) <= 0.1 * G + 1e-4);
+  }
+  // end=0 disables the region: no voice, and it is not an unplayable region.
+  {
+    TestInstrument ins;
+    ins.region(ins.dc(0.5f, 1000), 60, 60).has_end = true;
+    ins.region(ins.dc(0.25f, 1000), 60, 60);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    CHECK(e.start_voice(0, 60, v16(127)) == EngineStatus::kOk);
+    CHECK(e.active_voices() == 1);
+    CHECK(e.skipped_unplayable_starts() == 0);
+    CHECK_NEAR(render(e, 8).l[5], 0.25 * G, 1e-4);  // only the region without end sounds
+  }
+  // A loop must lie inside the played part: loop_continuous without loop points loops [0, end), never past it.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.add_sample(end_probe(len, 20)), 60, 60);
+    r.has_end = true;
+    r.end = 20;
+    r.loop_mode = ports::SampleLoopMode::kLoopContinuous;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    const Out o = render(e, 2000);
+    CHECK(peak(o) <= 0.3 * G + 1e-4);  // the 5.0 behind `end` is never reached
+    CHECK(e.active_voices() == 1);     // and it still loops
+  }
+  // An offset at or past the end cannot play: unplayable, counted, silent.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.dc(0.5f, 1000), 60, 60);
+    r.has_end = true;
+    r.end = 10;
+    r.offset = 10;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 1);
+  }
+  // A sample with a tail (only a 400 frame head resident, 5000 stored): end inside the head ends the voice there without an underrun; end beyond the head
+  // is still an underrun at the head end, as without `end`.
+  {
+    auto run = [&](std::uint64_t end, bool has_end) {
+      TestInstrument ins;
+      const std::uint32_t si = ins.add_sample(end_probe(400, 300));  // 0.1 .. frame 298, 0.3 at frame 299, 5.0 from frame 300 (inside the head)
+      ins.pcm[si].total_frames = 5000;
+      ins.pcm[si].has_tail = true;
+      auto& r = ins.region(si, 60, 60);
+      r.has_end = has_end;
+      r.end = end;
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      e.start_voice(0, 60, v16(127));
+      const Out o = render(e, 6000);
+      return std::make_tuple(peak(o), e.stream_underrun_events(), e.active_voices());
+    };
+    const auto inside = run(300, true);
+    CHECK(std::get<0>(inside) <= 0.3 * G + 1e-4 && std::get<0>(inside) > 0.25 * G);  // last played frame is 299
+    CHECK(std::get<1>(inside) == 0 && std::get<2>(inside) == 0);
+    const auto at_head = run(400, true);  // end at the head end: still a clean end
+    CHECK(std::get<1>(at_head) == 0 && std::get<2>(at_head) == 0);
+    const auto beyond = run(2000, true);
+    CHECK(std::get<1>(beyond) == 1 && std::get<2>(beyond) == 0);
+    const auto none = run(0, false);
+    CHECK(std::get<1>(none) == 1);
+  }
+}
+
+static void test_all_keys_released_clears_held_keys() {
+  const double G = mono_center_gain();
+  TestInstrument ins;
+  ins.region(ins.dc(0.1f, 40000), 60, 64);
+  { auto& r = ins.region(ins.dc(0.2f, 40000), 60, 64); r.trigger = ports::SampleTrigger::kFirst; }
+  { auto& r = ins.region(ins.dc(0.4f, 40000), 60, 64); r.trigger = ports::SampleTrigger::kLegato; }
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  e.start_voice(0, 60, v16(127));  // the key up never arrives (all notes off / panic instead)
+  drain(e);
+  e.start_voice(0, 62, v16(127));
+  CHECK_NEAR(render(e, 8).l[7] / G, 0.5, 1e-3);  // stuck key: attack + legato
+  drain(e);
+  e.start_voice(0, 60, v16(127));
+  e.all_keys_released(0);
+  drain(e);
+  e.start_voice(0, 62, v16(127));
+  CHECK_NEAR(render(e, 8).l[7] / G, 0.3, 1e-3);  // keys forgotten: attack + first
+  // Another channel's keys are not touched.
+  drain(e);
+  e.start_voice(1, 60, v16(127));
+  e.all_keys_released(0);
+  e.start_voice(1, 62, v16(127));
+  CHECK(e.active_voices() == 4);
+}
+
+static void test_first_and_legato() {
+  const double G = mono_center_gain();
+  TestInstrument ins;
+  ins.region(ins.dc(0.1f, 40000), 60, 64);
+  { auto& r = ins.region(ins.dc(0.2f, 40000), 60, 64); r.trigger = ports::SampleTrigger::kFirst; }
+  { auto& r = ins.region(ins.dc(0.4f, 40000), 60, 64); r.trigger = ports::SampleTrigger::kLegato; }
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  auto level = [&](std::uint32_t note) {  // level one note adds on its own, with the others silenced by a fresh engine state
+    (void)note;
+    return render(e, 8).l[7] / G;
+  };
+  // A first key: attack + first.
+  e.start_voice(0, 60, v16(127));
+  CHECK(e.active_voices() == 2);
+  CHECK_NEAR(level(60), 0.3, 1e-3);
+  // A second key while the first is still down: attack + legato (not first).
+  e.start_voice(0, 62, v16(127));
+  CHECK(e.active_voices() == 4);
+  CHECK_NEAR(level(62), 0.3 + 0.1 + 0.4, 1e-3);
+  // Both keys come up (the engine is told at the physical key up, then the voice stops): the next key starts a phrase again.
+  e.key_released(0, 60);
+  e.key_released(0, 62);
+  e.stop_voice(0, 60);
+  e.stop_voice(0, 62);
+  drain(e);
+  CHECK(e.active_voices() == 0);
+  e.start_voice(0, 64, v16(127));
+  CHECK(e.active_voices() == 2);
+  CHECK_NEAR(level(64), 0.3, 1e-3);
+  // The sustain pedal keeps voices sounding but not keys down: a new key after the physical key up is a first note.
+  e.key_released(0, 64);  // (stop_voice is deferred by the pedal: the voices keep sounding)
+  e.start_voice(0, 61, v16(127));
+  CHECK(e.active_voices() == 4);  // 2 old voices + attack + first (not legato)
+  // A key retriggered while still down does not count itself as "another key".
+  e.key_released(0, 61);
+  drain(e);
+  e.start_voice(0, 63, v16(127));
+  e.start_voice(0, 63, v16(127));
+  CHECK(e.active_voices() == 4);  // two note-ons of the same key, both first
+  drain(e);
+  // A key up for a key that was never down changes nothing.
+  e.key_released(0, 70);
+  e.start_voice(0, 60, v16(127));
+  CHECK(e.active_voices() == 2);
+}
+
+static void test_release_key_vs_release_with_pedal() {
+  const double G = mono_center_gain();
+  TestInstrument ins;
+  ins.region(ins.dc(0.1f, 60000), 60, 60);
+  { auto& r = ins.region(ins.dc(0.2f, 60000), 60, 60); r.trigger = ports::SampleTrigger::kRelease; }
+  { auto& r = ins.region(ins.dc(0.4f, 60000), 60, 60); r.trigger = ports::SampleTrigger::kReleaseKey; }
+  auto run = [&](bool pedal) {
+    auto br = std::make_unique<BlockRenderer>();
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    br->set_channel_engine(2, static_cast<std::uint32_t>(EngineTypeId::kSample));
+    CHECK(br->bind_engine(e));
+    float l[kBlockFrames], r[kBlockFrames];
+    auto block = [&]() { br->process_block(l, r); };
+    if (pedal) br->submit({make_control_change(0, 2, Ump::kControllerSustain, 0xFFFFFFFFu), 0});
+    br->submit({make_note_on(0, 2, 60, 0xFFFF), 0});
+    block();
+    CHECK(e.active_voices() == 1);  // neither release region fires on note on
+    br->submit({make_note_off(0, 2, 60), 0});
+    block();
+    struct R { std::uint32_t after_key_up, after_pedal_up; double level_key_up; };
+    R out{};
+    out.after_key_up = e.active_voices();
+    out.level_key_up = static_cast<double>(l[kBlockFrames - 1]) / G;
+    if (pedal) {
+      br->submit({make_control_change(0, 2, Ump::kControllerSustain, 0u), 0});
+      block();
+    }
+    out.after_pedal_up = e.active_voices();
+    return out;
+  };
+  // Pedal down: the key up fires release_key at once (attack voice held by the pedal + release_key = 2 voices); release waits.
+  const auto held = run(true);
+  CHECK(held.after_key_up == 2);
+  CHECK(held.level_key_up > 0.1 + 0.4 - 0.02 && held.level_key_up < 0.1 + 0.4 + 0.02);  // attack 0.1 + release_key 0.4, no release 0.2
+  CHECK(held.after_pedal_up == 3);                                                          // the pedal up lets release fire
+  // No pedal: both fire at the key up.
+  const auto free_ = run(false);
+  CHECK(free_.after_key_up == 3);
+  CHECK(free_.after_pedal_up == 3);
+}
+
+static void test_release_key_gates() {
+  auto make = [](auto&& tweak) {
+    auto ins = std::make_unique<TestInstrument>();
+    ins->region(ins->dc(0.1f, 60000), 60, 60);
+    auto& r = ins->region(ins->dc(0.4f, 60000), 60, 60);
+    r.trigger = ports::SampleTrigger::kReleaseKey;
+    tweak(r);
+    return ins;
+  };
+  // vel_hi below the note-on velocity: nothing fires; inside the range it does.
+  {
+    auto ins = make([](ports::SampleRegionDesc& r) { r.vel_hi = 50; });
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.start_voice(0, 60, v16(127));
+    CHECK(!e.key_released(0, 60) && e.active_voices() == 1);
+    e.stop_voice(0, 60);
+    drain(e);
+    e.start_voice(0, 60, v16(40));
+    CHECK(e.key_released(0, 60) && e.active_voices() == 2);
+  }
+  // seq_length=2: fires for every second note on.
+  {
+    auto ins = make([](ports::SampleRegionDesc& r) { r.seq_length = 2; r.seq_position = 1; });
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    bool fired[4];
+    for (bool& f : fired) {
+      e.start_voice(0, 60, v16(100));
+      f = e.key_released(0, 60);
+      e.stop_voice(0, 60);
+      drain(e);
+    }
+    CHECK(fired[0] && !fired[1] && fired[2] && !fired[3]);
+  }
+  // A key up without a note on, or twice, fires nothing.
+  {
+    auto ins = make([](ports::SampleRegionDesc&) {});
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    CHECK(!e.key_released(0, 60));
+    e.start_voice(0, 60, v16(100));
+    CHECK(e.key_released(0, 60) && !e.key_released(0, 60));
+  }
+  // A bank without release_key regions: a key up leaves the random sequence (and so the render) untouched.
+  {
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 3000), 60, 60); r.hirand = 0.5f; }
+    { auto& r = ins.region(ins.dc(0.4f, 3000), 60, 60); r.lorand = 0.5f; }
+    auto run = [&](bool key_ups) {
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      Out all;
+      for (int n = 0; n < 12; ++n) {
+        e.start_voice(0, 60, v16(100));
+        const Out a = render(e, 500);
+        all.l.insert(all.l.end(), a.l.begin(), a.l.end());
+        if (key_ups) CHECK(!e.key_released(0, 60));
+        e.stop_voice(0, 60);
+        const Out b = render(e, 4000);
+        all.l.insert(all.l.end(), b.l.begin(), b.l.end());
+      }
+      return all;
+    };
+    CHECK(run(true).l == run(false).l);
+  }
+}
+
 struct LR {
   double l, r;
 };
@@ -853,6 +1158,11 @@ int main() {
   test_envelope();
   test_loops_and_end();
   test_release_trigger();
+  test_sample_end();
+  test_first_and_legato();
+  test_all_keys_released_clears_held_keys();
+  test_release_key_gates();
+  test_release_key_vs_release_with_pedal();
   test_gain_and_pan();
   test_pool_missing_cost_and_info();
   test_interpolation_quality();

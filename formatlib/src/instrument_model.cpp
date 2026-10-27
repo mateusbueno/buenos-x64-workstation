@@ -8,6 +8,10 @@ bool has_extension(const Region& r) {
   return r.sw.any() || r.xf != Crossfade{} || r.filter != Filter{};
 }
 
+bool has_trigger_extension(const Region& r) {
+  return static_cast<std::uint8_t>(r.trigger) > 1 || r.has_end;
+}
+
 namespace {
 bool note_ok(std::int16_t v) { return v >= -1 && v <= 127; }
 
@@ -60,13 +64,15 @@ Error validate_region(const Region& r, std::uint64_t frames) {
   if (r.tune_cents < -1200.f || r.tune_cents > 1200.f) return Error::kInvalidArgument;
   if (r.volume_db < -144.f || r.volume_db > 48.f) return Error::kInvalidArgument;
   if (r.lorand < 0.f || r.hirand > 1.f || r.lorand > r.hirand) return Error::kInvalidArgument;
-  if (static_cast<std::uint8_t>(r.loop_mode) > 3 || static_cast<std::uint8_t>(r.trigger) > 1)
+  if (static_cast<std::uint8_t>(r.loop_mode) > 3 || static_cast<std::uint8_t>(r.trigger) > kMaxTriggerMode)
     return Error::kInvalidArgument;
   const AmpEnvelope& e = r.ampeg;
   for (float t : {e.delay, e.attack, e.hold, e.decay, e.release})
     if (!finite(t) || t < 0.f || t > 100.f) return Error::kInvalidArgument;
   for (float p : {e.start, e.sustain})
     if (!finite(p) || p < 0.f || p > 100.f) return Error::kInvalidArgument;
+  if (!r.has_end && r.end != 0) return Error::kInvalidArgument;
+  if (r.end > (std::uint64_t(1) << 40)) return Error::kInvalidArgument;
   if (validate_extension(r) != Error::kNone) return Error::kInvalidArgument;
   if (r.offset >= frames) return Error::kInvalidArgument;
   if (r.has_loop_points) {

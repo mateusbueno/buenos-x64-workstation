@@ -174,10 +174,15 @@ class Engine {
   // The key (channel, note) physically came up (Story 5.2). Called at the note off even when the sustain pedal defers the engine's
   // stop_voice() to the pedal up, so that engines that follow held keys (sw_down / sw_up keyswitches) see the release at once.
   // Idempotent for the engine: stop_voice() of the same key afterwards changes nothing more. Default: nothing.
-  virtual void key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING {
+  // Returns true when the engine started a voice because of the key up (the sample engine's trigger=release_key): the block loop then binds the
+  // generation to the key. Default: false.
+  virtual bool key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING {
     (void)channel;
     (void)note;
+    return false;
   }
+  // Every key of `channel` is up (all sound off / all notes off, Story 13.3): engines that track held keys forget them. Default: nothing.
+  virtual void all_keys_released(std::uint32_t channel) noexcept VELORA_NONBLOCKING { (void)channel; }
 
   // A Live Set switch takes effect (Story 5.2): drop the per-part play state that belongs to the previous Live Set (the sample engine
   // returns every part to its instrument's sw_default keyswitch and forgets held keys). Sounding voices are not touched. Default: nothing.

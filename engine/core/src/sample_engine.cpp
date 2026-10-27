@@ -148,6 +148,8 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
       r.right = pcm.right;
       r.has_tail = pcm.total_frames > pcm.frames;
       r.total_frames = r.has_tail ? pcm.total_frames : pcm.frames;
+      if (d.has_end && d.end > 0)  // Story 13.3: exclusive end, clamped to the stored length of the sample
+        r.end_cut = static_cast<std::int64_t>(std::min<std::uint64_t>(d.end, r.total_frames));
       if (r.has_tail) {  // Story 1.17: the tail's reader and the resident loop segments travel with the region (borrowed; the bank's owner keeps them alive)
         r.tail_source = pcm.tail_source;
         r.tail_sample = pcm.tail_sample;
@@ -168,7 +170,7 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
                                                           static_cast<double>(cfg_.sample_rate));
       r.playable = (pcm.channels == 1 || pcm.channels == 2) && pcm.frames > 0 && pcm.left != nullptr &&
                    (pcm.channels == 1 || pcm.right != nullptr) && pcm.sample_rate != 0 &&
-                   d.offset < pcm.frames && d.key_lo <= d.key_hi && d.vel_lo <= d.vel_hi &&
+                   d.offset < pcm.frames && (r.end_cut < 0 || static_cast<std::int64_t>(d.offset) < r.end_cut) && d.key_lo <= d.key_hi && d.vel_lo <= d.vel_hi &&
                    region_params_sane(d);
       if (r.playable) {
         // Pitch ratio at the extreme keys of the range must be finite and sane.
@@ -180,14 +182,16 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
         r.playable = std::isfinite(rmax) && std::isfinite(rmin) && rmax <= kMaxRatio && rmin >= kMinRatio;
       }
     }
-    if (!r.playable) ++bank->unplayable_regions;
+    r.disabled = d.has_end && d.end == 0;  // sfizz: end=0 switches the region off
+    if (!r.playable && !r.disabled) ++bank->unplayable_regions;
 
     r.uses_sequence = d.seq_length != 1 || d.seq_position != 1;
 
     // Loops: only the two looping modes, with the range inside the sample (otherwise no loop, as sfizz).
     if (d.loop_mode == velora::ports::SampleLoopMode::kLoopContinuous ||
         d.loop_mode == velora::ports::SampleLoopMode::kLoopSustain) {
-      const std::uint64_t loop_frames = r.has_tail ? r.total_frames : r.frames;  // a loop may lie beyond the head; the voice then underruns at the head end
+      std::uint64_t loop_frames = r.has_tail ? r.total_frames : r.frames;  // a loop may lie beyond the head; the voice then underruns at the head end
+      if (r.end_cut >= 0) loop_frames = std::min<std::uint64_t>(loop_frames, static_cast<std::uint64_t>(r.end_cut));  // a loop must lie inside the played part
       std::int64_t ls = 0, le = static_cast<std::int64_t>(loop_frames) - 1;
       if (d.has_loop_points) {
         ls = static_cast<std::int64_t>(std::min<std::uint64_t>(d.loop_start, INT64_MAX));
@@ -267,15 +271,19 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
 
   // Per-note lookup, regions in table order (a note's regions are visited in that order).
   std::array<std::uint32_t, 128> counts{};
-  for (const auto& r : regions)
+  for (const auto& r : regions) {
+    if (r.disabled) continue;
     for (unsigned n = r.d.key_lo; n <= std::min<unsigned>(r.d.key_hi, 127); ++n) ++counts[n];
+  }
   bank->note_begin[0] = 0;
   for (unsigned n = 0; n < 128; ++n) bank->note_begin[n + 1] = bank->note_begin[n] + counts[n];
   bank->note_list.assign(bank->note_begin[128], 0);
   std::array<std::uint32_t, 128> fill{};
-  for (std::uint32_t i = 0; i < regions.size(); ++i)
+  for (std::uint32_t i = 0; i < regions.size(); ++i) {
+    if (regions[i].disabled) continue;
     for (unsigned n = regions[i].d.key_lo; n <= std::min<unsigned>(regions[i].d.key_hi, 127); ++n)
       bank->note_list[bank->note_begin[n] + fill[n]++] = i;
+  }
 
   bank->seq_counter.assign(regions.size(), 0);
   bank->seq_switched.assign(regions.size(), 0);
@@ -368,9 +376,43 @@ bool SampleEngine::set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32
   return true;
 }
 
-void SampleEngine::key_released(std::uint32_t channel, std::uint32_t note) noexcept {
-  if (note > 127) return;
-  ks_[channel & 15u].set_held(static_cast<int>(note), false);
+bool SampleEngine::key_released(std::uint32_t channel, std::uint32_t note) noexcept {
+  if (note > 127) return false;
+  channel &= 15u;
+  KeyState& ks = ks_[channel];
+  const bool was_held = ks.is_held(static_cast<int>(note));
+  ks.set_held(static_cast<int>(note), false);
+  if (!was_held) return false;  // a key up for a key that was not down (or a repeat) fires nothing
+
+  // Story 13.3, trigger=release_key: fires at the physical key up, whatever the sustain pedal does (trigger=release is started by stop_voice_impl, which the
+  // block loop defers to the pedal up). Same gates as a release region: the note-on velocity, round robin, keyswitch, an attack voice still alive.
+  SampleBank* bank = bank_for(channel);
+  const std::uint64_t started_on = last_bank_[channel * 128u + note];
+  if (!bank || (started_on && started_on != bank->id)) return false;
+  bool started = false;
+  bool drawn = false;
+  float rnd = 0.0f;  // drawn at the first candidate only, so a bank without release_key regions never moves the random sequence
+  const std::uint8_t vel7 = last_vel7_[channel * 128u + note];
+  for (std::uint32_t i = bank->note_begin[note]; i < bank->note_begin[note + 1]; ++i) {
+    const std::uint32_t ri = bank->note_list[i];
+    const RegionRt& r = bank->regions[ri];
+    if (r.d.trigger != velora::ports::SampleTrigger::kReleaseKey) continue;
+    if (r.has_keyswitch && !region_switched(r, ks)) continue;
+    if (!bank->seq_switched[ri]) continue;
+    if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
+    if (!drawn) {
+      rnd = next_random();
+      drawn = true;
+    }
+    if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
+    if (!playing_attack_voice(r, channel, true)) continue;
+    if (!r.playable) {
+      ++skipped_unplayable_;
+      continue;
+    }
+    if (start_region(*bank, ri, channel, note, vel7, true)) started = true;  // a full voice pool drops the release sample, as it would a note
+  }
+  return started;
 }
 
 bool SampleEngine::region_switched(const RegionRt& r, const KeyState& ks) const noexcept {
@@ -569,6 +611,7 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
   SampleBank* bank = bank_for(channel);
   if (note > 127) return EngineStatus::kOk;
   KeyState& ks = ks_[channel];
+  const bool others_held = ks.others_held(static_cast<int>(note));  // Story 13.3: before this key goes down (first / legato)
   ks.set_held(static_cast<int>(note), true);  // the key state follows the keyboard even when the part has no (or an empty) instrument
   if (!bank || bank->regions.empty()) {
     ks.prev = static_cast<std::int16_t>(note);
@@ -592,7 +635,8 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
     const RegionRt& r = bank->regions[ri];
     // Round robin: every region whose key range holds the note advances its own counter.
     bank->seq_switched[ri] = (bank->seq_counter[ri]++ % r.d.seq_length) == r.d.seq_position - 1 ? 1 : 0;
-    if (r.d.trigger != velora::ports::SampleTrigger::kAttack) continue;
+    using Trig = velora::ports::SampleTrigger;
+    if (r.d.trigger == Trig::kFirst ? others_held : r.d.trigger == Trig::kLegato ? !others_held : r.d.trigger != Trig::kAttack) continue;
     if (r.has_keyswitch && !region_switched(r, ks)) continue;
     if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
@@ -851,7 +895,10 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
   const bool linear = cfg_.interpolation == SampleInterpolation::kLinear;
   const bool streamed = v.streamed;  // Story 1.17: the sample is `total_frames` long and the head is only its first part
   const std::int64_t nframes = static_cast<std::int64_t>(streamed ? r.total_frames : r.frames);
-  const std::int64_t end_idx = nframes - 2;  // sfizz: positions at or past this index end the sample
+  // Story 13.3: `end` (exclusive) makes the played part [0, eff_n); without it eff_n == nframes and nothing below changes.
+  const std::int64_t eff_n = (r.end_cut >= 0 && r.end_cut < nframes) ? r.end_cut : nframes;
+  const std::int64_t end_idx = eff_n - 2;  // sfizz: positions at or past this index end the sample
+  const bool head_cut = r.end_cut >= 0 && r.end_cut <= static_cast<std::int64_t>(r.frames);  // the sample ends inside the resident head: not an underrun
   const bool sustain_loop = r.d.loop_mode == velora::ports::SampleLoopMode::kLoopSustain;
   const float gl = v.gain_l * gain_, gr = v.gain_r * gain_;
   const bool has_xf = r.has_xfade, filtered = r.filtered;
@@ -949,9 +996,9 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       // the frame where the position reaches the end) while the last frame is held below.
       v.ended = true;
       env_fast_release(v.env);
-      if (r.has_tail && !streamed) underrun_events_.fetch_add(1, std::memory_order_relaxed);  // Story 1.16: the head of a sample with a tail ran out (a streamed voice reads on)
+      if (r.has_tail && !streamed && !head_cut) underrun_events_.fetch_add(1, std::memory_order_relaxed);  // Story 1.16: the head of a sample with a tail ran out (a streamed voice reads on)
     }
-    if (looping && r.has_tail && !streamed && idx >= end_idx) {  // a loop that reaches beyond the resident head: same ending, same count (once ended, the voice no longer loops)
+    if (looping && r.has_tail && !streamed && !head_cut && idx >= end_idx) {  // a loop that reaches beyond the resident head: same ending, same count (once ended, the voice no longer loops)
       v.ended = true;
       env_fast_release(v.env);
       underrun_events_.fetch_add(1, std::memory_order_relaxed);
@@ -976,7 +1023,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
         } else {
           float a = 0.0f, b = 0.0f;
           std::size_t slot = kNoSlot;
-          ok = stream_frame(sv, nframes - 1, a, b, slot) || (refresh_stream() && stream_frame(sv, nframes - 1, a, b, slot));
+          ok = stream_frame(sv, eff_n - 1, a, b, slot) || (refresh_stream() && stream_frame(sv, eff_n - 1, a, b, slot));
           sl = a;
           sr_ = r.stereo ? b : a;
           if (ok) {
@@ -1050,8 +1097,8 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
         sr_ = v.last_r * v.sgain;
       }
     } else if (idx >= end_idx && (!looping || r.has_tail)) {  // past the end (or, for a looping voice with a tail, past the resident head): hold the last frame
-      sl = r.left[nframes - 1];
-      sr_ = r.stereo ? r.right[nframes - 1] : sl;
+      sl = r.left[eff_n - 1];
+      sr_ = r.stereo ? r.right[eff_n - 1] : sl;
     } else {
       const float c = static_cast<float>(v.pos - static_cast<double>(idx));
       if (linear) {

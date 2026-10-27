@@ -30,7 +30,7 @@ class FmEngine final : public Engine {
 
   EngineStatus start_voice(uint32_t channel, uint32_t note, uint32_t velocity16) noexcept override;
   EngineStatus stop_voice(uint32_t channel, uint32_t note) noexcept override;
-  void key_released(uint32_t channel, uint32_t note) noexcept override;
+  bool key_released(uint32_t channel, uint32_t note) noexcept override;
   void set_param(uint32_t param_id, float value) noexcept override;
   // Registry part parameters ids 1000..1103 (fm_*), see part_params.hpp ("engagement"): they edit the part's patch, so they sound on the
   // NEXT note of the part (a sounding note keeps the patch it started with, the usual FM patch-edit behaviour); fm_brightness also follows the

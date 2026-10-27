@@ -24,7 +24,11 @@ enum class SampleLoopMode : std::uint8_t {
 
 enum class SampleTrigger : std::uint8_t {
   kAttack = 0,   // fires on note on
-  kRelease = 1,  // fires on note off
+  kRelease = 1,  // fires on note off (after the sustain pedal, like the voice it follows)
+  // Story 13.3.
+  kFirst = 2,       // fires on note on while no other key of the part is held
+  kLegato = 3,      // fires on note on while another key of the part is held
+  kReleaseKey = 4,  // fires at the physical key up, whatever the sustain pedal does
 };
 
 // Story 5.2 extension (keyswitches, CC crossfades, basic filter). Every field defaults to "the region does not use it", so a
@@ -73,6 +77,10 @@ struct SampleRegionDesc {
   float ampeg_delay = 0.0f, ampeg_start = 0.0f, ampeg_attack = 0.0f, ampeg_hold = 0.0f,
         ampeg_decay = 0.0f, ampeg_sustain = 100.0f, ampeg_release = 0.0f;
   SampleTrigger trigger = SampleTrigger::kAttack;
+  // Story 13.3: `end`, exclusive, in frames of the region's sample. The last played frame is min(end, length) - 1. has_end with end == 0: the
+  // region is disabled (never played, not counted as unplayable). has_end = false: plays to the end of the sample.
+  bool has_end = false;
+  std::uint64_t end = 0;
   // Story 5.2: keyswitches, CC crossfades (xfin_*/xfout_* on up to four controllers each, entries sorted by cc), basic filter
   // (filter_type kNone = no filter; cutoff in Hz, resonance in dB).
   SampleKeyswitch sw;

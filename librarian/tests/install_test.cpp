@@ -603,8 +603,8 @@ void test_signed_but_wrong() {
   {
     pfx::Pack q = clone(p, t.sub("ver") + "/" + p.library_id);
     pfx::write_bytes(q.dir / "bundle.vlrp", pfx::resign(p.bundle, K1().seed, [](Bytes& manifest, Bytes& header) {
-                       manifest[2] = 2;  // minor 2 in the manifest's version word ...
-                       header[6] = 2;    // ... and in the header's
+                       manifest[2] = 3;  // minor 3 in the manifest's version word ...
+                       header[6] = 3;    // ... and in the header's
                      }));
     const InstallResult r = install_protected(opts(root, q));
     CHECK(r.status == InstallStatus::kRejected && r.reason == InstallReason::kUnsupportedVersion && nothing_published(root));

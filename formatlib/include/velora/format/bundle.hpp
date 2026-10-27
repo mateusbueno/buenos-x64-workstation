@@ -35,7 +35,10 @@ namespace velora::format {
 // bundle with kUnsupportedVersion rather than misreading it. Minor 1 requires at least one
 // extension record (kCorruptManifest otherwise), so every content has exactly one encoding.
 inline constexpr std::uint32_t kFormatVersion = 2;
-inline constexpr std::uint32_t kFormatMinor = 1;
+// Minor 2 (Story 13.3) appends, after the minor 1 table of each instrument (present, possibly with zero records, in a minor 2 bundle), a trigger/end
+// table: trigger=first/legato/release_key and `end`. The writer stamps minor 2 only for a bundle with such a region; every other bundle is byte-
+// identical to what it was (minor 0 or 1). Minor 2 requires at least one trigger/end record (kCorruptManifest otherwise).
+inline constexpr std::uint32_t kFormatMinor = 2;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -77,7 +80,8 @@ struct WriterOptions {
   // kFormatVersion + 1 produces one the reader must reject; anything else fails finalize().
   std::uint32_t format_version = kFormatVersion;
   // Test hook for the minor policy: 0 makes the writer refuse regions that need the extension
-  // table (kInvalidArgument at finalize); 1 (default) stamps minor 1 only when one is present.
+  // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 (default) stamps minor 1 or 2 only when
+  // one is needed.
   std::uint32_t format_minor = kFormatMinor;
 };
 
@@ -241,7 +245,7 @@ class BundleReader {
   ~BundleReader();
 
   std::uint32_t format_version() const { return version_; }  // major
-  std::uint32_t format_minor() const { return minor_; }       // 0 = Epic 1 layout, 1 = with extensions
+  std::uint32_t format_minor() const { return minor_; }       // 0 = Epic 1 layout, 1 = with extensions, 2 = with the trigger/end table
   const Digest256& bundle_id() const { return bundle_id_; }  // SHA-256 of the manifest bytes
   const Uuid& library_id() const { return library_id_; }
   std::span<const InstrumentInfo> instruments() const { return instruments_; }

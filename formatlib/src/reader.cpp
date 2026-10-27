@@ -279,7 +279,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
-  std::uint64_t total_ext = 0;
+  std::uint64_t total_ext = 0, total_trig = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -378,6 +378,33 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
             return Error::kCorruptManifest;
         }
       }
+      if (minor >= 2) {  // the trigger/end table (Story 13.3) follows the minor 1 table
+        const std::uint32_t n_trig = c.u32();
+        if (!c.ok() || n_trig > n_regions || n_trig > c.remaining() / kTrigRecordSize) return Error::kCorruptManifest;
+        total_trig += n_trig;
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_trig; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          const std::uint8_t trig = c.u8(), flags = c.u8();
+          const std::uint8_t pad0 = c.u8(), pad1 = c.u8();
+          const std::uint64_t end = c.u64();
+          // The region record's trigger byte is 1 for trigger=release and 0 for the rest: the table must agree.
+          const std::uint8_t base = rg.trigger == TriggerMode::kRelease ? 1 : 0;
+          if (!c.ok() || trig > kMaxTriggerMode || (flags & ~1u) || pad0 || pad1 || (!(flags & 1u) && end != 0) ||
+              base != (trig == 1 ? 1 : 0))
+            return Error::kCorruptManifest;
+          rg.trigger = static_cast<TriggerMode>(trig);
+          rg.has_end = (flags & 1u) != 0;
+          rg.end = end;
+          // Canonical: a record exists only for a region that really needs it.
+          if (!has_trigger_extension(rg) ||
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+      }
     }
     r.instruments.push_back(std::move(ins));
   }
@@ -385,7 +412,8 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
     return Error::kCorruptManifest;
   // Canonical: minor 1 exists only for bundles that carry at least one extension record (the same
   // content must not have two encodings, hence two bundle ids).
-  if (minor >= 1 && total_ext == 0) return Error::kCorruptManifest;
+  if (minor == 1 && total_ext == 0) return Error::kCorruptManifest;
+  if (minor >= 2 && total_trig == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index.resize(n_blocks);

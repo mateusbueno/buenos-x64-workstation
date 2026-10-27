@@ -374,6 +374,7 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
         input_pedal_down_ = Ump::sustain_down(ump.controller_value32());
       } else if (cc == 120 || cc == 123) {  // all sound off / all notes off: that channel's keys are up (a lost note off must not stick)
         const std::size_t base = static_cast<std::size_t>(ump.channel() & 0xFu) * 128u;
+        for (std::size_t e = 0; e < registry_.size(); ++e) registry_.at(e)->all_keys_released(ump.channel() & 0xFu);  // engines that track held keys (first / legato)
         for (std::size_t n = 0; n < 128; ++n) {
           if (input_held_[base + n]) {
             input_held_[base + n] = 0;
@@ -499,7 +500,10 @@ void BlockRenderer::apply_part_note(std::uint32_t channel, std::uint32_t note, s
     record(rs);  // silence: nothing is rendered for this request
     return;
   }
-  if (!on) engine->key_released(channel, note);  // the key is up even when the pedal keeps the voice (sw_down / sw_up follow the key)
+  if (!on) {
+    // the key is up even when the pedal keeps the voice (sw_down / sw_up follow the key; trigger=release_key fires here)
+    if (engine->key_released(channel, note) && router_.active()) bind_generation(channel, note);  // a release_key voice started on the part's current instrument
+  }
   if (on) {
     const EngineStatus st = engine->start_voice(channel, note, velocity16);
     record(st);

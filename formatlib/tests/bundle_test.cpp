@@ -788,7 +788,7 @@ void test_extensions() {
     CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
     const Bytes good = w.finalize().take();
     CHECK(BundleReader::open_memory(good).ok());
-    { Bytes b = good; wr32(b, 4, 2u | (2u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 2u | (3u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 3u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 1u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 2u); CHECK(!BundleReader::open_memory(b).ok()); }  // word differs from the manifest's
@@ -882,6 +882,128 @@ void test_extensions() {
     for (std::size_t k = end - layout::kExtRecordSize; k < end; ++k) { got += hexd[b[k] >> 4]; got += hexd[b[k] & 15]; }
     CHECK(got == "0000000057181c1a0025001a02010004010040000b0a140000000000000000004a407f000000000000000000000000000010964400006040");
     CHECK(layout::kExtRecordSize == 56);
+  }
+  {  // Story 13.3: format 2.2, trigger first/legato/release_key and `end`
+    Region first = plain; first.trigger = TriggerMode::kFirst;
+    Region legato = plain; legato.trigger = TriggerMode::kLegato; legato.has_end = true; legato.end = 700;
+    Region rkey = ext_region(0); rkey.trigger = TriggerMode::kReleaseKey;
+    Region only_end = sample_region(0); only_end.has_end = true; only_end.end = 5000;  // beyond the file: stored as given
+    Region off = plain; off.has_end = true; off.end = 0;                                // disabled region
+    const std::vector<Region> a = {plain, first, legato, rkey, only_end, off};
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    for (const auto& r : a) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, plain), Error::kNone);  // an instrument without trigger/end records still carries `u32 0`
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (2u << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == 2);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == a);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && r.value().instruments()[1].regions[0] == plain);
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    CHECK(w.finalize().take() == b);  // deterministic
+    // N-1 writer: refuses trigger/end regions, and writes any other content as before (minor 1 or 0).
+    BundleWriter w1(WriterOptions{kFormatVersion, 1});
+    const std::size_t j0 = w1.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w1.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w1.add_region(j0, first), Error::kNone);
+    CHECK_ERR(w1.finalize().error(), Error::kInvalidArgument);
+    // Content without them is byte-identical whatever the writer's minor ceiling (existing bundles do not change).
+    for (const Region& rg : {plain, sample_region(0), ext_region(0)}) {
+      Bytes by[3];
+      for (std::uint32_t m = 0; m < 3; ++m) {
+        if (m == 0 && has_extension(rg)) continue;
+        BundleWriter x(WriterOptions{kFormatVersion, m});
+        const std::size_t k = x.add_instrument("A", "a.sfz").value();
+        CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+        CHECK_ERR(x.add_region(k, rg), Error::kNone);
+        by[m] = x.finalize().take();
+      }
+      CHECK(by[2] == by[1] || by[1].empty());
+      CHECK(by[2] == by[0] || by[0].empty());
+      CHECK(version_word(by[2]) == (has_extension(rg) ? (2u | (1u << 16)) : 2u));
+    }
+    // The N-1 reader view: a minor 1 bundle still opens (kFormatMinor is 2).
+    {
+      BundleWriter x;
+      const std::size_t k = x.add_instrument("A", "a.sfz").value();
+      CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+      CHECK_ERR(x.add_region(k, ext_region(0)), Error::kNone);
+      auto rr = BundleReader::open_memory(x.finalize().take());
+      CHECK(rr.ok() && rr.value().format_minor() == 1);
+    }
+    // Writer-side validation.
+    BundleWriter v;
+    const std::size_t vi = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(vi, {"s", f, 1000, pcm}), Error::kNone);
+    { Region x = plain; x.end = 5; CHECK_ERR(v.add_region(vi, x), Error::kInvalidArgument); }  // end without has_end
+    { Region x = plain; x.trigger = static_cast<TriggerMode>(5); CHECK_ERR(v.add_region(vi, x), Error::kInvalidArgument); }
+    // Corruption of the trigger table (the last instrument's table is the tail of the manifest only when it is the last record).
+    BundleWriter u;
+    const std::size_t ui = u.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(u.add_sample(ui, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(u.add_region(ui, plain), Error::kNone);
+    CHECK_ERR(u.add_region(ui, legato), Error::kNone);
+    const Bytes good = u.finalize().take();
+    const std::size_t end = rd64(good, 8) + rd64(good, 16), rec = end - layout::kTrigRecordSize;
+    CHECK(layout::kTrigRecordSize == 16 && layout::get_u32(good.data() + rec - 4) == 1u && layout::get_u32(good.data() + rec) == 1u);
+    CHECK(good[rec + 4] == 3 && good[rec + 5] == 1 && layout::get_u64(good.data() + rec + 8) == 700u);
+    auto expect_bad = [&](Bytes bad, const char* what) {
+      rehash(bad);
+      auto rb = BundleReader::open_memory(bad);
+      if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL trigger table corruption not rejected: %s\n", what); ++g_fail; }
+    };
+    { Bytes b = good; b[rec + 4] = 5; expect_bad(b, "trigger 5"); }
+    { Bytes b = good; b[rec + 4] = 1; expect_bad(b, "trigger byte disagrees with the region record"); }
+    { Bytes b = good; b[rec + 5] = 3; expect_bad(b, "reserved flag bit"); }
+    { Bytes b = good; b[rec + 6] = 1; expect_bad(b, "non-zero padding"); }
+    { Bytes b = good; b[rec + 5] = 0; expect_bad(b, "end without has_end"); }
+    { Bytes b = good; wr32(b, rec, 9); expect_bad(b, "region index out of range"); }
+    { Bytes b = good; wr32(b, rec - 4, 3); expect_bad(b, "n_trig larger than regions"); }
+    { Bytes b = good; b[rec + 4] = 0; b[rec + 5] = 0; std::fill(b.begin() + rec + 8, b.begin() + rec + 16, std::uint8_t(0)); expect_bad(b, "all-default record"); }
+    // The region record's own trigger byte is 0/1 only: first/legato/release_key there would be a second encoding (every minor).
+    {
+      const std::size_t reg1 = end - layout::kTrigRecordSize - 4 - 4 - layout::kRegionRecordSize;  // region 1 (legato): its record precedes n_ext, n_trig, the record
+      CHECK(good[reg1 + 10] == 0);
+      for (std::uint8_t t : {2, 3, 4}) { Bytes b = good; b[reg1 + 10] = t; expect_bad(b, "region record trigger byte > 1 (minor 2)"); }
+      BundleWriter m0;
+      const std::size_t k = m0.add_instrument("A", "a.sfz").value();
+      CHECK_ERR(m0.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+      CHECK_ERR(m0.add_region(k, plain), Error::kNone);
+      Bytes b0 = m0.finalize().take();  // minor 0: the region record is the manifest tail
+      const std::size_t r0 = rd64(b0, 8) + rd64(b0, 16) - layout::kRegionRecordSize;
+      for (std::uint8_t t : {2, 4}) { Bytes b = b0; b[r0 + 10] = t; expect_bad(b, "region record trigger byte > 1 (minor 0)"); }
+    }
+    for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+      CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+    for (std::size_t off = rec - 4; off < end; ++off)
+      for (int bit = 0; bit < 8; ++bit) {
+        Bytes bad = good;
+        bad[off] ^= std::uint8_t(1 << bit);
+        rehash(bad);
+        auto r3 = BundleReader::open_memory(bad);
+        if (!r3.ok() && r3.error() != Error::kCorruptManifest) { std::printf("FAIL trig flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error())); ++g_fail; }
+      }
+    // A minor 2 stamp on a bundle with no trigger record is non-canonical.
+    {
+      BundleWriter x;
+      const std::size_t k = x.add_instrument("A", "a.sfz").value();
+      CHECK_ERR(x.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+      CHECK_ERR(x.add_region(k, ext_region(0)), Error::kNone);
+      Bytes b = x.finalize().take();  // minor 1
+      const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+      b.insert(b.begin() + mo + ms, 4, std::uint8_t(0));  // n_trig = 0
+      wr64(b, 16, ms + 4); wr64(b, 24, io + 4); wr64(b, 40, rd64(b, 40) + 4); wr64(b, 56, rd64(b, 56) + 4);
+      for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
+      wr32(b, 4, 2u | (2u << 16));
+      wr32(b, mo, 2u | (2u << 16));
+      rehash(b);
+      CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    }
   }
 }
 

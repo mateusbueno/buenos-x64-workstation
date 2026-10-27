@@ -134,13 +134,13 @@ int main() {
   }
   {  // unsupported things are all reported, none silently dropped
     auto r = parse("<region> sample=a.wav key=60 lfo01_freq=1 ampeg_release_oncc4=2 amp_veltrack=50\n"
-                   "<effect>\n<region> sample=*sine key=1\n<region> sample=a.wav key=2 trigger=first\n"
+                   "<effect>\n<region> sample=*sine key=1\n<region> sample=a.wav key=2 trigger=bogus\n"
                    "<region> sample=a.wav key=3 loop_mode=loop_bidir\n");
     CHECK(!r.ok());
     CHECK(has(r, SfzIssueKind::kUnsupportedOpcode, "'lfo01_freq'") && has(r, SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_oncc4'") &&
           has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_veltrack'"));
     CHECK(has(r, SfzIssueKind::kUnsupportedHeader, "<effect>"));
-    CHECK(has(r, SfzIssueKind::kUnsupportedValue, "'first'") && has(r, SfzIssueKind::kUnsupportedValue, "'loop_bidir'"));
+    CHECK(has(r, SfzIssueKind::kUnsupportedValue, "'bogus'") && has(r, SfzIssueKind::kUnsupportedValue, "'loop_bidir'"));
     CHECK(has(r, SfzIssueKind::kUnsupportedValue, "*sine"));
   }
   {  // invalid values and structure
@@ -276,10 +276,35 @@ int main() {
     CHECK(has(parse("<group>\nampeg_dynamic=1 ampeg_release_oncc72=2\n<region> sample=a.wav key=60\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_oncc72'"));
     CHECK(has(parse("<region> sample=a.wav key=60 ampeg_vel2release=1\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_vel2release'"));
   }
+  {  // Story 13.3: end and the trigger modes
+    auto r = parse("<region> sample=a.wav key=60 end=100\n<region> sample=a.wav key=61 end=0\n<region> sample=a.wav key=62 end=-1\n"
+                   "<region> sample=a.wav key=63\n<region> sample=a.wav key=64 trigger=first\n<region> sample=a.wav key=65 trigger=legato\n"
+                   "<region> sample=a.wav key=66 trigger=release_key\n<region> sample=a.wav key=67 trigger=release\n"
+                   "<region> sample=a.wav key=68 trigger=attack end=44100\n");
+    CHECK(r.ok() && r.regions.size() == 9);
+    if (r.regions.size() == 9) {
+      CHECK(r.regions[0].has_end && r.regions[0].end == 100);
+      CHECK(r.regions[1].has_end && r.regions[1].end == 0);  // end=0 disables the region
+      CHECK(r.regions[2].has_end && r.regions[2].end == 0);  // below 0 too
+      CHECK(!r.regions[3].has_end && r.regions[3].end == 0);
+      CHECK(r.regions[4].trigger == TriggerMode::kFirst && r.regions[5].trigger == TriggerMode::kLegato);
+      CHECK(r.regions[6].trigger == TriggerMode::kReleaseKey && r.regions[7].trigger == TriggerMode::kRelease);
+      CHECK(r.regions[8].trigger == TriggerMode::kAttack && r.regions[8].end == 44100);
+      CHECK( !has_trigger_extension(r.regions[3]) && has_trigger_extension(r.regions[0]) &&
+            has_trigger_extension(r.regions[4]) && !has_trigger_extension(r.regions[7]));
+    }
+    CHECK(classify_opcode("end") == OpcodeClass::kSupported);
+    CHECK(!parse("<region> sample=a.wav key=60 end=abc\n").ok());
+    CHECK(has(parse("<region> sample=a.wav key=60 end=abc\n"), SfzIssueKind::kInvalidValue, "'end'"));
+    CHECK(has(parse("<region> sample=a.wav key=60 trigger=bogus\n"), SfzIssueKind::kUnsupportedValue, "'bogus'"));
+    // end is inherited like any region opcode.
+    auto g = parse("<group> end=50\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61 end=70\n");
+    CHECK(g.ok() && g.regions.size() == 2 && g.regions[0].end == 50 && g.regions[1].end == 70);
+  }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
     const char* bad[] = {"script", "set_cc1", "set_hdcc1", "lfo01_freq", "eg01_time1", "amplitude_oncc1",
                          "effect1", "output", "group", "off_by", "polyphony", "note_offset", "octave_offset",
-                         "amp_veltrack", "sample_quality", "delay", "end", "cutoff2", "fil2_type", "pitch_keytrack"};
+                         "amp_veltrack", "sample_quality", "delay", "rt_decay", "cutoff2", "fil2_type", "pitch_keytrack"};
     for (const char* op : bad) {
       auto r = parse(std::string("<region> sample=a.wav key=60 ") + op + "=1\n");
       bool found = false;

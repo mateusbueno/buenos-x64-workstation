@@ -26,6 +26,10 @@ struct SampleBankRegion {
   std::uint64_t frames = 0;
   bool stereo = false;
   bool playable = false;
+  // Story 13.3. disabled: `end=0` (the region never plays and is not in the per-note lookup). end_cut: min(end, sample length) in frames when the region has an
+  // `end`, else -1; the last played frame is end_cut - 1.
+  bool disabled = false;
+  std::int64_t end_cut = -1;
   bool uses_sequence = false;
   bool loops = false;  // loop_continuous / loop_sustain with a valid loop range
   std::int64_t loop_start = 0, loop_end = 0, loop_size = 0;

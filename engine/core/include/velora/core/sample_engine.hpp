@@ -114,7 +114,8 @@ class SampleEngine final : public Engine {
   // sfizz's: 0 everywhere except CC7 = 100, CC10 = 63.5, CC11 = 127. Delivered by the block loop, RT-owned, lock-free.
   bool set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
   float part_cc(std::uint32_t part, std::uint32_t cc) const noexcept { return cc_[part & 15u][cc & 127u]; }
-  void key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING override;
+  bool key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING override;
+  void all_keys_released(std::uint32_t channel) noexcept VELORA_NONBLOCKING override { ks_[channel & 15u].held = {}; }  // trigger=first / legato must not see stuck keys
   void reset_play_state() noexcept VELORA_NONBLOCKING override;
   // Registry part parameters part_attack (403, ms) and part_release (404, ms) (Story 9.9 follow-up; see part_params.hpp "engagement"). Once moved off
   // their registry defaults (10 ms / 300 ms) they REPLACE the instrument's own ampeg_attack / ampeg_release for the part: the attack applies to
@@ -259,6 +260,12 @@ class SampleEngine final : public Engine {
     std::int16_t last = -1;                // last keyswitch key pressed, -1 none
     std::int16_t prev = -1;                // the note on before the current one, -1 none
     std::array<std::uint64_t, 2> held{};   // keys currently down (bit n of held[n >> 6])
+    // Story 13.3 (trigger=first / legato): is any key other than `k` down? Fixed-size bit test, no allocation.
+    bool others_held(int k) const noexcept {
+      std::array<std::uint64_t, 2> h = held;
+      if (k >= 0 && k < 128) h[static_cast<std::size_t>(k) >> 6] &= ~(std::uint64_t{1} << (k & 63));
+      return (h[0] | h[1]) != 0;
+    }
     bool is_held(int k) const noexcept { return k >= 0 && k < 128 && ((held[static_cast<std::size_t>(k) >> 6] >> (k & 63)) & 1u) != 0; }
     void set_held(int k, bool down) noexcept {
       const std::uint64_t m = std::uint64_t{1} << (k & 63);

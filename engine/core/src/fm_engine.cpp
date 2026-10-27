@@ -117,13 +117,14 @@ EngineStatus FmEngine::stop_voice(uint32_t channel, uint32_t note) noexcept {
   return found ? EngineStatus::kOk : EngineStatus::kVoiceNotFound;
 }
 
-void FmEngine::key_released(uint32_t channel, uint32_t note) noexcept {
+bool FmEngine::key_released(uint32_t channel, uint32_t note) noexcept {
   uint8_t note7 = static_cast<uint8_t>(std::clamp(note, 0u, 127u));
   for (auto& v : voices_) {
     if (v.is_active() && v.channel() == channel && v.note() == note7 && v.is_held()) {
       v.key_released();
     }
   }
+  return false;
 }
 
 void FmEngine::set_param(uint32_t param_id, float value) noexcept {

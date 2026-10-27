@@ -20,7 +20,7 @@ void put_region(std::vector<std::uint8_t>& v, const Region& r) {
   put_u8(v, r.key_lo); put_u8(v, r.key_hi); put_u8(v, r.key_center);
   put_u8(v, r.vel_lo); put_u8(v, r.vel_hi);
   put_u8(v, static_cast<std::uint8_t>(r.loop_mode));
-  put_u8(v, static_cast<std::uint8_t>(r.trigger));
+  put_u8(v, r.trigger == TriggerMode::kRelease ? 1 : 0);  // first/legato/release_key: carried by the format 2.2 table
   put_u8(v, r.has_loop_points ? 1 : 0);
   put_u32(v, static_cast<std::uint32_t>(r.transpose));
   put_f32(v, r.tune_cents); put_f32(v, r.volume_db); put_f32(v, r.pan);
@@ -51,6 +51,14 @@ void put_ext(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r)
     }
   put_f32(v, r.filter.cutoff_hz);
   put_f32(v, r.filter.resonance_db);
+}
+
+void put_trig(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  put_u32(v, index);
+  put_u8(v, static_cast<std::uint8_t>(r.trigger));
+  put_u8(v, r.has_end ? 1 : 0);
+  put_u8(v, 0); put_u8(v, 0);
+  put_u64(v, r.end);
 }
 }  // namespace
 
@@ -204,10 +212,15 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   bool needs_ext = false;
   for (const auto& ins : instruments_)
     for (const auto& r : ins.regions) needs_ext = needs_ext || has_extension(r);
+  bool needs_trig = false;
+  for (const auto& ins : instruments_)
+    for (const auto& r : ins.regions) needs_trig = needs_trig || has_trigger_extension(r);
+  if (needs_trig && opt_.format_minor < 2) return Error::kInvalidArgument;
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
+  const std::uint32_t minor = needs_trig ? 2u : needs_ext ? 1u : 0u;  // a minor 2 bundle carries the minor 1 table too (possibly empty)
   const std::uint32_t version_word =
-      (protect ? kProtectedFormatVersion : opt_.format_version) | ((needs_ext ? 1u : 0u) << kMinorShift);
+      (protect ? kProtectedFormatVersion : opt_.format_version) | (minor << kMinorShift);
   Uuid library_id = library_id_;
   if (!has_library_id_ && has_source_id_) {
     library_id = library_id_from_source(source_id_);
@@ -305,12 +318,19 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
     if (protect || opt_.format_version >= 2) {
       put_u32(manifest, static_cast<std::uint32_t>(ins.regions.size()));
       for (const auto& r : ins.regions) put_region(manifest, r);
-      if (needs_ext) {
+      if (minor >= 1) {
         std::uint32_t n_ext = 0;
         for (const auto& r : ins.regions) n_ext += has_extension(r) ? 1u : 0u;
         put_u32(manifest, n_ext);
         for (std::size_t k = 0; k < ins.regions.size(); ++k)
           if (has_extension(ins.regions[k])) put_ext(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+      }
+      if (minor >= 2) {
+        std::uint32_t n_trig = 0;
+        for (const auto& r : ins.regions) n_trig += has_trigger_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_trig);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_trigger_extension(ins.regions[k])) put_trig(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
       }
     }
   }

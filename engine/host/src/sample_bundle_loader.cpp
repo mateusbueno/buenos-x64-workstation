@@ -115,7 +115,15 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   d.ampeg_decay = r.ampeg.decay;
   d.ampeg_sustain = r.ampeg.sustain;
   d.ampeg_release = r.ampeg.release;
-  d.trigger = r.trigger == fmt::TriggerMode::kRelease ? ports::SampleTrigger::kRelease : ports::SampleTrigger::kAttack;
+  switch (r.trigger) {
+    case fmt::TriggerMode::kAttack: d.trigger = ports::SampleTrigger::kAttack; break;
+    case fmt::TriggerMode::kRelease: d.trigger = ports::SampleTrigger::kRelease; break;
+    case fmt::TriggerMode::kFirst: d.trigger = ports::SampleTrigger::kFirst; break;
+    case fmt::TriggerMode::kLegato: d.trigger = ports::SampleTrigger::kLegato; break;
+    case fmt::TriggerMode::kReleaseKey: d.trigger = ports::SampleTrigger::kReleaseKey; break;
+  }
+  d.has_end = r.has_end;
+  d.end = r.end;
   // Story 5.2: the Story 5.1 extension (keyswitches, CC crossfades, filter) travels unchanged.
   d.sw = {r.sw.lokey, r.sw.hikey, r.sw.last, r.sw.down, r.sw.up, r.sw.previous, r.sw.default_key};
   // More controllers than the port holds (formatlib bounds them at the same 4, so this is defence in depth) is not truncated: the count is

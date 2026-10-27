@@ -31,6 +31,15 @@ inline constexpr std::size_t kRegionRecordSize = 4 + 8 + 4 + 12 + 8 + 8 + 8 + 16
 //   4 x (u8 cc, u8 lo, u8 hi, u8 0) xfin, then 4 x (...) xfout; unused entries are zero
 //   f32 cutoff_hz, f32 resonance_db
 inline constexpr std::size_t kExtRecordSize = 4 + 1 + 7 + 4 + 16 + 16 + 8;
+// Format 2.2 (Story 13.3) trigger/end record, one per region with a trigger other than attack/release or with `end`; the table follows the
+// minor 1 table of each instrument (u32 count, records ascending by region index). The region record's own trigger byte is the Epic 1 view:
+// 1 for trigger=release, 0 for everything else (including first, legato, release_key).
+//   u32 region_index
+//   u8  trigger (0..4: attack, release, first, legato, release_key)
+//   u8  flags (bit 0 = has_end; other bits zero)
+//   u16 0
+//   u64 end (0 when bit 0 is clear)
+inline constexpr std::size_t kTrigRecordSize = 4 + 1 + 1 + 2 + 8;
 inline constexpr unsigned kMinorShift = 16;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }

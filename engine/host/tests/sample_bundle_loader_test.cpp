@@ -251,7 +251,45 @@ static void test_extension_reaches_the_port() {
   CHECK(g.sw.last == 37 && g.xfin_count == 2 && g.xfout[0].cc == 11 && g.filter_type == ports::SampleFilterType::kBpf2p && g.filter_cutoff_hz == 1234.5f);
 }
 
+static void test_trigger_and_end_reach_the_port() {
+  using namespace velora::format;
+  const std::pair<TriggerMode, ports::SampleTrigger> modes[] = {
+      {TriggerMode::kAttack, ports::SampleTrigger::kAttack}, {TriggerMode::kRelease, ports::SampleTrigger::kRelease},
+      {TriggerMode::kFirst, ports::SampleTrigger::kFirst}, {TriggerMode::kLegato, ports::SampleTrigger::kLegato},
+      {TriggerMode::kReleaseKey, ports::SampleTrigger::kReleaseKey}};
+  for (const auto& m : modes) {
+    Region r;
+    r.trigger = m.first;
+    CHECK(host::to_port_region(r).trigger == m.second);
+  }
+  Region plain;
+  CHECK(!host::to_port_region(plain).has_end && host::to_port_region(plain).end == 0);
+  // Through a real bundle (format 2.2): write, read back, load.
+  BundleWriter w;
+  const auto inst = w.add_instrument("Trig", "Trig.sfz");
+  std::vector<std::int32_t> pcm(2000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 2000, pcm});
+  Region a;
+  a.trigger = TriggerMode::kReleaseKey;
+  a.has_end = true;
+  a.end = 1500;
+  Region b;
+  b.has_end = true;
+  b.end = 0;
+  CHECK(w.add_region(inst.value(), a) == Error::kNone && w.add_region(inst.value(), b) == Error::kNone);
+  const std::vector<std::uint8_t> bytes = w.finalize().take();
+  auto rd = BundleReader::open_memory(bytes);
+  CHECK(rd.ok() && rd.value().format_minor() == 2);
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  const auto regs = loaded.instrument->instrument().regions;
+  CHECK(regs.size() == 2 && regs[0].trigger == ports::SampleTrigger::kReleaseKey && regs[0].has_end && regs[0].end == 1500 && regs[1].has_end && regs[1].end == 0);
+}
+
 int main() {
+  test_trigger_and_end_reach_the_port();
   test_extension_reaches_the_port();
   test_unusable_samples();
   test_pcm_to_float();

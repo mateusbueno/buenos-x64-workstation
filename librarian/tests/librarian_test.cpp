@@ -213,6 +213,32 @@ void test_happy_import() {
   CHECK(list_names(e.lib() / r.library_id) == (std::set<std::string>{"current", r.bundle_id}));
 }
 
+// Story 13.3: end and the first / legato / release_key triggers import into the bundle (format 2.2) and read back unchanged.
+void test_end_and_trigger_modes() {
+  Env e("endtrig");
+  make_demo_library(e);
+  write_file(e.src / "Piano.sfz",
+             "<region> sample=samples/a.wav key=60 end=100\n"
+             "<region> sample=samples/a.wav key=61 end=0\n"
+             "<region> sample=samples/a.wav key=62 trigger=first\n"
+             "<region> sample=samples/a.wav key=62 trigger=legato end=999999999\n"
+             "<region> sample=samples/a.wav key=62 trigger=release_key\n"
+             "<region> sample=samples/a.wav key=63\n");
+  const auto r = import_sfz(e.opts());
+  CHECK(r.ok());
+  if (!r.ok()) return;
+  auto b = fmt::BundleReader::open_file(r.bundle_dir + "/bundle.vlb");
+  CHECK(b.ok());
+  if (!b.ok()) return;
+  CHECK(b.value().format_minor() == 2);
+  const auto& reg = b.value().instruments()[0].regions;
+  CHECK(reg.size() == 6);
+  if (reg.size() != 6) return;
+  CHECK(reg[0].has_end && reg[0].end == 100 && reg[1].has_end && reg[1].end == 0 && !reg[5].has_end);
+  CHECK(reg[2].trigger == fmt::TriggerMode::kFirst && reg[3].trigger == fmt::TriggerMode::kLegato && reg[3].end == 999999999);
+  CHECK(reg[4].trigger == fmt::TriggerMode::kReleaseKey && reg[5].trigger == fmt::TriggerMode::kAttack);
+}
+
 void test_category() {
   Env e("category");
   make_demo_library(e);
@@ -260,10 +286,10 @@ void test_unsupported_opcode() {
   // Previous `current` intact, nothing new published.
   CHECK(current_bundle(e, first.library_id) == first.bundle_id);
   CHECK(list_names(e.lib() / first.library_id) == (std::set<std::string>{"current", first.bundle_id}));
-  // trigger=legato is an unsupported value, not silently accepted.
-  write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav key=60 trigger=legato\n");
+  // trigger=bogus is an unsupported value, not silently accepted.
+  write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav key=60 trigger=bogus\n");
   const auto r2 = import_sfz(e.opts());
-  CHECK(r2.status == Status::kSkipped && mentions(r2, "Piano.sfz:1: unsupported value 'legato'"));
+  CHECK(r2.status == Status::kSkipped && mentions(r2, "Piano.sfz:1: unsupported value 'bogus'"));
   // A bad number is reported with its location too.
   write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav\npan=abc\n");
   const auto r3 = import_sfz(e.opts());
@@ -664,6 +690,7 @@ int main() {
   test_happy_import();
   test_category();
   test_unsupported_opcode();
+  test_end_and_trigger_modes();
   test_missing_sample_and_includes();
   test_unsupported_audio();
   test_reimport_and_change();

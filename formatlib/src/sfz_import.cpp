@@ -64,7 +64,8 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"ampeg_decay", C::kSupported, "s"},
       {"ampeg_sustain", C::kSupported, "%"},
       {"ampeg_release", C::kSupported, "s"},
-      {"trigger", C::kSupported, "attack, release"},
+      {"trigger", C::kSupported, "attack, release, first, legato, release_key (Story 13.3)"},
+      {"end", C::kSupported, "frames, exclusive: last played frame = min(end, length) - 1; 0 disables the region (Story 13.3)"},
       {"sw_lokey", C::kSupported, "keyswitch range low (Story 5.1)"},
       {"sw_hikey", C::kSupported, "keyswitch range high (Story 5.1)"},
       {"sw_last", C::kSupported, "(Story 5.1)"},
@@ -463,6 +464,11 @@ class Importer final : public sfz::ParserListener {
     else if (k == "seq_position") { if (!as_int(op, 1, 255, n)) return false; r.seq_position = std::uint32_t(n); }
     else if (k == "lorand") { if (!as_float(op, 0, 1, d)) return false; r.lorand = float(d); }
     else if (k == "hirand") { if (!as_float(op, 0, 1, d)) return false; r.hirand = float(d); }
+    else if (k == "end") {  // sfizz: a sample end of 0 (or below) turns the region off; beyond the file it is clamped by the engine
+      if (!parse_int(op.value, n) || n > kMaxFrames) { bad(op, "expected integer in range"); return false; }
+      r.has_end = true;
+      r.end = n > 0 ? std::uint64_t(n) : 0;
+    }
     else if (k == "loop_start") { if (!as_int(op, 0, kMaxFrames, n)) return false; r.loop_start = std::uint64_t(n); ls.start_set = true; }
     else if (k == "loop_end") { if (!as_int(op, 0, kMaxFrames, n)) return false; r.loop_end = std::uint64_t(n); ls.end_set = true; }
     else if (k == "loop_mode") {
@@ -476,6 +482,9 @@ class Importer final : public sfz::ParserListener {
       const std::string v = trim(op.value);
       if (v == "attack") r.trigger = TriggerMode::kAttack;
       else if (v == "release") r.trigger = TriggerMode::kRelease;
+      else if (v == "first") r.trigger = TriggerMode::kFirst;
+      else if (v == "legato") r.trigger = TriggerMode::kLegato;
+      else if (v == "release_key") r.trigger = TriggerMode::kReleaseKey;
       else { unsupported_value(op); return false; }
     }
     else if (k == "sw_lokey") { if (!as_note(op, n)) return false; r.sw.lokey = std::int16_t(n); }

@@ -51,7 +51,7 @@ is an infrastructure problem (I/O error, busy lock, failed verification, bad arg
 
 - `unsupported_features`: the SFZ uses something outside the subset: scripting (`script`), effects (`<effect>`, `effect1`),
   `lfo*`, `eg*`, `*_oncc*`, any other opcode or header that is not in the table in `formatlib/README.md`, a value outside
-  the subset (`trigger=legato`, `fil_type=lpf_4p`, a fifth xfin controller...), or a sample in an audio format the importer
+  the subset (`trigger=` anything but attack, release, first, legato, release_key; `fil_type=lpf_4p`, a fifth xfin controller...), or a sample in an audio format the importer
   does not have (8-bit or float64 WAV, a rate outside 44.1/48/88.2/96 kHz, a non-WAV container such as `.flac`; these
   appear in `offenders` with opcode `sample`). `offenders` lists every offender with `file:line` (also in `messages`).
 - `damaged`: the SFZ cannot be parsed or opened, a value is malformed or out of range, a region is inconsistent (inverted

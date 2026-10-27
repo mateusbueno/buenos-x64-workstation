@@ -50,6 +50,21 @@ Behaviour (SFZ subset of Story 1.13; sfizz 1.2.3 is the reference, the null test
   outside the sample disables the loop (sfizz).
 - **Sample end**: when the position reaches `frames - 2` (not looping) the voice starts a 6 ms release on that very frame and holds
   the last frame's value while it fades (sfizz behaviour), then frees after the fade-out.
+- **`end` (Story 13.3)**: exclusive, in frames. The played part of the sample is `[0, min(end, length))`: the last played frame is
+  `min(end, length) - 1`, the voice ends as above at that frame (`frames - 2` becomes `min(end, length) - 2`) and holds that frame. `end`
+  beyond the file or equal to the length renders bit for bit as a region without `end`; `end=0` disables the region (it is left out of the
+  per-note lookup and is not counted as unplayable); an `offset` at or past `end` makes the region unplayable (counted). A loop must lie inside
+  `[0, end)` (otherwise no loop, as for any loop outside the sample); a `loop_continuous` region without loop points loops the played part.
+- **`trigger=first` / `legato` (Story 13.3)**: decided at note on from the part's held-key set (`KeyState::held`, the physical keys down, the
+  sustain pedal does not count; a fixed 128-bit set updated on the control path, no allocation). `first` plays only when no other key is
+  down, `legato` only when another key is down; the key being struck does not count itself. They otherwise behave as `trigger=attack`
+  (round robin counters, keyswitches, velocity, random layers).
+- **`trigger=release_key` (Story 13.3)**: fires from `Engine::key_released()`, i.e. at the physical key up, whatever the sustain pedal does
+  (the block loop calls it before it decides whether the pedal defers `stop_voice()`). `trigger=release` keeps firing from `stop_voice()`,
+  which the pedal defers to the pedal up. A `release_key` region uses the same gates as a release region (note-on velocity, round robin,
+  random layer, keyswitch, an attack voice still alive) and the random sequence is only drawn for a key that has such a region, so a bank
+  without them renders as before. Release velocity (`release_velocity_triggers`) is not applied to `release_key`; a full voice pool drops
+  the release sample silently (`key_released()` has no status).
 - **Release triggers**: on note off, `trigger=release` regions of the note fire with the note-on velocity and pitch, but only while
   an attack voice (any state until it frees) for a note inside the region's key range and velocity range is alive (sfizz's
   `rt_dead=no` rule). They are not tied to the key (note off ignores them) and are reported as `kReleasing`.

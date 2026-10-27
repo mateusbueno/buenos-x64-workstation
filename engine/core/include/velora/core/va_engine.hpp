@@ -30,7 +30,7 @@ class VaEngine final : public Engine {
 
   EngineStatus start_voice(uint32_t channel, uint32_t note, uint32_t velocity16) noexcept override;
   EngineStatus stop_voice(uint32_t channel, uint32_t note) noexcept override;
-  void key_released(uint32_t channel, uint32_t note) noexcept override;
+  bool key_released(uint32_t channel, uint32_t note) noexcept override;
   void set_param(uint32_t param_id, float value) noexcept override;
   // Registry part parameters ids 1200..1266 (va_*), see part_params.hpp ("engagement"). The continuous ones (mix, filter, LFO depths, detune, pulse
   // width, envelope times, LFO rate, brightness) also move the notes that already sound, smoothed; the discrete ones (waveforms, octave, sync,
