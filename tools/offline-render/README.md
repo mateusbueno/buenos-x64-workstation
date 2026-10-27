@@ -28,7 +28,7 @@ Dependency rule: may depend on `engine/core`, `engine/ports`, `engine/host` (the
   sustain pedal; nothing is mapped to registry parameters in a sample render. A controller extends the render like a note does (frames up to its
   time are rendered). The Live Set renderer (`--live-set`) also passes unmapped controllers through, as the keyboard's, fanned out to the parts (`live_set_cc_test`: a CC1 sweep against a crossfading sample part, and a controller after the last note extends the render).
 - `velora-null-test` also takes `--max-length-diff-frames N`, `--check-excess` (the energy outside the compared overlap, i.e. a tail in
-  one file only, must stay below the tolerance too) and `--reference-decode sfizz-s16` (case keys `check_excess`, `reference_decode`).
+  one file only, must stay below the tolerance too) and `--reference-decode sfizz-s16` (case keys `check_excess`, `reference_decode`) and, only together with it, `--candidate-quantize sfizz-s16` (case key `candidate_quantize`): the float candidate is quantised with the same dr_wav float->s16 conversion and decoded the same way, so both sides sit on one 16-bit grid. Where the two renders agree to well below one LSB the integers are identical; without it the oracle's rounding noise (about -101 dBFS per sample) is the whole residual of a quiet instrument (Story 5.4: the VSCO oboe, mean level about -47 dBFS, -54 dB unquantised, -71 dB quantised, 99.9 % of the samples identical). The Story 1.15 / 5.2 cases do not use it.
   16-bit PCM WAVs are readable; `sfizz-s16` undoes `sfizz_render`'s float->s16 conversion (dr_wav maps silence to -1 and scales by
   32767.5, so the reference is decoded as `(s + 1) / 32767.5`), which would otherwise inject a -90 dBFS DC offset and a gain error of 1.5e-5.
 

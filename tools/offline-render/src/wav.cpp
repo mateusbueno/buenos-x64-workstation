@@ -107,6 +107,15 @@ bool undo_sfizz_s16(WavData& wav, std::string& error) {
   return true;
 }
 
+void quantize_like_sfizz_s16(WavData& wav) {
+  for (float& x : wav.samples) {
+    float c = x != x ? 0.0f : (x < -1.0f ? -1.0f : (x > 1.0f ? 1.0f : x));  // dr_wav clamps; NaN is mapped to silence here
+    c = c + 1.0f;
+    const std::int32_t s = static_cast<std::int32_t>(c * 32767.5f) - 32768;
+    x = (static_cast<float>(s) + 1.0f) / 32767.5f;
+  }
+}
+
 bool read_wav(const std::string& path, WavData& wav, std::string& error) {
   std::ifstream in(path, std::ios::binary);
   if (!in) { error = "cannot open file: " + path; return false; }

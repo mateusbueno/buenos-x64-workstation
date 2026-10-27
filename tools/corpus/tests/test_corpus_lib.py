@@ -537,10 +537,80 @@ class GuardAndSuiteTests(unittest.TestCase):
         for n in midi_suite.SUITES:
             a, b = midi_suite.build(n), midi_suite.build(n)
             self.assertEqual(a, b)
-            self.assertTrue(a.startswith(b"MThd\0\0\0\x06\0\0\0\x01\x01\xe0MTrk"))
+            self.assertTrue(a.startswith(b"MThd\0\0\0\x06\0\0\0\x01\x5d\xc0MTrk"))
             self.assertTrue(a.endswith(b"\xff\x2f\x00"))
             self.assertEqual(int.from_bytes(a[18:22], "big"), len(a) - 22)
         self.assertEqual(set(midi_suite.SUITES), {"range", "velocity", "round_robin", "keyswitches", "releases", "sustained_loops"})
+
+    def test_midi_suite_events_are_half_a_frame_after_a_frame_boundary(self):
+        """Every event time (from the tempo map) is k + 0.5 frames at 48 kHz, never exactly on a frame (sfizz_render fires a tie 1 frame early or late)."""
+        for n in midi_suite.SUITES:
+            data = midi_suite.build(n)
+            pos, tempo, tick, times = 22, None, 0, []
+            end = len(data)
+            exact = 0  # time in microseconds * 24000 ticks units: frames = units * 48000 / (24000 * 1e6)
+            units = 0
+            while pos < end:
+                delta, shift = 0, 0
+                while True:
+                    b = data[pos]; pos += 1
+                    delta = (delta << 7) | (b & 0x7F)
+                    if not b & 0x80:
+                        break
+                if tempo is not None:
+                    units += delta * tempo
+                tick += delta
+                st = data[pos]
+                if st == 0xFF:
+                    typ, ln = data[pos + 1], data[pos + 2]
+                    if typ == 0x51:
+                        tempo = int.from_bytes(data[pos + 3:pos + 6], "big")
+                    pos += 3 + ln
+                else:
+                    pos += 3
+                    times.append((tick, units))
+            self.assertTrue(times)
+            for tick, units in times:
+                if tick == 0:
+                    continue
+                twice_frames = units * 2 * 48000 // (24000 * 1000000)
+                self.assertEqual(units * 2 * 48000 % (24000 * 1000000), 0)
+                self.assertEqual(twice_frames, 2 * tick + 1, "tick %d is not at tick + 0.5 frames" % tick)
+
+    def test_random_layer_detection_and_null_pick(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, body in (("a.sfz", "<group> lorand=0.0 hirand=0.5\n<region> sample=x.wav\n"), ("b.sfz", "<region> sample=x.wav seq_length=2\n"),
+                               ("c.sfz", "<region> sample=x.wav xlorand=1\n")):
+                with open(os.path.join(d, name), "w") as fh:
+                    fh.write(body)
+            self.assertTrue(corpus.has_random_layers(os.path.join(d, "a.sfz")))
+            self.assertFalse(corpus.has_random_layers(os.path.join(d, "b.sfz")))
+            self.assertFalse(corpus.has_random_layers(os.path.join(d, "c.sfz")))
+            self.assertFalse(corpus.has_random_layers(os.path.join(d, "missing.sfz")))
+            runner = corpus.Runner.__new__(corpus.Runner)
+            runner.m = {"max_null_instruments": 3}
+            ok = [("a.sfz", {"regions": 1}), ("b.sfz", {"regions": 2}), ("c.sfz", {"regions": 3})]
+            res = {"failures": []}
+            picked = runner.pick_null({}, ok, res, d)
+            self.assertEqual([p[0] for p in picked], ["b.sfz", "c.sfz"])
+            self.assertEqual(res["null_excluded_random_layers"], ["a.sfz"])
+            res = {"failures": []}  # nothing deterministic: the random ones are kept (the failure stays honest)
+            self.assertEqual([p[0] for p in runner.pick_null({}, [ok[0]], res, d)], ["a.sfz"])
+            self.assertNotIn("null_excluded_random_layers", res)
+
+    def test_tolerance_overrides_need_a_reason_and_a_real_path(self):
+        base = {"id": "x", "name": "X", "kind": "required", "source_url": "https://codeload.github.com/a/b/tar.gz/c", "version": "1", "commit": "c",
+                "license": "CC0", "license_url": "https://example.org/l"}
+        good = {"path": "a/b.sfz", "tolerance_db": -45, "reason": "r" * 50}
+        cl.validate_entry(dict(base, tolerance_overrides=[good]))
+        for bad in (dict(good, reason="too short"), dict(good, tolerance_db=0), dict(good, tolerance_db=True), dict(good, tolerance_db="-45"),
+                    dict(good, path="../b.sfz"), {"path": "a.sfz", "reason": "r" * 50}):
+            with self.assertRaises(cl.CorpusError):
+                cl.validate_entry(dict(base, tolerance_overrides=[bad]))
+        with self.assertRaises(cl.CorpusError):
+            cl.validate_entry(dict(base, tolerance_overrides=[good, good]))
+        with self.assertRaises(cl.CorpusError):
+            cl.validate_entry(dict(base, tolerance_overrides={"a": 1}))
 
     def test_markdown_report_lists_exclusions(self):
         rep = {"generated": "t", "manifest": "m", "libraries": [], "excluded": [{"id": "pb", "name": "PB", "reason": "login required"}], "failed": 0}

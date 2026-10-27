@@ -4,6 +4,7 @@
 # Usage: tools/oracle/render-oracle.sh <file.sfz> <file.mid> <out.wav> [quality]
 #   quality  sfizz sample quality 0..10 (default 2 = Hermite, the sfizz default; 1 = linear)
 # Env:   VELORA_SFIZZ_RENDER  path of an existing sfizz_render (default: built by build-sfizz-render.sh)
+#        VELORA_SFIZZ_BLOCKSIZE  sfizz_render --blocksize in frames (default 64; the reference corpus job uses 1, see tools/corpus/README.md)
 # The output is sfizz's own 16-bit PCM WAV, untouched (the null-test harness decodes it, see
 # tools/oracle/README.md). Exit code 77 when no oracle is available and it cannot be built.
 set -euo pipefail
@@ -23,4 +24,4 @@ ulimit -f 131072
 abs() { case "$1" in /*) echo "$1" ;; *) echo "$PWD/$1" ;; esac; }
 # sfizz_render resolves its arguments against the current directory; give it absolute paths.
 "$bin" --sfz "$(abs "$sfz")" --midi "$(abs "$mid")" --wav "$(abs "$out")" \
-  --samplerate 48000 --blocksize 64 --quality "$quality" --polyphony 64
+  --samplerate 48000 --blocksize "${VELORA_SFIZZ_BLOCKSIZE:-64}" --quality "$quality" --polyphony 64

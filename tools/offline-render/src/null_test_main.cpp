@@ -44,7 +44,7 @@ static int usage() {
   std::fprintf(stderr,
                "usage: velora-null-test --reference r.wav --candidate c.wav [--candidate ...]\n"
                "       --tolerance-db X --max-offset-frames N [--max-length-diff-frames N] [--check-excess]\n"
-               "       [--reference-decode sfizz-s16]  |  --case file.case\n");
+               "       [--reference-decode sfizz-s16 [--candidate-quantize sfizz-s16]]  |  --case file.case\n");
   return 2;
 }
 
@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
   NullParams p;
   bool have_tol = false, have_off = false, have_len = false, have_excess = false;
   std::string ref_decode;
+  std::string cand_quant;
   std::uint64_t n = 0;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -65,6 +66,7 @@ int main(int argc, char** argv) {
     else if (a == "--candidate") cands.push_back(v);
     else if (a == "--case") case_file = v;
     else if (a == "--reference-decode") ref_decode = v;
+    else if (a == "--candidate-quantize") cand_quant = v;
     else if (a == "--tolerance-db") {
       if (!parse_double(v, -400.0, 400.0, p.tolerance_db)) return bad("--tolerance-db");
       have_tol = true;
@@ -83,7 +85,7 @@ int main(int argc, char** argv) {
     if (!load_case(case_file, kv, err)) { std::fprintf(stderr, "error: %s\n", err.c_str()); return 2; }
     for (const auto& e : kv) {
       if (e.first != "reference" && e.first != "tolerance_db" && e.first != "max_offset_frames" &&
-          e.first != "max_length_diff_frames" && e.first != "check_excess" && e.first != "reference_decode") {
+          e.first != "max_length_diff_frames" && e.first != "check_excess" && e.first != "reference_decode" && e.first != "candidate_quantize") {
         std::fprintf(stderr, "error: unknown key '%s' in case file\n", e.first.c_str());
         return 2;
       }
@@ -109,11 +111,14 @@ int main(int argc, char** argv) {
       p.check_excess = kv["check_excess"] == "1";
     }
     if (ref_decode.empty() && kv.count("reference_decode")) ref_decode = kv["reference_decode"];
+    if (cand_quant.empty() && kv.count("candidate_quantize")) cand_quant = kv["candidate_quantize"];
   } else if (!have_tol) {
     return usage();
   }
   if (ref.empty() || cands.empty()) return usage();
   if (!ref_decode.empty() && ref_decode != "sfizz-s16") return bad("reference_decode");
+  if (!cand_quant.empty() && cand_quant != "sfizz-s16") return bad("candidate_quantize");
+  if (!cand_quant.empty() && ref_decode != "sfizz-s16") return bad("candidate_quantize needs reference_decode=sfizz-s16 (both sides must be on the same grid)");
 
   WavData rw;
   std::string err;
@@ -131,6 +136,7 @@ int main(int argc, char** argv) {
       all = false;
       continue;
     }
+    if (cand_quant == "sfizz-s16") quantize_like_sfizz_s16(cw);
     const NullResult r = null_test(rw, cw, p);
     std::fputs(format_report(c, r, p).c_str(), stdout);
     all = all && r.pass;

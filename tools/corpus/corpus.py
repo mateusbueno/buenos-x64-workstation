@@ -23,6 +23,26 @@ import midi_suite  # noqa: E402
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MANIFEST = os.path.join(HERE, "manifest.json")
 DEFAULT_CACHE = os.path.expanduser("~/.cache/velora-corpus")
+# Block size of the sfizz oracle and of the engine's oracle-block event model (the Story 1.15 / 5.2 suite uses 64). sfizz accumulates a voice's
+# sample position per block in float32 (Voice::fillWithData: cumsum of the per-frame jumps, indices from the float sum), so the rounding of
+# that sum makes its playback speed about 0.6 ppm off for a 44.1 kHz sample at 48 kHz (measured and simulated, see the 5.4 spec): 0.27 frames
+# of drift after 10 s, a null of only -53 dB on a 10 s bell at block 64, -61 at 16, -72 at 1. At block size 1 the sum is exact, and the
+# block-relative note delay that sfizz mishandles with ampeg_dynamic (ADSREnvelope dynamic mode overwrites the start delay) is always 0.
+ORACLE_BLOCK_FRAMES = 1
+
+
+def has_random_layers(path):
+    """True when the SFZ selects layers with lorand/hirand (a plain text scan; an unreadable file counts as not random)."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return re.search(r"(?<![A-Za-z0-9_])(lorand|hirand)[ \t]*=", fh.read()) is not None
+    except OSError:
+        return False
+
+
+def wav_seconds(path, rate=48000):
+    """Length of a 16-bit stereo PCM WAV written by sfizz_render (44 byte header)."""
+    return max(0, os.path.getsize(path) - 44) / 4.0 / rate
 
 
 def tool_paths(build_dir):
@@ -147,6 +167,9 @@ class Runner:
         for p in skip:
             if p not in sfz:
                 res["failures"].append("skip_files lists %r, which is not in the library (stale manifest)" % p)
+        for ov in entry.get("tolerance_overrides", []):
+            if ov["path"] not in sfz:
+                res["failures"].append("tolerance_overrides lists %r, which is not in the library (stale manifest)" % ov["path"])
         root = os.path.join(work, "root")
         os.makedirs(root)
         report = os.path.join(work, "import.jsonl")
@@ -184,19 +207,25 @@ class Runner:
         if not ok:
             res["status"] = "fail"
             return res
-        pick = self.pick_null(entry, ok, res)
+        pick = self.pick_null(entry, ok, res, tree)
         suites = midi_suite.write_all(os.path.join(work, "midi"))
         for rel, o in pick:
             bundle = os.path.join(root, "lib", o["library_id"], o["bundle_id"], "bundle.vlb")
             inst = {"file": rel, "regions": o.get("regions"), "samples": o.get("samples"), "suites": []}
             res["instruments"].append(inst)
+            itol = tol
+            for ov in entry.get("tolerance_overrides", []):
+                if ov["path"] == rel:
+                    itol = ov["tolerance_db"]
+                    inst["tolerance_db"] = itol
+                    inst["tolerance_reason"] = ov["reason"]
             for name in midi_suite.SUITES:
-                inst["suites"].append(self.null_one(entry, tree, rel, bundle, name, suites[name], work, tol, res))
+                inst["suites"].append(self.null_one(entry, tree, rel, bundle, name, suites[name], work, itol, res))
         if res["failures"]:
             res["status"] = "fail"
         return res
 
-    def pick_null(self, entry, ok, res):
+    def pick_null(self, entry, ok, res, tree=None):
         wanted = entry.get("null_files")
         by_rel = dict(ok)
         if wanted:
@@ -208,6 +237,14 @@ class Runner:
                     res["failures"].append("null_files lists %r, which did not import" % rel)
             return out
         n = int(self.m.get("max_null_instruments", 3))
+        # An instrument that picks its layer with lorand/hirand cannot be null-tested: sfizz draws from a fixed-seed LCG that it also
+        # advances on every note-off and controller (and the engine from its own xorshift RNG), so the two play different layers. Such
+        # instruments are still imported; they are only left out of the null picks while a deterministic instrument exists (listed in the report).
+        det = [kv for kv in ok if not has_random_layers(os.path.join(tree, *kv[0].split("/")))]
+        random_only = [kv[0] for kv in ok if kv not in det]
+        if det and random_only:
+            res["null_excluded_random_layers"] = random_only
+            ok = det
         ordered = sorted(ok, key=lambda kv: (kv[1].get("regions", 0), kv[0]))
         if len(ordered) <= n:
             return ordered
@@ -219,16 +256,20 @@ class Runner:
         tag = "%s__%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", rel), suite)
         ref, cand = os.path.join(work, tag + ".oracle.wav"), os.path.join(work, tag + ".engine.wav")
         r = {"suite": suite, "file": rel, "status": "fail"}
-        t = midi_suite.TAIL_SECONDS[suite]
         rc, text, sec = self.sh([self.tools["oracle_sh"], os.path.join(tree, *rel.split("/")), midi, ref, "2"], os.path.join(work, tag + ".oracle.log"),
-                                env={"VELORA_SFIZZ_RENDER": self.tools["sfizz"]})
+                                env={"VELORA_SFIZZ_RENDER": self.tools["sfizz"], "VELORA_SFIZZ_BLOCKSIZE": str(ORACLE_BLOCK_FRAMES)})
         r["oracle_seconds"] = round(sec, 1)
         if rc != 0 or not os.path.isfile(ref):
             r["error"] = "oracle render failed (rc %s): %s" % (rc, text[-300:].strip())
             res["failures"].append("%s %s: %s" % (rel, suite, r["error"]))
             return r
+        # sfizz_render keeps rendering after the last MIDI event until a block is silent (a 15 s ampeg_release rings 15 s): the engine render
+        # is given exactly that tail, so the harness compares the same span (a shorter one truncates the tail, a longer one counts the
+        # engine's decay beyond the point where sfizz stopped, at block size 1 the first near-zero frame, as excess energy).
+        t = max(0.01, min(600.0, wav_seconds(ref) - midi_suite.last_event_seconds(suite)))
+        r["tail_seconds"] = round(t, 2)
         rc, text, sec = self.sh([self.tools["render"], "--midi", midi, "--out", cand, "--engine", "sample", "--bundle", bundle, "--instrument", key,
-                                 "--gain-db", "-7.35", "--oracle-block-frames", "64", "--tail-seconds", str(t)], os.path.join(work, tag + ".render.log"))
+                                 "--gain-db", "-7.35", "--oracle-block-frames", str(ORACLE_BLOCK_FRAMES), "--tail-seconds", str(t)], os.path.join(work, tag + ".render.log"))
         r["render_seconds"] = round(sec, 1)
         r["render_report"] = text.strip().splitlines()[-1][:300] if text.strip() else ""
         if rc != 0 or not os.path.isfile(cand):
@@ -236,7 +277,7 @@ class Runner:
             res["failures"].append("%s %s: %s" % (rel, suite, r["error"]))
             return r
         rc, text, _ = self.sh([self.tools["nulltest"], "--reference", ref, "--candidate", cand, "--tolerance-db", str(tol), "--max-offset-frames", "0",
-                               "--check-excess", "--reference-decode", "sfizz-s16"], os.path.join(work, tag + ".null.log"))
+                               "--check-excess", "--reference-decode", "sfizz-s16", "--candidate-quantize", "sfizz-s16"], os.path.join(work, tag + ".null.log"))
         r.update(parse_null(text))
         r["status"] = "pass" if rc == 0 else "fail"
         if rc != 0:
@@ -319,10 +360,12 @@ def render_markdown(rep):
             L.append("- FAILURE: %s" % f)
         if len(r["failures"]) > 40:
             L.append("- ... and %d more failures (report.json)" % (len(r["failures"]) - 40))
+        if r.get("null_excluded_random_layers"):
+            L.append("- imported but not null-tested (layers chosen with lorand/hirand: sfizz and the engine draw different random numbers, see the README): %s" % ", ".join("`%s`" % f for f in r["null_excluded_random_layers"]))
         if r.get("unsupported_histogram"):
             L.append("- import rejections by cause (count of lines): " + ", ".join("`%s` x%d" % kv for kv in r["unsupported_histogram"].items()))
         for i in r["instruments"]:
-            L.append("- `%s` (%s regions)" % (i["file"], i["regions"]))
+            L.append("- `%s` (%s regions)%s" % (i["file"], i["regions"], (" [recorded tolerance %s dB: %s]" % (i["tolerance_db"], i["tolerance_reason"])) if "tolerance_db" in i else ""))
             for s in i["suites"]:
                 L.append("    - %s: %s, residual %s dB, worst window %s dB" % (s["suite"], s["status"], s.get("residual_db"), s.get("worst_window_db")))
         L.append("")

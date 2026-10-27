@@ -124,6 +124,19 @@ def validate_entry(e):
                 if not isinstance(item, str):
                     raise CorpusError(where + ": null_files items must be strings")
                 check_rel(item, where + ".null_files")
+    overrides = e.get("tolerance_overrides", [])
+    if not isinstance(overrides, list):
+        raise CorpusError(where + ": tolerance_overrides must be a list")
+    seen_paths = set()
+    for item in overrides:
+        if not (isinstance(item, dict) and isinstance(item.get("path"), str) and isinstance(item.get("tolerance_db"), (int, float))
+                and not isinstance(item.get("tolerance_db"), bool) and -400 <= item["tolerance_db"] < 0
+                and isinstance(item.get("reason"), str) and len(item["reason"].strip()) >= 40):
+            raise CorpusError(where + ": every tolerance_overrides item needs path, a negative tolerance_db and a reason of at least 40 characters")
+        check_rel(item["path"], where + ".tolerance_overrides")
+        if item["path"] in seen_paths:
+            raise CorpusError(where + ": tolerance_overrides lists %r twice" % item["path"])
+        seen_paths.add(item["path"])
     limits = e.get("limits", {})
     if not isinstance(limits, dict) or any(k not in DEFAULT_LIMITS or not isinstance(v, int) or v <= 0 for k, v in limits.items()):
         raise CorpusError(where + ": limits has an unknown key or a non-positive value")

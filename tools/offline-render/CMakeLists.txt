@@ -139,6 +139,11 @@ add_test(NAME null_test_rejects_bad_tolerance
                  --tolerance-db inf --max-offset-frames 0)
 set_tests_properties(null_test_rejects_bad_tolerance PROPERTIES
                      PASS_REGULAR_EXPRESSION "invalid value for --tolerance-db")
+add_test(NAME null_test_candidate_quantize_needs_reference_decode
+         COMMAND velora-null-test --reference ${_golden}/golden.wav --candidate ${_golden}/golden.wav
+                 --tolerance-db -60 --max-offset-frames 0 --candidate-quantize sfizz-s16)
+set_tests_properties(null_test_candidate_quantize_needs_reference_decode PROPERTIES
+                     PASS_REGULAR_EXPRESSION "invalid value for --candidate_quantize|candidate_quantize needs")
 add_test(NAME null_test_rejects_unknown_case_key
          COMMAND velora-null-test --case ${CMAKE_CURRENT_SOURCE_DIR}/tests/cases/unknown_key.case
                  --candidate ${_golden}/golden.wav)

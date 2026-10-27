@@ -26,4 +26,11 @@ bool decode_wav(const std::vector<std::uint8_t>& bytes, WavData& wav, std::strin
 // step, x = (s + 1) / 32767.5, from samples read by decode_wav as s / 32768 (requires from_pcm16).
 bool undo_sfizz_s16(WavData& wav, std::string& error);
 
+// The forward model of the same conversion, applied to a float candidate: each sample goes through dr_wav's drwav_f32_to_s16
+// exactly (float32 arithmetic: clamp to [-1, 1], c = x + 1, s = (int)(c * 32767.5f) - 32768) and is then decoded with the
+// undo_sfizz_s16 step, x = (s + 1) / 32767.5. Quantising the candidate the way the oracle quantised its output puts both
+// sides on the same 16-bit grid: where the two float renders agree to well below one LSB the integers are identical and the
+// residual is zero instead of the oracle's rounding noise (about -101 dBFS per sample, which for a quiet instrument is the whole residual).
+void quantize_like_sfizz_s16(WavData& wav);
+
 }  // namespace velora::offline

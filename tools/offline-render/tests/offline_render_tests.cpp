@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -440,6 +441,40 @@ static Bytes pcm16_wav(const std::vector<std::int16_t>& s, int channels) {
   return v;
 }
 
+// The candidate-side model of sfizz_render's float->s16 conversion (Story 5.4 triage): quantise, then decode like the reference.
+static void test_quantize_like_sfizz_s16() {
+  // Silence stays silence (dr_wav writes -1, the decode maps it back to 0).
+  WavData w;
+  w.channels = 1;
+  w.samples = {0.0f, -0.0f};
+  quantize_like_sfizz_s16(w);
+  CHECK(w.samples[0] == 0.0f && w.samples[1] == 0.0f);
+  // Every decoded sfizz value is a fixed point: a candidate that already sits on the grid is not moved.
+  std::vector<std::int16_t> grid;
+  for (int s = -32768; s <= 32767; s += 257) grid.push_back(static_cast<std::int16_t>(s));
+  WavData g;
+  std::string err;
+  CHECK(decode_wav(pcm16_wav(grid, 1), g, err) && undo_sfizz_s16(g, err));
+  const std::vector<float> before = g.samples;
+  quantize_like_sfizz_s16(g);
+  for (std::size_t i = 0; i < before.size(); ++i) CHECK(g.samples[i] == before[i]);
+  // A float within a fraction of an LSB of a decoded grid value lands on that same value (the integers agree).
+  WavData n;
+  n.channels = 1;
+  for (const float b : before) n.samples.push_back(b + 0.2f / 32767.5f);
+  quantize_like_sfizz_s16(n);
+  for (std::size_t i = 0; i < before.size(); ++i) CHECK(n.samples[i] == before[i]);
+  // Out of range clamps like dr_wav (+1 -> 32767, -1 -> -32768), NaN is silence; the error never exceeds half an LSB.
+  WavData e;
+  e.channels = 1;
+  e.samples = {2.0f, -3.0f, std::numeric_limits<float>::quiet_NaN(), 0.123456f};
+  quantize_like_sfizz_s16(e);
+  CHECK(std::fabs(e.samples[0] - 1.0f) < 1.0f / 32767.5f * 1.01f);
+  CHECK(std::fabs(e.samples[1] + 1.0f) < 1.0f / 32767.5f * 1.01f);
+  CHECK(e.samples[2] == 0.0f);
+  CHECK(std::fabs(e.samples[3] - 0.123456f) <= 0.5f / 32767.5f * 1.01f);
+}
+
 static void test_pcm16_and_sfizz_decode() {
   const std::vector<std::int16_t> s = {-32768, -1, 0, 1, 32767, 1000};
   WavData w;
@@ -565,6 +600,7 @@ int main() {
   test_events_file();
   test_contact_events_render();
   test_pcm16_and_sfizz_decode();
+  test_quantize_like_sfizz_s16();
   test_null_check_excess();
   test_smf_more();
   test_smf_controllers_and_organ_options();

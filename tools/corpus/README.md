@@ -89,10 +89,36 @@ library is imported. Rendering every instrument of a 100-file library six times 
 
 ## Null test and tolerance
 
-Per render: `velora-offline-render --engine sample --gain-db -7.35 --oracle-block-frames 64` against `render-oracle.sh` (sfizz 1.2.3, Hermite, 48 kHz),
-compared with `velora-null-test --max-offset-frames 0 --check-excess --reference-decode sfizz-s16`, exactly as the Story 1.15 / 5.2 harness. The tolerance is
-recorded per library in the manifest (`tolerance_db`, default -60 dB) together with the reason for any value other than the default. A tolerance is never
-changed to make a run pass without a written reason in the manifest and the story spec.
+Per render: `velora-offline-render --engine sample --gain-db -7.35 --oracle-block-frames 1` against `render-oracle.sh` (sfizz 1.2.3, Hermite, 48 kHz,
+`VELORA_SFIZZ_BLOCKSIZE=1`), compared with `velora-null-test --max-offset-frames 0 --check-excess --reference-decode sfizz-s16 --candidate-quantize sfizz-s16`, as the Story 1.15 / 5.2
+harness except for the block size and the candidate quantisation (see below). The tolerance is recorded per library in the manifest (`tolerance_db`, default -60 dB) together with the
+reason for any value other than the default. A tolerance is never changed to make a run pass without a written reason in the manifest and the story spec.
+
+What the VSCO 2 CE triage (Story 5.4) found about the comparison itself, so that a residual is read correctly. None of it is an engine defect; each item is
+handled in the harness, not by loosening the tolerance:
+
+- **Event times sit half a frame after a frame boundary.** `sfizz_render` advances its MIDI clock by adding 1/48000 s per frame and fires an event on the first
+  frame whose accumulated time is at least the event time. For an event exactly on a frame boundary the double rounding decides between frame N and N-1, so
+  with the old 1/960 s grid (50 frames per tick, every event on a boundary) some notes started one frame early (4800 right, 14400 one frame early) and nulled at
+  -12 dB on a bright bell transient. `midi_suite.py` now uses one tick per frame (24000 PPQ) and a first tick of 1.5 frames, so every event is at k + 0.5 frames; sfizz
+  and the engine (exact integer arithmetic in `smf.cpp`) both use floor and agree. A unit test checks the property.
+- **Block size 1 for the oracle.** sfizz keeps a voice's read position as a float32 cumulative sum per block (`Voice::fillWithData`), which makes its playback speed about
+  0.6 ppm off for a 44.1 kHz sample at 48 kHz: 0.27 frames after 10 s (a simulation of exactly that sum gives 0.249, the measurement 0.27; the engine, which accumulates in double,
+  tracks an exact Hermite resample to 0.003 frames). A 10 s bell therefore nulls at -53.5 dB at the oracle's block size 64, -60.8 at 16, -70.8 at 2 and -72.2 at 1.
+  The block size is a command line option of `sfizz_render` (the oracle itself is untouched), so the corpus job runs the oracle and the engine's `--oracle-block-frames` at 1.
+  At block size 1 the block-relative note delay is always 0, which also removes sfizz's `ampeg_dynamic` defect (below). The 64-frame Story 1.15 / 5.2 suite is unchanged.
+- **`ampeg_dynamic=1` in sfizz** (`ADSREnvelope::getBlock` in dynamic mode calls `updateValues(0)` on its first chunk, which overwrites the start delay of a note that does not begin
+  on a block boundary with 0): the amplitude attack of such a note is cut short (VSCO `ampeg_attack` 1 ms, note at frame 4832: residual -34 dB, the same SFZ without the flag -61 dB).
+  By the SFZ definition the flag only makes the envelope re-read `ampeg_*_oncc` / `vel2` values while a voice sounds; the importer rejects those opcodes, so the flag is inert and the engine's specified attack is right.
+- **The engine tail follows the oracle.** `sfizz_render` renders until silence (VSCO `ampeg_release` is up to 15 s); the runner measures the oracle file and gives the engine the same tail, otherwise the comparison covers a truncated tail.
+- **Random layers cannot be null-tested.** Instruments that choose a layer with `lorand`/`hirand` (19 of the 75 VSCO files) play different layers in the two renderers: sfizz draws from a fixed-seed
+  LCG (`Random::randomGenerator`, one draw per note-on, note-off and controller, and its own seed cannot be set) and the engine from a seeded xorshift (one draw per note-on and note-off). Removing the second
+  layer from FluteStac makes it null at -50 .. -59 dB. Such files are imported (and counted in `SFZ imported`) but left out of the null picks while a deterministic instrument exists; the report lists them.
+  The engine's random layers are covered by the synthetic `random_layers` case of the sample suite (paired regions with identical audio).
+- **16-bit oracle floor, and why the candidate is quantised.** sfizz's output is 16-bit, a rounding noise of about -101 dBFS per sample. Relative to a quiet instrument that alone is the whole residual:
+  the VSCO oboe `round_robin` probe (mean level about -47 dBFS) shows -54.4 dB with every real difference below 0.3 LSB, the GM percussion about -38 dB. `--candidate-quantize sfizz-s16` runs the engine's float
+  output through the same dr_wav conversion before the comparison (a deterministic model of the oracle's output stage, nothing statistical): the integers are then identical wherever the two float renders agree
+  to well below one LSB (99.89 % identical samples in that oboe probe, -71.5 dB). A real error of one LSB or more still shows in full.
 
 ## Licences
 

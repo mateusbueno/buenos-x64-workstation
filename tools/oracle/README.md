@@ -20,7 +20,8 @@ fixtures, built into `.work/` on the machine that regenerates goldens, and never
   10 minutes the first time. Two build workarounds, both in the script: on arm64 Linux/macOS it passes `-DPROJECT_SYSTEM_PROCESSOR=aarch64`
   (sfizz 1.2.3 adds the 32-bit ARM flags `-mfpu/-mfloat-abi` for any "arm*" processor, which clang rejects on arm64), and it silences
   `-Wmissing-template-arg-list-after-template-kw` (an error in recent clang for sfizz's bundled atomic_queue).
-- `render-oracle.sh <file.sfz> <file.mid> <out.wav> [quality]` -- `sfizz_render` at 48 kHz, 64-frame blocks, polyphony 64, sample
+- `render-oracle.sh <file.sfz> <file.mid> <out.wav> [quality]` -- `sfizz_render` at 48 kHz, 64-frame blocks (`VELORA_SFIZZ_BLOCKSIZE` overrides; the reference corpus job uses 1, because sfizz's float32
+  position sum drifts with larger blocks, see `tools/corpus/README.md`), polyphony 64, sample
   quality 2 (Hermite, sfizz's default; 1 = linear). The output is sfizz's own 16-bit WAV, untouched. Uses `VELORA_SFIZZ_RENDER` if
   set, else builds the oracle; exits 77 when it is unavailable. The output size is capped (128 MB) because sfizz renders until silence and
   a voice that never releases (see the quirks in `engine/core/README.md`) would otherwise fill the disk.
