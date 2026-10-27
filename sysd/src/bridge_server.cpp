@@ -891,6 +891,10 @@ void BridgeServer::on_library_frame(Session& s, const std::string& frame) {
     lm.set_request_id(outer);
     up.pending.erase(it);
   }
+  // Story 9.11: Studio lists the installed timbres through list_libraries / list_instruments. LibraryInfo.source_path is the absolute path the library was imported
+  // from on the unit (a removable drive, a folder): nothing a computer needs, so it never leaves the unit through the bridge.
+  if (lm.has_library_list())
+    for (auto& info : *lm.mutable_library_list()->mutable_libraries()) info.clear_source_path();
   ws::v1::ServerMessage m;
   m.set_request_id(outer);
   m.mutable_library_reply()->set_payload(lm.SerializeAsString());

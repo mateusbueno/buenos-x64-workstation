@@ -193,3 +193,24 @@ shows. A parameter added to the registry **is displayed** with no UI code (`test
   That the RT plane applies a queued edit is covered only by the C++ control tests (`control_test`, `test_performance_path`).
 - **Not verified.** The real Tauri webview, the light theme, a screen reader, a real unit, and the 1280 px window. Browser check without a unit: `python3 desktop/tests/support/serve_mock.py` serves `desktop/` with a paired fake unit
   (`tests/support/mock_device.js`) and `http://127.0.0.1:8765/src/index.html` shows the real Part Editor (select a part strip; `window.__mockUnit.log` lists what was sent).
+
+## Add a timbre to an empty part (Story 9.11)
+
+An EMPTY part strip ("+ Add timbre", dashed) opens a modal picker on click, Enter or Space (every activation selects the part first; strips with a timbre, a missing library or an unavailable engine only select).
+- **List.** `window.veloraDevice.libraryTimbres()` (Tauri `device_library_timbres`, `device.rs` `list_timbres`): `ListLibraries` then `ListInstruments` per library through the bridge's library allow-list (read-only; no allow-list row was added: both were
+  already allowed), 200 rows a page, halving when a reply does not fit one ws.v1 frame, a library that vanished between the two calls skipped, at most 5000 timbres (`truncated` is said in the dialog); any other failure is an error with "Try again"
+  (never a partial list shown as complete). `LibraryInfo.source_path` never reaches Studio (the bridge clears it).
+- **Picker.** `src/timbre_picker.js` (model + controller: search by words, diacritics / case / full-width ignored, also the category label; grouped by category in the unit's order, none last; at most 200 rows drawn and the cap is said; a row is chosen by its
+  `(library_id, instrument_key)`, never by name; replies for a closed / re-opened / aborted picker are dropped) and `src/timbre_picker_dom.js` (combobox: the focus stays in the search field, Up / Down / PageUp / PageDown move, Enter adds, Esc, Cancel or the
+  backdrop close without a request, Tab stays inside; an IME composition is never filtered or confirmed half way; text from the unit is `textContent` only; the focus returns to the strip). Esc does not take back a request that is already out.
+- **Assignment.** `PartEditorController.assignTimbre`: ONE `SetPartTimbre{part, library_id, instrument_key}` (no engine type) with the same `base_revision` as every Part Editor edit, sent at once (a pick is discrete: it does not go through the coalescing sender).
+  STALE_REVISION closes the picker, raises the Part Editor's banner (nothing assigned) and Reload then works as for a knob. The unit rebuilds the part in the background (the sound keeps playing); the page reads the Live Set view again (strip, ◆, Footer
+  `UNSAVED: LIVE SET`, because a timbre change is a Whole Live Set edit) and, while `State.loading` shows the rebuild, a State that still reports the old generation does not turn the strip back into "+ Add timbre" (`applyState`).
+- **Library gone.** The engine does not look the library up when it takes the edit, and Studio does not decide that it is missing: if the chosen timbre's library is not there (removed after the list was read, or later) the part rebuilds as `MISSING_LIBRARY`
+  and the strip shows "⚠ Missing library" with no name, exactly as Story 9.8 draws it, never another timbre; the page says so in the live region. Nothing substitutes a timbre.
+- **Disconnect / change while open.** The link dropping closes the picker (nothing assigned by it); a request already out is judged by the unit and, if it landed, the part is read back after reconnect with the ◆. The picker also closes when the Live Set shown
+  changes or the part stops being empty on the unit.
+- **Tests.** `node --test tests/timbre_picker.test.js tests/timbre_picker_dom.test.js` (model, assignment against `tests/support/fake_unit.js`, the DOM shim: keyboard, IME, hostile text, cap, errors, focus); `cargo test --offline`
+  (`timbre_list_pages_halves...` against a fake bridge and librarian); `ctest -R sysd_bridge` (`source_path` removed, instruments untouched); `ctest -R engine_host_bridge_studio_smoke` (the Rust client against a REAL librarian-service with two imported SFZ
+  libraries, the real bridge and engine: the list, the assignment with `base_revision`, the part read back through `GetLiveSetView`, a stale assignment refused, a library that is not there reading `MISSING_LIBRARY` with an empty name). Browser check
+  without a unit: `serve_mock.py` has two empty strips (parts 7 and 8).

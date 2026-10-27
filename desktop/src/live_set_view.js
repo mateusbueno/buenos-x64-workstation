@@ -169,6 +169,10 @@ export function applyState(base, state) {
   m.currentScene = cur >= 0 && cur < SCENE_SLOTS && !m.scenes[cur].empty ? cur : -1;
   if (m.currentScene >= 0) m.scenes[m.currentScene].current = true;
   const sp = Array.isArray(state.parts) ? state.parts : [];
+  // Story 9.11: while the unit rebuilds the Live Set (a timbre was just assigned: the sound keeps playing from the old generation until the new one is published) its parts still
+  // report the OLD generation. The picture read from the unit's edited copy is the truth about what was assigned, so the part's kind (empty / missing / ready) is not overlaid from a
+  // State that is about to be replaced: the strip must not flick back to "+ Add timbre" under the player's choice. Volume, on / off and zone follow as always.
+  const rebuilding = !!(state.loading && state.loading.loading);
   for (const raw of sp) {
     const i = num(raw && raw.part, -1);
     if (i < 0 || i >= PART_SLOTS) continue;
@@ -180,6 +184,11 @@ export function applyState(base, state) {
     p.volume = clamp01(raw.volume);
     p.volumePct = Math.round(p.volume * 100);
     if (typeof raw.low_key === "number" && typeof raw.high_key === "number") p.keyRange = keyRangeText(raw.low_key, raw.high_key);
+    if (rebuilding) {
+      p.status = partStatus(p);
+      p.addTimbre = p.status === "empty";
+      continue;
+    }
     switch (raw.part_state) {
       case PART_STATE.MISSING_LIBRARY:
         p.missing = true;

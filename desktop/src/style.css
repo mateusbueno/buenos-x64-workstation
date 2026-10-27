@@ -1211,6 +1211,14 @@ nav.jump a:hover {
   font-weight: 400;
 }
 
+.st.empty {
+  cursor: pointer;
+}
+
+.st.empty:hover .n, .st.empty:focus .n {
+  color: var(--accent);
+}
+
 .st .n.miss {
   color: var(--warn);
   font-weight: 600;
@@ -1818,4 +1826,63 @@ nav.jump a:hover {
 .pe-slider[data-inert="true"] .pe-fill {
   opacity: 0.55;
   border-right: 2px dotted var(--text);
+}
+
+/* "+ Add timbre" picker (Story 9.11): reuses the Setlists dialog (.sv-backdrop, .sv-dialog); tokens only. */
+.tp-dialog {
+  width: min(34rem, calc(100vw - 2rem));
+}
+
+.tp-search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.tp-list {
+  display: flex;
+  flex-direction: column;
+  max-height: min(24rem, 50vh);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+}
+
+.tp-group-head {
+  position: sticky;
+  top: 0;
+  padding: var(--spacing-1) var(--spacing-2);
+  background: var(--raised);
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+}
+
+.tp-option {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-2);
+  font-size: var(--font-desktop-body);
+  cursor: pointer;
+}
+
+.tp-option:hover, .tp-option.active {
+  background-color: var(--raised);
+}
+
+.tp-option.active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tp-lib {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-name {
+  overflow-wrap: anywhere;
 }

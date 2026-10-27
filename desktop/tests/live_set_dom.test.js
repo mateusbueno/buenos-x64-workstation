@@ -53,7 +53,7 @@ const tr = (key, ...args) => {
     "studio.live_set.missing_library": "Missing library", "studio.live_set.engine_unavailable": "Engine not available", "studio.live_set.scene_label": "%d %s",
     "studio.live_set.scene_add": "+ %d", "studio.live_set.scene_empty": "empty scene", "studio.live_set.scene_current": "current", "studio.live_set.part_aria": "Part %d, %s, %s",
     "studio.live_set.organ": "Organ", "studio.live_set.grid_scenes": "Scenes", "studio.live_set.grid_parts": "Parts", "category.piano.short": "Piano", "category.organ.short": "Organ",
-    "studio.live_set.add_timbre_soon": "later" };
+    "studio.live_set.add_timbre_tooltip": "Choose a timbre", "studio.live_set.add_timbre_hint": "press Enter to add a timbre" };
   let i = 0;
   return (T[key] ?? key).replace(/%[ds]/g, () => String(args[i++]));
 };
@@ -127,7 +127,10 @@ test("statuses: empty is a dashed placeholder with a tooltip, missing and unavai
   assert.ok(g.partCells[0].className.includes("missing"));
   assert.equal(g.partCells[0].getAttribute("aria-label"), "Part 1, Missing library");
   assert.equal(g.partCells[1]._r.name.textContent, "+ Add timbre");
-  assert.equal(g.partCells[1]._r.name.title, "later");
+  assert.equal(g.partCells[1]._r.name.title, "Choose a timbre");      // Story 9.11: an enabled affordance, no longer a disabled placeholder
+  assert.equal(g.partCells[1]._r.name.getAttribute("aria-disabled"), null);
+  assert.match(g.partCells[1].getAttribute("aria-label"), /press Enter to add a timbre$/);
+  assert.doesNotMatch(g.partCells[0].getAttribute("aria-label"), /press Enter/);
   assert.ok(g.partCells[1].className.includes("empty"));
   assert.equal(g.partCells[2]._r.left.textContent, "OFF");
   assert.equal(g.partCells[3]._r.name.textContent, "⚠ Engine not available");
@@ -159,4 +162,36 @@ test("keyboard: arrows move the roving tabindex and focus with wrap, Enter / Spa
   assert.equal(doc.activeElement, g.sceneCells[3]);
   g.partCells[4].fire("click", {});
   assert.deepEqual(selected.at(-1), 4);
+});
+
+// Story 9.11: an EMPTY strip is also the "+ Add timbre" button (click, Enter, Space); a strip with a timbre, a missing library or an unavailable engine only selects.
+test("an empty strip opens the picker on click, Enter and Space; other strips only select", () => {
+  const doc = makeDoc();
+  const scenes = doc.createElement("div"); scenes.setAttribute("role", "grid");
+  const parts = doc.createElement("div"); parts.setAttribute("role", "grid");
+  const selected = [];
+  const added = [];
+  const g = buildGrids(doc, scenes, parts, { onSelectPart: (i) => selected.push(i), onAddTimbre: (i) => added.push(i) });
+  const m = view([p(0), p(1, { empty: true, timbre_name: "" }), p(2, { missing_library: true }), p(3, { on: false })]);
+  m.parts.forEach((q, i) => updatePartCell(g.partCells[i], q, { tr, selected: false }));
+  g.partCells[1].fire("click", {});
+  assert.deepEqual(added, [1]);
+  g.partCells[0].fire("click", {});
+  g.partCells[2].fire("click", {});
+  g.partCells[3].fire("click", {});
+  assert.deepEqual(added, [1], "a filled, missing or off strip never opens the picker");
+  g.partCells[1].focus();
+  const e = g.partCells[1].fire("keydown", { key: "Enter" });
+  assert.ok(e.prevented);
+  g.partCells[1].fire("keydown", { key: " " });
+  assert.deepEqual(added, [1, 1, 1]);
+  g.partCells[0].focus();
+  g.partCells[0].fire("keydown", { key: "Enter" });
+  assert.deepEqual(added, [1, 1, 1]);
+  assert.deepEqual(selected.slice(0, 3), [1, 0, 2]);                   // every activation selects the part first
+  // once the part has a timbre the same strip no longer offers it
+  const filled = view([p(0), p(1, { timbre_name: "Concert Grand" })]);
+  updatePartCell(g.partCells[1], filled.parts[1], { tr, selected: false });
+  g.partCells[1].fire("click", {});
+  assert.deepEqual(added, [1, 1, 1]);
 });

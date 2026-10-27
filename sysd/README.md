@@ -256,7 +256,7 @@ Decisions: `set_performance_param` is an edit (Studio edits parameters live); th
 `INVALID_COMMAND` (`reason=library_message_not_available`) before the librarian sees them: a second `hello` (the bridge did the handshake), the engine-to-librarian reports
 (`report_active`, `live_set_deleted`, `reconcile`, `set_playing`, `flush_recent`), `install_protected`, and everything that names absolute device paths (`import_request`,
 `preflight_request`, and `list_preflight_rows`, which returns them). The import path policy (restricting sources to removable media) is deferred; until it exists the import is not
-offered over the bridge. Inner ids: `CancelPreflight.request_id` names one of the client's own requests and is translated to the upstream id of that request (none pending: 0).
+offered over the bridge. Story 9.11 changes the TABLE not at all (`list_libraries` and `list_instruments` were already allowed, `set_part_timbre` is an engine edit of `params.v1`): Velora Studio's timbre picker is built on those three. What changed is the reply: `LibraryInfo.source_path` (the absolute path a library was imported from, e.g. a removable drive) is cleared by the bridge in every `LibraryList` it relays (`test_library_forwarding`). Inner ids: `CancelPreflight.request_id` names one of the client's own requests and is translated to the upstream id of that request (none pending: 0).
 
 **Forwarding.** Each paired session gets a connection of its own to the engine's control socket (so the engine keeps its per-client `Subscribe` state and its State pushes flow back
 as they come) and, on first use, one to the librarian. The upstream sockets are connected non-blocking: an unreachable or backlogged one is `UPSTREAM_UNAVAILABLE`. `request_id` is

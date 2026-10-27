@@ -494,6 +494,13 @@ async fn device_request(request: serde_json::Value, dev: State<'_, DeviceHandle>
     serde_json::to_value(&reply).map_err(|e| e.to_string())
 }
 
+/// Story 9.11: the timbres installed on the unit (Library API through the bridge, read-only), for the Part Editor's "+ Add timbre" picker. Blocking work off the UI thread.
+#[tauri::command]
+async fn device_library_timbres(dev: State<'_, DeviceHandle>) -> Result<serde_json::Value, String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || client.list_timbres(device::MAX_PICKER_TIMBRES)).await.map_err(|e| e.to_string())?
+}
+
 fn make_device_handle() -> DeviceHandle {
     let app: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let app2 = app.clone();
@@ -580,6 +587,7 @@ fn main() {
             device_status,
             device_state,
             device_request,
+            device_library_timbres,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");

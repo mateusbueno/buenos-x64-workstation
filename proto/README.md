@@ -84,7 +84,7 @@ and `requests`; the bridge's message table already allows every one for a paired
 | ASSIGN K1..K8 | `SetAssignSlot {target: CURRENT_LIVE_SET, slot, param_id}` / `ClearAssignSlot {target, slot}` | only `assignable` performance parameters |
 | master scope (not shown in the part editor) | `SetMasterParams` (structural) / `SetPerformanceParam` (performance) | mapped in `commandKind`, no UI yet |
 | `arp_*`, low / high key, keyboard on/off, octave, transpose | **none** | no engine command: shown read-only with a reason, DEFERRED. Minimal additive commands: `SetPartZone {part, optional low_key, high_key, octave, transpose, keyboard_on}` and `SetPartArp {part, arp_*}` (structural), with `PartState` fields for octave, transpose and the arp |
-| `timbre_ref` | none here | the timbre picker is Story 9.11 |
+| `timbre_ref` | none here | the timbre picker (Story 9.11) is the Live Set view's "+ Add timbre" on an EMPTY part strip: it lists the installed timbres with `ListLibraries` / `ListInstruments` (Library API through the bridge's allow-list, read-only) and assigns with ONE `SetPartTimbre{part, library_id, instrument_key}` carrying `base_revision` (no engine type). The engine does not look the library up when it takes the edit: a reference it cannot resolve rebuilds as `PART_RUN_STATE_MISSING_LIBRARY` (silent, empty name), which Studio shows as "Missing library". The bridge removes `LibraryInfo.source_path` (the device path of the import) from every `LibraryList` it relays. No proto change |
 
 ## Key contact events (`contact_k`, Story 2.5)
 

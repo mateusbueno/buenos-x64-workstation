@@ -13,7 +13,7 @@ const BY_ID = new Map(REGISTRY.params.map((d) => [d.id, d]));
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
 export class FakeUnit {
-  constructor({ liveSetId = "ls-1", engines = [1, 3, 4, 2, 1, 1, 1, 1], fxMax = 5, rtDelay = 0, noRender = false } = {}) {
+  constructor({ liveSetId = "ls-1", engines = [1, 3, 4, 2, 1, 1, 1, 1], fxMax = 5, rtDelay = 0, noRender = false, empties = [] } = {}) {
     this.rtDelay = rtDelay; // macrotask turns between an acked performance edit and the RT plane applying it (Ack means QUEUED)
     this.noRender = noRender; // --no-audio: no render thread, a queued edit is never applied
     this.audibleLog = []; // [id, part, value] of every applied edit an engine CONSUMES (the sound changed); the others are stored only
@@ -37,8 +37,17 @@ export class FakeUnit {
     }
     this.parts = engines.map((e, i) => ({
       part: i, timbre_ref: 100 + i, inserts: [], output: 0, send_reverb: 0.25, send_delay: 0.1, volume: 0.7, keyboard_on: true, low_key: 36, high_key: 96,
-      engine_type_id: e, part_state: 0, view_fields: true,
+      engine_type_id: e, part_state: empties.includes(i) ? 1 : 0, view_fields: true, empty: empties.includes(i), timbre: null,
     }));
+    // Story 9.11: the timbres installed on the unit (what Studio's picker lists through the Library API) and the libraries that exist (a timbre whose library is not in `installed` is
+    // accepted like the engine accepts it, and its part then reads MISSING_LIBRARY with no name)
+    this.catalog = [
+      { library_id: "lib-a", library_name: "Studio Collection", instrument_key: "grand", name: "Concert Grand", category: 1 },
+      { library_id: "lib-a", library_name: "Studio Collection", instrument_key: "rhodes", name: "Rhôdes Mk I", category: 2 },
+      { library_id: "lib-b", library_name: "Strings Vol 1", instrument_key: "ensemble", name: "String Ensemble", category: 6 },
+      { library_id: "lib-b", library_name: "Strings Vol 1", instrument_key: "grand", name: "Soft Grand", category: 1 },
+    ];
+    this.installed = new Set(["lib-a", "lib-b"]);
     for (let p = 0; p < 8; p++) {
       this.perf.set(`400:${p}`, this.parts[p].send_reverb); // the live send levels start at the snapshot's initial ones
       this.perf.set(`401:${p}`, this.parts[p].send_delay);
@@ -46,6 +55,14 @@ export class FakeUnit {
     this.assignMap = [0, 0, 0, 0, 0, 0, 0, 0];
     this.sounding = true;
     this.scene = 0;
+  }
+
+  /** What `window.veloraDevice.libraryTimbres()` resolves to (device.rs list_timbres): every installed timbre, never a device path. */
+  async listTimbres() {
+    for (let i = 0; i < this.delay; i++) await new Promise((r) => setImmediate(r));
+    if (this.listFail) throw new Error(this.listFail);
+    const timbres = clone(this.catalog.filter((t) => this.installed.has(t.library_id)));
+    return { timbres, libraries: this.installed.size, total: timbres.length, truncated: false };
   }
 
   state() {
@@ -161,8 +178,14 @@ export class FakeUnit {
         return { revision: this.revision, body: { LiveSetViewReply: {
           live_set_id: this.liveSetId, name: "Perfect", dirty: false, sounding: this.sounding,
           scenes: Array.from({ length: 8 }, (_, i) => ({ index: i, name: i < 2 ? ["Verse", "Chorus"][i] : "", empty: i >= 2 })),
-          parts: this.parts.map((p) => ({ index: p.part, empty: false, on: p.keyboard_on, engine_type_id: p.engine_type_id, timbre_name: p.engine_type_id === 1 ? "Concert Grand" : "", category: p.engine_type_id === 2 ? 3 : p.engine_type_id === 1 ? 1 : 13, volume: p.volume, low_key: p.low_key, high_key: p.high_key, organ_registration: p.engine_type_id === 2 ? "88 8000 000" : "" })),
-          part_count: this.parts.length, scene_count: 2, factory: false } } };
+          parts: this.parts.map((p) => {
+            const t = p.timbre && this.catalog.find((c) => c.library_id === p.timbre.library_id && c.instrument_key === p.timbre.instrument_key);
+            const missing = !!p.timbre && p.part_state === 2;
+            return { index: p.part, empty: p.empty && !p.timbre, missing_library: missing, unavailable_reason: missing ? "missing_library" : "", on: p.keyboard_on, engine_type_id: p.engine_type_id,
+              timbre_name: missing || (p.empty && !p.timbre) ? "" : t ? t.name : p.engine_type_id === 1 ? "Concert Grand" : "", category: t ? t.category : p.engine_type_id === 2 ? 3 : p.engine_type_id === 1 ? 1 : 13,
+              volume: p.volume, low_key: p.low_key, high_key: p.high_key, organ_registration: p.engine_type_id === 2 ? "88 8000 000" : "" };
+          }),
+          part_count: this.parts.length, scene_count: 2, factory: false, dirty: this.dirty } } };
       case "GetSetlists":
         return { revision: this.revision, body: { SetlistsReply: { setlists: [], tags: [], status: { available: true, library_revision: 1 }, detail_setlist_id: "", entries: [], all_live_sets: [{ live_set_id: this.liveSetId, name: "Perfect", missing: false }] } } };
       case "GetState": return { revision: this.revision, body: { State: this.state() } };
@@ -194,6 +217,17 @@ export class FakeUnit {
         this.parts[b.part].output = b.output;
         this.bump();
         return this.ack();
+      case "SetPartTimbre": {
+        if (!this.partOk(b.part)) return this.err(CODE.INVALID_PART);
+        if (!b.library_id || !b.instrument_key) return this.err(CODE.INVALID_COMMAND, "needs a library and an instrument");
+        if (this.busyRebuild) return { request_id: 0, revision: this.revision, body: { Error: { code: CODE.BUSY, message: "a Live Set load is in progress", details: { reason: "reload_in_progress" } } } };
+        const p = this.parts[b.part];
+        p.timbre = { library_id: b.library_id, instrument_key: b.instrument_key };
+        p.part_state = this.installed.has(b.library_id) && this.catalog.some((c) => c.library_id === b.library_id && c.instrument_key === b.instrument_key) ? 0 : 2; // the engine takes the reference; the part reads MISSING_LIBRARY when it cannot resolve
+        this.hasTimbreEdit = true;
+        this.bump();
+        return this.ack();
+      }
       case "SetPartVolume":
         if (!this.partOk(b.part)) return this.err(CODE.INVALID_PART);
         if (!(b.volume >= 0 && b.volume <= 1)) return this.err(CODE.OUT_OF_RANGE);

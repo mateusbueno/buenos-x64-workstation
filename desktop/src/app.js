@@ -22,6 +22,8 @@ import { liveEditFooter } from "./live_edit_state.js";
 import { PartEditorView } from "./part_editor_dom.js";
 import { SetlistsController } from "./setlists_view.js";
 import { SetlistsView } from "./setlists_dom.js";
+import { TimbrePickerController } from "./timbre_picker.js";
+import { TimbrePickerView } from "./timbre_picker_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -840,12 +842,12 @@ window.addEventListener("DOMContentLoaded", () => {
     parts: document.getElementById("live-part-grid"),
     simStrips: document.getElementById("editor-part-strips"),
   };
-  const liveUi = { grids: null, partListeners: new Set() };
+  const liveUi = { grids: null, partListeners: new Set(), picker: null };
   const sidebar = { setlists: [], all: [], entries: new Map(), expanded: new Set(), key: null, error: "", firstLoad: true, playingId: "", autoTried: "" };
 
   function buildLiveGrids() {
     if (liveUi.grids) return;
-    liveUi.grids = buildGrids(document, liveEls.scenes, liveEls.parts, { onSelectPart: (i) => liveCtl.selectPart(i) });
+    liveUi.grids = buildGrids(document, liveEls.scenes, liveEls.parts, { onSelectPart: (i) => liveCtl.selectPart(i), onAddTimbre: (i) => openTimbrePicker(i) });
     setGridLabels(liveEls.scenes, liveEls.parts, tr);
   }
 
@@ -877,6 +879,13 @@ window.addEventListener("DOMContentLoaded", () => {
     if (changes.header) markLiveEdit(isDirty); // the footer follows the real unsaved flag
     if (changes.parts.includes(liveCtl.selectedPart)) renderRealPartDetails(m); // the controller assigns its model after this callback: use the one passed in
     if (changes.header) updateSidebarMarkers();
+    // Story 9.11: an open picker is about an EMPTY part of the Live Set it was opened on; when the unit changed that under it (another Live Set, the part filled elsewhere) it closes
+    // without assigning anything. (While its own assignment is in flight the part legitimately stops being empty: the controller judges that result.)
+    const tp = liveUi.picker;
+    if (tp && tp.ctl.isOpen && tp.ctl.status !== "assigning") {
+      const ctx = tp.ctl.context;
+      if (liveCtl.liveSetId !== ctx.liveSetId || !m.parts[ctx.part] || m.parts[ctx.part].status !== "empty") tp.ctl.abort("changed");
+    }
   }
 
   const ALL_CHANGES = { header: true, note: true, scenes: [0, 1, 2, 3, 4, 5, 6, 7], parts: [0, 1, 2, 3, 4, 5, 6, 7] };
@@ -1009,6 +1018,70 @@ window.addEventListener("DOMContentLoaded", () => {
       if (!on && !liveCtl.model) renderPairedEditor(); // a first read that failed: the "Reading the Live Set" title must not stay
     },
   });
+
+  // ---- "+ Add timbre" picker (Story 9.11) -----------------------------------------------------------------------------------------------------------
+  // An empty part strip (click, Enter or Space) opens a modal picker of the timbres installed on the unit (Library API through the bridge, read-only). Choosing one sends a
+  // single SetPartTimbre with the same base_revision as every Part Editor edit; the unit rebuilds the part and the Live Set view is read again (the strip, the diamond and the
+  // Footer follow). Esc / Cancel change nothing. timbre_picker.js is the model, timbre_picker_dom.js the DOM.
+  const tpHost = document.createElement("div");
+  tpHost.className = "tp-host";
+  document.body.appendChild(tpHost);
+  const timbrePick = {
+    ctl: new TimbrePickerController({
+      listTimbres: () => window.veloraDevice.libraryTimbres(),
+      assign: assignPickedTimbre,
+      categoryLabel: (it) => (it.categoryKey ? tr(it.categoryKey) : ""),
+      onChange: () => timbrePick.view.render(),
+      onClose: (reason, detail, ctx) => {
+        timbrePick.view.restoreFocus();
+        const n = ctx ? ctx.part + 1 : 0;
+        if (reason === "cancelled") quietAnnounce(tr("studio.timbre_picker.closed"));
+        else if (reason === "aborted") quietAnnounce(tr(detail === "disconnected" ? "studio.timbre_picker.disconnected" : "studio.timbre_picker.changed"));
+        else if (reason === "stale") quietAnnounce(localeMgr.tr("studio.part_editor.stale_banner")); // the Part Editor's banner (with Reload) is the place that explains it
+        void n;
+      },
+    }),
+    view: null,
+  };
+  liveUi.picker = timbrePick;
+  timbrePick.view = new TimbrePickerView({
+    doc: document, host: tpHost, tr, controller: timbrePick.ctl, announce: quietAnnounce, categoryLabel: (it) => (it.categoryKey ? tr(it.categoryKey) : ""),
+  });
+
+  // The assignment the picker sends: refused (nothing sent) when the part is no longer an empty strip of the Live Set the picker was opened on; otherwise one SetPartTimbre through
+  // the Part Editor controller (base_revision, STALE_REVISION banner). On success the Live Set view is read again and the result is announced; a library that is gone shows the
+  // strip's own "Missing library" state (the unit takes the reference, it never substitutes another timbre).
+  async function assignPickedTimbre({ part, libraryId, instrumentKey, liveSetId }) {
+    const m = liveCtl.model;
+    if (!m || liveCtl.liveSetId !== liveSetId) return { ok: false, error: { code: 0, message: tr("studio.timbre_picker.changed") } };
+    if (!m.parts[part] || m.parts[part].status !== "empty") return { ok: false, error: { code: 0, message: tr("studio.timbre_picker.not_empty", part + 1) } };
+    const res = await partEditorCtl.assignTimbre({ part, libraryId, instrumentKey, liveSetId });
+    if (res.ok) {
+      const item = timbrePick.ctl.chosen;
+      const picked = item ? item.name : "";
+      await liveCtl.select(liveSetId); // the strip, the diamond and the footer are taken from the unit again
+      const after = liveCtl.model && liveCtl.model.parts[part];
+      if (after && after.status === "missing") quietAnnounce(tr("studio.timbre_picker.assigned_missing", part + 1));
+      else quietAnnounce(tr("studio.timbre_picker.assigned", picked, part + 1));
+      paintLiveEditFooter();
+    }
+    return res;
+  }
+
+  function openTimbrePicker(i) {
+    const m = liveCtl.model;
+    if (!pairedReal() || !m || setlistsUi.open || timbrePick.ctl.isOpen) return;
+    const p = m.parts[i];
+    if (!p || p.status !== "empty") return;
+    if (!m.sounding) {
+      quietAnnounce(tr("studio.timbre_picker.not_sounding"));
+      if (liveEls.error) { liveEls.error.hidden = false; liveEls.error.textContent = tr("studio.timbre_picker.not_sounding"); }
+      return;
+    }
+    const strip = liveUi.grids && liveUi.grids.partCells[i];
+    timbrePick.view.open(strip || null);
+    timbrePick.ctl.open({ liveSetId: liveCtl.liveSetId, part: i });
+  }
 
   // For Story 9.9 (Part Editor): the selection of the Live Set view.
   window.veloraLiveSetView = {
@@ -1353,6 +1426,8 @@ window.addEventListener("DOMContentLoaded", () => {
     disconnect() { return window.__TAURI__.core.invoke("device_disconnect"); },
     // request: a ws.v1 ClientMessage as JSON, e.g. { body: { GetState: {} } }; resolves to the ServerMessage as JSON.
     request(request) { return window.__TAURI__.core.invoke("device_request", { request }); },
+    // Story 9.11: the timbres installed on the unit (Library API through the bridge, read-only): { timbres: [{ library_id, library_name, instrument_key, name, category }], total, truncated }.
+    libraryTimbres() { return window.__TAURI__.core.invoke("device_library_timbres"); },
   };
   let pairPromptedFor = null;
   function applyDeviceStatus(st) {
@@ -1411,6 +1486,7 @@ window.addEventListener("DOMContentLoaded", () => {
       deviceStore.state = null; // a State from before the outage is never shown again
       liveCtl.reset();
       partEditorCtl.reset();
+      timbrePick.ctl.abort("disconnected"); // Story 9.11: an open picker closes; nothing is assigned by it
       if (pe.view) { pe.view.clear(); pe.view = null; }
       hideSetlistsView(); // the Setlists view is disabled without a paired device
       setlistsCtl.reset();

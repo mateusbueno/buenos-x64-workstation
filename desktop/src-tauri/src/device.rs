@@ -16,7 +16,10 @@
 // Status values (also the `device://status` event payload, `DeviceStatus.status`): "disconnected" | "connecting" | "unpaired" | "paired" |
 // "version-mismatch". The latest engine State is kept (`latest_state()`) and every State message (reply or push) is emitted as `device://state`.
 // The physical USB link is the trust boundary (no TLS): the pairing code is a physical-presence check, not cryptography.
-use crate::ws_v1::{client_message::Body as CBody, server_message::Body as SBody, ClientMessage, ErrorCode, Hello, ServerMessage};
+use crate::ws_v1::{
+    client_message::Body as CBody, library_client_message::Body as LBody, library_server_message::Body as LSBody, server_message::Body as SBody, ClientMessage, ErrorCode, Hello,
+    LibraryClientMessage, LibraryRequest, LibraryServerMessage, ListInstruments, ListLibraries, ServerMessage,
+};
 use prost::Message;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
@@ -28,6 +31,17 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub const MAX_FRAME: usize = 65536;
+/// Rows asked per Library API page (a reply must fit one 65536-byte frame; the librarian also keeps its own reply budget and says `more`).
+const LIBRARY_PAGE: u32 = 200;
+/// What the timbre picker takes from a unit at most (a ceiling for the list, not a library limit: `truncated` tells the page).
+pub const MAX_PICKER_TIMBRES: usize = 5000;
+const MAX_PICKER_LIBRARIES: usize = 1000;
+
+enum LibFail {
+    TooLarge,
+    Gone,
+    Other(String),
+}
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const FEATURES: [&str; 6] = ["params.v1", "snapshots.v1", "subscribe.v1", "liveset.v1", "config.v1", "library.v1"];
 const BACKOFF_START: Duration = Duration::from_millis(50);
@@ -243,6 +257,110 @@ impl DeviceClient {
             Err(mpsc::RecvTimeoutError::Timeout) => Err("timeout".to_string()),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err("not connected".to_string()),
         }
+    }
+
+    /// One Library API request through the bridge's library allow-list (`LibraryRequest{payload}`), read-only calls only. Typed failures are told apart because the timbre
+    /// list reacts to two of them: a reply too big for one ws.v1 frame (ask for fewer rows) and a library that is gone (skip it).
+    fn library_call(&self, body: LBody) -> Result<LSBody, LibFail> {
+        let inner = LibraryClientMessage { request_id: 1, body: Some(body) }; // the bridge maps the inner id to its own and back
+        let msg = ClientMessage { request_id: 0, body: Some(CBody::Library(LibraryRequest { payload: inner.encode_to_vec() })), ..Default::default() };
+        let reply = self.request(msg, Duration::from_secs(10)).map_err(LibFail::Other)?;
+        match reply.body {
+            Some(SBody::LibraryReply(r)) => {
+                let m = LibraryServerMessage::decode(&r.payload[..]).map_err(|e| LibFail::Other(format!("the library reply does not parse: {}", e)))?;
+                match m.body {
+                    Some(LSBody::Error(e)) => {
+                        if e.code == crate::ws_v1::LibraryErrorCode::UnknownLibrary as i32 {
+                            Err(LibFail::Gone)
+                        } else {
+                            let reason = e.details.get("reason").cloned().unwrap_or_default();
+                            Err(LibFail::Other(format!("library error {}{}", e.code, if reason.is_empty() { String::new() } else { format!(" ({})", reason) })))
+                        }
+                    }
+                    Some(b) => Ok(b),
+                    None => Err(LibFail::Other("the library reply is empty".to_string())),
+                }
+            }
+            Some(SBody::Error(e)) => {
+                if e.details.get("reason").map(|r| r == "library_reply_too_large").unwrap_or(false) {
+                    Err(LibFail::TooLarge)
+                } else {
+                    Err(LibFail::Other(describe_error(&e)))
+                }
+            }
+            _ => Err(LibFail::Other("unexpected reply to a library request".to_string())),
+        }
+    }
+
+    /// Story 9.11: every timbre installed on the unit, for the Part Editor's "+ Add timbre" picker: the libraries (ListLibraries) and each library's instruments
+    /// (ListInstruments), paged, as `{ timbres: [{library_id, library_name, instrument_key, name, category}], libraries, total, truncated }`. Read-only (nothing is
+    /// assigned, no revision moves). At most `max_timbres` are returned (`truncated` says more exist); a page that does not fit one frame is asked again with half the rows; a library
+    /// that vanishes between the two calls is skipped; a failure of any other kind is the error (never a partial list presented as complete).
+    pub fn list_timbres(&self, max_timbres: usize) -> Result<serde_json::Value, String> {
+        let mut libraries: Vec<crate::ws_v1::LibraryInfo> = Vec::new();
+        let mut offset = 0u32;
+        let mut limit = LIBRARY_PAGE;
+        loop {
+            match self.library_call(LBody::ListLibraries(ListLibraries { offset, limit })) {
+                Ok(LSBody::LibraryList(l)) => {
+                    let n = l.libraries.len() as u32;
+                    libraries.extend(l.libraries);
+                    if !l.more || n == 0 || libraries.len() >= MAX_PICKER_LIBRARIES {
+                        break;
+                    }
+                    offset += n;
+                }
+                Ok(_) => return Err("unexpected reply to ListLibraries".to_string()),
+                Err(LibFail::TooLarge) if limit > 1 => limit = (limit / 2).max(1),
+                Err(LibFail::TooLarge) => return Err("a library entry does not fit one frame".to_string()),
+                Err(LibFail::Gone) => return Err("the library list is not available".to_string()),
+                Err(LibFail::Other(e)) => return Err(e),
+            }
+        }
+        let mut timbres: Vec<serde_json::Value> = Vec::new();
+        let mut total: u64 = 0;
+        let mut truncated = false;
+        'libs: for lib in libraries.iter() {
+            if lib.instrument_count == 0 {
+                continue;
+            }
+            let mut offset = 0u32;
+            let mut limit = LIBRARY_PAGE;
+            loop {
+                match self.library_call(LBody::ListInstruments(ListInstruments { library_id: lib.library_id.clone(), offset, limit })) {
+                    Ok(LSBody::InstrumentList(l)) => {
+                        if l.library_id != lib.library_id {
+                            return Err("the instrument list is for another library".to_string()); // never attribute a timbre to the wrong library
+                        }
+                        total += l.instruments.len() as u64;
+                        let n = l.instruments.len() as u32;
+                        for i in l.instruments {
+                            if timbres.len() >= max_timbres {
+                                truncated = true;
+                                break 'libs;
+                            }
+                            timbres.push(serde_json::json!({
+                                "library_id": lib.library_id,
+                                "library_name": lib.name,
+                                "instrument_key": i.instrument_key,
+                                "name": i.name,
+                                "category": i.category,
+                            }));
+                        }
+                        if !l.more || n == 0 {
+                            break;
+                        }
+                        offset += n;
+                    }
+                    Ok(_) => return Err("unexpected reply to ListInstruments".to_string()),
+                    Err(LibFail::TooLarge) if limit > 1 => limit = (limit / 2).max(1),
+                    Err(LibFail::TooLarge) => return Err("an instrument entry does not fit one frame".to_string()),
+                    Err(LibFail::Gone) => break, // removed between the two calls: nothing to offer from it
+                    Err(LibFail::Other(e)) => return Err(e),
+                }
+            }
+        }
+        Ok(serde_json::json!({ "timbres": timbres, "libraries": libraries.len(), "total": total, "truncated": truncated }))
     }
 
     /// PairRequest with the code the unit shows. Ok when paired (the client then subscribes by itself); Err with the typed code otherwise
@@ -895,9 +1013,51 @@ mod tests {
                     send_server(&mut s, &ServerMessage { request_id: id, revision: 7, body: Some(SBody::Ack(Ack { not_durable: false })) });
                     send_server(&mut s, &state_msg(7, 3));
                 }
+                Some(CBody::Library(r)) if is_paired => send_server(&mut s, &fake_library_reply(id, &r.payload)),
                 Some(_) if is_paired => send_server(&mut s, &ServerMessage { request_id: id, revision: 0, body: Some(SBody::Ack(Ack { not_durable: false })) }),
                 _ => send_server(&mut s, &err(ErrorCode::NotPaired, &[])),
             }
+        }
+    }
+
+    /// The fake librarian behind the fake bridge (Story 9.11): "Grand" (3 instruments), "Strings" (250: two pages at the client's page size), "Vanished" (listed, then
+    /// UNKNOWN_LIBRARY), "Empty" (0). An instrument page over 100 rows is "too large" like a reply that does not fit one ws.v1 frame.
+    fn fake_library_reply(id: u64, payload: &[u8]) -> ServerMessage {
+        use crate::ws_v1::{InstrumentInfo, InstrumentList, LibraryError, LibraryErrorCode, LibraryInfo, LibraryList, LibraryReply};
+        let lm = LibraryClientMessage::decode(payload).unwrap();
+        let wrap = |body: LSBody| ServerMessage {
+            request_id: id,
+            revision: 0,
+            body: Some(SBody::LibraryReply(LibraryReply { payload: LibraryServerMessage { request_id: lm.request_id, body: Some(body) }.encode_to_vec() })),
+        };
+        let libs = [("lib-grand", "Grand", 3u32), ("lib-strings", "Strings", 250), ("lib-gone", "Vanished", 5), ("lib-empty", "Empty", 0)];
+        match lm.body {
+            Some(LBody::ListLibraries(l)) => {
+                let limit = if l.limit == 0 { 500 } else { l.limit } as usize;
+                let rows: Vec<LibraryInfo> = libs.iter().skip(l.offset as usize).take(limit).map(|(i, n, c)| LibraryInfo { library_id: i.to_string(), name: n.to_string(), instrument_count: *c, ..Default::default() }).collect();
+                let more = (l.offset as usize + rows.len()) < libs.len();
+                wrap(LSBody::LibraryList(LibraryList { libraries: rows, total: libs.len() as u32, offset: l.offset, more }))
+            }
+            Some(LBody::ListInstruments(l)) => {
+                let Some((lid, _, count)) = libs.iter().find(|(i, _, _)| *i == l.library_id) else {
+                    return wrap(LSBody::Error(LibraryError { code: LibraryErrorCode::UnknownLibrary as i32, message: "no such library".into(), ..Default::default() }));
+                };
+                if *lid == "lib-gone" {
+                    return wrap(LSBody::Error(LibraryError { code: LibraryErrorCode::UnknownLibrary as i32, message: "no such library".into(), ..Default::default() }));
+                }
+                let limit = if l.limit == 0 { 500 } else { l.limit };
+                if limit > 100 {
+                    return ServerMessage {
+                        request_id: id,
+                        revision: 0,
+                        body: Some(SBody::Error(WsError { code: ErrorCode::Internal as i32, message: "too big".into(), details: [("reason".to_string(), "library_reply_too_large".to_string())].into_iter().collect() })),
+                    };
+                }
+                let end = (l.offset + limit).min(*count);
+                let rows: Vec<InstrumentInfo> = (l.offset..end).map(|k| InstrumentInfo { instrument_key: format!("{}-k{}", lid, k), name: format!("{} {}", lid, k), category: 1 + (k % 17), ..Default::default() }).collect();
+                wrap(LSBody::InstrumentList(InstrumentList { library_id: l.library_id.clone(), instruments: rows, total: *count, offset: l.offset, more: end < *count }))
+            }
+            _ => wrap(LSBody::Error(LibraryError { code: LibraryErrorCode::InvalidCommand as i32, message: "not on the allow-list".into(), ..Default::default() })),
         }
     }
 
@@ -1167,6 +1327,49 @@ mod tests {
     }
 
     #[test]
+    fn timbre_list_pages_halves_a_too_large_page_and_skips_a_vanished_library() {
+        let b = FakeBridge::start(0, &["studio-lib"], Mode::Normal);
+        let (c, _ev) = client_with_events("studio-lib");
+        let dir = tmpdir("lib");
+        with_token(&c, &dir, "velora-test", "studio-lib");
+        c.connect("127.0.0.1", b.port);
+        assert!(wait_for(|| c.status().status == LinkStatus::Paired));
+        let v = c.list_timbres(MAX_PICKER_TIMBRES).unwrap();
+        let t = v["timbres"].as_array().unwrap();
+        assert_eq!(t.len(), 253, "3 + 250 (the vanished library is skipped, the empty one asked for nothing)");
+        assert_eq!(v["libraries"], 4);
+        assert_eq!(t[0]["library_id"], "lib-grand");
+        assert_eq!(t[0]["library_name"], "Grand");
+        assert_eq!(t[0]["instrument_key"], "lib-grand-k0");
+        assert_eq!(t[3]["library_id"], "lib-strings");
+        assert_eq!(t[252]["instrument_key"], "lib-strings-k249");
+        assert_eq!(v["truncated"], false);
+        // every timbre keeps its own library: no key of the Strings library is listed under another one
+        assert!(t.iter().all(|x| x["instrument_key"].as_str().unwrap().starts_with(x["library_id"].as_str().unwrap())));
+        // a cap is a cap, and says so
+        let v = c.list_timbres(10).unwrap();
+        assert_eq!(v["timbres"].as_array().unwrap().len(), 10);
+        assert_eq!(v["truncated"], true);
+        // the unit going away is an error, not an empty list
+        drop(b);
+        c.disconnect();
+        assert!(c.list_timbres(10).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn timbre_assignment_and_library_requests_map_to_the_wire() {
+        // the picker's assignment is an ordinary ws.v1 edit (SetPartTimbre with base_revision), sent as the page's JSON through device_request
+        let m: ClientMessage = serde_json::from_value(serde_json::json!({"base_revision": 12, "body": {"SetPartTimbre": {"part": 2, "library_id": "lib-a", "instrument_key": "k1"}}})).unwrap();
+        assert_eq!(m.base_revision, 12);
+        assert!(matches!(m.body, Some(CBody::SetPartTimbre(ref t)) if t.part == 2 && t.library_id == "lib-a" && t.instrument_key == "k1" && t.engine_type_id.is_none()));
+        // a library request carries the Library API message as opaque bytes
+        let inner = LibraryClientMessage { request_id: 1, body: Some(LBody::ListLibraries(ListLibraries { offset: 0, limit: 200 })) };
+        let back = LibraryClientMessage::decode(&inner.encode_to_vec()[..]).unwrap();
+        assert!(matches!(back.body, Some(LBody::ListLibraries(ref l)) if l.limit == 200));
+    }
+
+    #[test]
     fn json_requests_deserialize_with_defaults() {
         // The shape `device_request` accepts from the UI: a ClientMessage as JSON, absent fields defaulted.
         let m: ClientMessage = serde_json::from_value(serde_json::json!({"body": {"GetState": {}}})).unwrap();
@@ -1403,6 +1606,9 @@ mod tests {
         }
         real_setlists_flow(&c);
         real_part_edit_flow(&c);
+        if std::env::var("VELORA_TEST_TIMBRES").is_ok() {
+            real_timbre_flow(&c);
+        }
         eprintln!("real_bridge_round_trip: status {:?}", c.status());
         c.disconnect();
         let _ = std::fs::remove_dir_all(&dir);
@@ -1466,6 +1672,79 @@ mod tests {
         assert!(r["body"].get("Ack").is_some() || r["body"]["Error"]["code"] == 17, "expected Ack or NO_LIVE_SET, got {}", r);
         assert_eq!(call(serde_json::json!({"body": {"SetAssignSlot": {"target": 1, "slot": 9, "param_id": 102}}}))["body"]["Error"]["code"].as_u64().map(|c| c == 11 || c == 17), Some(true));
         eprintln!("real_part_edit_flow: ok");
+    }
+
+    /// Story 9.11 against a REAL librarian, bridge and engine (the C++ smoke starts a librarian-service over the fixture libraries and sets VELORA_TEST_TIMBRES): the picker's list
+    /// (Library API through the bridge's allow-list), the assignment as the page sends it (SetPartTimbre with base_revision) on an empty part, the rebuilt Live Set read back
+    /// (GetLiveSetView: the chosen timbre's name, dirty, a timbre change in the summary), a stale assignment refused, and a timbre whose library is not there (the engine takes the
+    /// reference and the part reads "missing library" with NO name: never another timbre).
+    fn real_timbre_flow(c: &DeviceClient) {
+        let call = |v: serde_json::Value| -> serde_json::Value {
+            let m: ClientMessage = serde_json::from_value(v).expect("page JSON maps onto a ClientMessage");
+            serde_json::to_value(c.request(m, Duration::from_secs(10)).expect("a reply")).unwrap()
+        };
+        let state = || call(serde_json::json!({"body": {"GetState": {}}}))["body"]["State"].clone();
+        let list = c.list_timbres(MAX_PICKER_TIMBRES).expect("the timbre list through the bridge");
+        let timbres = list["timbres"].as_array().unwrap();
+        assert!(!timbres.is_empty(), "the librarian lists no timbre: the fixture libraries were not found");
+        assert_eq!(list["truncated"], false);
+        assert!(timbres.iter().all(|t| !t["library_id"].as_str().unwrap().is_empty() && !t["instrument_key"].as_str().unwrap().is_empty() && !t["name"].as_str().unwrap().is_empty()));
+        let wire = serde_json::to_string(&list).unwrap();
+        assert!(!wire.contains("source_path"), "a device path must not reach Studio");
+        let st = state();
+        assert_eq!(st["live_set_loaded"], true, "the smoke engine has no Live Set loaded");
+        let live_id = st["live_set_id"].as_str().unwrap().to_string();
+        let empties: Vec<u64> = st["parts"].as_array().unwrap().iter().filter(|p| p["part_state"] == 1).map(|p| p["part"].as_u64().unwrap()).collect();
+        assert!(empties.len() >= 2, "need two empty parts, got {:?}", empties);
+        let (p1, p2) = (empties[0], empties[1]);
+        let part_state = |part: u64| -> Option<u64> { c.latest_state().and_then(|s| s["parts"][part as usize]["part_state"].as_u64()) };
+        let settle = |part: u64, want: u64| {
+            let end = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < end {
+                let s = state();
+                if part_state(part) == Some(want) && s["loading"]["loading"] != true {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        };
+        let rev = || state()["edits"]["live_set_revision"].as_u64().unwrap();
+        // assign: a Studio structural edit with base_revision; the unit rebuilds the part
+        let pick = &timbres[0];
+        let lib = pick["library_id"].as_str().unwrap();
+        let key = pick["instrument_key"].as_str().unwrap();
+        let name = pick["name"].as_str().unwrap();
+        let base = rev();
+        let r = call(serde_json::json!({"base_revision": base, "body": {"SetPartTimbre": {"part": p1, "library_id": lib, "instrument_key": key}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert!(settle(p1, 0), "the part did not become READY after the timbre was assigned");
+        assert_eq!(rev(), base, "a Studio edit does not move the revision (the rebuild and the restore are not foreign changes)");
+        let st = state();
+        assert_eq!(st["edits"]["has_timbre_edit"], true);
+        assert_eq!(st["edits"]["current_dirty"], true);
+        let view = call(serde_json::json!({"body": {"GetLiveSetView": {"live_set_id": live_id}}}));
+        let part = &view["body"]["LiveSetViewReply"]["parts"].as_array().unwrap().iter().find(|p| p["index"].as_u64().unwrap_or(0) == p1).cloned().expect("the part is in the view");
+        assert_eq!(part["empty"], false);
+        assert_eq!(part["missing_library"], false);
+        assert_eq!(part["timbre_name"], name, "the view shows the timbre that was picked");
+        // an assignment built on an older revision is refused and changes nothing
+        let r = call(serde_json::json!({"base_revision": base + 5, "body": {"SetPartTimbre": {"part": p2, "library_id": lib, "instrument_key": key}}}));
+        assert_eq!(r["body"]["Error"]["code"], 47, "expected STALE_REVISION, got {}", r);
+        assert_eq!(part_state(p2), Some(1), "a refused assignment left the part empty");
+        // a bad part and a malformed reference are typed errors, not an assignment
+        assert_eq!(call(serde_json::json!({"base_revision": rev(), "body": {"SetPartTimbre": {"part": 99, "library_id": lib, "instrument_key": key}}}))["body"]["Error"]["code"], 8);
+        // the library vanished between the list and the assign: the unit takes the reference and the part is "missing library" with no name
+        let gone = "00000000-0000-4000-8000-00000000dead";
+        let r = call(serde_json::json!({"base_revision": rev(), "body": {"SetPartTimbre": {"part": p2, "library_id": gone, "instrument_key": "nothing"}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert!(settle(p2, 2), "the part did not read MISSING_LIBRARY");
+        let view = call(serde_json::json!({"body": {"GetLiveSetView": {"live_set_id": live_id}}}));
+        let part = &view["body"]["LiveSetViewReply"]["parts"].as_array().unwrap().iter().find(|p| p["index"].as_u64().unwrap_or(0) == p2).cloned().unwrap();
+        assert_eq!(part["missing_library"], true);
+        assert_eq!(part["timbre_name"], "", "a missing library never shows another timbre's name");
+        assert_eq!(part["empty"], false);
+        eprintln!("real_timbre_flow: ok ({} timbres listed)", timbres.len());
     }
 
     /// Story 9.13 against a REAL bridge and engine (called by real_bridge_round_trip with its paired client: the bridge's pairing window closes at the first pairing, so

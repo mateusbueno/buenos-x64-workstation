@@ -1002,6 +1002,44 @@ export class PartEditorController {
     return true;
   }
 
+  /**
+   * Story 9.11: assigns a timbre to an EMPTY part from the picker: one `SetPartTimbre{part, library_id, instrument_key}` (never an engine type: the part keeps its engine) with the same
+   * `base_revision` as every other edit (the revision this Live Set was loaded at; the rebuild the unit does for it does not move it, Studio's own edits never do). Not coalesced: a pick is one
+   * discrete edit, sent at once (the sender's queues are for drags). `liveSetId` is the Live Set the picker was opened on: when the view has since moved to another one (or the link dropped, or a
+   * Reload changed the base) nothing is sent / the answer is not believed. Resolves `{ ok: true, revision }` (the unit took it: the part is rebuilt in the background, State follows),
+   * `{ ok: false, stale: true }` (STALE_REVISION: the banner is raised exactly as for a knob, nothing was assigned) or `{ ok: false, error }` (any other typed refusal or a transport failure:
+   * nothing was assigned, the part is as it was).
+   */
+  async assignTimbre({ part, libraryId, instrumentKey, liveSetId } = {}) {
+    const fail = (message, code = 0) => ({ ok: false, error: { code, message, details: {} } });
+    if (!Number.isInteger(part) || part < 0 || !libraryId || !instrumentKey) return fail("invalid timbre");
+    if (!this.live || this.liveSetId !== liveSetId) return fail("the Live Set is not the one that sounds on the Velora");
+    if (this.stale) return { ok: false, stale: true }; // the banner is already up: Reload first
+    const base = this.baseRev;
+    const token = this._reloadToken;
+    const msg = { body: { SetPartTimbre: { part, library_id: libraryId, instrument_key: instrumentKey } } };
+    if (base > 0) msg.base_revision = base;
+    let reply;
+    try {
+      reply = await this.request(msg);
+    } catch (e) {
+      return fail(String(e && e.message ? e.message : e));
+    }
+    const err = errorOf(reply, null);
+    if (isStale(err)) {
+      // an answer to a request sent on a base the view has since left (Reload, another Live Set, a reconnect) says nothing about the view as it is now
+      if (token === this._reloadToken && base === this.baseRev) {
+        this._markStale(err);
+        return { ok: false, stale: true };
+      }
+      return fail("the Live Set changed meanwhile");
+    }
+    if (err) return { ok: false, error: err };
+    if (!reply || !reply.body || !reply.body.Ack) return fail("the Velora gave no answer");
+    this._notify();
+    return { ok: true, revision: num(reply.revision, 0) };
+  }
+
   // -- answers --
   _done(sendKey, reply, thrown, meta, msg) {
     const err = errorOf(reply, thrown);

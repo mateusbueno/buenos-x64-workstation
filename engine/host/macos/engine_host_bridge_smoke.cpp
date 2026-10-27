@@ -151,11 +151,14 @@ static int bridge_port(const std::string& log) {
 }
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::fprintf(stderr, "usage: engine_host_bridge_smoke ENGINE_HOST VELORA_SYSD\n");
+  if (argc != 3 && argc != 5) {
+    std::fprintf(stderr, "usage: engine_host_bridge_smoke ENGINE_HOST VELORA_SYSD [LIBRARIAN_SERVICE LIBRARIAN_CLI]\n");
     return 2;
   }
   const std::string engine = argv[1], sysd = argv[2];
+  // Story 9.11 (optional): a real librarian-service over two tiny SFZ libraries imported with the librarian CLI, reached through the bridge's library allow-list, so Studio's
+  // timbre picker and its assignment run against the real librarian, bridge and engine.
+  const std::string librarian = argc == 5 ? argv[3] : "", librarian_cli = argc == 5 ? argv[4] : "";
   if (const char* root = std::getenv("VELORA_STUDIO_CARGO_TEST")) {
     (void)root;
     if (std::system("command -v cargo >/dev/null 2>&1") != 0) {
@@ -168,20 +171,51 @@ int main(int argc, char** argv) {
   const std::string d = dir, esock = d + "/e.sock", ssock = d + "/s.sock", elog = d + "/engine.log", slog = d + "/sysd.log";
   // Story 9.8: the engine has a data directory (so it can create a Live Set and answer GetLiveSetView, the read-only view Velora Studio draws).
   [[maybe_unused]] const int mk1 = ::mkdir((d + "/edata").c_str(), 0700), mk2 = ::mkdir((d + "/lib").c_str(), 0700);
+  const std::string lsock = d + "/l.sock";
+  if (!librarian_cli.empty()) {
+    [[maybe_unused]] const int mk = ::mkdir((d + "/src").c_str(), 0700);
+    for (const char* name : {"Smoke Grand", "Smoke Strings"}) {  // one SFZ with one 300-frame mono 16-bit WAV each: one library, one timbre
+      std::string pcm;
+      std::uint32_t x = static_cast<std::uint32_t>(std::strlen(name)) * 2654435761u + 12345u;
+      for (int i = 0; i < 300; ++i) {
+        x = x * 1664525u + 1013904223u;
+        const std::int16_t v = static_cast<std::int16_t>((x >> 16) & 0x3fff) - 0x2000;
+        pcm.push_back(static_cast<char>(v & 0xff));
+        pcm.push_back(static_cast<char>((v >> 8) & 0xff));
+      }
+      auto le32 = [](std::uint32_t v) { return std::string{char(v), char(v >> 8), char(v >> 16), char(v >> 24)}; };
+      auto le16 = [](std::uint32_t v) { return std::string{char(v), char(v >> 8)}; };
+      const std::string wav = "RIFF" + le32(static_cast<std::uint32_t>(36 + pcm.size())) + "WAVE" + "fmt " + le32(16) + le16(1) + le16(1) + le32(48000) + le32(96000) + le16(2) + le16(16) +
+                              "data" + le32(static_cast<std::uint32_t>(pcm.size())) + pcm;
+      const std::string base = d + "/src/" + name;
+      if (FILE* f = std::fopen((base + "_s.wav").c_str(), "wb")) { std::fwrite(wav.data(), 1, wav.size(), f); std::fclose(f); }
+      if (FILE* f = std::fopen((base + ".sfz").c_str(), "w")) { std::fprintf(f, "<region> sample=%s_s.wav key=60 lokey=48 hikey=72\n", name); std::fclose(f); }
+      const std::string imp = "'" + librarian_cli + "' import '" + base + ".sfz' --root '" + d + "/lib' --category piano >> '" + d + "/import.log' 2>&1";
+      if (std::system(imp.c_str()) != 0) std::printf("FAIL: librarian import of %s\n%s\n", name, slurp(d + "/import.log").c_str()), ++g_fail;
+    }
+  }
   pid_t epid = spawn({engine, "--no-audio", "--duration", "120", "--socket", esock, "--data-dir", d + "/edata", "--library-root", d + "/lib"}, elog);
+  pid_t lpid = -1;
+  if (!librarian.empty()) lpid = spawn({librarian, "--data", d + "/lib", "--socket", lsock}, d + "/librarian.log");
   pid_t spid = -1;
   auto start_sysd = [&](int n) {
     const std::string log = d + "/sysd" + std::to_string(n) + ".log";
-    spid = spawn({sysd, "--data-dir", d + "/data", "--socket", ssock, "--bridge-port", "0", "--engine-socket", esock, "--pairing-code", "123456"}, log);
+    std::vector<std::string> args = {sysd, "--data-dir", d + "/data", "--socket", ssock, "--bridge-port", "0", "--engine-socket", esock, "--pairing-code", "123456"};
+    if (n >= 2 && lpid > 0) {  // the first bridge runs without a librarian (its library request is a typed UPSTREAM_UNAVAILABLE, checked below)
+      args.push_back("--librarian-socket");
+      args.push_back(lsock);
+    }
+    spid = spawn(args, log);
     int port = 0;
     wait_for([&] { return (port = bridge_port(slurp(log))) != 0; });
     return port;
   };
   auto cleanup = [&] {
     if (g_fail) {
-      for (const std::string& f : {elog, d + "/sysd1.log", d + "/sysd2.log"}) std::printf("---- %s ----\n%s\n", f.c_str(), slurp(f).c_str());
+      for (const std::string& f : {elog, d + "/sysd1.log", d + "/sysd2.log", d + "/librarian.log"}) std::printf("---- %s ----\n%s\n", f.c_str(), slurp(f).c_str());
     }
     stop(spid);
+    stop(lpid);
     stop(epid);
     const std::string cmd = "rm -rf " + d;
     [[maybe_unused]] const int rc = std::system(cmd.c_str());
@@ -336,12 +370,13 @@ int main(int argc, char** argv) {
   // With VELORA_STUDIO_CARGO_TEST=<repo root> (the ctest entry engine_host_bridge_studio_smoke sets it): the Velora Studio Rust client against this same real bridge and engine (needs cargo and its crates). It pairs with the code: the restarted bridge has a fresh window.
   if (const char* root = std::getenv("VELORA_STUDIO_CARGO_TEST")) {
     const std::string cmd = std::string("cd '") + root + "/desktop/src-tauri' && VELORA_TEST_BRIDGE=127.0.0.1:" + std::to_string(port2) +
-                            " VELORA_TEST_PAIRING_CODE=123456 cargo test --offline real_bridge_round_trip -- --nocapture > " + d + "/studio.log 2>&1";
+                            " VELORA_TEST_PAIRING_CODE=123456 " + std::string(librarian.empty() ? "" : "VELORA_TEST_TIMBRES=1 ") + "cargo test --offline real_bridge_round_trip -- --nocapture > " + d + "/studio.log 2>&1";
     const int rc = std::system(cmd.c_str());
     CHECK(rc == 0);
     CHECK(slurp(d + "/studio.log").find("status: Paired") != std::string::npos);
     CHECK(slurp(d + "/studio.log").find("view of \"Smoke Set\": 8 parts") != std::string::npos);  // Story 9.8: the Rust client read the Live Set created above through GetLiveSetView
     CHECK(slurp(d + "/studio.log").find("real_bridge_setlists_round_trip: ok") != std::string::npos);  // Story 9.13: the Rust client ran the Setlists view's commands and read them back
+    if (!librarian.empty()) CHECK(slurp(d + "/studio.log").find("real_timbre_flow: ok") != std::string::npos);  // Story 9.11: the picker's list and the assignment through the real librarian, bridge and engine
     CHECK(slurp(d + "/studio.log").find("real_part_edit_flow: ok") != std::string::npos);  // Story 9.9: the Rust client sent the Part Editor's edits (with base_revision) and the State showed the structural ones
     if (rc != 0 || g_fail) std::printf("---- studio.log ----\n%s\n", slurp(d + "/studio.log").c_str());
   }

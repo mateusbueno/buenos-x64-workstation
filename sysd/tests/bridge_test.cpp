@@ -173,6 +173,8 @@ struct FakeUds {
   std::string path;
   bool library = false;
   std::function<void(const std::string& frame, std::vector<std::string>& replies)> handler;
+  // library fakes only (Story 9.11): when set and it returns true, `reply` (request_id filled in) answers instead of the default Ack
+  std::function<bool(const ws::v1::LibraryClientMessage& m, ws::v1::LibraryServerMessage& reply)> lib_reply;
   std::atomic<bool> stop{false};
   std::atomic<int> received{0};
   std::atomic<int> connections{0};
@@ -230,7 +232,11 @@ struct FakeUds {
           }
           ws::v1::LibraryServerMessage a;
           a.set_request_id(m.request_id());
-          a.mutable_ack()->set_changed(true);
+          if (!(lib_reply && lib_reply(m, a))) {
+            a.Clear();
+            a.set_request_id(m.request_id());
+            a.mutable_ack()->set_changed(true);
+          }
           replies.push_back(a.SerializeAsString());
         }
       } else {
@@ -978,6 +984,31 @@ void test_frames_and_limits() {
 void test_library_forwarding() {
   Rig r;
   FakeUds lib;
+  lib.lib_reply = [](const ws::v1::LibraryClientMessage& m, ws::v1::LibraryServerMessage& a) {
+    if (m.has_list_libraries()) {  // Story 9.11: the librarian's catalog rows carry the absolute import path
+      auto* l = a.mutable_library_list();
+      auto* i = l->add_libraries();
+      i->set_library_id("lib-1");
+      i->set_name("Studio Grand");
+      i->set_source_path("/media/usb0/secret/Studio Grand");
+      i->set_instrument_count(2);
+      l->set_total(1);
+      return true;
+    }
+    if (m.has_list_instruments()) {
+      auto* l = a.mutable_instrument_list();
+      l->set_library_id(m.list_instruments().library_id());
+      for (int k = 0; k < 2; ++k) {
+        auto* i = l->add_instruments();
+        i->set_instrument_key("inst" + std::to_string(k));
+        i->set_name("Grand " + std::to_string(k));
+        i->set_category(1);
+      }
+      l->set_total(2);
+      return true;
+    }
+    return false;
+  };
   lib.start(r.tmp.path + "/l.sock", true);
   CHECK(r.start([&](sd::BridgeOptions& o) {
     o.librarian_socket = lib.path;
@@ -1043,6 +1074,31 @@ void test_library_forwarding() {
     w.mutable_library()->set_payload(x.SerializeAsString());
     c.send(w);
     CHECK(c.recv(e) == 1 && e.request_id() == 901 && e.has_library_reply());
+  }
+  // Story 9.11: the read-only listing Studio's timbre picker uses: libraries (the device path is removed), then a library's instruments, untouched.
+  {
+    ws::v1::LibraryClientMessage x;
+    x.set_request_id(7);
+    x.mutable_list_libraries()->set_limit(50);
+    ws::v1::ClientMessage w;
+    w.set_request_id(950);
+    w.mutable_library()->set_payload(x.SerializeAsString());
+    c.send(w);
+    ws::v1::ServerMessage e;
+    CHECK(c.recv(e) == 1 && e.request_id() == 950 && e.has_library_reply());
+    ws::v1::LibraryServerMessage y;
+    CHECK(y.ParseFromString(e.library_reply().payload()) && y.request_id() == 950 && y.has_library_list());
+    CHECK(y.library_list().libraries_size() == 1 && y.library_list().libraries(0).library_id() == "lib-1" && y.library_list().libraries(0).name() == "Studio Grand");
+    CHECK(y.library_list().libraries(0).source_path().empty());
+    CHECK(e.library_reply().payload().find("secret") == std::string::npos);
+    x.Clear();
+    x.mutable_list_instruments()->set_library_id("lib-1");
+    w.set_request_id(951);
+    w.mutable_library()->set_payload(x.SerializeAsString());
+    c.send(w);
+    CHECK(c.recv(e) == 1 && e.request_id() == 951 && e.has_library_reply());
+    CHECK(y.ParseFromString(e.library_reply().payload()) && y.has_instrument_list() && y.instrument_list().instruments_size() == 2 &&
+          y.instrument_list().instruments(1).name() == "Grand 1" && y.instrument_list().instruments(1).category() == 1);
   }
   // Garbage payload and a missing librarian are typed.
   ws::v1::ClientMessage bad;

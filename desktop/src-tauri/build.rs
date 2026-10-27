@@ -22,6 +22,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", proto_dir.join("setlist.proto").display());
     println!("cargo:rerun-if-changed={}", proto_dir.join("live_set.proto").display());
     println!("cargo:rerun-if-changed={}", proto_dir.join("backup.proto").display());
+    println!("cargo:rerun-if-changed={}", proto_dir.join("library_api.proto").display());
     println!("cargo:rerun-if-changed={}", params_json.display());
     println!("cargo:rerun-if-changed={}", gen_params_py.display());
 
@@ -43,6 +44,8 @@ fn main() {
     let setlist_proto = proto_dir.join("setlist.proto");
     let live_set_proto = proto_dir.join("live_set.proto");
     let backup_proto = proto_dir.join("backup.proto");
+    // Story 9.11: the Library API (package ws.v1, the librarian's protocol): Studio lists the installed timbres through the bridge's library allow-list.
+    let library_api_proto = proto_dir.join("library_api.proto");
 
     let mut config = prost_build::Config::new();
     config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
@@ -50,7 +53,7 @@ fn main() {
     config.message_attribute(".", "#[serde(default)]");
     config
         .compile_protos(
-            &[ws_v1_proto, setlist_proto, live_set_proto, backup_proto],
+            &[ws_v1_proto, setlist_proto, live_set_proto, backup_proto, library_api_proto],
             &[gen_proto_dir.as_path(), proto_dir.as_path()],
         )
         .expect("Failed to compile protos with prost");

@@ -46,7 +46,7 @@ function wireGrid(grid, cells, state, key, onEnter) {
 }
 
 /** Builds the 8 scene cells and the 8 part cells; returns `{ sceneCells, partCells, focus }` (focus = the roving indexes). */
-export function buildGrids(doc, scenesHost, partsHost, { onSelectPart } = {}) {
+export function buildGrids(doc, scenesHost, partsHost, { onSelectPart, onAddTimbre } = {}) {
   const sceneCells = [];
   const partCells = [];
   const focus = { scene: 0, part: 0 };
@@ -92,13 +92,20 @@ export function buildGrids(doc, scenesHost, partsHost, { onSelectPart } = {}) {
     row.appendChild(kr);
     [head, name, cat, reg, meter, row].forEach((c) => el.appendChild(c));
     el._r = { pn, name, cat, reg, meter, fill, row, left, kr };
-    el.addEventListener("click", () => onSelectPart && onSelectPart(i));
+    // Story 9.11: an EMPTY strip is also the "+ Add timbre" button: a click (or Enter / Space) selects the part and opens the timbre picker; any other strip only selects.
+    el.addEventListener("click", () => {
+      if (onSelectPart) onSelectPart(i);
+      if (el._empty && onAddTimbre) onAddTimbre(i);
+    });
     partRow.appendChild(el);
     partCells.push(el);
   }
   partsHost.appendChild(partRow);
   wireGrid(scenesHost, sceneCells, focus, "scene", null);
-  wireGrid(partsHost, partCells, focus, "part", (i) => onSelectPart && onSelectPart(i));
+  wireGrid(partsHost, partCells, focus, "part", (i) => {
+    if (onSelectPart) onSelectPart(i);
+    if (partCells[i]._empty && onAddTimbre) onAddTimbre(i);
+  });
   return { sceneCells, partCells, focus };
 }
 
@@ -141,6 +148,7 @@ export function updatePartCell(el, p, { tr, selected }) {
   const r = el._r;
   const warn = p.status === "missing" || p.status === "unavailable";
   const bare = warn || p.status === "empty";
+  el._empty = p.status === "empty"; // read by the click / Enter handlers built in buildGrids
   el.className = "st" + (selected ? " sel" : "") + (p.status === "off" ? " off" : "") + (p.status === "empty" ? " empty" : "") + (warn ? " missing" : "");
   el.setAttribute("aria-selected", selected ? "true" : "false");
   r.pn.textContent = tr("studio.live_set.part", p.index + 1);
@@ -153,8 +161,8 @@ export function updatePartCell(el, p, { tr, selected }) {
   } else if (p.status === "empty") {
     r.name.className = "n add";
     r.name.textContent = name;
-    r.name.title = tr("studio.live_set.add_timbre_soon"); // a disabled placeholder until Story 9.11
-    r.name.setAttribute("aria-disabled", "true");
+    r.name.title = tr("studio.live_set.add_timbre_tooltip"); // Story 9.11: the strip opens the timbre picker
+    r.name.removeAttribute("aria-disabled");
   } else {
     r.name.className = "n";
     r.name.textContent = name;
@@ -189,5 +197,6 @@ export function updatePartCell(el, p, { tr, selected }) {
     if (p.keyRange) bits.push(p.keyRange);
     if (p.registration) bits.push(p.registration);
   }
+  if (p.status === "empty") bits.push(tr("studio.live_set.add_timbre_hint"));
   el.setAttribute("aria-label", bits.filter(Boolean).join(", "));
 }

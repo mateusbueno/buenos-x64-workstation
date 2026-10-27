@@ -2,7 +2,7 @@
 // window.veloraDevice). Served by tests/support/serve_mock.py, which adds this module in front of app.js. `window.__mockUnit` is the unit (inspect `.log`, `.perf`, `.parts`).
 import { FakeUnit } from "./fake_unit.js";
 
-const unit = new FakeUnit();
+const unit = new FakeUnit({ empties: [6, 7] }); // parts 7 and 8 are empty strips: "+ Add timbre" opens the picker (libraryTimbres below)
 window.__mockUnit = unit;
 const listeners = new Map();
 const emit = (name, payload) => (listeners.get(name) || []).forEach((cb) => cb({ payload }));
@@ -15,6 +15,7 @@ window.__TAURI__ = {
         case "device_status": return status;
         case "device_state": return unit.state();
         case "device_request": return unit.request(args.request);
+        case "device_library_timbres": return unit.listTimbres();
         default: throw new Error("not mocked: " + cmd);
       }
     },
