@@ -30,6 +30,11 @@ One entry per library. Included entries have `source_url` (https, allow-listed h
 with a reason" is enforced three ways: an `.sfz` that fails or skips on import fails the job unless it is in `skip_files`; a stale `skip_files` entry fails; an
 entry that is neither complete nor excluded is a manifest error.
 
+**Scope rule for `skip_files`** (Story 13.1, `_bmad-output/planning-artifacts/sfz-scope-decision.md`, proposed pending founder ratification): `skip_files` lists
+only files that need an SFZ tier marked **out of scope** in that record, and the `reason` names the tier and the opcodes the importer reports as
+`unsupported_features` (FR22). A file that fails import for any other reason (an opcode of a supported or deferred tier that is not implemented yet, a damaged file)
+is not listed: it fails the job, so the gap stays visible. The corpus requirement reads "imports and plays with mapping intact for every file in a supported tier".
+
 ## Local sources (`source_kind: "local_dir"`)
 
 Some libraries are supplied by the founder from local disk (the Pianobook packs: no scripted download, no licence statement to rely on). Such an entry

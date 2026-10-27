@@ -69,9 +69,9 @@ Source conventions: the SPEC (`SPEC.md` + companions) stands in for the PRD, so 
 
 **User import (CAP-8, CAP-14)**
 
-- FR18 (CAP-8): The user imports SFZ + WAV libraries within the v1 opcode subset (`<global>`, `<master>`, `<group>`, `<region>`, `<control>`; key/velocity ranges, `pitch_keycenter`, tune/transpose, volume/pan, offset; round robin `seq_length`/`seq_position`, `lorand`/`hirand`; loops; `ampeg_*`; release triggers; keyswitches `sw_*`; CC crossfades `xfin`/`xfout`; `#define`/`#include`, `default_path`; basic filters) with key, velocity, round-robin and loop mapping intact.
+- FR18 (CAP-8): The user imports SFZ + WAV libraries within the v1 opcode subset (`<global>`, `<master>`, `<group>`, `<region>`, `<control>`; key/velocity ranges, `pitch_keycenter`, tune/transpose, volume/pan, offset; round robin `seq_length`/`seq_position`, `lorand`/`hirand`; loops; `ampeg_*`; release triggers; keyswitches `sw_*`; CC crossfades `xfin`/`xfout`; `#define`/`#include`, `default_path`; basic filters) with key, velocity, round-robin and loop mapping intact. The subset is extended in Epic 13 by tiers (importer value rules; note-on scalars; trigger and release modes; CC at voice start; choke groups and polyphony; pitch bend and CC-triggered voices; per-voice filter), and region EQ and LFO/EG modulation are conditional on measured need; the verdict per tier is in `_bmad-output/planning-artifacts/sfz-scope-decision.md` (proposed, awaiting founder ratification). A file that needs a tier marked out of scope is skipped with `unsupported_features` (FR22).
 - FR19 (CAP-8): The user imports SF2 libraries into the same internal instrument model.
-- FR20 (CAP-8): Every library in the reference corpus (Salamander Grand Piano, VSCO2, Sonatina Symphonic Orchestra, Karoryfer libraries, a Pianobook selection) imports and plays with mapping intact.
+- FR20 (CAP-8): Every library in the reference corpus (Salamander Grand Piano, VSCO2, Sonatina Symphonic Orchestra, Karoryfer libraries, a Pianobook selection) imports and plays with mapping intact for every file in a supported tier (FR18 and Epic 13); a file that needs a tier marked out of scope is skipped with a stated reason and listed in the corpus manifest, and nothing else is.
 - FR21 (CAP-8): Every imported instrument carries exactly one of the 17 categories; the category is auto-suggested from filename or metadata, the user confirms or changes it (per row or "Apply one category to all"), and an instrument without a category cannot import.
 - FR22 (CAP-8): Files that use features outside the v1 subset (SFZ scripting, effect buses) or are damaged are skipped with a stated reason, and the rest of the batch imports.
 - FR23 (CAP-8): A library already imported is flagged `already imported` with Skip (default) or Import again; Import again replaces it and existing Live Sets keep pointing at it (stable `library_id` / `instrument_key`).
@@ -784,6 +784,8 @@ A keyboardist receives the 6-operator FM and virtual-analog engines by firmware 
 ### Epic 13: SFZ coverage for the reference corpus
 
 The reference corpus (Salamander, VSCO2, Sonatina, Karoryfer, a Pianobook selection) imports and passes the sfizz null test, by widening the SFZ opcode coverage of the importer and the sample engine in measured steps. Follows the Story 5.4 corpus findings: only VSCO 2 imports today, and the Pianobook, Salamander, Sonatina and Karoryfer libraries are rejected on specific opcodes. Starts with an explicit scope decision so the v1 subset (FR18) and the corpus requirement (FR20) agree.
+
+Scope decision (Story 13.1, proposed, awaiting founder ratification; `_bmad-output/planning-artifacts/sfz-scope-decision.md`): tiers of Stories 13.2-13.8 and 13.10 in scope; the region EQ and LFO/EG tier (Story 13.9) deferred and conditional on measured need after 13.8. No story is cancelled by the proposal; if 13.9 ends out of scope it is cancelled and its files stay skipped in the manifest with that reason.
 
 **FRs covered:** FR18 (extension), FR20, FR22
 
