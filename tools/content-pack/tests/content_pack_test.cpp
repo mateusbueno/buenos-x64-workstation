@@ -1178,7 +1178,7 @@ void test_cli(const fs::path& work, const fs::path& src_a, const Source& source)
     CHECK(run_cmd(env + exe + " check-register" + bad_reg, &out) == 8);
   }
   // a failed pack does not take the id (skipped source, 9), nor does an unknown instrument key (10, SFZ)
-  put(src_a / "unsup.sfz", "<region> sample=samples/a.wav key=60 amp_veltrack=50\n");
+  put(src_a / "unsup.sfz", "<region> sample=samples/a.wav key=60 amp_random=3\n");
   put(work / "unsup.json", desc_json("eeeeeeee-2222-4333-8444-555555555555", "Unsupported", (src_a / "unsup.sfz").string(), "factory-test"));
   CHECK(run_cmd(env + exe + " pack --description '" + (work / "unsup.json").string() + "'" + o + ftkeys + regarg + no_dev_list + " --register --owner Founder", &out) == 9);
   CHECK(out.find("import_skipped") != std::string::npos && read_text(reg).find("eeeeeeee") == std::string::npos);

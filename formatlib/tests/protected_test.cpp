@@ -480,6 +480,26 @@ void test_roundtrip_and_seeks(const std::string& fixture_dir) {
       CHECK(got.size() == 6 && got[2] == a && got[3] == b && got[4] == c && got[5] == d && got[1].sw.last == 26);
     }
   }
+  // Story 13.4: the amp table (format minor 3), velocity curve included, round-trips through the protected format.
+  {
+    Source s5;
+    BundleWriter wa = make_writer(s5, true);
+    Region a;
+    a.amp.veltrack = 30.f; a.amp.amplitude = 75.f; a.amp.keytrack = -0.5f; a.amp.keycenter = 50;
+    a.amp.vel2attack = 0.1f; a.amp.vel2decay = 0.2f; a.amp.vel2sustain = -20.f; a.amp.vel2release = 0.3f;
+    a.amp.curve_count = 2; a.amp.curve[0] = {1, 0.25f}; a.amp.curve[1] = {99, 0.75f};
+    Region b;
+    b.trigger = TriggerMode::kLegato;  // a minor 2 feature in the same bundle
+    for (const Region* r : {&a, &b}) CHECK_ERR(wa.add_region(0, *r), Error::kNone);
+    const Bytes ba = protect(wa, nonce1());
+    CHECK(L::get_u32(ba.data() + 4) == (kProtectedFormatVersion | (3u << 16)));
+    auto ra = ProtectedBundleReader::open_memory(ba, tk, test_key());
+    CHECK(ra.ok() && ra.value().info().format_minor == 3 && ra.value().verify_all() == Error::kNone);
+    if (ra.ok()) {
+      const auto& got = ra.value().instruments()[0].regions;
+      CHECK(got.size() == 4 && got[2] == a && got[3] == b && got[2].amp.curve_count == 2);
+    }
+  }
   // An empty writer is a valid (zero block) protected bundle.
   {
     BundleWriter we;
@@ -685,7 +705,8 @@ void test_tamper() {
   {
     struct V { std::uint32_t word; Error want; };
     for (const V& v : {V{4u, Error::kUnsupportedVersion}, V{2u, Error::kNotProtected}, V{1u, Error::kNotProtected}, V{0u, Error::kUnsupportedVersion},
-                       V{3u | (3u << 16), Error::kUnsupportedVersion}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest}}) {
+                       V{3u | (4u << 16), Error::kUnsupportedVersion}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest},
+                       V{3u | (3u << 16), Error::kCorruptManifest}}) {
       Bytes b = good;
       for (int i = 0; i < 4; ++i) {
         b[4 + i] = static_cast<std::uint8_t>(v.word >> (8 * i));

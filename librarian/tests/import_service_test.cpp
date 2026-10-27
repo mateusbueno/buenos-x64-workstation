@@ -424,7 +424,7 @@ void test_progress_skips_and_reasons() {
   CHECK(by_name["gm.sf2"].status() == ws::v1::IMPORT_ITEM_IMPORTED && by_name["gm.sf2"].instruments() == 6);
   const auto& fancy = by_name["Fancy.sfz"];
   CHECK(fancy.status() == ws::v1::IMPORT_ITEM_SKIPPED && fancy.reason() == ws::v1::IMPORT_REASON_UNSUPPORTED_FEATURES && fancy.offenders_size() == 1);
-  if (fancy.offenders_size() == 1) CHECK(fancy.offenders(0).opcode() == "amp_veltrack" && fancy.offenders(0).line() == 1 && !fancy.offenders(0).file().empty());
+  if (fancy.offenders_size() == 1) CHECK(fancy.offenders(0).opcode() == "amp_random" && fancy.offenders(0).line() == 1 && !fancy.offenders(0).file().empty());
   const auto& broken = by_name["Broken.sfz"];
   CHECK(broken.status() == ws::v1::IMPORT_ITEM_SKIPPED && broken.reason() == ws::v1::IMPORT_REASON_DAMAGED && !broken.failing_path().empty() && broken.messages_size() > 0);
   CHECK(fancy.library_id().empty() && broken.library_id().empty());

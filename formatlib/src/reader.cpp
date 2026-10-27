@@ -279,7 +279,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
-  std::uint64_t total_ext = 0, total_trig = 0;
+  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -405,6 +405,37 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
             return Error::kCorruptManifest;
         }
       }
+      if (minor >= 3) {  // the amp table (Story 13.4) follows the minor 2 table
+        const std::uint32_t n_amp = c.u32();
+        if (!c.ok() || n_amp > n_regions || n_amp > c.remaining() / kAmpRecordFixedSize) return Error::kCorruptManifest;
+        total_amp += n_amp;
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_amp; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          AmpMap& a = rg.amp;
+          a.veltrack = c.f32(); a.amplitude = c.f32(); a.keytrack = c.f32();
+          a.keycenter = c.u8();
+          const std::uint8_t count = c.u8();
+          const std::uint8_t pad0 = c.u8(), pad1 = c.u8();
+          a.vel2attack = c.f32(); a.vel2decay = c.f32(); a.vel2sustain = c.f32(); a.vel2release = c.f32();
+          if (!c.ok() || pad0 || pad1 || count > kMaxVelPoints || count > c.remaining() / kAmpPointSize)
+            return Error::kCorruptManifest;
+          a.curve_count = count;
+          for (unsigned e = 0; e < count; ++e) {
+            a.curve[e].vel = c.u8();
+            const std::uint8_t q0 = c.u8(), q1 = c.u8(), q2 = c.u8();
+            a.curve[e].gain = c.f32();
+            if (!c.ok() || q0 || q1 || q2) return Error::kCorruptManifest;
+          }
+          // Canonical: a record exists only for a region that really needs it.
+          if (!has_amp_extension(rg) ||
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+      }
     }
     r.instruments.push_back(std::move(ins));
   }
@@ -413,7 +444,8 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   // Canonical: minor 1 exists only for bundles that carry at least one extension record (the same
   // content must not have two encodings, hence two bundle ids).
   if (minor == 1 && total_ext == 0) return Error::kCorruptManifest;
-  if (minor >= 2 && total_trig == 0) return Error::kCorruptManifest;
+  if (minor == 2 && total_trig == 0) return Error::kCorruptManifest;
+  if (minor >= 3 && total_amp == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index.resize(n_blocks);

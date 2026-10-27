@@ -1,0 +1,9 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.05
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 amp_velcurve_1=0.1 amp_velcurve_64=0.8 amp_velcurve_127=1
+<region> sample=a.wav lokey=62 hikey=62 pitch_keycenter=62 amp_velcurve_30=0.5
+<region> sample=a.wav lokey=64 hikey=64 pitch_keycenter=64 amp_velcurve_1=0.5 amp_velcurve_127=0.5 amp_veltrack=50
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65 amp_velcurve_0=1 amp_velcurve_127=0
+<region> sample=a.wav lokey=67 hikey=67 pitch_keycenter=67 amp_velcurve_64=1 amp_veltrack=-100
+<region> sample=a.wav lokey=69 hikey=69 pitch_keycenter=69 amp_velcurve_20=0.9 amp_velcurve_21=0.1 amp_velcurve_100=0.2

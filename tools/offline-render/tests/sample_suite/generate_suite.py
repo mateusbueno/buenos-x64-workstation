@@ -6,6 +6,7 @@ sines come from math.sin, so regenerating on another libm could change a sample 
 which is why the outputs are committed and the goldens are rendered from the committed files).
 
     python3 generate_suite.py            # (re)writes samples/, sfz/, midi/ next to this script
+    python3 generate_suite.py story134   # only the Story 13.4 cases (no existing file is touched)
 
 MIDI timing: the files use 32000 PPQ at 500000 us per quarter, i.e. 0.75 audio frames per tick at
 48 kHz. A frame is mapped to a tick that puts the event at a quarter-frame fraction (never on an
@@ -15,6 +16,7 @@ their floating point rounding does.
 import math
 import os
 import struct
+import sys
 import wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -410,6 +412,75 @@ def build_story52_cases():
             for i, key in enumerate([60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77])]))
 
 
+def build_story134_cases():
+    """Story 13.4: one fixture instrument per opcode family of the velocity and amplitude model. The velocity sweeps use whole MIDI velocities, so
+    the engine and sfizz evaluate the same 7-bit value."""
+    loop = "loop_mode=loop_continuous loop_start=2400 loop_end=7199"
+
+    def sweep_notes(keys, vels, step=0.09, length=0.06):
+        return notes([(i * secs(step), i * secs(step) + secs(length), key, vel)
+                      for i, (key, vel) in enumerate((k, v) for k in keys for v in vels)])
+
+    # amp_veltrack: 0 (no velocity law), a partial value, negative values (louder at low velocity), the explicit default and the plain default.
+    case("amp_veltrack", HEADER + """<global> ampeg_release=0.05
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 amp_veltrack=0
+<region> sample=a.wav lokey=62 hikey=62 pitch_keycenter=62 amp_veltrack=50
+<region> sample=a.wav lokey=64 hikey=64 pitch_keycenter=64 amp_veltrack=-100
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65 amp_veltrack=-50
+<region> sample=a.wav lokey=67 hikey=67 pitch_keycenter=67 amp_veltrack=100
+<region> sample=a.wav lokey=69 hikey=69 pitch_keycenter=69
+""", sweep_notes([60, 62, 64, 65, 67, 69], [20, 64, 127], step=0.07, length=0.05))
+
+    # amp_velcurve_N: sparse points (gaps filled linearly), only a middle point, a flat curve with a partial veltrack, an inverted curve, and a
+    # curve combined with a negative veltrack. Velocity steps hit the points exactly and fall between them.
+    case("amp_velcurve", HEADER + """<global> ampeg_release=0.05
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 amp_velcurve_1=0.1 amp_velcurve_64=0.8 amp_velcurve_127=1
+<region> sample=a.wav lokey=62 hikey=62 pitch_keycenter=62 amp_velcurve_30=0.5
+<region> sample=a.wav lokey=64 hikey=64 pitch_keycenter=64 amp_velcurve_1=0.5 amp_velcurve_127=0.5 amp_veltrack=50
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65 amp_velcurve_0=1 amp_velcurve_127=0
+<region> sample=a.wav lokey=67 hikey=67 pitch_keycenter=67 amp_velcurve_64=1 amp_veltrack=-100
+<region> sample=a.wav lokey=69 hikey=69 pitch_keycenter=69 amp_velcurve_20=0.9 amp_velcurve_21=0.1 amp_velcurve_100=0.2
+""", sweep_notes([60, 62, 64, 65, 67, 69], [1, 20, 30, 45, 64, 90, 127], step=0.07, length=0.05))
+
+    # amplitude, group_volume, master_volume (they add to `volume`; amplitude multiplies), and the *_amplitude forms.
+    case("amp_gain", HEADER + """<global> ampeg_release=0.05
+<master> master_volume=-4
+<group> group_volume=3
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60
+<region> sample=a.wav lokey=62 hikey=62 pitch_keycenter=62 volume=-2 amplitude=150
+<group> group_volume=-6 group_amplitude=50
+<region> sample=a.wav lokey=64 hikey=64 pitch_keycenter=64 amplitude=80
+<master> master_amplitude=25
+<group>
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65
+<region> sample=a.wav lokey=67 hikey=67 pitch_keycenter=67 amplitude=0
+<master>
+<group>
+<region> sample=a.wav lokey=69 hikey=69 pitch_keycenter=69 amplitude=50
+<region> sample=a.wav lokey=71 hikey=71 pitch_keycenter=71
+""", sweep_notes([60, 62, 64, 65, 67, 69, 71], [100], step=0.09, length=0.06))
+
+    # ampeg_vel2*: each scalar on a looped sample that sustains while the key is held; the last region sets all four with ampeg_dynamic=1, which
+    # must not change anything (the trigger velocity is constant).
+    case("ampeg_vel2", HEADER + f"""<global> sample=loop.wav {loop} pitch_keycenter=60
+<region> key=60 ampeg_attack=0.01 ampeg_vel2attack=0.08 ampeg_release=0.05
+<region> key=62 ampeg_decay=0.02 ampeg_sustain=70 ampeg_vel2decay=0.1 ampeg_release=0.05
+<region> key=64 ampeg_decay=0.04 ampeg_sustain=100 ampeg_vel2sustain=-70 ampeg_release=0.05
+<region> key=65 ampeg_release=0.02 ampeg_vel2release=0.25
+<region> key=67 ampeg_attack=0.005 ampeg_vel2attack=0.04 ampeg_decay=0.02 ampeg_vel2decay=0.05 ampeg_sustain=50 ampeg_vel2sustain=-30 ampeg_release=0.03 ampeg_vel2release=0.1 ampeg_dynamic=1
+""", notes([(i * secs(0.5) + j * secs(0.22) + secs(0.0), i * secs(0.5) + j * secs(0.22) + secs(0.16), key, vel)
+            for j, key in enumerate([60, 62, 64, 65, 67])
+            for i, vel in enumerate([25, 127])]))
+
+    # amp_keytrack / amp_keycenter: dB per key around the centre (default centre 60 when only the track is given).
+    case("amp_keytrack", HEADER + """<global> ampeg_release=0.05
+<region> sample=a.wav lokey=48 hikey=71 pitch_keycenter=60 amp_keytrack=0.5 amp_keycenter=60
+<region> sample=b.wav lokey=72 hikey=96 pitch_keycenter=84 amp_keytrack=-0.25 amp_keycenter=84
+<region> sample=c.wav lokey=24 hikey=47 pitch_keycenter=36 amp_keytrack=0.3
+<region> sample=d.wav lokey=98 hikey=100 pitch_keycenter=99 amp_keytrack=12 amp_keycenter=99
+""", sweep_notes([48, 54, 60, 66, 71, 72, 84, 96, 24, 36, 47, 98, 99, 100], [100], step=0.08, length=0.05))
+
+
 def make_demo_probe():
     """midi/demo_probe.mid: a short phrase over the keyboard range for the env-gated real-library null test."""
     keys = [28, 40, 52, 64, 76, 88, 100]
@@ -442,11 +513,22 @@ def make_demo_features():
 
 
 def main():
+    if sys.argv[1:] not in ([], ["story134"]):
+        sys.exit("usage: generate_suite.py [story134]")
+    if sys.argv[1:] == ["story134"]:  # only the Story 13.4 cases (leaves every older file untouched)
+        build_story134_cases()
+        for name, (sfz, events, ccs, setup) in CASES.items():
+            with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
+                f.write(sfz)
+            write_midi(os.path.join(HERE, "midi", name + ".mid"), events, ccs, setup)
+        print("wrote", len(CASES), "cases")
+        return
     make_samples(HERE)
     make_demo_probe()
     make_demo_features()
     build_cases()
     build_story52_cases()
+    build_story134_cases()
     for name, (sfz, events, ccs, setup) in CASES.items():
         with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
             f.write(sfz)

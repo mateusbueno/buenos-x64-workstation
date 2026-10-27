@@ -21,3 +21,9 @@ keyswitch_previous  hermite  2  -60
 xfade_power         hermite  2  -60
 xfade_gain          hermite  2  -60
 filters             hermite  2  -60
+# Story 13.4: velocity and amplitude model (amp_veltrack, amp_velcurve_N, amplitude/group_volume/master_volume, ampeg_vel2*, amp_keytrack).
+amp_veltrack      hermite  2  -60
+amp_velcurve      hermite  2  -60
+amp_gain          hermite  2  -60
+ampeg_vel2        hermite  2  -60
+amp_keytrack      hermite  2  -60

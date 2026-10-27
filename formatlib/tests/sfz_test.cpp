@@ -1,6 +1,7 @@
 // SFZ -> instrument model mapping (parse only; the importer tests cover bundles and publishing).
 #include <unistd.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -114,9 +115,9 @@ int main() {
       CHECK(r.ok() && r.curves.size() == 1 && r.curves[0].index == 1 && r.curves[0].points.size() == 2 &&
             r.curves[0].points[1].first == 127 && r.curves[0].points[1].second == 1.0 && r.regions.size() == 1);
     }
-    {  // a curve used through an unsupported opcode still skips the file, naming it
-      auto r = parse("<curve>\ncurve_index=1 v000=0 v127=1\n<region> sample=a.wav key=60 amp_velcurve_1=0.5\n");
-      CHECK(!r.ok() && has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_velcurve_1'"));
+    {  // a named curve used through an unsupported opcode still skips the file, naming it (amp_velcurve_N itself is Story 13.4 and needs no <curve>)
+      auto r = parse("<curve>\ncurve_index=1 v000=0 v127=1\n<region> sample=a.wav key=60 amp_veltrack_curvecc1=1\n");
+      CHECK(!r.ok() && has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_veltrack_curvecc1'"));
     }
     {
       auto r = parse("<group>\nampeg_dynamic=1\n<region> sample=a.wav key=60\n");
@@ -133,12 +134,12 @@ int main() {
     }
   }
   {  // unsupported things are all reported, none silently dropped
-    auto r = parse("<region> sample=a.wav key=60 lfo01_freq=1 ampeg_release_oncc4=2 amp_veltrack=50\n"
+    auto r = parse("<region> sample=a.wav key=60 lfo01_freq=1 ampeg_release_oncc4=2 amp_veltrack_oncc7=50\n"
                    "<effect>\n<region> sample=*sine key=1\n<region> sample=a.wav key=2 trigger=bogus\n"
                    "<region> sample=a.wav key=3 loop_mode=loop_bidir\n");
     CHECK(!r.ok());
     CHECK(has(r, SfzIssueKind::kUnsupportedOpcode, "'lfo01_freq'") && has(r, SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_oncc4'") &&
-          has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_veltrack'"));
+          has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_veltrack_oncc7'"));
     CHECK(has(r, SfzIssueKind::kUnsupportedHeader, "<effect>"));
     CHECK(has(r, SfzIssueKind::kUnsupportedValue, "'bogus'") && has(r, SfzIssueKind::kUnsupportedValue, "'loop_bidir'"));
     CHECK(has(r, SfzIssueKind::kUnsupportedValue, "*sine"));
@@ -274,7 +275,8 @@ int main() {
     CHECK(r.allowlisted.size() == 1 && r.allowlisted[0].opcode == "ampeg_dynamic" && r.allowlisted[0].line == 2);
     CHECK(classify_opcode("ampeg_dynamic") == OpcodeClass::kAllowListed);
     CHECK(has(parse("<group>\nampeg_dynamic=1 ampeg_release_oncc72=2\n<region> sample=a.wav key=60\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_oncc72'"));
-    CHECK(has(parse("<region> sample=a.wav key=60 ampeg_vel2release=1\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_vel2release'"));
+    CHECK(parse("<region> sample=a.wav key=60 ampeg_vel2release=1\n").ok());  // Story 13.4: supported, and it does not make ampeg_dynamic matter
+    CHECK(has(parse("<region> sample=a.wav key=60 ampeg_vel2hold=1\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_vel2hold'"));
   }
   {  // Story 13.3: end and the trigger modes
     auto r = parse("<region> sample=a.wav key=60 end=100\n<region> sample=a.wav key=61 end=0\n<region> sample=a.wav key=62 end=-1\n"
@@ -301,10 +303,72 @@ int main() {
     auto g = parse("<group> end=50\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61 end=70\n");
     CHECK(g.ok() && g.regions.size() == 2 && g.regions[0].end == 50 && g.regions[1].end == 70);
   }
+  {  // Story 13.4: the velocity and amplitude model
+    auto r = parse("<region> sample=a.wav key=60\n"
+                   "<region> sample=a.wav key=61 amp_veltrack=40 amplitude=50 amp_keytrack=0.5 amp_keycenter=c4\n"
+                   "<region> sample=a.wav key=62 amp_velcurve_127=0.9 amp_velcurve_1=0.1 amp_velcurve_64=0.6\n"
+                   "<region> sample=a.wav key=63 ampeg_vel2attack=0.1 ampeg_vel2decay=-0.2 ampeg_vel2sustain=-30 ampeg_vel2release=2\n"
+                   "<master>master_volume=-4 master_amplitude=50\n<group>group_volume=1.5 group_amplitude=50\n"
+                   "<region> sample=a.wav key=64 volume=-2 amplitude=80\n<region> sample=a.wav key=65\n"
+                   "<global>global_volume=2\n<master>\n<group>\n<region> sample=a.wav key=66\n"
+                   "<region> sample=a.wav key=67 amp_velcurve_10=0.2\n");
+    CHECK(r.ok() && r.regions.size() == 8 && r.ignored_values.empty());
+    if (r.regions.size() == 8) {
+      CHECK(!has_amp_extension(r.regions[0]) && r.regions[0].amp == AmpMap{});  // plain regions keep the default map (no record, same bytes)
+      const AmpMap& a = r.regions[1].amp;
+      CHECK(a.veltrack == 40.f && a.amplitude == 50.f && a.keytrack == 0.5f && a.keycenter == 60 && a.curve_count == 0 && has_amp_extension(r.regions[1]));
+      const AmpMap& c = r.regions[2].amp;
+      CHECK(c.curve_count == 3 && c.curve[0].vel == 1 && c.curve[0].gain == 0.1f && c.curve[1].vel == 64 && c.curve[2].vel == 127 && c.curve[2].gain == 0.9f);
+      CHECK(c.veltrack == 100.f && c.amplitude == 100.f);
+      const AmpMap& v = r.regions[3].amp;
+      CHECK(v.vel2attack == 0.1f && v.vel2decay == -0.2f && v.vel2sustain == -30.f && v.vel2release == 2.f);
+      // master_volume + group_volume add to volume; the *_amplitude opcodes multiply amplitude.
+      CHECK(std::fabs(r.regions[4].volume_db - (-2.f - 4.f + 1.5f)) < 1e-6f && std::fabs(r.regions[4].amp.amplitude - 80.f * 0.5f * 0.5f) < 1e-4f);
+      CHECK(std::fabs(r.regions[5].volume_db - (-4.f + 1.5f)) < 1e-6f && std::fabs(r.regions[5].amp.amplitude - 25.f) < 1e-4f);
+      CHECK(r.regions[6].volume_db == 2.f && r.regions[6].amp == AmpMap{});  // a later header drops the lower levels, global_volume stays
+      CHECK(r.regions[7].amp.curve_count == 1 && r.regions[7].amp.curve[0].vel == 10);
+      for (const auto& rg : r.regions) CHECK(validate_region(rg, 100) == Error::kNone);
+    }
+    // inheritance: curve points of a group and of the region merge, the region's point with the same N wins
+    auto g = parse("<group>amp_velcurve_20=0.2 amp_velcurve_40=0.4\n<region> sample=a.wav key=60 amp_velcurve_40=0.5 amp_velcurve_5=0.1\n");
+    CHECK(g.ok() && g.regions[0].amp.curve_count == 3 && g.regions[0].amp.curve[0].vel == 5 && g.regions[0].amp.curve[2].vel == 40 && g.regions[0].amp.curve[2].gain == 0.5f);
+    // out-of-range values are clamped and recorded; N above 127 is dropped (sfizz); a non-number is invalid; the volume sum is clamped
+    auto o = parse("<region> sample=a.wav key=60 amp_velcurve_64=1.5 amp_veltrack=250 amp_keytrack=20 ampeg_vel2attack=500 amp_velcurve_200=1\n"
+                   "<region> sample=a.wav key=61 volume=40 group_volume=30 amp_keycenter=200\n");
+    CHECK(o.ok() && o.regions.size() == 2 && o.ignored_values.size() == 6);
+    if (o.regions.size() == 2) {
+      CHECK(o.regions[0].amp.curve_count == 1 && o.regions[0].amp.curve[0].gain == 1.f && o.regions[0].amp.veltrack == 100.f);
+      CHECK(o.regions[0].amp.keytrack == 12.f && o.regions[0].amp.vel2attack == 100.f);
+      CHECK(o.regions[1].volume_db == 48.f && o.regions[1].amp.keycenter == 60);
+    }
+    CHECK(has(parse("<region> sample=a.wav key=60 amp_veltrack=loud\n"), SfzIssueKind::kInvalidValue, "'amp_veltrack'"));
+    {  // more than kMaxVelPoints distinct points is unsupported, naming the opcode
+      std::string many = "<region> sample=a.wav key=60";
+      for (int i = 0; i <= int(kMaxVelPoints); ++i) many += " amp_velcurve_" + std::to_string(i * 3) + "=0.5";
+      auto m = parse(many + "\n");
+      CHECK(!m.ok() && has(m, SfzIssueKind::kUnsupportedValue, "amp_velcurve_<N>"));
+      many = "<region> sample=a.wav key=60";
+      for (int i = 0; i < int(kMaxVelPoints); ++i) many += " amp_velcurve_" + std::to_string(i * 3) + "=0.5";
+      CHECK(parse(many + "\n").ok());
+    }
+    // non-canonical velocity numbers are invalid (two spellings of one point); an unparsable amp_keycenter keeps the inherited value; -0 is stored as +0
+    CHECK(has(parse("<region> sample=a.wav key=60 amp_velcurve_064=0.5\n"), SfzIssueKind::kInvalidValue, "non-canonical velocity number"));
+    CHECK(parse("<region> sample=a.wav key=60 amp_velcurve_0=0.5\n").ok());
+    {
+      auto k = parse("<group>amp_keycenter=40\n<region> sample=a.wav key=60 amp_keycenter=bogus\n<region> sample=a.wav key=61 amp_keycenter=c5 amp_keytrack=-0\n");
+      CHECK(k.ok() && k.regions.size() == 2 && k.regions[0].amp.keycenter == 40 && k.ignored_values.size() == 1 && k.regions[1].amp.keycenter == 72);
+      CHECK(k.regions.size() == 2 && !std::signbit(k.regions[1].amp.keytrack) && has_amp_extension(k.regions[1]));
+    }
+    for (const char* op : {"amp_veltrack", "amp_velcurve_<N>", "amplitude", "global_amplitude", "master_amplitude", "group_amplitude", "global_volume",
+                           "master_volume", "group_volume", "amp_keytrack", "amp_keycenter", "ampeg_vel2attack", "ampeg_vel2decay", "ampeg_vel2sustain", "ampeg_vel2release"})
+      CHECK(classify_opcode(std::string(op) == "amp_velcurve_<N>" ? "amp_velcurve_64" : op) == OpcodeClass::kSupported);
+    // determinism: the same text imports to the same regions
+    CHECK(parse("<region> sample=a.wav key=60 amp_velcurve_30=0.3 amp_velcurve_90=0.8\n").regions == parse("<region> sample=a.wav key=60 amp_velcurve_90=0.8 amp_velcurve_30=0.3\n").regions);
+  }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
     const char* bad[] = {"script", "set_cc1", "set_hdcc1", "lfo01_freq", "eg01_time1", "amplitude_oncc1",
                          "effect1", "output", "group", "off_by", "polyphony", "note_offset", "octave_offset",
-                         "amp_veltrack", "sample_quality", "delay", "rt_decay", "cutoff2", "fil2_type", "pitch_keytrack"};
+                         "amp_veltrack_oncc7", "sample_quality", "delay", "rt_decay", "amp_random", "ampeg_vel2delay", "amplitude_curvecc3", "xfin_lovel", "cutoff2", "fil2_type", "pitch_keytrack"};
     for (const char* op : bad) {
       auto r = parse(std::string("<region> sample=a.wav key=60 ") + op + "=1\n");
       bool found = false;

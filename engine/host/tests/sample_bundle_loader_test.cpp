@@ -288,7 +288,39 @@ static void test_trigger_and_end_reach_the_port() {
   CHECK(regs.size() == 2 && regs[0].trigger == ports::SampleTrigger::kReleaseKey && regs[0].has_end && regs[0].end == 1500 && regs[1].has_end && regs[1].end == 0);
 }
 
+static void test_amp_map_reaches_the_port() {
+  using namespace velora::format;
+  Region r;
+  r.amp.veltrack = -40.f; r.amp.amplitude = 85.f; r.amp.keytrack = 0.75f; r.amp.keycenter = 49;
+  r.amp.vel2attack = 0.11f; r.amp.vel2decay = 0.22f; r.amp.vel2sustain = -33.f; r.amp.vel2release = 0.44f;
+  r.amp.curve_count = 3;
+  r.amp.curve[0] = {2, 0.1f}; r.amp.curve[1] = {70, 0.6f}; r.amp.curve[2] = {126, 0.9f};
+  const ports::SampleRegionDesc d = host::to_port_region(r);
+  CHECK(d.amp_veltrack == -40.f && d.amplitude == 85.f && d.amp_keytrack == 0.75f && d.amp_keycenter == 49);
+  CHECK(d.vel2attack == 0.11f && d.vel2decay == 0.22f && d.vel2sustain == -33.f && d.vel2release == 0.44f);
+  CHECK(d.vel_point_count == 3 && d.vel_points[0].vel == 2 && d.vel_points[0].gain == 0.1f && d.vel_points[1].vel == 70 &&
+        d.vel_points[1].gain == 0.6f && d.vel_points[2].vel == 126 && d.vel_points[2].gain == 0.9f && d.vel_points[3].gain == 0.0f);
+  const ports::SampleRegionDesc plain = host::to_port_region(Region{});
+  CHECK(plain.amp_veltrack == 100.f && plain.amplitude == 100.f && plain.amp_keytrack == 0.f && plain.amp_keycenter == 60 && plain.vel_point_count == 0 &&
+        plain.vel2attack == 0.f && plain.vel2decay == 0.f && plain.vel2sustain == 0.f && plain.vel2release == 0.f);
+  // Through a real bundle (format 2.3).
+  BundleWriter w;
+  const auto inst = w.add_instrument("Amp", "Amp.sfz");
+  std::vector<std::int32_t> pcm(2000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 2000, pcm});
+  CHECK(w.add_region(inst.value(), r) == Error::kNone);
+  auto rd = BundleReader::open_memory(w.finalize().take());
+  CHECK(rd.ok() && rd.value().format_minor() == 3);
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  const auto& g = loaded.instrument->instrument().regions[0];
+  CHECK(g.vel2decay == 0.22f && g.vel2release == 0.44f && g.vel_point_count == 3 && g.vel_points[1].vel == 70 && g.amp_keycenter == 49);
+}
+
 int main() {
+  test_amp_map_reaches_the_port();
   test_trigger_and_end_reach_the_port();
   test_extension_reaches_the_port();
   test_unusable_samples();

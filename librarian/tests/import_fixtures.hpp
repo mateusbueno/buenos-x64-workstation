@@ -48,10 +48,10 @@ inline fs::path write_damaged_sfz(const fs::path& dir, const std::string& name) 
   return dir / (name + ".sfz");
 }
 
-// Skipped for `unsupported_features`: amp_veltrack is outside the opcode subset.
+// Skipped for `unsupported_features`: amp_random is outside the opcode subset.
 inline fs::path write_unsupported_sfz(const fs::path& dir, const std::string& name) {
   put(dir / (name + "_s.wav"), wav16(200, 5));
-  put(dir / (name + ".sfz"), "<region> sample=" + name + "_s.wav key=60 amp_veltrack=50\n");
+  put(dir / (name + ".sfz"), "<region> sample=" + name + "_s.wav key=60 amp_random=3\n");
   return dir / (name + ".sfz");
 }
 

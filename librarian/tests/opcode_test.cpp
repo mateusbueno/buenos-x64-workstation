@@ -303,10 +303,10 @@ void test_unsupported_features() {
   }
   // All offenders are listed, with file:line, in one report; sounding neighbours do not matter.
   write_file(e.src / "Bad.sfz",
-             "<control>\nscript=x.lua\n<group>\nlfo01_freq=1\n<region> sample=samples/a.wav\namp_veltrack=10\n<effect>\n");
+             "<control>\nscript=x.lua\n<group>\nlfo01_freq=1\n<region> sample=samples/a.wav\namp_random=3\n<effect>\n");
   const ImportResult r = import_sfz(e.opts("Bad.sfz"));
   CHECK(r.reason_code == ReasonCode::kUnsupportedFeatures && r.offenders.size() == 4);
-  CHECK(offends(r, "script", 2) && offends(r, "lfo01_freq", 4) && offends(r, "amp_veltrack", 6) && offends(r, "<effect>", 7));
+  CHECK(offends(r, "script", 2) && offends(r, "lfo01_freq", 4) && offends(r, "amp_random", 6) && offends(r, "<effect>", 7));
   CHECK(mentions(r, "Bad.sfz:2: unsupported opcode 'script'"));
   CHECK(!r.offenders.empty() && r.offenders[0].file.find("Bad.sfz") != std::string::npos);
   // Audio format outside the supported set (8-bit, not resampled) is a feature, not damage.

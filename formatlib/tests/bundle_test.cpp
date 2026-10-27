@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -788,7 +789,7 @@ void test_extensions() {
     CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
     const Bytes good = w.finalize().take();
     CHECK(BundleReader::open_memory(good).ok());
-    { Bytes b = good; wr32(b, 4, 2u | (3u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 2u | (4u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 3u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 1u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 2u); CHECK(!BundleReader::open_memory(b).ok()); }  // word differs from the manifest's
@@ -1001,6 +1002,166 @@ void test_extensions() {
       for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
       wr32(b, 4, 2u | (2u << 16));
       wr32(b, mo, 2u | (2u << 16));
+      rehash(b);
+      CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    }
+  }
+  {  // Story 13.4: format 2.3, the amp table (veltrack, velocity curve, amplitude, keytrack, vel2 scalars)
+    Region veltrack = plain; veltrack.amp.veltrack = 25.f;
+    Region curve = sample_region(0);
+    curve.amp.curve_count = 3; curve.amp.curve[0] = {1, 0.25f}; curve.amp.curve[1] = {64, 0.5f}; curve.amp.curve[2] = {127, 1.f};
+    curve.amp.amplitude = 80.f; curve.amp.keytrack = -0.5f; curve.amp.keycenter = 48;
+    Region all = ext_region(0);  // minor 1 + 2 + 3 content in one region
+    all.trigger = TriggerMode::kLegato; all.has_end = true; all.end = 900;
+    all.amp.veltrack = -100.f; all.amp.vel2attack = 0.1f; all.amp.vel2decay = -0.2f; all.amp.vel2sustain = -30.f; all.amp.vel2release = 1.5f;
+    for (unsigned k = 0; k < kMaxVelPoints; ++k) all.amp.curve[k] = {std::uint8_t(4 * k), 0.5f};
+    all.amp.curve_count = kMaxVelPoints;
+    const std::vector<Region> a = {plain, veltrack, curve, all, ext_region(0)};
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    for (const auto& r : a) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, plain), Error::kNone);  // an instrument without amp records still carries `u32 0`
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (3u << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == 3);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == a);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && r.value().instruments()[1].regions[0] == plain);
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    CHECK(w.finalize().take() == b);  // deterministic
+    // N-1 writer (minor ceiling 2) refuses amp regions.
+    BundleWriter w2(WriterOptions{kFormatVersion, 2});
+    const std::size_t j0 = w2.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w2.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w2.add_region(j0, veltrack), Error::kNone);
+    CHECK_ERR(w2.finalize().error(), Error::kInvalidArgument);
+    // Content without amp fields keeps its exact bytes whatever the writer's ceiling: existing bundles do not change.
+    {
+      Region trig = plain; trig.trigger = TriggerMode::kReleaseKey;
+      for (const Region& rg : {plain, sample_region(0), ext_region(0), trig}) {
+        Bytes by[4];
+        for (std::uint32_t m = 0; m < 4; ++m) {
+          if ((m == 0 && has_extension(rg)) || (m < 2 && has_trigger_extension(rg))) continue;
+          BundleWriter x(WriterOptions{kFormatVersion, m});
+          const std::size_t k = x.add_instrument("A", "a.sfz").value();
+          CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+          CHECK_ERR(x.add_region(k, rg), Error::kNone);
+          by[m] = x.finalize().take();
+        }
+        for (std::uint32_t m = 0; m < 3; ++m) CHECK(by[3] == by[m] || by[m].empty());
+        const std::uint32_t want = has_trigger_extension(rg) ? 2u : has_extension(rg) ? 1u : 0u;
+        CHECK(version_word(by[3]) == (2u | (want << 16)));
+      }
+    }
+    // N-1 reader view: a minor 2 bundle still opens (kFormatMinor is 3).
+    {
+      BundleWriter x;
+      const std::size_t k = x.add_instrument("A", "a.sfz").value();
+      CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+      Region trig = plain; trig.trigger = TriggerMode::kFirst;
+      CHECK_ERR(x.add_region(k, trig), Error::kNone);
+      auto rr = BundleReader::open_memory(x.finalize().take());
+      CHECK(rr.ok() && rr.value().format_minor() == 2);
+    }
+    // Writer-side validation.
+    BundleWriter v;
+    const std::size_t vi = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(vi, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad = [&](auto mutate) { Region x = plain; mutate(x); return v.add_region(vi, x); };
+    CHECK_ERR(bad([](Region& x) { x.amp.veltrack = 101.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.amplitude = -1.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.keytrack = 13.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.keycenter = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.vel2release = 100.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.vel2sustain = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.curve_count = 1; x.amp.curve[0] = {5, 1.5f}; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.curve_count = 2; x.amp.curve[0] = {9, 0.5f}; x.amp.curve[1] = {9, 0.6f}; }), Error::kInvalidArgument);  // not ascending
+    CHECK_ERR(bad([](Region& x) { x.amp.curve_count = 1; x.amp.curve[0] = {128, 0.5f}; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.curve[3] = {7, 0.5f}; }), Error::kInvalidArgument);  // an entry past curve_count must be zero
+    CHECK_ERR(bad([](Region& x) { x.amp.curve_count = kMaxVelPoints + 1; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.amp.vel2decay = -0.0f; }), Error::kInvalidArgument);  // -0.0 would be a second encoding of the default
+    CHECK_ERR(bad([](Region& x) { x.amp.veltrack = 50.f; x.amp.keytrack = -0.0f; }), Error::kInvalidArgument);
+    // Corruption of the amp table (the last instrument's amp table is the tail of the manifest).
+    BundleWriter u;
+    const std::size_t ui = u.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(u.add_sample(ui, {"s", f, 1000, pcm}), Error::kNone);
+    Region cv = plain;
+    cv.amp.veltrack = 50.f; cv.amp.amplitude = 120.f; cv.amp.keytrack = 0.25f; cv.amp.keycenter = 61;
+    cv.amp.vel2attack = 0.5f; cv.amp.vel2decay = 0.25f; cv.amp.vel2sustain = -10.f; cv.amp.vel2release = 0.125f;
+    cv.amp.curve_count = 2; cv.amp.curve[0] = {10, 0.5f}; cv.amp.curve[1] = {100, 0.75f};
+    CHECK_ERR(u.add_region(ui, plain), Error::kNone);
+    CHECK_ERR(u.add_region(ui, cv), Error::kNone);
+    const Bytes good = u.finalize().take();
+    const std::size_t end = rd64(good, 8) + rd64(good, 16);
+    const std::size_t rec = end - (layout::kAmpRecordFixedSize + 2 * layout::kAmpPointSize);
+    CHECK(layout::kAmpRecordFixedSize == 36 && layout::kAmpPointSize == 8);
+    CHECK(layout::get_u32(good.data() + rec - 4) == 1u && layout::get_u32(good.data() + rec) == 1u);  // n_amp, region index 1
+    auto f32at = [&](const Bytes& by, std::size_t at) { std::uint32_t u32 = layout::get_u32(by.data() + at); float v; std::memcpy(&v, &u32, 4); return v; };
+    CHECK(f32at(good, rec + 4) == 50.f && f32at(good, rec + 8) == 120.f && f32at(good, rec + 12) == 0.25f);
+    CHECK(good[rec + 16] == 61 && good[rec + 17] == 2 && good[rec + 18] == 0 && good[rec + 19] == 0);
+    CHECK(f32at(good, rec + 20) == 0.5f && f32at(good, rec + 24) == 0.25f && f32at(good, rec + 28) == -10.f && f32at(good, rec + 32) == 0.125f);
+    CHECK(good[rec + 36] == 10 && f32at(good, rec + 40) == 0.5f && good[rec + 44] == 100 && f32at(good, rec + 48) == 0.75f);
+    auto put_f32 = [](Bytes& by, std::size_t at, float v) { std::uint32_t u32; std::memcpy(&u32, &v, 4); wr32(by, at, u32); };
+    auto expect_bad = [&](Bytes bad_bytes, const char* what) {
+      rehash(bad_bytes);
+      auto rb = BundleReader::open_memory(bad_bytes);
+      if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL amp table corruption not rejected: %s\n", what); ++g_fail; }
+    };
+    { Bytes b = good; put_f32(b, rec + 4, 150.f); expect_bad(b, "veltrack above 100"); }
+    { Bytes b = good; put_f32(b, rec + 8, -1.f); expect_bad(b, "negative amplitude"); }
+    { Bytes b = good; put_f32(b, rec + 12, 20.f); expect_bad(b, "keytrack above 12"); }
+    { Bytes b = good; b[rec + 16] = 200; expect_bad(b, "keycenter above 127"); }
+    { Bytes b = good; b[rec + 18] = 1; expect_bad(b, "non-zero padding"); }
+    { Bytes b = good; b[rec + 17] = 33; expect_bad(b, "more curve points than the bound"); }
+    { Bytes b = good; b[rec + 17] = 3; expect_bad(b, "curve count beyond the record (reads into nothing)"); }
+    { Bytes b = good; b[rec + 17] = 1; expect_bad(b, "curve count smaller than the data (non-canonical tail)"); }
+    { Bytes b = good; b[rec + 44] = 10; expect_bad(b, "curve points not ascending"); }
+    { Bytes b = good; b[rec + 37] = 1; expect_bad(b, "point padding"); }
+    { Bytes b = good; put_f32(b, rec + 48, 2.f); expect_bad(b, "curve gain above 1"); }
+    { Bytes b = good; put_f32(b, rec + 20, std::nanf("")); expect_bad(b, "NaN vel2attack"); }
+    { Bytes b = good; put_f32(b, rec + 24, -0.0f); put_f32(b, rec + 20, 0.0f); expect_bad(b, "negative zero vel2decay"); }
+    { Bytes b = good; wr32(b, rec, 5); expect_bad(b, "region index out of range"); }
+    { Bytes b = good; wr32(b, rec - 4, 3); expect_bad(b, "n_amp larger than regions"); }
+    {  // an all-default record is non-canonical
+      Bytes b = good;
+      put_f32(b, rec + 4, 100.f); put_f32(b, rec + 8, 100.f); put_f32(b, rec + 12, 0.f); b[rec + 16] = 60; b[rec + 17] = 0;
+      for (std::size_t o = rec + 20; o < rec + 36; ++o) b[o] = 0;
+      b.erase(b.begin() + rec + 36, b.begin() + end);  // the two points are gone: shrink the manifest
+      const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+      const std::size_t cut = 2 * layout::kAmpPointSize;
+      wr64(b, 16, ms - cut); wr64(b, 24, io - cut); wr64(b, 40, rd64(b, 40) - cut); wr64(b, 56, rd64(b, 56) - cut);
+      for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io - cut + e * 48, rd64(b, io - cut + e * 48) - cut);
+      (void)mo;
+      expect_bad(b, "all-default amp record");
+    }
+    for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+      CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+    for (std::size_t off = rec - 4; off < end; ++off)
+      for (int bit = 0; bit < 8; ++bit) {
+        Bytes bad_bytes = good;
+        bad_bytes[off] ^= std::uint8_t(1 << bit);
+        rehash(bad_bytes);
+        auto r3 = BundleReader::open_memory(bad_bytes);
+        if (!r3.ok() && r3.error() != Error::kCorruptManifest) { std::printf("FAIL amp flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error())); ++g_fail; }
+      }
+    // A minor 3 stamp on a bundle with no amp record is non-canonical.
+    {
+      BundleWriter x;
+      const std::size_t k = x.add_instrument("A", "a.sfz").value();
+      CHECK_ERR(x.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+      Region trig = plain; trig.trigger = TriggerMode::kFirst;
+      CHECK_ERR(x.add_region(k, trig), Error::kNone);
+      Bytes b = x.finalize().take();  // minor 2
+      const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+      b.insert(b.begin() + mo + ms, 4, std::uint8_t(0));  // n_amp = 0
+      wr64(b, 16, ms + 4); wr64(b, 24, io + 4); wr64(b, 40, rd64(b, 40) + 4); wr64(b, 56, rd64(b, 56) + 4);
+      for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
+      wr32(b, 4, 2u | (3u << 16));
+      wr32(b, mo, 2u | (3u << 16));
       rehash(b);
       CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
     }

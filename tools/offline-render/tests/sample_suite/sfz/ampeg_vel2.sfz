@@ -1,0 +1,8 @@
+<control>
+default_path=samples/
+<global> sample=loop.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 pitch_keycenter=60
+<region> key=60 ampeg_attack=0.01 ampeg_vel2attack=0.08 ampeg_release=0.05
+<region> key=62 ampeg_decay=0.02 ampeg_sustain=70 ampeg_vel2decay=0.1 ampeg_release=0.05
+<region> key=64 ampeg_decay=0.04 ampeg_sustain=100 ampeg_vel2sustain=-70 ampeg_release=0.05
+<region> key=65 ampeg_release=0.02 ampeg_vel2release=0.25
+<region> key=67 ampeg_attack=0.005 ampeg_vel2attack=0.04 ampeg_decay=0.02 ampeg_vel2decay=0.05 ampeg_sustain=50 ampeg_vel2sustain=-30 ampeg_release=0.03 ampeg_vel2release=0.1 ampeg_dynamic=1

@@ -119,8 +119,8 @@ struct SfzIgnoredValue {
   std::string message;
 };
 
-// Story 13.2: a <curve> block, parsed and stored inert (nothing in the subset consumes a curve; an opcode that
-// would, like amp_velcurve_N, is unsupported and skips the file by itself).
+// Story 13.2: a <curve> block, parsed and stored inert (nothing in the subset consumes a named curve; an opcode that
+// would, like amp_veltrack_curvecc<N>, is unsupported and skips the file by itself; amp_velcurve_N points do not use a <curve> block).
 struct SfzCurve {
   int index = -1;                                 // curve_index, -1 when not given
   std::vector<std::pair<int, double>> points;     // (vNNN point number 0..255, value), source order

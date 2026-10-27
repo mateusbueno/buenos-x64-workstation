@@ -38,7 +38,11 @@ inline constexpr std::uint32_t kFormatVersion = 2;
 // Minor 2 (Story 13.3) appends, after the minor 1 table of each instrument (present, possibly with zero records, in a minor 2 bundle), a trigger/end
 // table: trigger=first/legato/release_key and `end`. The writer stamps minor 2 only for a bundle with such a region; every other bundle is byte-
 // identical to what it was (minor 0 or 1). Minor 2 requires at least one trigger/end record (kCorruptManifest otherwise).
-inline constexpr std::uint32_t kFormatMinor = 2;
+// Minor 3 (Story 13.4) appends, after the minor 2 table of each instrument (present, possibly with zero records, in a minor 3 bundle), the amp table: the
+// per-region AmpMap (amp_veltrack, amp_velcurve_N, amplitude, amp_keytrack/keycenter, ampeg_vel2*). The writer stamps minor 3 only for a bundle with such a
+// region; every other bundle keeps the bytes it had (minor 0, 1 or 2). Minor 3 requires at least one amp record (kCorruptManifest otherwise). The reader
+// accepts minor 0..3 (N, N-1 and the Epic 1 layout) and rejects a newer one with kUnsupportedVersion.
+inline constexpr std::uint32_t kFormatMinor = 3;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -80,8 +84,8 @@ struct WriterOptions {
   // kFormatVersion + 1 produces one the reader must reject; anything else fails finalize().
   std::uint32_t format_version = kFormatVersion;
   // Test hook for the minor policy: 0 makes the writer refuse regions that need the extension
-  // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 (default) stamps minor 1 or 2 only when
-  // one is needed.
+  // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 refuses regions that need the minor 3 amp table; 3 (default)
+  // stamps minor 1, 2 or 3 only when one is needed.
   std::uint32_t format_minor = kFormatMinor;
 };
 
@@ -245,7 +249,7 @@ class BundleReader {
   ~BundleReader();
 
   std::uint32_t format_version() const { return version_; }  // major
-  std::uint32_t format_minor() const { return minor_; }       // 0 = Epic 1 layout, 1 = with extensions, 2 = with the trigger/end table
+  std::uint32_t format_minor() const { return minor_; }       // 0 = Epic 1 layout, 1 = with extensions, 2 = with the trigger/end table, 3 = with the amp table
   const Digest256& bundle_id() const { return bundle_id_; }  // SHA-256 of the manifest bytes
   const Uuid& library_id() const { return library_id_; }
   std::span<const InstrumentInfo> instruments() const { return instruments_; }

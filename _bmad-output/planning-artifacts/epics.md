@@ -7086,7 +7086,7 @@ So that a harmless value does not reject a whole library.
 
 **Given** the allow-list of inert opcodes
 **When** `ampeg_dynamic` is listed
-**Then** it is inert only while no `ampeg_*_oncc` or `ampeg_vel2*` is supported
+**Then** it is inert only while no `ampeg_*_oncc` is supported (`ampeg_vel2*` does not need it: the trigger velocity is constant, verified against sfizz in the Story 13.4 `ampeg_vel2` fixture)
 **And** Story 13.5 revisits it when `*_oncc` lands
 
 ### Story 13.3: Sample end, first/legato triggers and release_key

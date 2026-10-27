@@ -1,9 +1,9 @@
 // Null test of the sample engine against committed sfizz renders (Story 1.15), through the shipped tools:
 //   librarian import (in process)  ->  velora-offline-render --engine sample  ->  velora-null-test --case
-// Usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip]
+// Usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip|strip134]
 //   no flag     the render must pass the case's null test (tolerance in golden/<case>.case)
 //   --negative  a deliberately wrong render (1 dB gain error / the other interpolation / the Story 5.2 opcodes
-//               stripped from the SFZ: keyswitches, CC crossfades and filters) must FAIL the same null test
+//               stripped from the SFZ: keyswitches, CC crossfades and filters; strip134: the Story 13.4 velocity and amplitude opcodes) must FAIL the same null test
 //               on residual, proving the test can fail
 //   cli-errors  as the case name: exercises the sample-engine argument errors of velora-offline-render
 // Needs no sfizz: the goldens are committed. Regenerating them needs tools/oracle (see its README).
@@ -56,9 +56,16 @@ static long counter(const std::string& out, const std::string& label) {
 
 // The SFZ text without any Story 5.2 opcode (sw_*, xfin_*/xfout_*, xf_cccurve, fil_type, cutoff, resonance): opcodes are the
 // whitespace separated key=value words, headers and comments stay as they are.
-static std::string strip_story52(const std::string& sfz, int& stripped) {
-  auto drop = [](const std::string& w) {
+// With story134 it is the Story 13.4 velocity and amplitude opcodes instead (amp_veltrack, amp_velcurve_N, amp_keytrack, amp_keycenter, amplitude,
+// group_/master_/global_ volume and amplitude, ampeg_vel2*).
+static std::string strip_story52(const std::string& sfz, int& stripped, bool story134 = false) {
+  auto drop = [story134](const std::string& w) {
     const std::string key = w.substr(0, w.find('='));
+    if (story134) {
+      auto ends = [&](const char* suffix) { const std::string x = suffix; return key.size() > x.size() && key.compare(key.size() - x.size(), x.size(), x) == 0; };
+      return w.find('=') != std::string::npos &&
+             (key.rfind("amp_", 0) == 0 || key.rfind("ampeg_vel2", 0) == 0 || key == "amplitude" || ends("_amplitude") || ends("_volume"));
+    }
     return w.find('=') != std::string::npos &&
            (key.rfind("sw_", 0) == 0 || key.rfind("xfin_", 0) == 0 || key.rfind("xfout_", 0) == 0 || key == "xf_cccurve" ||
             key == "fil_type" || key == "cutoff" || key == "resonance");
@@ -186,8 +193,8 @@ int main(int argc, char** argv) {
   std::string negative;
   if (argc > 3) {
     if (argc != 5 || std::string(argv[3]) != "--negative" ||
-        (std::string(argv[4]) != "gain" && std::string(argv[4]) != "interp" && std::string(argv[4]) != "strip")) {
-      std::fprintf(stderr, "usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip]\n");
+        (std::string(argv[4]) != "gain" && std::string(argv[4]) != "interp" && std::string(argv[4]) != "strip" && std::string(argv[4]) != "strip134")) {
+      std::fprintf(stderr, "usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip|strip134]\n");
       return 2;
     }
     negative = argv[4];
@@ -199,12 +206,12 @@ int main(int argc, char** argv) {
   opt.base_dir = std::string(SUITE_DIR) + "/sfz";
   opt.root = work + "/root";
   mkdirs(opt.root);
-  if (negative == "strip") {  // the same instrument without keyswitches, crossfades and filters (samples still resolve through base_dir)
+  if (negative == "strip" || negative == "strip134") {  // the same instrument without keyswitches, crossfades and filters / without the Story 13.4 opcodes (samples still resolve through base_dir)
     std::ifstream in(opt.sfz_path);
     int stripped = 0;
-    std::string text = strip_story52(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), stripped);
+    std::string text = strip_story52(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), stripped, negative == "strip134");
     if (stripped == 0) {  // a negative that strips nothing would fail (or pass) for the wrong reason
-      std::printf("FAIL: --negative strip removed no Story 5.2 opcode from %s\n", opt.sfz_path.c_str());
+      std::printf("FAIL: --negative strip removed no %s opcode from %s\n", negative == "strip134" ? "Story 13.4" : "Story 5.2", opt.sfz_path.c_str());
       return 2;
     }
     mkdirs(work + "/stripped");

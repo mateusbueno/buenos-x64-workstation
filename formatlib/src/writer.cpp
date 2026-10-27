@@ -60,6 +60,18 @@ void put_trig(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r
   put_u8(v, 0); put_u8(v, 0);
   put_u64(v, r.end);
 }
+
+void put_amp(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  const AmpMap& a = r.amp;
+  put_u32(v, index);
+  put_f32(v, a.veltrack); put_f32(v, a.amplitude); put_f32(v, a.keytrack);
+  put_u8(v, a.keycenter); put_u8(v, a.curve_count); put_u8(v, 0); put_u8(v, 0);
+  put_f32(v, a.vel2attack); put_f32(v, a.vel2decay); put_f32(v, a.vel2sustain); put_f32(v, a.vel2release);
+  for (unsigned i = 0; i < a.curve_count; ++i) {
+    put_u8(v, a.curve[i].vel); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+    put_f32(v, a.curve[i].gain);
+  }
+}
 }  // namespace
 
 BundleWriter::BundleWriter(WriterOptions opt) : opt_(opt) {}
@@ -215,10 +227,15 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   bool needs_trig = false;
   for (const auto& ins : instruments_)
     for (const auto& r : ins.regions) needs_trig = needs_trig || has_trigger_extension(r);
+  bool needs_amp = false;
+  for (const auto& ins : instruments_)
+    for (const auto& r : ins.regions) needs_amp = needs_amp || has_amp_extension(r);
+  if (needs_amp && opt_.format_minor < 3) return Error::kInvalidArgument;
   if (needs_trig && opt_.format_minor < 2) return Error::kInvalidArgument;
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
-  const std::uint32_t minor = needs_trig ? 2u : needs_ext ? 1u : 0u;  // a minor 2 bundle carries the minor 1 table too (possibly empty)
+  // a minor N bundle carries the tables of every lower minor too (possibly empty)
+  const std::uint32_t minor = needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
   const std::uint32_t version_word =
       (protect ? kProtectedFormatVersion : opt_.format_version) | (minor << kMinorShift);
   Uuid library_id = library_id_;
@@ -331,6 +348,13 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
         put_u32(manifest, n_trig);
         for (std::size_t k = 0; k < ins.regions.size(); ++k)
           if (has_trigger_extension(ins.regions[k])) put_trig(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+      }
+      if (minor >= 3) {
+        std::uint32_t n_amp = 0;
+        for (const auto& r : ins.regions) n_amp += has_amp_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_amp);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_amp_extension(ins.regions[k])) put_amp(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
       }
     }
   }

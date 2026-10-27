@@ -212,6 +212,9 @@ class SampleEngine final : public Engine {
     float transition_delta = 0.0f;
     float release_rate = 0.0f;
     float attack_step = 1.0f;  // per-voice copy of the attack rate (the region's, or the part's part_attack override)
+    // Story 13.4: per-voice copies of the decay rate and the sustain level (the region's, or its ampeg_vel2decay / vel2sustain value at the note-on velocity).
+    float decay_rate = 0.0f, sustain = 1.0f;
+    bool free_running = false;
   };
 
   struct Voice {
@@ -285,7 +288,7 @@ class SampleEngine final : public Engine {
     release_stream(v);
     v.active = false;
   }
-  void init_env(Env& e, const RegionRt& r, std::uint32_t channel) const noexcept;
+  void init_env(Env& e, const RegionRt& r, std::uint32_t channel, std::uint8_t vel7) const noexcept;
   float env_next(Env& e, const RegionRt& r) const noexcept;
   // false: the voice must be dropped (released before its envelope delay elapsed).
   bool env_release(Env& e, const RegionRt& r) const noexcept;

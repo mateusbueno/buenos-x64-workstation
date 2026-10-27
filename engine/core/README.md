@@ -36,6 +36,17 @@ Behaviour (SFZ subset of Story 1.13; sfizz 1.2.3 is the reference, the null test
   `10^(volume/20)` x envelope. Pan: sfizz's equal-power law, a 4095-entry cosine table indexed by `round((pan/100 + 1)/2 * 4094)`;
   a mono sample then gets +3.01 dB (`x1.41254`, so centred mono is 0.99881), a stereo sample goes through pan, an identity width stage
   and a centre position stage, +6.02 dB (centred stereo is 0.99763).
+- **Velocity and amplitude model (Story 13.4)**: evaluated once at note on, in `start_region`; a region with none of the opcodes takes the
+  expression above untouched (bit for bit). `amp_veltrack` (percent, default 100) and `amp_velcurve_N` follow sfizz's `velocityCurve()`:
+  `g` = the curve value at `vel7/127` (a 128-entry table built in `prepare()`: ends (0, 0) and (127, 1) unless given, gaps filled by a
+  linear ramp, linear interpolation at `vel * 127`) or `vel^2` without points; the gain is `1 - |t| * (1 - g)`, or `|t| * (1 - g)` for a
+  negative track `t`. `amplitude` (percent, already multiplied by `global_/master_/group_amplitude` at import) scales `vol_gain`;
+  `group_volume`/`master_volume`/`global_volume` were added to `volume` at import. `amp_keytrack` multiplies by
+  `10^(keytrack * (note - amp_keycenter) / 20)`. `ampeg_vel2attack/decay/release` (seconds) and `ampeg_vel2sustain` (percent) are added at
+  `vel7/127` to the region's attack, decay, release and sustain when the voice starts (`init_env`; sustain clamped to 0..1, a time at or
+  below 0 gives sfizz's instant rate); the decay rate, sustain level and free-running flag are per-voice copies in `Env`, equal to the
+  region's own when no `vel2` is set. A part's `part_attack` and `part_release` overrides replace the region's attack and release, vel2attack/vel2release included (tested). The keytrack total is bounded to +-144 dB and `vol_gain` to about +144 dB so the gain is always finite. Nothing here is modulated by CC yet
+  (Story 13.5). The `amp_velcurve_N` table lives in `SampleBank::vel_tables`; nothing allocates after `prepare()`.
 - **Amplitude envelope** (`ampeg_*`), a sample-by-sample port of sfizz's `ADSREnvelope`, single precision, state per voice:
   `delay` frames at `start` (percent), linear `attack` (`v += 1/(rate*t)`, the first attack frame is `start + step`), `hold` frames at
   1, exponential `decay` (`v *= exp(-9/(t*rate))` down to `sustain`, so `t` is the time of nine time constants), `sustain` held
@@ -81,7 +92,7 @@ Behaviour (SFZ subset of Story 1.13; sfizz 1.2.3 is the reference, the null test
   `stop_voice` return `kPoolExhausted`.
 - Story 5.2 added keyswitches, CC crossfades and the basic per-voice filters (below, "Keyswitches, CC crossfades and filters").
 - Out of scope (later stories): parallel render (1.18; done), heads and streaming (1.16/1.17; done, opt-in), effects, other CC modulation (`*_oncc`),
-  `amp_veltrack`/`pitch_veltrack`, `rt_decay`. SoundFont 2 (Story 5.3) needs no engine feature: the importer maps presets onto the same regions (see `formatlib/README.md`); the compensations it makes for engine conventions (-3.0103 dB for the pan law, decay/release x 0.7817 for the nine-time-constant envelope) are listed there, and the render comparison against FluidSynth is `tools/offline-render/tests/sf2_suite/README.md`.
+  `pitch_veltrack`, `rt_decay`, `amp_random` and the `ampeg_vel2delay/hold/depth` forms. SoundFont 2 (Story 5.3) needs no engine feature: the importer maps presets onto the same regions (see `formatlib/README.md`); the compensations it makes for engine conventions (-3.0103 dB for the pan law, decay/release x 0.7817 for the nine-time-constant envelope) are listed there, and the render comparison against FluidSynth is `tools/offline-render/tests/sf2_suite/README.md`.
 
 Known differences from sfizz that the null tests work around (not engine features):
 

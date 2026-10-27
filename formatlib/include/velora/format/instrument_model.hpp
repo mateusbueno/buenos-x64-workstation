@@ -87,6 +87,30 @@ struct Filter {
   friend bool operator==(const Filter&, const Filter&) = default;
 };
 
+// One point of an `amp_velcurve_N` curve: velocity N (0..127) maps to gain 0..1.
+struct VelPoint {
+  std::uint8_t vel = 0;
+  float gain = 0;
+  friend bool operator==(const VelPoint&, const VelPoint&) = default;
+};
+// At most this many `amp_velcurve_N` points per region (documented bound; sfizz takes up to 128).
+inline constexpr unsigned kMaxVelPoints = 32;
+
+// Story 13.4 (bundle format 2.3): the note-on amplitude map of one region, evaluated once when a note starts (sfizz noteGain / EGDescription).
+// The defaults leave the sound exactly as it was (gain = velocity squared). group_volume, master_volume and global_volume are not here:
+// the importer adds them to the region's volume_db, and group/master/global_amplitude multiply `amplitude`.
+struct AmpMap {
+  float veltrack = 100;        // amp_veltrack, percent -100..100: 100 = the full velocity law, 0 = none, negative = inverted
+  float amplitude = 100;       // amplitude, percent 0..10000
+  float keytrack = 0;          // amp_keytrack, dB per key -96..12
+  std::uint8_t keycenter = 60; // amp_keycenter
+  std::uint8_t curve_count = 0;  // amp_velcurve_N points, ascending by vel, unused entries zero; 0 = the default law (velocity squared)
+  VelPoint curve[kMaxVelPoints]{};
+  float vel2attack = 0, vel2decay = 0, vel2release = 0;  // ampeg_vel2attack/decay/release, seconds added at velocity 127 (-100..100)
+  float vel2sustain = 0;                                  // ampeg_vel2sustain, percent added at velocity 127 (-100..100)
+  friend bool operator==(const AmpMap&, const AmpMap&) = default;
+};
+
 struct Region {
   std::uint32_t sample = 0;  // index into the owning instrument's samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -111,6 +135,8 @@ struct Region {
   Keyswitch sw;
   Crossfade xf;
   Filter filter;
+  // Story 13.4 extension (bundle format 2.3).
+  AmpMap amp;
 
   friend bool operator==(const Region&, const Region&) = default;
 };
@@ -121,6 +147,9 @@ bool has_extension(const Region& r);
 
 // True when the region needs a record in the format 2.2 trigger/end table: a trigger other than attack/release, or `end`.
 bool has_trigger_extension(const Region& r);
+
+// True when the region needs a record in the format 2.3 amp table: any AmpMap field other than its default.
+bool has_amp_extension(const Region& r);
 
 // Checks every range invariant of a region against its sample length (`sample_frames`). Returns
 // kNone or kInvalidArgument. Used by the writer, the reader (as kCorruptManifest) and the importer.

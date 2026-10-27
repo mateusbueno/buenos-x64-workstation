@@ -30,6 +30,13 @@ struct SampleBankRegion {
   // `end`, else -1; the last played frame is end_cut - 1.
   bool disabled = false;
   std::int64_t end_cut = -1;
+  // Story 13.4: the note-on amplitude map. vel_shaped: amp_veltrack other than 100 or an amp_velcurve_N table (else the old velocity-squared expression is
+  // used untouched); vel_table indexes SampleBank::vel_tables (-1 = none); amp_veltrack is the normalized (percent / 100) value; key_gain_db / key_center are
+  // amp_keytrack / amp_keycenter; vel2: any ampeg_vel2* is non-zero.
+  bool vel_shaped = false, vel2 = false;
+  std::int32_t vel_table = -1;
+  float amp_veltrack = 1.0f, key_gain_db = 0.0f;
+  std::uint8_t key_center = 60;
   bool uses_sequence = false;
   bool loops = false;  // loop_continuous / loop_sustain with a valid loop range
   std::int64_t loop_start = 0, loop_end = 0, loop_size = 0;
@@ -70,6 +77,7 @@ struct SampleBank {
   // bank, this cannot. Parts compare it to tell "the same instrument again" from "another instrument".
   std::uint64_t id = 0;
   std::vector<SampleBankRegion> regions;
+  std::vector<std::array<float, 128>> vel_tables;  // Story 13.4: the amp_velcurve_N curves, one table of 128 entries per region that has points
   std::vector<std::uint32_t> note_list;         // region indices, grouped by note
   std::array<std::uint32_t, 129> note_begin{};  // note n uses note_list[note_begin[n], note_begin[n+1])
   std::vector<std::uint32_t> seq_counter;       // audio thread only

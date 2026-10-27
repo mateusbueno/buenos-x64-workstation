@@ -73,7 +73,7 @@ Supported SFZ subset: see `formatlib/README.md` (authoritative opcode table: sup
 unsupported). It now includes keyswitches, CC crossfades, loops and basic filters (Story 5.1). A bundle that uses none of the
 new features is byte-identical to what Story 1.13 produced; the new features set format 2.1 (see `formatlib/README.md`).
 Any opcode, header or value outside the subset skips the whole file with a per-file reason listing every offender (e.g.
-`Piano.sfz:12: unsupported opcode 'amp_veltrack'`); nothing is published and the previous `current` stays. The engine does
+`Piano.sfz:12: unsupported opcode 'amp_random'`); nothing is published and the previous `current` stays. The engine does
 not play the new features yet (Story 5.2): until then an instrument with keyswitches sounds all its regions. The importer never resamples or requantizes: samples must be WAV, 16/24-bit PCM or 32-bit
 float, mono/stereo, 44.1/48/88.2/96 kHz, otherwise the file is skipped with the sample path as the reason. SFZ loops: a missing `loop_start` is 0, a missing `loop_end` the last frame, `loop_mode=loop_continuous|loop_sustain` without points loops the whole sample; `loop_start > loop_end` is an error. Sample paths must stay inside the SFZ's directory. Missing
 samples, missing/recursive `#include` and region values beyond a sample's length are reasons too.
@@ -129,7 +129,7 @@ VELORA_SFZ_DEMO_DIR=~/libs ctest --test-dir build -R librarian_demo_acceptance -
 
 It imports every `*.sfz` below it into a temporary root and checks the bundle's region count equals the `<region>` count of
 the SFZ sources (parser count and an independent text scan). Without the variable the test is reported as skipped
-(exit code 77). A library using opcodes outside the subset (for example `amp_veltrack`) is reported as a failure with the
+(exit code 77). A library using opcodes outside the subset (for example `amp_random`) is reported as a failure with the
 offending file:line, which is the intended behaviour of the subset.
 
 ## Category suggestion (Story 5.5)

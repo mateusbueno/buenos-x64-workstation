@@ -740,6 +740,213 @@ static void test_release_key_gates() {
   }
 }
 
+// --- Story 13.4: velocity and amplitude model --------------------------------------------------------
+
+template <typename F>
+static double amp_level(F setup, std::uint32_t vel7, int key = 60, int lo = 48, int hi = 84) {
+  TestInstrument ins;
+  auto& r = ins.region(ins.dc(1.0f, 5000), lo, hi, 60);
+  setup(r);
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  e.start_voice(0, static_cast<std::uint32_t>(key), v16(vel7));
+  return static_cast<double>(render(e, 4).l[3]);
+}
+static double vsq(std::uint32_t vel7) { return (vel7 / 127.0) * (vel7 / 127.0); }
+
+static void test_velocity_and_amplitude_model() {
+  const double G = mono_center_gain();
+  // A region without the opcodes keeps the velocity-squared law bit for bit; an unused amp_keycenter does not change it either.
+  for (const std::uint32_t vel : {1u, 17u, 64u, 100u, 127u}) {
+    const double plain = amp_level([](ports::SampleRegionDesc&) {}, vel);
+    CHECK_NEAR(plain, G * vsq(vel), 1e-5);
+    CHECK(amp_level([](ports::SampleRegionDesc& r) { r.amp_veltrack = 100.0f; r.amp_keycenter = 30; }, vel) == plain);
+    CHECK(amp_level([](ports::SampleRegionDesc& r) { r.amplitude = 100.0f; r.amp_keytrack = 0.0f; r.vel2attack = 0.0f; }, vel) == plain);
+  }
+  // amp_veltrack: 0 = no velocity law, 50 = halfway, negative = inverted.
+  for (const std::uint32_t vel : {1u, 40u, 64u, 127u}) {
+    const double v2 = vsq(vel);
+    CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amp_veltrack = 0.0f; }, vel), G, 1e-5);
+    CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amp_veltrack = 50.0f; }, vel), G * (1.0 - 0.5 * (1.0 - v2)), 1e-5);
+    CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amp_veltrack = -100.0f; }, vel), G * (1.0 - v2), 1e-5);
+    CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amp_veltrack = -50.0f; }, vel), G * 0.5 * (1.0 - v2), 1e-5);
+  }
+  // amp_velcurve_N: ends default to (0, 0) and (127, 1), gaps are filled linearly, the value between two velocities is interpolated by sfizz's rule
+  // (here velocities are whole, so the table entry itself).
+  {
+    auto curve = [](std::initializer_list<std::pair<int, float>> pts, float veltrack = 100.0f) {
+      return [pts, veltrack](ports::SampleRegionDesc& r) {
+        r.amp_veltrack = veltrack;
+        for (const auto& [v, g] : pts) r.vel_points[r.vel_point_count++] = {static_cast<std::uint8_t>(v), g};
+      };
+    };
+    const auto c = curve({{1, 0.2f}, {64, 0.9f}});
+    CHECK_NEAR(amp_level(c, 1), G * 0.2, 1e-5);
+    CHECK_NEAR(amp_level(c, 64), G * 0.9, 1e-5);
+    CHECK_NEAR(amp_level(c, 127), G * 1.0, 1e-5);
+    CHECK_NEAR(amp_level(c, 32), G * (0.2 + (0.9 - 0.2) * 31.0 / 63.0), 1e-5);  // ramp from point 1 to point 64
+    CHECK_NEAR(amp_level(c, 100), G * (0.9 + (1.0 - 0.9) * 36.0 / 63.0), 1e-5);  // ramp from point 64 to the default end (127, 1)
+    CHECK_NEAR(amp_level(curve({{30, 0.5f}}), 15), G * (0.5 * 15.0 / 30.0), 1e-5);  // only a middle point: the default start (0, 0) ramps to it
+    CHECK_NEAR(amp_level(curve({{0, 1.0f}, {127, 0.0f}}), 20), G * (1.0 - 20.0 / 127.0), 1e-5);  // an inverted curve
+    CHECK_NEAR(amp_level(curve({{1, 0.5f}, {127, 0.5f}}, 50.0f), 90), G * (1.0 - 0.5 * (1.0 - 0.5)), 1e-5);  // curve and a partial veltrack
+    CHECK_NEAR(amp_level(curve({{64, 1.0f}}, -100.0f), 32), G * (1.0 - 32.0 / 64.0), 1e-5);  // curve and a negative veltrack
+    CHECK(amp_level(curve({{40, 0.25f}, {80, 0.75f}}), 77) == amp_level(curve({{40, 0.25f}, {80, 0.75f}}), 77));  // deterministic
+  }
+  // amplitude is a plain gain (percent); amplitude=0 silences the region; it multiplies volume.
+  CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amplitude = 50.0f; }, 127), 0.5 * G, 1e-5);
+  CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amplitude = 150.0f; }, 127), 1.5 * G, 1e-5);
+  CHECK(amp_level([](ports::SampleRegionDesc& r) { r.amplitude = 0.0f; }, 127) == 0.0);
+  CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amplitude = 50.0f; r.volume_db = -6.0206f; }, 127), 0.25 * G, 1e-5);
+  // amp_keytrack: dB per key around amp_keycenter (60 by default).
+  for (const int key : {48, 60, 66, 84}) {
+    CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amp_keytrack = 0.5f; }, 127, key), G * std::pow(10.0, 0.5 * (key - 60) / 20.0), 1e-4);
+    CHECK_NEAR(amp_level([](ports::SampleRegionDesc& r) { r.amp_keytrack = -1.0f; r.amp_keycenter = 72; }, 127, key), G * std::pow(10.0, -1.0 * (key - 72) / 20.0), 1e-4);
+  }
+  // Envelope scalars: sfizz EGDescription: value + velocity * vel2*, at note-on (velocity = vel7 / 127).
+  const double sr = 48000.0;
+  auto render_voice = [&](auto setup, std::uint32_t vel7, std::uint32_t frames) {
+    TestInstrument ins;
+    auto& r = ins.region(ins.dc(1.0f, 400000), 60, 60);
+    setup(r);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(vel7));
+    return render(e, frames);
+  };
+  {  // vel2attack: a linear attack of ampeg_attack + vf * vel2attack seconds
+    auto at = [&](std::uint32_t vel) {
+      return render_voice([](ports::SampleRegionDesc& r) { r.ampeg_attack = 0.01f; r.vel2attack = 0.02f; r.amp_veltrack = 0.0f; }, vel, 4000);
+    };
+    for (const std::uint32_t vel : {127u, 64u, 1u}) {
+      const double t = 0.01 + 0.02 * (vel / 127.0), step = 1.0 / (sr * t);
+      const Out o = at(vel);
+      for (const std::uint32_t f : {0u, 99u, 250u}) CHECK_NEAR(o.l[f] / G, std::min(1.0, (f + 1) * step), 2e-5);
+    }
+    // The same attack without vel2attack is not velocity dependent; a negative total attack is instantaneous (sfizz: time <= 0 -> rate 1).
+    const Out flat = render_voice([](ports::SampleRegionDesc& r) { r.ampeg_attack = 0.01f; r.amp_veltrack = 0.0f; }, 127, 600);
+    CHECK_NEAR(flat.l[99] / G, 100.0 / 480.0, 2e-5);
+    const Out neg = render_voice([](ports::SampleRegionDesc& r) { r.ampeg_attack = 0.01f; r.vel2attack = -0.05f; r.amp_veltrack = 0.0f; }, 127, 8);
+    CHECK_NEAR(neg.l[0] / G, 1.0, 1e-6);
+  }
+  {  // vel2decay: exponential decay time ampeg_decay + vf * vel2decay
+    for (const std::uint32_t vel : {127u, 64u}) {
+      const Out o = render_voice([](ports::SampleRegionDesc& r) { r.ampeg_decay = 0.01f; r.vel2decay = 0.02f; r.ampeg_sustain = 50.0f; r.amp_veltrack = 0.0f; }, vel, 3000);
+      const double t = 0.01 + 0.02 * (vel / 127.0), rate = std::exp(-9.0 / (t * sr));
+      for (const std::uint32_t f : {3u, 20u, 60u}) CHECK_NEAR(o.l[f + 1] / o.l[f], rate, 1e-5);
+    }
+  }
+  {  // vel2sustain: percent added at velocity 127, the level is clamped to 0..100 %
+    for (const std::uint32_t vel : {127u, 64u, 30u}) {
+      const Out o = render_voice([](ports::SampleRegionDesc& r) { r.ampeg_decay = 0.005f; r.ampeg_sustain = 80.0f; r.vel2sustain = -50.0f; r.amp_veltrack = 0.0f; }, vel, 20000);
+      CHECK_NEAR(o.l[19999] / G, (80.0 - 50.0 * (vel / 127.0)) / 100.0, 1e-4);
+    }
+    const Out up = render_voice([](ports::SampleRegionDesc& r) { r.ampeg_decay = 0.005f; r.ampeg_sustain = 80.0f; r.vel2sustain = 50.0f; r.amp_veltrack = 0.0f; }, 127, 20000);
+    CHECK_NEAR(up.l[19999] / G, 1.0, 1e-5);  // clamped to 100 %
+    TestInstrument zero;  // sustain below zero: clamped to 0, which releases by itself like any zero sustain
+    { auto& rg = zero.region(zero.dc(1.0f, 400000), 60, 60); rg.ampeg_decay = 0.01f; rg.ampeg_sustain = 20.0f; rg.vel2sustain = -50.0f; }
+    SampleEngine ez(cfg());
+    ez.set_instrument(zero);
+    ez.start_voice(0, 60, v16(127));
+    render(ez, 96000);
+    CHECK(ez.active_voices() == 0);
+    TestInstrument kept;  // the same region at velocity 1: sustain 20 - 0.4 = 19.6 %, the voice keeps sounding
+    { auto& rg = kept.region(kept.dc(1.0f, 400000), 60, 60); rg.ampeg_decay = 0.01f; rg.ampeg_sustain = 20.0f; rg.vel2sustain = -50.0f; }
+    SampleEngine ek(cfg());
+    ek.set_instrument(kept);
+    ek.start_voice(0, 60, v16(1));
+    render(ek, 96000);
+    CHECK(ek.active_voices() == 1);
+  }
+  {  // vel2release: exponential release time ampeg_release + vf * vel2release, evaluated at note-on
+    for (const std::uint32_t vel : {127u, 64u}) {
+      TestInstrument ins;
+      { auto& rg = ins.region(ins.dc(1.0f, 400000), 60, 60); rg.ampeg_release = 0.02f; rg.vel2release = 0.03f; rg.amp_veltrack = 0.0f; }
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      e.start_voice(0, 60, v16(vel));
+      render(e, 200);
+      e.stop_voice(0, 60);
+      const Out rel = render(e, 2000);
+      const double t = 0.02 + 0.03 * (vel / 127.0), rate = std::exp(-9.0 / (t * sr));
+      for (const std::uint32_t f : {10u, 100u, 400u}) CHECK_NEAR(rel.l[f + 1] / rel.l[f], rate, 1e-5);
+    }
+  }
+  {  // a region with vel2 scalars at zero (and a plain one) renders the old envelope bit for bit
+    auto base = [](ports::SampleRegionDesc& r) { r.ampeg_attack = 0.01f; r.ampeg_decay = 0.02f; r.ampeg_sustain = 40.0f; r.ampeg_release = 0.02f; };
+    const Out a = render_voice(base, 90, 6000);
+    const Out b = render_voice([&](ports::SampleRegionDesc& r) { base(r); r.vel2attack = 0.0f; r.vel2sustain = 0.0f; r.amp_keycenter = 20; }, 90, 6000);
+    CHECK(a.l == b.l && a.r == b.r);
+  }
+  {  // a part's attack / release override wins over vel2attack / vel2release and does not depend on velocity
+    for (const std::uint32_t vel : {127u, 20u}) {
+      TestInstrument ins;
+      { auto& rg = ins.region(ins.dc(1.0f, 400000), 60, 60); rg.ampeg_attack = 0.01f; rg.vel2attack = 0.05f; rg.ampeg_release = 0.02f; rg.vel2release = 0.03f; rg.amp_veltrack = 0.0f; }
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      e.set_part_param_edit(0, velora::core::params::kPartAttack, 100.0f);
+      e.set_part_param_edit(0, velora::core::params::kPartRelease, 50.0f);
+      e.start_voice(0, 60, v16(vel));
+      const Out o = render(e, 400);
+      for (const std::uint32_t f : {0u, 99u, 300u}) CHECK_NEAR(o.l[f] / G, (f + 1) / (sr * 0.1), 2e-5);
+      e.stop_voice(0, 60);
+      const Out rel = render(e, 1000);
+      for (const std::uint32_t f : {10u, 100u}) CHECK_NEAR(rel.l[f + 1] / rel.l[f], std::exp(-9.0 / (0.05 * sr)), 1e-5);
+    }
+  }
+  {  // extreme opcodes stay finite
+    TestInstrument ins;
+    auto& rg = ins.region(ins.dc(1.0f, 2000), 0, 127, 60);
+    rg.amp_keytrack = 12.0f; rg.amp_keycenter = 0; rg.amplitude = 10000.0f; rg.volume_db = 48.0f;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 127, v16(127));
+    const Out o = render(e, 64);
+    bool fin = true;
+    for (float x : o.l) fin = fin && std::isfinite(x);
+    for (float x : o.r) fin = fin && std::isfinite(x);
+    CHECK(fin && peak(o) > 1.0f);
+  }
+  // Insane maps make the region unplayable (counted), they never reach the audio thread.
+  {
+    auto unplayable = [](auto setup) {
+      TestInstrument ins;
+      setup(ins.region(ins.dc(1.0f, 100), 60, 60));
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      return e.unplayable_regions();
+    };
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.amp_veltrack = std::numeric_limits<float>::quiet_NaN(); }) == 1);
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.amplitude = -1.0f; }) == 1);
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.amp_keytrack = 50.0f; }) == 1);
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.vel2release = 1000.0f; }) == 1);
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.vel_point_count = 1; r.vel_points[0] = {5, 2.0f}; }) == 1);
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.vel_point_count = 2; r.vel_points[0] = {9, 0.5f}; r.vel_points[1] = {9, 0.6f}; }) == 1);
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.vel_point_count = 200; }) == 1);
+    CHECK(unplayable([](ports::SampleRegionDesc& r) { r.amp_veltrack = 50.0f; r.vel_point_count = 1; r.vel_points[0] = {5, 0.5f}; }) == 0);
+  }
+  // Two voices of one region at different velocities are evaluated independently and the render is deterministic.
+  {
+    auto run = [&]() {
+      TestInstrument ins;
+      auto& r = ins.region(ins.dc(1.0f, 20000), 48, 84, 60);
+      r.amp_veltrack = 70.0f; r.amp_keytrack = 0.2f; r.vel_point_count = 2; r.vel_points[0] = {20, 0.3f}; r.vel_points[1] = {100, 0.8f};
+      r.ampeg_attack = 0.003f; r.ampeg_decay = 0.01f; r.ampeg_sustain = 60.0f; r.vel2attack = 0.01f; r.vel2decay = 0.02f; r.vel2sustain = -30.0f; r.vel2release = 0.05f;
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      e.start_voice(0, 60, v16(30));
+      e.start_voice(0, 67, v16(120));
+      Out o = render(e, 3000);
+      e.stop_voice(0, 60);
+      const Out tail = render(e, 3000);
+      o.l.insert(o.l.end(), tail.l.begin(), tail.l.end());
+      return o;
+    };
+    const Out a = run(), b = run();
+    CHECK(a.l == b.l);
+    CHECK(peak(a) > 0.1f);
+  }
+}
+
 struct LR {
   double l, r;
 };
@@ -1164,6 +1371,7 @@ int main() {
   test_release_key_gates();
   test_release_key_vs_release_with_pedal();
   test_gain_and_pan();
+  test_velocity_and_amplitude_model();
   test_pool_missing_cost_and_info();
   test_interpolation_quality();
   test_oracle_block_stall();

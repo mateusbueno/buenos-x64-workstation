@@ -811,6 +811,10 @@ add_test(NAME sample_null_neg_interp COMMAND sample_suite_test pitch_far hermite
 foreach(_neg keyswitch_last keyswitch_down_up keyswitch_previous xfade_power xfade_gain filters)
   add_test(NAME sample_null_neg_strip_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip)
 endforeach()
+# Story 13.4: the velocity and amplitude cases must fail when the same instrument is imported without those opcodes.
+foreach(_neg amp_veltrack amp_velcurve amp_gain ampeg_vel2 amp_keytrack)
+  add_test(NAME sample_null_neg_strip134_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip134)
+endforeach()
 add_test(NAME sample_render_cli_errors COMMAND sample_suite_test cli-errors)
 # Story 1.18: --voice-threads 3 equals --voice-threads 1 bit for bit; 2 and a non-sample engine exit 2.
 add_test(NAME sample_render_voice_threads COMMAND sample_suite_test voice-threads)

@@ -22,6 +22,8 @@ constexpr float kStereoPanCompensation = 1.9952623149688797f;  // +6 dB, pan and
 constexpr unsigned kXfadeSmoothingMs = 5;  // sfizz Config::xfadeSmoothing
 constexpr float kMaxRatio = 1024.0f, kMinRatio = 1.0f / 4096.0f;
 constexpr float kMaxSeconds = 100.0f;
+constexpr float kMaxAmpDb = 144.0f;        // Story 13.4: bound on the amp_keytrack total
+constexpr float kMaxAmpGain = 1.6e7f;      // about +144 dB: bound on volume x amplitude
 
 bool finite_time(float t) noexcept { return std::isfinite(t) && t >= 0.0f && t <= kMaxSeconds; }
 
@@ -44,9 +46,21 @@ bool extension_sane(const velora::ports::SampleRegionDesc& d) noexcept {
   return true;
 }
 
+// Story 13.4 fields: the amp map must be finite and inside the documented ranges (a region that is not is unplayable).
+bool amp_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+  if (!in(d.amp_veltrack, -100.0f, 100.0f) || !in(d.amplitude, 0.0f, 10000.0f) || !in(d.amp_keytrack, -96.0f, 12.0f) || d.amp_keycenter > 127) return false;
+  for (float t : {d.vel2attack, d.vel2decay, d.vel2release, d.vel2sustain})
+    if (!in(t, -100.0f, 100.0f)) return false;
+  if (d.vel_point_count > velora::ports::kSampleMaxVelPoints) return false;
+  for (unsigned i = 0; i < d.vel_point_count; ++i)
+    if (d.vel_points[i].vel > 127 || !in(d.vel_points[i].gain, 0.0f, 1.0f) || (i > 0 && d.vel_points[i].vel <= d.vel_points[i - 1].vel)) return false;
+  return true;
+}
+
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return extension_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && amp_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -227,6 +241,39 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
 
     r.base_cents = d.tune_cents + 100.0f * static_cast<float>(d.transpose);
     r.vol_gain = std::pow(10.0f, d.volume_db * 0.05f);
+    // Story 13.4: the note-on amplitude map. A region with none of it keeps the old law and the old numbers (shaped = false).
+    if (amp_sane(d)) {
+      if (d.amplitude != 100.0f) r.vol_gain *= d.amplitude / 100.0f;
+      r.vol_gain = std::clamp(r.vol_gain, 0.0f, kMaxAmpGain);  // finite whatever amplitude x volume fold to
+      r.vel_shaped = d.amp_veltrack != 100.0f || d.vel_point_count != 0;
+      r.amp_veltrack = d.amp_veltrack / 100.0f;
+      r.key_gain_db = d.amp_keytrack;
+      r.key_center = d.amp_keycenter;
+      r.vel2 = d.vel2attack != 0.0f || d.vel2decay != 0.0f || d.vel2sustain != 0.0f || d.vel2release != 0.0f;
+      if (d.vel_point_count != 0) {  // sfizz Curve::buildFromVelcurvePoints (linear): ends (0, 0) and (127, 1) unless given, gaps filled by a ramp
+        std::array<float, 128> t{};
+        std::array<bool, 128> set{};
+        t[0] = 0.0f; set[0] = true;
+        t[127] = 1.0f; set[127] = true;
+        for (unsigned i = 0; i < d.vel_point_count; ++i) {
+          t[d.vel_points[i].vel] = d.vel_points[i].gain;
+          set[d.vel_points[i].vel] = true;
+        }
+        int left = 0, right = 1;
+        while (right < 128) {
+          for (; right < 128 && !set[static_cast<std::size_t>(right)]; ++right) {}
+          const int length = right - left;
+          if (length > 1) {
+            const float mu = (t[static_cast<std::size_t>(right)] - t[static_cast<std::size_t>(left)]) / static_cast<float>(length);
+            const float start = t[static_cast<std::size_t>(left)];
+            for (int i = 0; i < length; ++i) t[static_cast<std::size_t>(left + i)] = start + mu * static_cast<float>(i);
+          }
+          left = right++;
+        }
+        r.vel_table = static_cast<std::int32_t>(bank->vel_tables.size());
+        bank->vel_tables.push_back(t);
+      }
+    }
     const float p = std::clamp((d.pan / 100.0f + 1.0f) * 0.5f, 0.0f, 1.0f);
     const float pl = pan_lookup(pan_table_, p), pr = pan_lookup(pan_table_, 1.0f - p);
     if (r.stereo) {
@@ -441,7 +488,7 @@ std::uint32_t SampleEngine::active_voices() const noexcept {
 
 // --- amplitude envelope: a sample-by-sample port of sfizz's ADSREnvelope --------------------------
 
-void SampleEngine::init_env(Env& e, const RegionRt& r, std::uint32_t channel) const noexcept {
+void SampleEngine::init_env(Env& e, const RegionRt& r, std::uint32_t channel, std::uint8_t vel7) const noexcept {
   e.s = EnvState::kDelay;
   e.v = r.env_start;
   e.delay_left = r.env_delay;
@@ -449,6 +496,19 @@ void SampleEngine::init_env(Env& e, const RegionRt& r, std::uint32_t channel) co
   e.transition_delta = 0.0f;
   e.release_rate = r.env_release_rate;
   e.attack_step = part_engaged_[channel & 15u].test(0) ? part_attack_step_[channel & 15u] : r.env_attack_step;
+  e.decay_rate = r.env_decay_rate;
+  e.sustain = r.env_sustain;
+  e.free_running = r.env_free_running;
+  if (r.vel2) {  // Story 13.4: sfizz EGDescription::get*: value + velocity * vel2*, evaluated once at note-on (velocity = vel7 / 127)
+    const float sr = static_cast<float>(cfg_.sample_rate);
+    const float vf = static_cast<float>(vel7) / 127.0f;
+    const velora::ports::SampleRegionDesc& d = r.d;
+    if (!part_engaged_[channel & 15u].test(0)) e.attack_step = seconds_to_lin_rate(d.ampeg_attack + vf * d.vel2attack, sr);
+    e.decay_rate = seconds_to_exp_rate(d.ampeg_decay + vf * d.vel2decay, sr);
+    e.release_rate = seconds_to_exp_rate((d.ampeg_release > 0.0f ? d.ampeg_release : kDefaultRelease) + vf * d.vel2release, sr);
+    e.sustain = std::clamp(d.ampeg_sustain / 100.0f + vf * (d.vel2sustain / 100.0f), 0.0f, 1.0f);
+    e.free_running = e.sustain <= kFreeRunningSustain;
+  }
 }
 
 float SampleEngine::env_next(Env& e, const RegionRt& r) const noexcept {
@@ -473,26 +533,26 @@ float SampleEngine::env_next(Env& e, const RegionRt& r) const noexcept {
         e.s = EnvState::kDecay;
         continue;
       case EnvState::kDecay: {
-        e.v *= r.env_decay_rate;
-        if (e.v > r.env_sustain) {
+        e.v *= e.decay_rate;
+        if (e.v > e.sustain) {
           const float out = e.v;
-          if (e.v <= r.env_sustain + kVirtuallyZero) {
+          if (e.v <= e.sustain + kVirtuallyZero) {
             e.s = EnvState::kSustain;
-            e.transition_delta = (r.env_sustain - e.v) / (sr * kTransitionTime);
+            e.transition_delta = (e.sustain - e.v) / (sr * kTransitionTime);
           }
           return out;
         }
-        e.v = std::max(r.env_sustain, e.v);
+        e.v = std::max(e.sustain, e.v);
         e.s = EnvState::kSustain;
-        e.transition_delta = (r.env_sustain - e.v) / (sr * kTransitionTime);
+        e.transition_delta = (e.sustain - e.v) / (sr * kTransitionTime);
         continue;
       }
       case EnvState::kSustain:
-        if (r.env_free_running) {  // a (near) zero sustain level releases by itself
+        if (e.free_running) {  // a (near) zero sustain level releases by itself
           e.s = EnvState::kRelease;
           continue;
         }
-        if (e.v > r.env_sustain) e.v += e.transition_delta;
+        if (e.v > e.sustain) e.v += e.transition_delta;
         return e.v;
       case EnvState::kRelease: {
         const float nv = e.v * e.release_rate;
@@ -550,8 +610,27 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
 
   // Amplitude velocity tracking at the SFZ default amp_veltrack=100: gain = velocity squared.
   const float vf = static_cast<float>(vel7) / 127.0f;
-  const float vgain = 1.0f - 1.0f * (1.0f - vf * vf);
-  const float base = vgain * r.vol_gain;
+  float vgain = 1.0f - 1.0f * (1.0f - vf * vf);
+  if (r.vel_shaped) {
+    // Story 13.4, sfizz velocityCurve(): g = curve(velocity) (a point table, linear between entries) or velocity squared; the gain is
+    // 1 - |veltrack| * (1 - g), or |veltrack| * (1 - g) for a negative veltrack. Evaluated here, once, at note-on.
+    float g = vf * vf;
+    if (r.vel_table >= 0) {
+      const std::array<float, 128>& t = bank.vel_tables[static_cast<std::size_t>(r.vel_table)];
+      const float x = std::clamp(vf * 127.0f, 0.0f, 127.0f);
+      const int i1 = static_cast<int>(x);
+      const int i2 = std::min(127, i1 + 1);
+      const float mu = x - static_cast<float>(i1);
+      g = t[static_cast<std::size_t>(i1)] + mu * (t[static_cast<std::size_t>(i2)] - t[static_cast<std::size_t>(i1)]);
+    }
+    const float inv = std::fabs(r.amp_veltrack) * (1.0f - g);
+    vgain = r.amp_veltrack < 0.0f ? inv : 1.0f - inv;
+  }
+  float base = vgain * r.vol_gain;
+  if (r.key_gain_db != 0.0f) {  // amp_keytrack: dB per key from amp_keycenter, the total bounded so the gain stays finite
+    const float db = std::clamp(r.key_gain_db * static_cast<float>(static_cast<int>(note) - static_cast<int>(r.key_center)), -kMaxAmpDb, kMaxAmpDb);
+    base *= std::pow(10.0f, db * 0.05f);
+  }
 
   release_stream(*v);  // a free slot holds no ring (every end gives it back); defence in depth, so a ring can never leak through a reused slot
   *v = Voice{};
@@ -568,7 +647,7 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   v->gain_l = base * r.chan_l;
   v->gain_r = base * r.chan_r;
   v->base_gain = base;
-  init_env(v->env, r, channel);
+  init_env(v->env, r, channel, vel7);
   if (r.has_xfade) {  // sfizz resetCrossfades(): the smoother starts at the current gain, so a new note does not ramp
     v->xf_tgt = crossfade_target(r, channel);
     v->xf_cur = v->xf_tgt;

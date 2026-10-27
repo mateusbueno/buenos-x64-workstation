@@ -12,7 +12,31 @@ bool has_trigger_extension(const Region& r) {
   return static_cast<std::uint8_t>(r.trigger) > 1 || r.has_end;
 }
 
+bool has_amp_extension(const Region& r) { return r.amp != AmpMap{}; }
+
 namespace {
+Error validate_amp(const AmpMap& a) {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+  for (float v : {a.veltrack, a.amplitude, a.keytrack, a.vel2attack, a.vel2decay, a.vel2sustain, a.vel2release})
+    if (v == 0.f && std::signbit(v)) return Error::kInvalidArgument;  // -0.0 == 0.0 as a number but not as bytes: one encoding only
+  for (unsigned i = 0; i < a.curve_count && i < kMaxVelPoints; ++i)
+    if (a.curve[i].gain == 0.f && std::signbit(a.curve[i].gain)) return Error::kInvalidArgument;
+  if (!in(a.veltrack, -100.f, 100.f) || !in(a.amplitude, 0.f, 10000.f) || !in(a.keytrack, -96.f, 12.f)) return Error::kInvalidArgument;
+  if (a.keycenter > 127) return Error::kInvalidArgument;
+  for (float t : {a.vel2attack, a.vel2decay, a.vel2release, a.vel2sustain})
+    if (!in(t, -100.f, 100.f)) return Error::kInvalidArgument;
+  if (a.curve_count > kMaxVelPoints) return Error::kInvalidArgument;
+  for (unsigned i = 0; i < kMaxVelPoints; ++i) {
+    if (i >= a.curve_count) {
+      if (a.curve[i] != VelPoint{}) return Error::kInvalidArgument;  // unused entries are zero
+      continue;
+    }
+    if (a.curve[i].vel > 127 || !in(a.curve[i].gain, 0.f, 1.f)) return Error::kInvalidArgument;
+    if (i > 0 && a.curve[i].vel <= a.curve[i - 1].vel) return Error::kInvalidArgument;  // strictly ascending, so unique
+  }
+  return Error::kNone;
+}
+
 bool note_ok(std::int16_t v) { return v >= -1 && v <= 127; }
 
 Error validate_extension(const Region& r) {
@@ -74,6 +98,7 @@ Error validate_region(const Region& r, std::uint64_t frames) {
   if (!r.has_end && r.end != 0) return Error::kInvalidArgument;
   if (r.end > (std::uint64_t(1) << 40)) return Error::kInvalidArgument;
   if (validate_extension(r) != Error::kNone) return Error::kInvalidArgument;
+  if (validate_amp(r.amp) != Error::kNone) return Error::kInvalidArgument;
   if (r.offset >= frames) return Error::kInvalidArgument;
   if (r.has_loop_points) {
     if (r.loop_start > r.loop_end || r.loop_end >= frames) return Error::kInvalidArgument;

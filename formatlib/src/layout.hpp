@@ -40,6 +40,15 @@ inline constexpr std::size_t kExtRecordSize = 4 + 1 + 7 + 4 + 16 + 16 + 8;
 //   u16 0
 //   u64 end (0 when bit 0 is clear)
 inline constexpr std::size_t kTrigRecordSize = 4 + 1 + 1 + 2 + 8;
+// Format 2.3 (Story 13.4) amp record, one per region whose AmpMap differs from the default; the table follows the minor 2 table of each
+// instrument (u32 count, records ascending by region index). Variable length: a fixed part, then `curve_count` points.
+//   u32 region_index
+//   f32 amp_veltrack (percent), f32 amplitude (percent), f32 amp_keytrack (dB per key)
+//   u8  amp_keycenter, u8 curve_count (0..kMaxVelPoints), u16 0
+//   f32 vel2attack, f32 vel2decay, f32 vel2sustain, f32 vel2release
+//   curve_count x { u8 vel (strictly ascending), u8 0, u16 0, f32 gain }
+inline constexpr std::size_t kAmpRecordFixedSize = 4 + 4 + 4 + 4 + 1 + 1 + 2 + 4 + 4 + 4 + 4;
+inline constexpr std::size_t kAmpPointSize = 1 + 1 + 2 + 4;
 inline constexpr unsigned kMinorShift = 16;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }

@@ -1,0 +1,17 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.05
+<master> master_volume=-4
+<group> group_volume=3
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60
+<region> sample=a.wav lokey=62 hikey=62 pitch_keycenter=62 volume=-2 amplitude=150
+<group> group_volume=-6 group_amplitude=50
+<region> sample=a.wav lokey=64 hikey=64 pitch_keycenter=64 amplitude=80
+<master> master_amplitude=25
+<group>
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65
+<region> sample=a.wav lokey=67 hikey=67 pitch_keycenter=67 amplitude=0
+<master>
+<group>
+<region> sample=a.wav lokey=69 hikey=69 pitch_keycenter=69 amplitude=50
+<region> sample=a.wav lokey=71 hikey=71 pitch_keycenter=71

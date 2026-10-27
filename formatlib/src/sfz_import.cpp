@@ -66,6 +66,21 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"ampeg_release", C::kSupported, "s"},
       {"trigger", C::kSupported, "attack, release, first, legato, release_key (Story 13.3)"},
       {"end", C::kSupported, "frames, exclusive: last played frame = min(end, length) - 1; 0 disables the region (Story 13.3)"},
+      {"amp_veltrack", C::kSupported, "percent -100..100 (Story 13.4)"},
+      {"amp_velcurve_<N>", C::kSupported, "N = velocity 0..127, gain 0..1, linear between points, at most 32 points per region (Story 13.4)"},
+      {"amplitude", C::kSupported, "percent 0..10000 (Story 13.4)"},
+      {"global_amplitude", C::kSupported, "percent, multiplies amplitude (Story 13.4)"},
+      {"master_amplitude", C::kSupported, "percent, multiplies amplitude (Story 13.4)"},
+      {"group_amplitude", C::kSupported, "percent, multiplies amplitude (Story 13.4)"},
+      {"global_volume", C::kSupported, "dB, added to volume (Story 13.4)"},
+      {"master_volume", C::kSupported, "dB, added to volume (Story 13.4)"},
+      {"group_volume", C::kSupported, "dB, added to volume (Story 13.4)"},
+      {"amp_keytrack", C::kSupported, "dB per key -96..12 (Story 13.4)"},
+      {"amp_keycenter", C::kSupported, "note number or name (Story 13.4)"},
+      {"ampeg_vel2attack", C::kSupported, "s at velocity 127 (Story 13.4)"},
+      {"ampeg_vel2decay", C::kSupported, "s at velocity 127 (Story 13.4)"},
+      {"ampeg_vel2sustain", C::kSupported, "% at velocity 127 (Story 13.4)"},
+      {"ampeg_vel2release", C::kSupported, "s at velocity 127 (Story 13.4)"},
       {"sw_lokey", C::kSupported, "keyswitch range low (Story 5.1)"},
       {"sw_hikey", C::kSupported, "keyswitch range high (Story 5.1)"},
       {"sw_last", C::kSupported, "(Story 5.1)"},
@@ -93,8 +108,10 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       // Story 5.4 (real VSCO2: 75 of 75 files used it and nothing else outside the subset): a flag that only makes sfizz re-read the
       // ampeg_* values while a voice sounds. The values it could change come from ampeg_*_oncc<N> / ampeg_vel2*, which are unsupported
       // opcodes and reject the file by themselves, so without them the flag cannot change the sound; with them the file is rejected anyway.
-      // INERT ONLY WHILE no ampeg_*_oncc<N> / ampeg_vel2* opcode is supported: the moment one is, this entry must leave the allow-list
-      // (Story 13.5 revisits it).
+      // INERT ONLY WHILE no ampeg_*_oncc<N> opcode is supported: the moment one is, this entry must leave the allow-list (Story 13.5
+      // revisits it). Story 13.4 added ampeg_vel2*, which does NOT change that: sfizz's dynamic flag re-evaluates the envelope values
+      // every chunk, but vel2* reads the trigger velocity, which is constant for the life of the voice, so the values never differ
+      // (checked against sfizz in the ampeg_vel2 null-test fixture, which sets ampeg_dynamic=1).
       {"ampeg_dynamic", C::kAllowListed, "flag, no effect without ampeg_*_oncc<N> (Story 5.4)"},
   };
   return t;
@@ -149,6 +166,12 @@ struct Acc {
   bool never_note = false;        // hikey=-1 (the last hikey wins, so a later valid hikey clears it)
   const Op* type_op = nullptr;  // fil_type / resonance as given (for ignored_opcode warnings)
   const Op* res_op = nullptr;
+  // Story 13.4. amp_velcurve_N points (last wins, ascending by N); group/master/global volume and amplitude, folded into the region at the end.
+  std::map<int, float> velcurve;
+  bool vol_set = false;
+  double vol_extra[3] = {0, 0, 0};  // group_volume, master_volume, global_volume
+  bool amp_set = false;
+  double amp_mult[3] = {100, 100, 100};  // group_amplitude, master_amplitude, global_amplitude (percent)
 };
 
 // "xfin_locc64" -> in, lo, cc 64. Names are already classified as xf opcodes.
@@ -428,6 +451,20 @@ class Importer final : public sfz::ParserListener {
     return false;
   }
 
+  // A number the value must parse as; outside [lo, hi] it is clamped (sfizz's permissive bounds) and recorded in ignored_values.
+  bool as_clamped(const Op& op, double lo, double hi, double& out) {
+    if (!parse_double(op.value, out)) {
+      bad(op, "expected a number");
+      return false;
+    }
+    if (out < lo || out > hi) {
+      out = out < lo ? lo : hi;
+      ignore(op, "outside the range sfizz accepts, clamped", false);
+    }
+    if (out == 0) out = 0;  // "-0" is stored as +0: one encoding per value (the bundle compares bytes, the model compares numbers)
+    return true;
+  }
+
   // Applies one opcode to `r`. Returns false for an invalid value (reported when `report`).
   bool apply(Region& r, Acc& acc, const Op& op, bool report) {
     SfzLoopSpec& ls = acc.ls;
@@ -486,6 +523,39 @@ class Importer final : public sfz::ParserListener {
       else if (v == "legato") r.trigger = TriggerMode::kLegato;
       else if (v == "release_key") r.trigger = TriggerMode::kReleaseKey;
       else { unsupported_value(op); return false; }
+    }
+    else if (k == "amp_veltrack") { if (!as_clamped(op, -100, 100, d)) return false; r.amp.veltrack = float(d); }
+    else if (k == "amplitude") { if (!as_clamped(op, 0, 10000, d)) return false; r.amp.amplitude = float(d); }
+    else if (k == "global_amplitude" || k == "master_amplitude" || k == "group_amplitude") {
+      if (!as_clamped(op, 0, 10000, d)) return false;
+      acc.amp_mult[k[0] == 'g' && k[1] == 'r' ? 0 : k[0] == 'm' ? 1 : 2] = d;
+      acc.amp_set = true;
+    }
+    else if (k == "global_volume" || k == "master_volume" || k == "group_volume") {
+      if (!as_clamped(op, -144, 48, d)) return false;
+      acc.vol_extra[k[0] == 'g' && k[1] == 'r' ? 0 : k[0] == 'm' ? 1 : 2] = d;
+      acc.vol_set = true;
+    }
+    else if (k == "amp_keytrack") { if (!as_clamped(op, -96, 12, d)) return false; r.amp.keytrack = float(d); }
+    else if (k == "amp_keycenter") {  // an unusable note keeps the value inherited from a higher level (or the default)
+      if (parse_note(op.value, n)) r.amp.keycenter = std::uint8_t(n);
+      else ignore(op, "not a MIDI note 0..127; the inherited value is kept", false);
+    }
+    else if (k == "ampeg_vel2attack") { if (!as_clamped(op, -100, 100, d)) return false; r.amp.vel2attack = float(d); }
+    else if (k == "ampeg_vel2decay") { if (!as_clamped(op, -100, 100, d)) return false; r.amp.vel2decay = float(d); }
+    else if (k == "ampeg_vel2sustain") { if (!as_clamped(op, -100, 100, d)) return false; r.amp.vel2sustain = float(d); }
+    else if (k == "ampeg_vel2release") { if (!as_clamped(op, -100, 100, d)) return false; r.amp.vel2release = float(d); }
+    else if (k.compare(0, 13, "amp_velcurve_") == 0) {
+      if (k.size() > 14 && k[13] == '0') {  // like xfin_locc<N>: amp_velcurve_064 would spell velocity 64 twice
+        if (report_)
+          add(SfzIssueKind::kInvalidValue, op.file, op.line,
+              "opcode '" + k + "' has a non-canonical velocity number (write 'amp_velcurve_" + std::to_string(std::atoi(k.c_str() + 13)) + "')");
+        return false;
+      }
+      const int vel = std::atoi(k.c_str() + 13);
+      if (vel > 127) { ignore(op, "velocity above 127; sfizz drops the opcode", false); return true; }
+      if (!as_clamped(op, 0, 1, d)) return false;
+      acc.velcurve[vel] = float(d);
     }
     else if (k == "sw_lokey") { if (!as_note(op, n)) return false; r.sw.lokey = std::int16_t(n); }
     else if (k == "sw_hikey") { if (!as_note(op, n)) return false; r.sw.hikey = std::int16_t(n); }
@@ -552,6 +622,25 @@ class Importer final : public sfz::ParserListener {
         apply(r, acc, op, false);  // values were validated when read
       }
     const SfzLoopSpec ls = acc.ls;
+    // Story 13.4: volumes add and amplitudes multiply, as sfizz does; the amp map keeps the velocity curve.
+    if (acc.vol_set) {
+      const double v = double(r.volume_db) + acc.vol_extra[0] + acc.vol_extra[1] + acc.vol_extra[2];
+      r.volume_db = float(std::clamp(v, -144.0, 48.0));
+    }
+    if (acc.amp_set) {
+      const double a = double(r.amp.amplitude) * (acc.amp_mult[0] / 100.0) * (acc.amp_mult[1] / 100.0) * (acc.amp_mult[2] / 100.0);
+      r.amp.amplitude = float(std::min(a, 10000.0));
+    }
+    if (acc.velcurve.size() > kMaxVelPoints) {
+      issue(SfzIssueKind::kUnsupportedValue, region_loc_,
+            "more than " + std::to_string(kMaxVelPoints) + " amp_velcurve_<N> points in one region", "amp_velcurve_<N>");
+      return;
+    }
+    for (const auto& [vel, gain] : acc.velcurve) {
+      r.amp.curve[r.amp.curve_count].vel = std::uint8_t(vel);
+      r.amp.curve[r.amp.curve_count].gain = gain;
+      ++r.amp.curve_count;
+    }
     r.has_loop_points = ls.start_set || ls.end_set;
     // Story 5.1: filter, keyswitch and crossfade state.
     if (acc.cutoff_set) r.filter.type = acc.type_set ? acc.type : FilterType::kLpf2p;

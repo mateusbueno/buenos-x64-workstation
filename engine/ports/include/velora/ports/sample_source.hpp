@@ -60,6 +60,13 @@ enum class SampleFilterType : std::uint8_t {
 // One region of the instrument (the SFZ opcode subset of Story 1.13). Field meaning follows the
 // SFZ specification; times are in seconds, ampeg_start and ampeg_sustain in percent, pan in
 // -100..100, offset and loop points in frames of the region's sample (loop_end inclusive).
+// Story 13.4: one `amp_velcurve_N` point (velocity 0..127 -> gain 0..1) and the bound on the points of a region.
+struct SampleVelPoint {
+  std::uint8_t vel = 0;
+  float gain = 0.0f;
+};
+inline constexpr unsigned kSampleMaxVelPoints = 32;
+
 struct SampleRegionDesc {
   std::uint32_t sample_index = 0;  // into InstrumentView::samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -89,6 +96,14 @@ struct SampleRegionDesc {
   SampleCcRange xfin[kSampleMaxCcCrossfades], xfout[kSampleMaxCcCrossfades];
   SampleFilterType filter_type = SampleFilterType::kNone;
   float filter_cutoff_hz = 0.0f, filter_resonance_db = 0.0f;
+  // Story 13.4: the note-on amplitude map (SFZ amp_veltrack / amp_velcurve_N / amplitude / amp_keytrack / amp_keycenter / ampeg_vel2*). The defaults give
+  // the fixed law gain = velocity squared and the region's own envelope, bit for bit. veltrack and amplitude are percent, keytrack dB per key, the
+  // vel2 times seconds and vel2sustain percent, all added at velocity 127 (scaled by velocity / 127). vel_points are ascending by vel, unused entries zero.
+  float amp_veltrack = 100.0f, amplitude = 100.0f, amp_keytrack = 0.0f;
+  std::uint8_t amp_keycenter = 60;
+  std::uint8_t vel_point_count = 0;
+  SampleVelPoint vel_points[kSampleMaxVelPoints]{};
+  float vel2attack = 0.0f, vel2decay = 0.0f, vel2sustain = 0.0f, vel2release = 0.0f;
 };
 
 // Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.

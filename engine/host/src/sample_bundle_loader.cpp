@@ -124,6 +124,19 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   }
   d.has_end = r.has_end;
   d.end = r.end;
+  // Story 13.4: the amp map travels unchanged.
+  d.amp_veltrack = r.amp.veltrack;
+  d.amplitude = r.amp.amplitude;
+  d.amp_keytrack = r.amp.keytrack;
+  d.amp_keycenter = r.amp.keycenter;
+  d.vel2attack = r.amp.vel2attack;
+  d.vel2decay = r.amp.vel2decay;
+  d.vel2sustain = r.amp.vel2sustain;
+  d.vel2release = r.amp.vel2release;
+  // More points than the port holds (formatlib bounds them at the same 32) is not truncated: the count is passed on and the engine makes the region
+  // unplayable (counted) instead of playing a different curve.
+  d.vel_point_count = r.amp.curve_count;
+  for (unsigned i = 0; i < fmt::kMaxVelPoints && i < ports::kSampleMaxVelPoints; ++i) d.vel_points[i] = {r.amp.curve[i].vel, r.amp.curve[i].gain};
   // Story 5.2: the Story 5.1 extension (keyswitches, CC crossfades, filter) travels unchanged.
   d.sw = {r.sw.lokey, r.sw.hikey, r.sw.last, r.sw.down, r.sw.up, r.sw.previous, r.sw.default_key};
   // More controllers than the port holds (formatlib bounds them at the same 4, so this is defence in depth) is not truncated: the count is
