@@ -245,6 +245,7 @@ development_status:
   9-20-send-firmware-from-velora-studio: backlog
   9-21-device-view-and-diagnostics-export: backlog
   9-22-velora-studio-accessibility-audit: backlog
+  9-23-edit-zone-keyboard-and-arpeggiator-from-velora-studio: backlog
   epic-9-retrospective: optional
 
   epic-10: done
@@ -296,3 +297,17 @@ development_status:
   12-13-velora-studio-part-editor-sound-sections-for-fm-and-va: done
   12-14-fm-and-va-firmware-update-reaches-shipped-v1-units: backlog
   epic-12-retrospective: optional
+
+  epic-13: backlog
+  13-1-decision-sfz-scope-for-the-reference-corpus: backlog
+  13-2-importer-value-rules-and-inert-opcodes: backlog
+  13-3-sample-end-first-legato-triggers-and-release-key: backlog
+  13-4-velocity-and-amplitude-model: backlog
+  13-5-cc-at-voice-start-and-sfizz-pseudo-ccs: backlog
+  13-6-choke-groups-and-polyphony-limits: backlog
+  13-7-pitch-bend-and-cc-triggered-voices: backlog
+  13-8-per-voice-filter: backlog
+  13-9-region-eq-and-lfo-eg-modulation-conditional: backlog
+  13-10-random-layer-parity-with-the-null-oracle: backlog
+  13-11-sf2-libraries-in-the-reference-corpus: backlog
+  epic-13-retrospective: optional

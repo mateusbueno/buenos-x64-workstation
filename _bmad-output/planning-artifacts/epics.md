@@ -781,6 +781,12 @@ A keyboardist receives the 6-operator FM and virtual-analog engines by firmware 
 
 **FRs covered:** FR12, FR13, FR14, FR121
 
+### Epic 13: SFZ coverage for the reference corpus
+
+The reference corpus (Salamander, VSCO2, Sonatina, Karoryfer, a Pianobook selection) imports and passes the sfizz null test, by widening the SFZ opcode coverage of the importer and the sample engine in measured steps. Follows the Story 5.4 corpus findings: only VSCO 2 imports today, and the Pianobook, Salamander, Sonatina and Karoryfer libraries are rejected on specific opcodes. Starts with an explicit scope decision so the v1 subset (FR18) and the corpus requirement (FR20) agree.
+
+**FRs covered:** FR18 (extension), FR20, FR22
+
 ## Epic 1: Deep library with stage latency
 
 A keyboardist plays, on the RK3588 dev board with a USB MIDI keyboard, a sample library far larger than RAM with 256 voices, ≤5 ms latency and zero dropouts over 24 h. The epic starts with the PREEMPT_RT latency, audio output, MIPI DSI and secure-boot spikes, and ends with the Milestone 1 investor demo (month 6). Development is Mac-first: stories tagged **Runs on: Mac** start on the developer's Apple-silicon Mac (same ARM64/NEON ISA) before the dev board arrives; latency and xrun budgets are only accepted on the dev board.
@@ -1128,7 +1134,7 @@ So that the demo plays real, deep sample libraries without waiting for the full 
 
 **Runs on:** Mac
 
-**Blocked by:** Story 11.12 (target month 5)
+**Blocked by:** Story 11.12 (target month 5; done). Full closure also depends on Epic 13 (SFZ coverage), the founder's three remaining Pianobook packs (>=5 total) and the licence confirmation of the Sonatina and Pianobook packs
 
 **Acceptance Criteria:**
 
@@ -5888,6 +5894,32 @@ So that I can use the app fully whatever my needs.
 **When** the audit ends
 **Then** each is fixed in this story or logged with its WCAG reference, and the checklist is committed as `desktop/ACCESSIBILITY.md` for re-use at each release
 
+### Story 9.23: Edit zone, keyboard and arpeggiator from Velora Studio
+
+As a keyboardist,
+I want to change a part's key zone, octave, transpose and arpeggiator from the Part Editor,
+So that the controls Story 9.9 shows read-only become editable and play on the unit immediately.
+
+**Covers:** FR97 (partial: Part Editor zone and arpeggiator), FR98 (partial: live edit), UX-DR41 (partial)
+
+**Runs on:** Mac (against host engine); dev board
+
+**Blocked by:** Story 9.9 (done) and Story 9.10
+
+**Acceptance Criteria:**
+
+**Given** the Part Editor's zone, keyboard and arpeggiator controls
+**When** the user edits them
+**Then** Studio sends additive ws.v1 commands `SetPartZone` and `SetPartArp`, carrying `base_revision` and judged like other edits (stale edits refused with `STALE_REVISION`), applied by the control thread through the same path the device UI uses
+
+**Given** the published state
+**When** an edit is accepted
+**Then** the `PartState` fields reflect it, ◆ and `UNSAVED: SCENE n` appear as in Story 9.10, and the Part Editor controls reflect the unit's value after a device-side change
+
+**Given** the controls
+**When** they are edited from the keyboard
+**Then** they are operable like the other Studio Knobs (arrows, Home/End, typed value, Esc) with a polite live region, and the 'read-only' hints of Story 9.9 are removed
+
 ## Epic 10: Settings, languages and themes
 
 A keyboardist sets the unit up for the room and the player: the Keyboard & Pedals rows (velocity curve, sustain and expression calibration, aftertouch) and MIDI & Clock rows, Stage (dark) or Studio (light) theme, screen and LED brightness with the EXIT + VALUE quick path, Large text and Reduced motion, and the UI language among English (default), PT-BR and ES, all in one coherent Settings surface. The epic consolidates Settings rows that earlier epics added (Knobs · Global Assign, Footswitch and the stage guards from Epic 4, Storage & Library from Epic 5, Clock source from Epic 7, System & Update and Boot into from Epic 8, Computer from Epic 9) into the canonical seven-section structure. Development is Mac-first: every device surface here runs in the LVGL SDL simulator on the Mac and Velora Studio runs natively; screen backlight and panel LED brightness are accepted on the prototype.
@@ -6999,3 +7031,300 @@ So that my instrument gains two engines for free without losing a single Live Se
 **When** 100 random power cuts are made during installation
 **Then** the unit boots every time on the previous or the new firmware (NFR12), and after a rollback a Live Set saved with FM/VA parts opens with those parts in the not-available state and its data preserved
 **And** the release notes in EN, PT-BR and ES describe the engines with generic names only ("6-operator FM", "virtual analog")
+
+## Epic 13: SFZ coverage for the reference corpus
+
+The reference corpus imports and passes the sfizz null test by widening the SFZ opcode coverage in measured steps, after an explicit scope decision. Findings and the opcode inventory: Story 5.4 spec and its gap analysis. Corpus vocabulary: `tools/corpus/README.md`.
+
+### Story 13.1: Decision: SFZ scope for the reference corpus
+
+As the founder,
+I want a written decision on which SFZ opcodes beyond the v1 subset the product supports,
+So that FR18 (a deliberate subset) and FR20 (every corpus library imports) stop contradicting each other.
+
+**Covers:** FR18, FR20, FR22
+
+**Runs on:** Mac (documentation and decision)
+
+**Acceptance Criteria:**
+
+**Given** the Story 5.4 gap analysis (every rejected opcode per library with region counts, what the sample engine can express, effort and risk)
+**When** the founder reviews it
+**Then** each opcode tier (importer rules, note-on scalars, trigger and release modes, CC at voice start, choke groups, pitch bend, per-voice filter, region EQ, LFO/EG modulation) is marked in scope, deferred or out of scope with a reason
+**And** FR18 and the epic list are amended to name the final subset, and the stories below are re-ordered or cancelled accordingly
+
+**Given** an out-of-scope tier
+**When** a library needs it
+**Then** the import report skips that file with `unsupported_features` and the offending opcodes (FR22), and Story 5.4's manifest lists the file with the same reason
+**And** the manifest lists only files skipped for tiers marked out of scope, and the Epic 5 corpus requirement is restated as 'imports and plays with mapping intact for every file in a supported tier'
+
+### Story 13.2: Importer value rules and inert opcodes
+
+As a keyboardist,
+I want libraries whose SFZ uses out-of-range note values, `<curve>` headers or non-sounding opcodes to import like they do in sfizz,
+So that a harmless value does not reject a whole library.
+
+**Covers:** FR18, FR22
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.1
+
+**Acceptance Criteria:**
+
+**Given** an SFZ with `lokey=-1` or `lokey=c-2`
+**When** it is imported
+**Then** the value follows sfizz: an unparseable or out-of-range note falls back to the opcode default, and `hikey=-1` marks a region that never triggers from a note
+**And** a unit test per case compares the region table with sfizz's behaviour, and the report logs the ignored value
+
+**Given** a `<curve>` header
+**When** it is parsed
+**Then** the curve is stored and stays inert until an opcode that uses it is supported
+**And** a file using a curve through an unsupported opcode is still skipped with that opcode named
+
+**Given** the allow-list of inert opcodes
+**When** `ampeg_dynamic` is listed
+**Then** it is inert only while no `ampeg_*_oncc` or `ampeg_vel2*` is supported
+**And** Story 13.5 revisits it when `*_oncc` lands
+
+### Story 13.3: Sample end, first/legato triggers and release_key
+
+As a keyboardist,
+I want samples with an `end` point and `trigger=first`, `legato` and `release_key` regions to play like sfizz,
+So that a library such as Manthey Klaviano imports and plays with its mapping intact.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.1
+
+**Acceptance Criteria:**
+
+**Given** a region with `end`
+**When** it plays
+**Then** the last played frame is `min(end, sample length) - 1` (exclusive end), `end=0` disables the region, and the importer and bundle store the field
+**And** a test covers a truncated sample (end beyond the file), end equal to the length and end=0
+
+**Given** a region with `trigger=release_key`
+**When** the key is released while the sustain pedal is down
+**Then** it fires at the physical key-up, while `trigger=release` keeps waiting for the pedal
+**And** the engine tells the two apart in its release path and a render test with the pedal covers both
+
+**Given** `trigger=first` and `trigger=legato`
+**When** notes overlap
+**Then** first fires only for the first note of a phrase and legato only for overlapping notes, using held-key state on the control path with no allocation in the render thread
+**And** the bundle `format_version` minor is bumped, the reader accepts N and N-1, and existing demo bundles still render bit-identically
+
+**Given** Manthey Klaviano from the corpus
+**When** the corpus job runs
+**Then** it imports, its MIDI suite renders and the sfizz null test passes within its recorded tolerance
+**And** the manifest keeps no exclusion for it
+
+### Story 13.4: Velocity and amplitude model
+
+As a keyboardist,
+I want `amp_veltrack`, `amp_velcurve_N`, `amplitude`, `group_volume`, `master_volume` and the velocity-dependent envelope opcodes to shape the sound as in the library,
+So that touch response matches what the sample author built.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.1
+
+**Acceptance Criteria:**
+
+**Given** regions using these opcodes
+**When** they are imported
+**Then** each region carries a velocity-to-gain mapping evaluated at note-on, replacing the fixed velocity-squared gain only where the opcodes ask for it
+**And** a region without the opcodes renders bit-identically to before
+
+**Given** `ampeg_vel2attack`, `vel2decay`, `vel2sustain`, `vel2release` and `amp_keytrack`/`keycenter`
+**When** a note starts
+**Then** the scalar is applied at note-on, deterministically and without allocation or locks in the render thread
+**And** a null test against sfizz passes for a fixture using each opcode
+
+**Given** the bundle format
+**When** the fields are added
+**Then** `format_version` minor is bumped, N and N-1 are readable and every existing demo bundle opens and renders bit-identically
+
+### Story 13.5: CC at voice start and sfizz pseudo-CCs
+
+As a keyboardist,
+I want `locc`/`hicc` gates, `*_oncc` modulation and `set_ccN` defaults to follow the controller value when a note starts,
+So that libraries that react to pedals, wheels and velocity-as-CC play as designed.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Stories 13.2 and 13.4
+
+**Acceptance Criteria:**
+
+**Given** regions with `locc`/`hicc` gates
+**When** a note starts
+**Then** the region plays only when the per-part CC value is inside the range, and `set_ccN`/`set_hdccN` seed the initial values
+**And** a test covers boundaries and a CC change between notes
+
+**Given** `*_oncc` and `*_curvecc` on envelope, offset, amplitude, pan and tune
+**When** a note starts
+**Then** the CC value is sampled at voice start through the stored `<curve>`, and sfizz's pseudo-CCs (131 velocity, 135/136 random, 137 alternate, 140/141 key delta) are resolved from the note, never from a real controller
+**And** `ampeg_dynamic` is no longer inert and the importer rejects `ampeg_*_oncc` with `ampeg_dynamic` unless the continuous form is implemented
+
+**Given** a CC that moves during a held note
+**When** the null test runs
+**Then** the divergence from sfizz's continuous per-block modulation is documented as a known limit and the corpus keeps such probes out of the null picks with a manifest reason
+**And** kamoepiano301, Scarypiano, Osiris and Steel Drum import
+
+### Story 13.6: Choke groups and polyphony limits
+
+As a keyboardist,
+I want `group`, `off_by`, `off_mode`, `off_time`, `polyphony` and `note_polyphony` to cut notes as the library intends,
+So that hi-hats, noise releases and mono instruments behave correctly.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.1
+
+**Acceptance Criteria:**
+
+**Given** a region with `off_by` matching another region's `group`
+**When** the second region starts
+**Then** the first group's voices are released with the fast or normal release named by `off_mode` and `off_time`, in the shared voice pool and under the existing voice-stealing rules
+**And** a test covers the cut, the fast release time and the interaction with the sustain pedal
+
+**Given** `polyphony` and `note_polyphony`
+**When** the limit is reached
+**Then** the oldest voice of that group or note is released, deterministically, with no allocation in the render thread
+**And** parallel voice render (3 partitions) stays bit-identical to the serial result
+
+**Given** the null test against sfizz
+**When** a fixture uses groups
+**Then** it passes, or the divergence of sfizz's stealing and `off_mode` timing is documented with evidence
+
+### Story 13.7: Pitch bend and CC-triggered voices
+
+As a keyboardist,
+I want `bend_up`/`bend_down`, `bend_step` and regions triggered by a controller (`on_locc`/`on_hicc`, `hikey=-1`) to work,
+So that the pedal-action noises of Salamander and the pitch-bend range of other libraries play as designed.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Stories 13.2 and 13.5
+
+**Acceptance Criteria:**
+
+**Given** a pitch-bend message
+**When** a note sounds
+**Then** its pitch follows `bend_up`/`bend_down` in cents with smoothing and no allocation in the render thread, and a part without the opcodes keeps its current bend behaviour
+**And** a test covers both extremes and a bend during release
+
+**Given** a region with `on_locc`/`on_hicc` and `hikey=-1`
+**When** the CC crosses into its range
+**Then** the region starts as a voice from the controller and never from a note, and Salamander's pedal-action region imports
+**And** Salamander from the corpus imports and passes the null test within its recorded tolerance
+
+### Story 13.8: Per-voice filter
+
+As a keyboardist,
+I want `cutoff_oncc`/`cutoff_cc`, `fil_keytrack`, `fil_keycenter`, `fil_veltrack`, `resonance_cc` and a second filter to shape the tone per note,
+So that libraries that open the filter with touch (kamoepiano301, Headroom Piano) sound as designed.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.5
+
+**Acceptance Criteria:**
+
+**Given** a region with these opcodes
+**When** a note starts
+**Then** the filter coefficients are computed per voice, in the render thread without allocation or locks, within the existing per-voice CPU budget
+**And** the NFR8 voice floors still hold in the rt-traffic and parallel-render tests
+
+**Given** the null test against sfizz
+**When** a fixture uses each opcode
+**Then** it passes within a recorded tolerance, and the filter's stability at extreme cutoff and resonance is tested including NaN and subnormal inputs
+
+**Given** kamoepiano301 and Headroom Piano
+**When** the corpus job runs
+**Then** they import and pass, or the manifest records the exact remaining opcode and reason
+
+### Story 13.9: Region EQ and LFO/EG modulation (conditional)
+
+As a keyboardist,
+I want region EQ bands, LFOs and envelope generators (`eqN_*`, `lfoNN_*`, `egNN_*`, `pitcheg`, `fileg`, `amplfo_*`) if the scope decision includes them,
+So that Karoryfer and Sonatina libraries import with their character intact.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.1 (scope) and Stories 13.5 and 13.8
+
+**Acceptance Criteria:**
+
+**Given** Story 13.1 marks the tier in scope
+**When** the story starts
+**Then** a design note fixes the modulation matrix, LFO phase, smoothing and sum rules against sfizz before any code, and states the CPU cost per voice on the target
+**And** if the tier is out of scope this story is cancelled and the affected files stay in the manifest with that reason
+
+**Given** regions with these opcodes
+**When** they play
+**Then** modulation runs on the render thread with no allocation or locks, deterministically, and 1 versus 3 worker partitions stay bit-identical
+
+**Given** the corpus job
+**When** Sonatina and the Karoryfer libraries run
+**Then** they import and pass the null test within recorded tolerances, or the remaining differences are documented per opcode
+
+### Story 13.10: Random-layer parity with the null oracle
+
+As the founder,
+I want `lorand`/`hirand` instruments to be null-testable,
+So that the corpus proves the random-layer libraries too, not only the deterministic ones.
+
+**Covers:** FR20, AR2 (partial: null tests)
+
+**Runs on:** Mac
+
+**Blocked by:** Story 5.4 (findings)
+
+**Acceptance Criteria:**
+
+**Given** the sfizz oracle's fixed-seed random draw (per note-on, note-off and CC)
+**When** the options are assessed
+**Then** a decision records one of: a test-only mode that aligns the engine's draw order with the oracle, a seeded comparison with the oracle's draw sequence replayed, or a statistical check of layer distribution, with the reason
+**And** the production random generator is not changed for a test
+
+**Given** the chosen method
+**When** FluteStac and TrumpetStac from VSCO run
+**Then** they are null-tested or checked, and are removed from the 'left out of null picks' list in the corpus report
+
+### Story 13.11: SF2 libraries in the reference corpus
+
+As the founder,
+I want SF2 packs to run through the corpus with a FluidSynth oracle,
+So that a Pianobook or other pack delivered as SoundFont can count toward the corpus.
+
+**Covers:** FR19, FR20, AR2 (partial: null tests)
+
+**Runs on:** Mac
+
+**Blocked by:** Story 5.3 and Story 5.4
+
+**Acceptance Criteria:**
+
+**Given** a corpus entry of kind SF2
+**When** the corpus job runs
+**Then** it imports with the SF2 reader (Story 5.3), renders the per-library MIDI suite and is null-tested against the existing FluidSynth oracle within a recorded tolerance, with the same hash pinning and hardening as SFZ entries
+
+**Given** the report
+**When** it is written
+**Then** it lists SF2 and SFZ entries together and fails the job on any import or null-test failure
