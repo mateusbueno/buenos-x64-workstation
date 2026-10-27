@@ -1614,34 +1614,77 @@ static void test_slow_subscriber_is_dropped() {
   CHECK(eof);
 }
 
-// Story 9.9: ClientMessage.base_revision is accepted on edit commands, recorded and IGNORED (no stale-revision rejection before Story 9.10); 0 = not provided.
-static void test_base_revision_is_recorded_and_ignored() {
+// Story 9.9 / 9.10: ClientMessage.base_revision. 0 = not provided (accepted, counts as a change from elsewhere); a value other than the Live Set's current revision is refused with
+// STALE_REVISION on every edit command and changes nothing; Studio edits (with base_revision) keep the revision and light STUDIO for 3 s.
+static void test_base_revision_and_stale_edits() {
   Rig rig;
   CHECK(rig.load("{}"));
   bool changed = false;
   CHECK(rig.plane.last_base_revision() == 0 && rig.plane.base_revision_edits() == 0);
+  const std::uint64_t r0 = rig.plane.live_set_revision();
+  CHECK(r0 == 1);
+  auto state = [&] {
+    ws::v1::ClientMessage g;
+    g.set_request_id(++g_rid);
+    g.mutable_get_state();
+    return rig.plane.handle(g, changed);
+  };
+  CHECK(state().state().edits().live_set_revision() == r0 && !state().state().edits().available());  // present even without an edit session
   ws::v1::ClientMessage m;
   m.set_request_id(++g_rid);
   m.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_SEND_REVERB_MASTER);
   m.mutable_set_performance_param()->set_value(0.25f);
   CHECK(rig.plane.handle(m, changed).has_ack());  // not provided: accepted as before
-  CHECK(rig.plane.base_revision_edits() == 0);
+  CHECK(rig.plane.base_revision_edits() == 0 && !rig.plane.studio_edit_active());
+  const std::uint64_t r1 = rig.plane.live_set_revision();
+  CHECK(r1 == r0 + 1);  // ... and it is a change from elsewhere
+  // Studio edit with the current revision: accepted, STUDIO on, revision unchanged.
   m.set_request_id(++g_rid);
-  m.set_base_revision(7);  // far below the plane's current revision: still accepted (ignored until 9.10)
-  const ws::v1::ServerMessage r = rig.plane.handle(m, changed);
-  CHECK(r.has_ack() && r.request_id() == m.request_id());
-  CHECK(rig.plane.last_base_revision() == 7 && rig.plane.base_revision_edits() == 1);
-  m.set_base_revision(1ull << 40);  // a revision from the future: accepted too
-  CHECK(rig.plane.handle(m, changed).has_ack() && rig.plane.base_revision_edits() == 2);
+  m.set_base_revision(r1);
+  ws::v1::ServerMessage r = rig.plane.handle(m, changed);
+  CHECK(r.has_ack() && r.request_id() == m.request_id() && changed);
+  CHECK(rig.plane.last_base_revision() == r1 && rig.plane.base_revision_edits() == 1 && rig.plane.live_set_revision() == r1);
+  CHECK(rig.plane.studio_edit_active() && state().state().edits().studio_edit_active());
+  // Stale: below, and from the future.
+  for (const std::uint64_t base : {std::uint64_t{7}, r0, r1 + 1, std::uint64_t{1} << 40}) {
+    m.set_request_id(++g_rid);
+    m.set_base_revision(base);
+    const std::uint64_t rejected = rig.plane.commands_rejected();
+    r = rig.plane.handle(m, changed);
+    CHECK(r.has_error() && r.error().code() == ws::v1::ERROR_CODE_STALE_REVISION && !changed);
+    CHECK(r.error().details().at("base_revision") == std::to_string(base) && r.error().details().at("current_revision") == std::to_string(r1));
+    CHECK(rig.plane.commands_rejected() == rejected + 1 && rig.plane.live_set_revision() == r1);
+  }
+  CHECK(rig.plane.stale_rejections() == 4 && rig.plane.base_revision_edits() == 5);
+  // Structural command: judged too, and nothing is published when stale.
+  ws::v1::ClientMessage v;
+  v.set_request_id(++g_rid);
+  v.set_base_revision(r0);
+  v.mutable_set_part_volume()->set_part(0);
+  v.mutable_set_part_volume()->set_volume(0.5f);
+  const std::uint64_t gen = rig.plane.revision();
+  CHECK(rig.plane.handle(v, changed).error().code() == ws::v1::ERROR_CODE_STALE_REVISION && rig.plane.revision() == gen && !changed);
+  v.set_base_revision(r1);
+  CHECK(rig.plane.handle(v, changed).has_ack() && changed && rig.plane.live_set_revision() == r1);
+  // A read is never judged.
   ws::v1::ClientMessage g;
   g.set_request_id(++g_rid);
-  g.set_base_revision(9);  // a read does not count as an edit
+  g.set_base_revision(9);
   g.mutable_get_state();
-  CHECK(rig.plane.handle(g, changed).has_state() && rig.plane.base_revision_edits() == 2);
+  CHECK(rig.plane.handle(g, changed).has_state() && rig.plane.base_revision_edits() == 7);
+  // STUDIO expires 3 s after the last accepted Studio edit; the control tick learns of both flips once.
+  CHECK(rig.plane.take_studio_activity_changed() && !rig.plane.take_studio_activity_changed());
+  rig.clock_ns += 2'999'000'000ull;
+  CHECK(rig.plane.studio_edit_active() && !rig.plane.take_studio_activity_changed());
+  rig.clock_ns += 2'000'000ull;
+  CHECK(!rig.plane.studio_edit_active() && rig.plane.take_studio_activity_changed() && !state().state().edits().studio_edit_active());
+  // The echo bookkeeping: a value a Studio edit sent is consumed once (and older ones of the slot with it); unrelated values and slots are not.
+  rig.step(4);
+  CHECK(rig.plane.consume_studio_echo(0, 99.0f) == false);
 }
 
 int main() {
-  test_base_revision_is_recorded_and_ignored();
+  test_base_revision_and_stale_edits();
   test_dev_config();
   test_handshake();
   test_structural_commands();

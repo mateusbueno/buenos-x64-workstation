@@ -987,6 +987,10 @@ nav.jump a:hover {
   color: var(--ok);
 }
 
+.foot-warn {
+  color: var(--warn);
+}
+
 
 
 /* Placeholder pairing dialog (Story 9.6 replaces it). */
@@ -1528,6 +1532,26 @@ nav.jump a:hover {
   font-size: var(--font-desktop-section-label);
   font-weight: 600;
   letter-spacing: 0.08em;
+}
+
+.pe-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-desktop-sm);
+  font-size: var(--font-desktop-body);
+  color: var(--text);
+}
+
+.pe-stale[hidden] {
+  display: none;
+}
+
+.pe-stale-reload {
+  margin-inline-start: var(--spacing-2);
 }
 
 .pe-banner {

@@ -2,10 +2,12 @@
 // `window.veloraDevice.request` is in the page). It keeps one sounding Live Set of 8 parts with the semantics of engine/host/src/control_plane.cpp: a performance edit is
 // ACKED when queued and changes the live value (read by GetPerformanceValues) but never the State revision; a structural edit (chain, sends, output, volume, ASSIGN slot)
 // publishes a new State (revision + 1, pushed to subscribers); typed errors for an unknown / out-of-range / wrong-class parameter, a bad part or slot; base_revision is
-// recorded and ignored. Not a copy of the engine: the C++ tests are the authority; this is what lets the page and the model run without one.
+// judged like engine/host/src/control_plane.cpp (Story 9.10): an edit command whose base_revision differs from State.edits.live_set_revision is STALE_REVISION (47), one without
+// base_revision (and `deviceChange()`, the unit's own controls) moves that revision, Studio's own edits do not; accepted edits mark the Live Set dirty and light studio_edit_active
+// until `expireStudio()`. Not a copy of the engine: the C++ tests are the authority; this is what lets the page and the model run without one.
 import { REGISTRY } from "../../src/params_registry.js";
 
-export const CODE = { INVALID_COMMAND: 5, UNKNOWN_PARAM: 6, OUT_OF_RANGE: 7, INVALID_PART: 8, WRONG_CLASS: 9, WRONG_SCOPE: 10, INVALID_SLOT: 11, BUSY: 13, FX_BUDGET: 15, NOT_ASSIGNABLE: 37 };
+export const CODE = { INVALID_COMMAND: 5, UNKNOWN_PARAM: 6, OUT_OF_RANGE: 7, INVALID_PART: 8, WRONG_CLASS: 9, WRONG_SCOPE: 10, INVALID_SLOT: 11, BUSY: 13, FX_BUDGET: 15, NOT_ASSIGNABLE: 37, STALE_REVISION: 47 };
 
 const BY_ID = new Map(REGISTRY.params.map((d) => [d.id, d]));
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -18,6 +20,11 @@ export class FakeUnit {
     this.liveSetId = liveSetId;
     this.fxMax = fxMax;
     this.revision = 10;
+    this.liveRevision = 5; // State.edits.live_set_revision (Story 9.10)
+    this.dirty = false;
+    this.studioActive = false;
+    this.hasTimbreEdit = false;
+    this.staleRejected = 0;
     this.log = []; // [name, body, base_revision] of every request
     this.fail = null; // (name, body) => error code | null
     this.delay = 0; // macrotask turns before an answer
@@ -49,7 +56,11 @@ export class FakeUnit {
         return { param_id: id, part, value };
       }),
       encoders: { mode: 3, selected_part: 0, assign: this.assignMap },
-      edits: { available: true, dirty_live_set_ids: [], current_dirty: false, change_summary: [], change_count: 0, writes_done: 0 },
+      edits: {
+        available: true, dirty_live_set_ids: this.dirty ? [this.liveSetId] : [], current_dirty: this.dirty, change_summary: [], change_count: this.dirty ? 1 : 0, writes_done: 0,
+        has_timbre_edit: this.hasTimbreEdit, scene_write_available: !this.hasTimbreEdit, scene_write_blocked_reason: this.hasTimbreEdit ? "timbre_change" : "",
+        live_set_revision: this.liveRevision, studio_edit_active: this.studioActive,
+      },
       setlists: { library_revision: 1 },
     });
   }
@@ -66,6 +77,19 @@ export class FakeUnit {
 
   bump() {
     this.revision++;
+    this.push();
+  }
+
+  /** A change from the unit's own controls (panel, encoder, fader, scene recall, device UI): moves the Live Set revision, marks it dirty, pushes the State. */
+  deviceChange({ dirty = true } = {}) {
+    this.liveRevision++;
+    if (dirty) this.dirty = true;
+    this.push();
+  }
+
+  /** The 3 s idle window passed: STUDIO goes out and the State is pushed. */
+  expireStudio() {
+    this.studioActive = false;
     this.push();
   }
 
@@ -86,7 +110,22 @@ export class FakeUnit {
       const c = this.fail(name, b);
       if (c) return this.err(c, "injected");
     }
-    return this.handle(name, b);
+    const edit = ["SetInsertChain", "SetSendLevels", "SetPartOutput", "SetMasterParams", "SetPerformanceParam", "SetPartTimbre", "SetPartVolume", "SetAssignSlot", "ClearAssignSlot"].includes(name);
+    const base = msg.base_revision || 0;
+    if (edit && base !== 0 && base !== this.liveRevision) {
+      this.staleRejected++;
+      return { request_id: 0, revision: this.revision, body: { Error: { code: CODE.STALE_REVISION, message: "stale", details: { base_revision: String(base), current_revision: String(this.liveRevision) } } } };
+    }
+    const reply = await this.handle(name, b);
+    if (edit && reply.body && !reply.body.Error) {
+      const wasActive = this.studioActive;
+      if (base === 0) this.liveRevision++; // an edit that does not speak for a Studio view changed the Live Set under every view
+      else this.studioActive = true;
+      const was = this.dirty;
+      this.dirty = true;
+      if (!was || (base !== 0 && !wasActive) || base === 0) this.push(); // like the engine: a State push when something visible flipped
+    }
+    return reply;
   }
 
   /** What the engines consume of the registry's part parameters (engine/core: only OrganEngine overrides set_part_param; the sends belong to the mixer). */

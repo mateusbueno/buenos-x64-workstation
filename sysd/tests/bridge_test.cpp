@@ -290,7 +290,13 @@ void engine_handler(const std::string& payload, std::vector<std::string>& replie
   ws::v1::ServerMessage r;
   r.set_request_id(m.request_id());
   r.set_revision(7);
-  if (m.has_get_state()) {
+  if (m.base_revision() == 0xDEAD) {  // Story 9.10: the engine's typed refusal of an edit built on an older Live Set revision
+    auto* e = r.mutable_error();
+    e->set_code(ws::v1::ERROR_CODE_STALE_REVISION);
+    e->set_message("stale");
+    (*e->mutable_details())["base_revision"] = "57005";
+    (*e->mutable_details())["current_revision"] = "9";
+  } else if (m.has_get_state()) {
     r.mutable_state()->set_revision(7);
     r.mutable_state()->set_current_scene(3);
   } else if (m.has_get_live_set_view()) {  // Story 9.8: the engine's read-only view
@@ -1225,8 +1231,7 @@ void test_live_set_view_is_a_paired_read() {
   CHECK(eng.received.load() == 1);  // nothing more reached the engine
 }
 
-// Story 9.9: every edit command the Part Editor sends passes the bridge for a paired client with ClientMessage.base_revision intact (the envelope field the engine records
-// and ignores until Story 9.10), and a message without it reaches the engine with 0 as before.
+// Story 9.9: every edit command the Part Editor sends passes the bridge for a paired client with ClientMessage.base_revision intact (the envelope field the engine judges since Story 9.10), and a message without it reaches the engine with 0 as before.
 void test_part_editor_edits_carry_base_revision() {
   Rig r;
   FakeUds eng;
@@ -1278,6 +1283,18 @@ void test_part_editor_edits_carry_base_revision() {
   ws::v1::ServerMessage rep;
   CHECK(c.recv(rep) == 1 && rep.has_state());
   CHECK(g_seen_base_count.load() == 8);
+  // Story 9.10: the engine's STALE_REVISION (code 47, with both revisions in the details) reaches the paired client unchanged, the connection stays up and the next edit works.
+  m.Clear();
+  m.mutable_set_performance_param()->set_param_id(ws::v1::PARAM_DRAWBAR_8);
+  m.set_request_id(990);
+  m.set_base_revision(0xDEAD);
+  c.send(m);
+  CHECK(c.recv(rep) == 1 && rep.request_id() == 990 && rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_STALE_REVISION && rep.error().code() == 47);
+  CHECK(rep.error().details().at("base_revision") == "57005" && rep.error().details().at("current_revision") == "9");
+  m.set_request_id(991);
+  m.set_base_revision(9);
+  c.send(m);
+  CHECK(c.recv(rep) == 1 && rep.request_id() == 991 && rep.has_ack());
 }
 
 int main() {

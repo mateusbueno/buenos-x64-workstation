@@ -482,6 +482,34 @@ void ControlPlane::fill_tier(ws::v1::State* out) const {
   ts->set_sequencer_enabled(t.sequencer_enabled);
 }
 
+bool ControlPlane::studio_edit_active() const noexcept {
+  const std::uint64_t until = studio_active_until_ns_.load(std::memory_order_relaxed);
+  return until != 0 && clock_ && clock_() < until;
+}
+
+bool ControlPlane::take_studio_activity_changed() noexcept {
+  const bool now = studio_edit_active();
+  if (now == studio_reported_) return false;
+  studio_reported_ = now;
+  return true;
+}
+
+bool ControlPlane::consume_studio_echo(std::size_t slot, float live) noexcept {
+  const std::uint64_t now = clock_ ? clock_() : 0;
+  for (std::size_t i = 0; i < studio_echoes_.size();) {
+    if (studio_echoes_[i].expires_ns <= now) studio_echoes_.erase(studio_echoes_.begin() + static_cast<std::ptrdiff_t>(i));
+    else ++i;
+  }
+  for (std::size_t i = 0; i < studio_echoes_.size(); ++i) {
+    if (studio_echoes_[i].slot != slot || std::fabs(studio_echoes_[i].value - live) > 1e-4f * std::max(1.0f, std::fabs(live))) continue;
+    // this value and every older one for the slot are accounted for (RT applies in order)
+    for (std::size_t j = i + 1; j-- > 0;)
+      if (studio_echoes_[j].slot == slot) studio_echoes_.erase(studio_echoes_.begin() + static_cast<std::ptrdiff_t>(j));
+    return true;
+  }
+  return false;
+}
+
 void ControlPlane::fill_state(ws::v1::State* out) const {
   if (current_) fill_from(*current_, out, part_cap());
   fill_tier(out);
@@ -490,6 +518,8 @@ void ControlPlane::fill_state(ws::v1::State* out) const {
   if (switch_handler_) switch_handler_->fill_status(out);
   if (setlist_handler_) setlist_handler_->fill_status(out);
   if (edit_handler_) edit_handler_->fill_status(out);
+  out->mutable_edits()->set_live_set_revision(live_set_revision());  // Story 9.10: always present (available = false without an edit session)
+  out->mutable_edits()->set_studio_edit_active(studio_edit_active());
   if (fader_handler_) fader_handler_->fill_status(out);
 }
 
@@ -554,15 +584,16 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   f.part_cap = part_cap();
   bool ok = false;
   using B = ws::v1::ClientMessage;
-  {
-    // Story 9.9: an edit carries the revision the client's view was built on. Recorded for diagnostics and for Story 9.10, IGNORED here (no stale-revision rejection yet).
-    const auto bc = msg.body_case();
-    const bool is_edit = (bc >= B::kSetInsertChain && bc <= B::kSetPerformanceParam) || bc == B::kSetPartTimbre || bc == B::kSetPartVolume ||
-                         bc == B::kSetAssignSlot || bc == B::kClearAssignSlot;
-    if (is_edit && msg.base_revision() != 0) {
-      last_base_revision_.store(msg.base_revision(), std::memory_order_relaxed);
-      base_revision_edits_.fetch_add(1, std::memory_order_relaxed);
-    }
+  // Story 9.9 / 9.10: an edit command carries the Live Set revision the client's view was built on (0 = not provided). A different value is STALE_REVISION (refused below, nothing
+  // changes). An accepted edit with base_revision is a Velora Studio edit (it keeps the revision, lights STUDIO); one without it is a change from elsewhere (it moves the revision).
+  const auto bc = msg.body_case();
+  const bool is_edit = (bc >= B::kSetInsertChain && bc <= B::kSetPerformanceParam) || bc == B::kSetPartTimbre || bc == B::kSetPartVolume || bc == B::kSetAssignSlot ||
+                       bc == B::kClearAssignSlot;
+  const bool studio_edit = is_edit && msg.base_revision() != 0;
+  const bool stale = studio_edit && msg.base_revision() != live_set_revision();
+  if (studio_edit) {
+    last_base_revision_.store(msg.base_revision(), std::memory_order_relaxed);
+    base_revision_edits_.fetch_add(1, std::memory_order_relaxed);
   }
   const bool scene_cmd = msg.body_case() == B::kRecallScene || msg.body_case() == B::kNextScene || msg.body_case() == B::kPreviousScene;
   const bool switch_cmd = msg.body_case() == B::kJumpToLiveSet || msg.body_case() == B::kCancelLoad;
@@ -572,7 +603,12 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   const bool fader_cmd = msg.body_case() == B::kSetFaderMode || msg.body_case() == B::kSelectOrganPart || msg.body_case() == B::kMoveFader;
   const bool pedal_cmd = msg.body_case() == B::kStartPedalCalibration || msg.body_case() == B::kFinishPedalCalibration || msg.body_case() == B::kCancelPedalCalibration;
   const bool view_cmd = msg.body_case() == B::kGetLiveSetView;
-  if (view_cmd) {
+  if (stale) {
+    f.details["base_revision"] = std::to_string(msg.base_revision());
+    f.details["current_revision"] = std::to_string(live_set_revision());
+    stale_rejected_.fetch_add(1, std::memory_order_relaxed);
+    fail(f, ws::v1::ERROR_CODE_STALE_REVISION, "the Live Set changed on the unit after this view was built; reload it");
+  } else if (view_cmd) {
     // The read-only Live Set view (Story 9.8): never changes anything, so `changed` stays false and the revision does not move.
     if (!view_handler_) {
       fail(f, ws::v1::ERROR_CODE_INVALID_COMMAND, "the Live Set view is not available: the engine was started without a Live Set directory");
@@ -623,6 +659,8 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       HandlerFailure hf;
       bool bump = false, push = false;
       ok = setlist_handler_->run(msg, reply, hf, bump, push);
+      // Story 9.10: stepping to another Live Set (it starts a switch) leaves a Studio view of the current one stale at once, like JumpToLiveSet
+      if (ok && reply.has_step_reply() && reply.step_reply().jump_result() == ws::v1::JUMP_RESULT_ACCEPTED) note_device_change();
       if (!ok) {
         f.code = hf.code;
         f.message = hf.message;
@@ -654,6 +692,7 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
         jr->set_target_name(o.target_name);
         jr->set_superseded_previous(o.superseded_previous);
         ok = true;
+        if (o.result == SwitchOutcome::Result::kAccepted) note_device_change();  // Story 9.10: edits made on the view of the Live Set that is about to go are stale from now on
         changed = o.result == SwitchOutcome::Result::kAccepted || o.superseded_previous;  // a no-op pushes nothing
       }
     }
@@ -923,6 +962,27 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
       ok = commit(work, f);
       changed = ok;
       if (ok && edit_handler_ && structural_msg) edit_handler_->on_structural(msg);  // Story 4.9: record the edit against the Live Set
+    }
+  }
+  if (ok && is_edit) {
+    if (!studio_edit) {
+      note_device_change();  // an edit from a client that does not speak for a Studio view: the Live Set changed under any Studio view
+    } else {
+      const std::uint64_t now = clock_ ? clock_() : 0;
+      const std::uint64_t until = now + kStudioActiveNs;
+      studio_active_until_ns_.store(until, std::memory_order_relaxed);
+      if (bc == B::kSetPerformanceParam) {  // RT applies it later; the live-value capture must not take it for a device-side change
+        const auto& m = msg.set_performance_param();
+        const p::ParamDef* d = nullptr;
+        for (const p::ParamDef& x : p::kParams)
+          if (x.id == m.param_id()) d = &x;
+        if (d && d->cls == p::Class::kPerformance) {
+          const std::uint32_t part = d->scope == p::Scope::kPart ? m.part() : 0;
+          if (studio_echoes_.size() >= 64) studio_echoes_.erase(studio_echoes_.begin());
+          studio_echoes_.push_back(StudioEcho{p::perf_slot(*d, part), static_cast<float>(m.value()), now + 2'000'000'000ull});
+        }
+      }
+      if (studio_edit && !studio_reported_) changed = true;  // STUDIO lights: subscribers get a State push
     }
   }
   if (!ok) {

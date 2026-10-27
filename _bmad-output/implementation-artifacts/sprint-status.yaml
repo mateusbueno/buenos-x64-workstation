@@ -232,7 +232,7 @@ development_status:
   9-7-connection-states-version-mismatch-disconnect-and-reconnect: backlog
   9-8-live-set-view-scenes-and-part-strips: done
   9-9-part-editor-layout-with-studio-knobs: in-progress
-  9-10-live-edit-state-stale-edits-and-disconnect-mid-edit: backlog
+  9-10-live-edit-state-stale-edits-and-disconnect-mid-edit: in-progress
   9-11-add-a-timbre-to-an-empty-part-from-velora-studio: backlog
   9-12-write-to-velora-with-the-device-s-scopes: backlog
   9-13-setlists-view-in-velora-studio: done

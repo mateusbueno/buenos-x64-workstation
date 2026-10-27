@@ -38,6 +38,7 @@
 
 import { REGISTRY } from "./params_registry.js";
 import { createThrottledRunner, noteName } from "./live_set_view.js";
+import { liveRevision, isStale } from "./live_edit_state.js";
 
 export const SECTION_ORDER = Object.freeze(["sound", "amp_eq", "effects", "zone"]);
 // the section titles are the strings Story 12.13's editor already has
@@ -49,6 +50,7 @@ export const SEND_PARAMS = Object.freeze({ reverb: "send_reverb_level", delay: "
 export const REASON_NOT_PLAYING = "studio.part_editor.ro_not_playing";
 export const REASON_NO_COMMAND = "studio.part_editor.ro_no_command";
 export const REASON_UNAVAILABLE = "studio.part_editor.ro_engine_unavailable";
+export const REASON_STALE = "studio.part_editor.stale_banner"; // Story 9.10: the Live Set changed on the unit after this view was loaded; knobs are read-only until Reload
 
 /**
  * The columns the editor shows at a container width. style.css: `repeat(auto-fit, minmax(min(100%, 15.1rem), 1fr))` with a 1rem gap (grows with the TEXT size: rem), and one column
@@ -389,7 +391,7 @@ export function buildPartEditorModel(ctx) {
   const pending = ctx.pending || new Map();
   const perf = ctx.perf || new Map();
   const editable = !!ctx.editable;
-  const roReason = ctx.available === false ? REASON_UNAVAILABLE : REASON_NOT_PLAYING;
+  const roReason = ctx.stale ? REASON_STALE : ctx.available === false ? REASON_UNAVAILABLE : REASON_NOT_PLAYING;
   const known = !!state && !!ctx.live; // `live`: the shown Live Set is the one that sounds, so State / live values are about it
   const deferred = [];
 
@@ -534,6 +536,7 @@ export function buildPartEditorModel(ctx) {
     partIndex: part,
     engine: ctx.engine,
     editable,
+    stale: !!ctx.stale,
     known,
     reason: editable ? "" : roReason,
     sections,
@@ -574,6 +577,7 @@ export const requests = {
     ? { body: { SetAssignSlot: { target: ASSIGN_TARGET_CURRENT_LIVE_SET, slot, param_id: paramId } } }
     : { body: { ClearAssignSlot: { target: ASSIGN_TARGET_CURRENT_LIVE_SET, slot } } }),
   getPerformanceValues: () => ({ body: { GetPerformanceValues: {} } }),
+  getState: () => ({ body: { GetState: {} } }),
 };
 
 // ---- the coalescing sender ------------------------------------------------------------------------------------------------------------------------------------
@@ -683,7 +687,7 @@ function errorOf(reply, thrown) {
  * transport) puts the knob back to the confirmed value and calls `onError({ key, code, message, details })`.
  */
 export class PartEditorController {
-  constructor({ registry, request, clock, setTimer, clearTimer, throttleMs = 30, structuralThrottleMs = 140, settleMs = 800, perfRefreshMs = 80, rereadMs = [150, 500], onChange, onError } = {}) {
+  constructor({ registry, request, clock, setTimer, clearTimer, throttleMs = 30, structuralThrottleMs = 140, settleMs = 800, perfRefreshMs = 80, rereadMs = [150, 500], onChange, onError, onStale, onReloaded } = {}) {
     this.registry = registry || REGISTRY;
     this.request = request;
     this.clock = clock || (() => (typeof performance !== "undefined" ? performance.now() : Date.now()));
@@ -693,6 +697,8 @@ export class PartEditorController {
     this.perfRefreshMs = perfRefreshMs;
     this.rereadMs = rereadMs; // a read-back that differs from the acked value is read again after these delays before it is believed
     this.onChange = onChange || (() => {});
+    this.onStale = onStale || (() => {});
+    this.onReloaded = onReloaded || (() => {});
     this.onError = onError || (() => {});
     this.state = null;
     this.partIndex = -1;
@@ -700,6 +706,10 @@ export class PartEditorController {
     this.liveSetId = "";
     this.available = true;
     this.perf = new Map();
+    this.baseRev = 0; // the Live Set revision (State.edits.live_set_revision) the shown Live Set was loaded at; 0 = unknown / an older unit: no base_revision is sent
+    this.baseFor = ""; // the Live Set id baseRev belongs to
+    this.stale = null; // { current } after the unit refused an edit as STALE_REVISION: the knobs are read-only and the banner offers Reload
+    this._reloadToken = 0;
     this.pending = new Map(); // key -> { value, seq, acked, ackedAt, ackRev, kind }
     this.chain = null; // { slots, seq, acked, ackedAt, ackRev } the optimistic chain of the selected part
     this.assignPending = new Map(); // slot -> { value, seq, acked, ackRev }
@@ -713,8 +723,8 @@ export class PartEditorController {
       clearTimer: this.clearTimer,
       throttleMs,
       structuralThrottleMs,
-      baseRevision: () => num(this.state && this.state.revision, 0),
-      done: (key, reply, error, meta) => this._done(key, reply, error, meta),
+      baseRevision: () => this.baseRev, // Story 9.10: the Live Set revision this view was LOADED at (not the latest State: that would hide a change made on the unit)
+      done: (key, reply, error, meta, msg) => this._done(key, reply, error, meta, msg),
     });
     this._perfRunner = createThrottledRunner(() => this._refreshPerfTask(), { minMs: 60, clock: this.clock, setTimer: this.setTimer, clearTimer: this.clearTimer });
   }
@@ -731,12 +741,30 @@ export class PartEditorController {
       this.sender.cancelAll(); // requests still waiting for the previous part never go out (their builders also refuse: see _guard)
       this._dropPending();
     }
+    if (liveSetId !== this.baseFor) {
+      // another Live Set is opened: it is loaded afresh, so the revision of the State we hold (when it is about this Live Set) is its base
+      this.baseFor = "";
+      this.baseRev = 0;
+      this.stale = null;
+      this._adoptBase(this.state);
+    }
     if (!same) this.refreshPerf(); // the Live Set view calls this for every change of the part's strip: only a different part / engine reads the live values again
     this._notify();
   }
 
+  /** Takes the Live Set revision of `st` as the base of this view when `st` is about the shown, sounding Live Set and no base is held for it yet. */
+  _adoptBase(st) {
+    if (!st || !this.liveSetId || this.baseFor === this.liveSetId || !st.live_set_loaded || st.live_set_id !== this.liveSetId) return;
+    this.baseFor = this.liveSetId;
+    this.baseRev = liveRevision(st);
+  }
+
   reset() {
     this._token++;
+    this._reloadToken++;
+    this.baseRev = 0;
+    this.baseFor = "";
+    this.stale = null;
     this.state = null;
     this.partIndex = -1;
     this.liveSetId = "";
@@ -770,13 +798,14 @@ export class PartEditorController {
   }
 
   get editable() {
-    return this.live && this.available && this.partIndex >= 0 && this.partIndex < num(this.state.parts && this.state.parts.length, 0);
+    return !this.stale && this.live && this.available && this.partIndex >= 0 && this.partIndex < num(this.state.parts && this.state.parts.length, 0);
   }
 
   onState(st) {
     if (!st || typeof st !== "object") return;
     const prev = this.state;
     this.state = st;
+    this._adoptBase(st);
     const rev = num(st.revision, 0);
     // a structural edit the engine acked is confirmed once a State at or after its revision arrives
     for (const [k, p] of this.pending) if (p.kind === "struct" && p.acked && rev >= p.ackRev) this.pending.delete(k);
@@ -841,6 +870,7 @@ export class PartEditorController {
       chain: this.chain ? this.chain.slots : null,
       assign,
       editable: this.editable,
+      stale: !!this.stale,
       available: this.available,
       live: this.live,
     });
@@ -973,8 +1003,13 @@ export class PartEditorController {
   }
 
   // -- answers --
-  _done(sendKey, reply, thrown, meta) {
+  _done(sendKey, reply, thrown, meta, msg) {
     const err = errorOf(reply, thrown);
+    if (isStale(err)) {
+      // an answer to a request sent on a base the view has since left (Reload, another Live Set, a reconnect) says nothing about the view as it is now
+      if (!msg || num(msg.base_revision, 0) === this.baseRev) this._markStale(err);
+      return;
+    }
     const rev = num(reply && reply.revision, 0);
     const now = this.clock();
     let perfAcked = false;
@@ -1040,6 +1075,54 @@ export class PartEditorController {
     }
     if (perfAcked) this._scheduleRead();
     this._notify();
+  }
+
+  /**
+   * The unit refused an edit as STALE_REVISION: the Live Set was changed on the unit after this view was loaded. Everything optimistic is dropped (the knobs show what the unit
+   * holds), edits still waiting never go out, the knobs are read-only and the banner "Changed on the Velora since you opened it · Reload" is shown.
+   */
+  _markStale(err) {
+    const wasStale = !!this.stale;
+    const cur = Number(err.details && err.details.current_revision); // details are strings on the wire
+    this.stale = { current: Number.isFinite(cur) ? cur : 0 };
+    this.sender.cancelAll();
+    this._dropPending();
+    this.refreshPerf();
+    if (!wasStale) this.onStale();
+    this._notify();
+  }
+
+  /**
+   * Reload (the banner's button): applies the current snapshot: reads the State (the Live Set, its revision and parts) and the live values again, takes the revision it carries as the
+   * new base and makes the knobs editable again. `onReloaded` lets the page re-read the Live Set view too. Resolves true when the unit answered.
+   */
+  async reload() {
+    const token = ++this._reloadToken;
+    let reply;
+    try {
+      reply = await this.request(requests.getState());
+    } catch (e) {
+      this.onError({ key: "", code: 0, message: String(e && e.message ? e.message : e), details: {} });
+      return false;
+    }
+    if (token !== this._reloadToken) return false; // another reload, or the link went down meanwhile
+    const st = reply && reply.body && reply.body.State;
+    if (!st) {
+      const err = errorOf(reply, null);
+      this.onError({ key: "", code: err ? err.code : 0, message: err ? err.message : "", details: err ? err.details : {} });
+      return false;
+    }
+    this.sender.cancelAll();
+    this._dropPending();
+    this.state = st;
+    this.baseFor = "";
+    this.baseRev = 0;
+    this.stale = null;
+    this._adoptBase(st);
+    this.refreshPerf();
+    this.onReloaded(st);
+    this._notify();
+    return true;
   }
 
   _confirmed(rev) {

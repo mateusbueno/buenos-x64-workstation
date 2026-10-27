@@ -18,6 +18,7 @@ import {
   setlistsRequest,
 } from "./live_set_view.js";
 import { PartEditorController } from "./part_editor.js";
+import { liveEditFooter } from "./live_edit_state.js";
 import { PartEditorView } from "./part_editor_dom.js";
 import { SetlistsController } from "./setlists_view.js";
 import { SetlistsView } from "./setlists_dom.js";
@@ -282,6 +283,24 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Story 9.10: the Footer follows State.edits of the unit (live_edit_state.js): "● LIVE EDIT ON · CHANGES PLAY ON THE VELORA" while an edit is in the unit's memory or Studio edits
+  // arrived a moment ago, plus "UNSAVED: SCENE n" / "UNSAVED: LIVE SET" (the scope Write would offer). Only the Live Set that sounds has edits to report; another shown Live Set
+  // falls back to the diamond text.
+  function paintLiveEditFooter() {
+    const footerStatus = document.getElementById("footer-live-edit-status");
+    const unsaved = document.getElementById("footer-unsaved-scope");
+    if (!footerStatus) return;
+    const st = deviceStore.state;
+    const sounding = !!st && !!liveCtl.liveSetId && st.live_set_id === liveCtl.liveSetId;
+    const f = liveEditFooter(sounding ? st : null);
+    if (f.on) footerStatus.textContent = localeMgr.tr("studio.footer.live_edit_on");
+    else footerStatus.textContent = localeMgr.tr(liveCtl.model && liveCtl.model.dirty ? "studio.part_editor.live_edit_edited" : "studio.part_editor.live_edit_clean");
+    if (unsaved) {
+      unsaved.hidden = f.scope.kind === "none";
+      unsaved.textContent = f.scope.kind === "scene" ? tr("studio.footer.unsaved_scene", f.scope.scene) : f.scope.kind === "live_set" ? tr("studio.footer.unsaved_live_set") : "";
+    }
+  }
+
   // Mark live edit dirty
   function markLiveEdit(dirty = true) {
     isDirty = dirty;
@@ -290,6 +309,8 @@ window.addEventListener("DOMContentLoaded", () => {
     const footerStatus = document.getElementById("footer-live-edit-status");
 
     const real = pairedReal();
+    const unsavedEl = document.getElementById("footer-unsaved-scope");
+    if (unsavedEl && !real) unsavedEl.hidden = true;
     if (badge) badge.style.display = isDirty && !real ? "inline-block" : "none"; // paired: the real marker is the diamond after the Live Set name
     if (writeBtn && isConnected && deviceLinkActive) {
       writeBtn.disabled = true; // a real unit is connected but the editor still shows simulated Live Sets (until Stories 9.8 / 9.13): never write them
@@ -298,10 +319,13 @@ window.addEventListener("DOMContentLoaded", () => {
       writeBtn.disabled = !isDirty;
     }
     if (footerStatus) {
-      const shownDirty = real ? !!(liveCtl.model && liveCtl.model.dirty) : isDirty;
-      footerStatus.textContent = shownDirty
-        ? localeMgr.tr("studio.part_editor.live_edit_edited")
-        : localeMgr.tr("studio.part_editor.live_edit_clean");
+      if (real) {
+        paintLiveEditFooter();
+      } else {
+        footerStatus.textContent = isDirty
+          ? localeMgr.tr("studio.part_editor.live_edit_edited")
+          : localeMgr.tr("studio.part_editor.live_edit_clean");
+      }
     }
     if (real) return; // the real strips are drawn by the Live Set view (never edited from here)
 
@@ -903,7 +927,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // ---- Part Editor (Story 9.9) ---------------------------------------------------------------------------------------------------------------------
   // The selected real part is edited with Studio Knobs built from the generated registry (part_editor.js is the model and the controller, part_editor_dom.js the DOM). Each
-  // change is a ws.v1 edit with base_revision (the engine records it and ignores it until Story 9.10); the unit plays it at once and the knob shows what the unit confirms.
+  // change is a ws.v1 edit with base_revision (Story 9.10: the Live Set revision the view was loaded at; the unit refuses a stale one and the editor shows the Reload banner); the unit plays it at once and the knob shows what the unit confirms.
   const peEls = { host: document.getElementById("real-part-editor"), sim: document.getElementById("studio-part-editor") };
   const pe = { view: null, lang: "" };
 
@@ -930,6 +954,11 @@ window.addEventListener("DOMContentLoaded", () => {
     request: (r) => window.veloraDevice.request(r),
     onChange: renderPartEditor,
     onError: (e) => { if (!e.render && pe.view) pe.view.showError(e); },
+    // Story 9.10: Reload applied the current snapshot of the unit: the Live Set view is read again too (the ◆, scenes and strips), and the footer follows the State
+    onReloaded: (st) => {
+      if (liveCtl.liveSetId) liveCtl.select(liveCtl.liveSetId);
+      paintLiveEditFooter();
+    },
   });
 
   // The Part Editor for the real selection: the engine and the names are the real ones, the parameters come from the registry.
@@ -1216,6 +1245,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (!st || !pairedReal()) return;
     liveCtl.onState(st);
     partEditorCtl.onState(st);
+    paintLiveEditFooter();
     if (setlistsUi.open) setlistsCtl.onState(st);
     const setlists = st.setlists || {};
     const key = `${setlists.library_revision || 0}/${setlists.loaded_setlist_id || ""}`;

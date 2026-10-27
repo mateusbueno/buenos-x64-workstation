@@ -889,7 +889,8 @@ int main(int argc, char** argv) {
       const bool b = sc ? sc->tick() : false;
       const bool c = ed ? ed->tick() : false;
       const bool d = pl->take_content_changed();  // Story 6.5: an I/O edge thread reported a damaged block of a protected library: push State.content
-      return a || b || c || d;
+      const bool e = pl->take_studio_activity_changed();  // Story 9.10: STUDIO lights / goes out (idle expiry): push State.edits.studio_edit_active
+      return a || b || c || d || e;
     });
   } else if (panel_tick || sysd_client) {
     control.set_tick([pt = panel_tick, sy = sysd_client.get()]() mutable {

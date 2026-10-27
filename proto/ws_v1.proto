@@ -76,6 +76,10 @@ enum ErrorCode {
   ERROR_CODE_UPSTREAM_UNAVAILABLE = 44;  // the engine / librarian the command routes to is not reachable (details: upstream = engine | library, reason)
   ERROR_CODE_PAIRING_CODE_INVALID = 45;  // PairRequest with a wrong code (details: attempts_left)
   ERROR_CODE_PAIRING_CLOSED = 46;      // the pairing window is closed (details: reason = attempts | expired | not_open)
+  // Story 9.10: an edit command carried a base_revision that is not the Live Set's current revision (State.edits.live_set_revision): the Live Set was changed on the
+  // unit (panel, encoders, faders, MIDI, device UI, scene recall, Live Set switch) after the client's view was built. Nothing changed. details: base_revision,
+  // current_revision. The client shows "Changed on the Velora since you opened it" and offers Reload (a fresh GetState / GetLiveSetView).
+  ERROR_CODE_STALE_REVISION = 47;
 }
 
 message Error {
@@ -343,6 +347,13 @@ message EditStatus {
   string scene_write_blocked_reason = 10;  // "" | timbre_change | no_scene | no_scenes
   uint64 edit_seq = 11;                  // increases with every change of the edits (also changes that do not move the revision)
   uint32 writes_done = 12;               // Write commands that wrote a file since the engine started
+  // Story 9.10 (additive). `live_set_revision`: the Live Set's change revision, a monotonic counter (starts at 1, never 0; uint64 so it cannot wrap in practice) that moves with
+  // every change of the sounding Live Set that did NOT come from a Velora Studio edit (an edit command carrying base_revision): the panel / encoders / faders / MIDI controllers
+  // (detected when the live values are captured), the device UI and any client that sends an edit WITHOUT base_revision, a scene recall, the start of a Live Set switch
+  // and the publication of another Live Set. Studio's own edits do not move it, so a drag of several knobs never makes itself stale. An edit whose base_revision differs from it is
+  // refused with STALE_REVISION. `studio_edit_active`: an edit carrying base_revision was accepted within the last 3 s (the device Status Bar shows STUDIO).
+  uint64 live_set_revision = 13;
+  bool studio_edit_active = 14;
 }
 
 // Story 4.6: the setlist side of the State. `current_live_set_id` is the Live Set that sounds (as State.live_set_id). `last_setlist_position` is the index
@@ -840,8 +851,9 @@ message PedalCalibrationReply {
 
 message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
-  // Story 9.9 (additive): the State revision the client's view was built on when it made this edit (0 = not provided, accepted exactly as before). The engine
-  // records it for edit commands and IGNORES it: the STALE_REVISION rejection and the live-edit banner are Story 9.10.
+  // Story 9.9 (additive): the Live Set revision (State.edits.live_set_revision) the client's view was built on when it made this edit (0 = not provided: accepted exactly as
+  // before, and the edit counts as a device-side change). Story 9.10: on an edit command (SetInsertChain .. SetPerformanceParam, SetPartTimbre, SetPartVolume, SetAssignSlot,
+  // ClearAssignSlot) a value other than the current revision is refused with ERROR_CODE_STALE_REVISION, nothing changes.
   uint64 base_revision = 2;
   oneof body {
     Hello hello = 10;

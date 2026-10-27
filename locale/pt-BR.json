@@ -916,5 +916,12 @@
   "studio.group.va.osc2": "Oscilador 2",
   "studio.group.va.sub": "Suboscilador",
   "studio.group.va.noise": "Ruído",
-  "studio.group.fm.global": "Global"
+  "studio.group.fm.global": "Global",
+  "performance.status.studio": "STUDIO",
+  "studio.footer.live_edit_on": "● EDIÇÃO AO VIVO · AS MUDANÇAS SOAM NO VELORA",
+  "studio.footer.unsaved_scene": "NÃO SALVO: CENA %d",
+  "studio.footer.unsaved_live_set": "NÃO SALVO: LIVE SET",
+  "studio.part_editor.stale_banner": "Alterado no Velora desde que você abriu",
+  "studio.part_editor.stale_reload": "Recarregar",
+  "studio.part_editor.stale_reloaded": "Recarregado a partir do Velora"
 }

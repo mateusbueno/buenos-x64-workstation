@@ -916,5 +916,12 @@
   "studio.group.va.osc2": "Oscillator 2",
   "studio.group.va.sub": "Sub oscillator",
   "studio.group.va.noise": "Noise",
-  "studio.group.fm.global": "Global"
+  "studio.group.fm.global": "Global",
+  "performance.status.studio": "STUDIO",
+  "studio.footer.live_edit_on": "● LIVE EDIT ON · CHANGES PLAY ON THE VELORA",
+  "studio.footer.unsaved_scene": "UNSAVED: SCENE %d",
+  "studio.footer.unsaved_live_set": "UNSAVED: LIVE SET",
+  "studio.part_editor.stale_banner": "Changed on the Velora since you opened it",
+  "studio.part_editor.stale_reload": "Reload",
+  "studio.part_editor.stale_reloaded": "Reloaded from the Velora"
 }

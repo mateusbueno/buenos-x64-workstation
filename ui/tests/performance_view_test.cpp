@@ -236,8 +236,49 @@ static void test_top_bar_tempo_clock_source_and_clock_lost() {
   std::cout << "[PASS] test_top_bar_tempo_clock_source_and_clock_lost\n";
 }
 
+// Story 9.10: the Status Bar shows STUDIO while Velora Studio edits arrive (State.edits.studio_edit_active, which the engine clears after 3 s idle), and the dirty Live Set shows
+// the diamond in the Hero. Headless: the label's visibility and text, not pixels (the board render is unverified).
+static void test_studio_status_and_diamond() {
+  lv_init();
+  Locale::instance().initialize("", "en");
+  HeadlessAdapter adapter;
+  assert(adapter.initialize(1024, 600));
+  PerformanceView view;
+  assert(view.create());
+  lv_obj_update_layout(view.root_container());
+  assert(!view.studio_active() && !view.studio_indicator_visible());  // nothing arrives: no STUDIO
+
+  ws::v1::State st;
+  st.set_live_set_name("Sunday Morning");
+  st.mutable_edits()->set_studio_edit_active(true);  // an accepted Studio edit (and an unsaved one)
+  st.mutable_edits()->set_current_dirty(true);
+  view.update_from_state(st);
+  assert(view.studio_active() && view.studio_indicator_visible());
+  assert(view.has_unsaved_edits());  // the diamond: the Live Set carries unsaved edits
+
+  st.mutable_edits()->set_studio_edit_active(false);  // idle 3 s: STUDIO goes out, the diamond stays until Write or power-off
+  view.update_from_state(st);
+  assert(!view.studio_active() && !view.studio_indicator_visible());
+  assert(view.has_unsaved_edits());
+
+  ws::v1::State no_edits;  // a State without edits (an engine without an edit session) never shows STUDIO
+  no_edits.set_live_set_name("Sunday Morning");
+  st.mutable_edits()->set_studio_edit_active(true);
+  view.update_from_state(st);
+  assert(view.studio_indicator_visible());
+  view.update_from_state(no_edits);
+  assert(!view.studio_indicator_visible());
+  view.set_studio_active(true);
+  assert(view.studio_indicator_visible());
+
+  lv_timer_handler();
+  adapter.shutdown();
+  std::cout << "[PASS] test_studio_status_and_diamond\n";
+}
+
 int main() {
   std::cout << "Running performance_view_test...\n";
+  test_studio_status_and_diamond();
   test_performance_view();
   test_top_bar_tempo_clock_source_and_clock_lost();
   std::cout << "All performance view tests passed!\n";

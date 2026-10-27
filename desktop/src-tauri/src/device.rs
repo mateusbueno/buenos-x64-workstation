@@ -1408,7 +1408,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
     /// Story 9.9 against a REAL bridge and engine (called by real_bridge_round_trip with its paired client): the edits the Part Editor sends, as the page's JSON with
-    /// `base_revision` (the engine records and ignores it until Story 9.10). A performance edit is acked (queued for the RT plane) and the live values are readable; the structural
+    /// `base_revision` (Story 9.10: the engine refuses a stale one). A performance edit is acked (queued for the RT plane) and the live values are readable; the structural
     /// edits (sends, volume, insert chain) publish a State that shows them; a bad value is a typed error. The ASSIGN slot commands answer an Ack, or NO_LIVE_SET when the smoke
     /// engine has no Live Set loaded.
     fn real_part_edit_flow(c: &DeviceClient) {
@@ -1416,7 +1416,8 @@ mod tests {
             let m: ClientMessage = serde_json::from_value(v).expect("page JSON maps onto a ClientMessage");
             serde_json::to_value(c.request(m, Duration::from_secs(5)).expect("a reply")).unwrap()
         };
-        let rev = || c.latest_state().and_then(|s| s["revision"].as_u64()).unwrap_or(0);
+        // Story 9.10: the base_revision of an edit is the Live Set revision (State.edits.live_set_revision), read fresh (an edit WITHOUT base_revision moves it)
+        let rev = || call(serde_json::json!({"body": {"GetState": {}}}))["body"]["State"]["edits"]["live_set_revision"].as_u64().unwrap_or(0);
         let live = |param: u64, part: u64| -> Option<f64> {
             let r = call(serde_json::json!({"body": {"GetPerformanceValues": {}}}));
             r["body"]["PerformanceValues"]["values"].as_array()?.iter().find(|v| v["param_id"] == param && v["part"] == part).and_then(|v| v["value"].as_f64())
@@ -1428,6 +1429,18 @@ mod tests {
         // checked here is the read-back path the Part Editor uses to confirm a knob: GetPerformanceValues lists the parameter for the part.
         let before = live(102, 0);
         assert!(before.is_some(), "GetPerformanceValues does not list drawbar_8 for part 0");
+        // Story 9.10: an edit built on an older Live Set revision is STALE_REVISION (47) with both revisions in the details, and changes nothing; an edit without base_revision
+        // moves the revision (a change from elsewhere), so the one built on the revision before it is stale in turn
+        let now = rev();
+        assert!(now >= 1, "State.edits.live_set_revision missing");
+        let stale = call(serde_json::json!({"base_revision": now + 1, "body": {"SetPerformanceParam": {"param_id": 102, "part": 0, "value": 4.0}}}));
+        assert_eq!(stale["body"]["Error"]["code"], 47, "expected STALE_REVISION, got {}", stale);
+        assert_eq!(stale["body"]["Error"]["details"]["current_revision"], now.to_string());
+        assert_eq!(live(102, 0), before, "a stale edit changed nothing");
+        let r = call(serde_json::json!({"body": {"SetPerformanceParam": {"param_id": 102, "part": 0, "value": 5.0}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert!(rev() > now, "an edit without base_revision did not move the revision");
+        assert_eq!(call(serde_json::json!({"base_revision": now, "body": {"SetPerformanceParam": {"param_id": 102, "part": 0, "value": 5.0}}}))["body"]["Error"]["code"], 47);
         // a value outside the registry range, an unknown parameter and a bad part are typed errors (the knob reverts and shows the message)
         assert_eq!(call(serde_json::json!({"base_revision": rev(), "body": {"SetPerformanceParam": {"param_id": 102, "part": 0, "value": 9.0}}}))["body"]["Error"]["code"], 7);
         assert_eq!(call(serde_json::json!({"body": {"SetPerformanceParam": {"param_id": 99999, "part": 0, "value": 1.0}}}))["body"]["Error"]["code"], 6);

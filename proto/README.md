@@ -66,8 +66,12 @@ else the entry's `locale_key` (the FM / VA strings of Story 12.13), else the nam
 
 ### Edits from Studio (Story 9.9)
 
-`ClientMessage.base_revision = 2` (additive, `uint64`, 0 = not provided): the State revision the client's view was built on when it made an edit. The engine records it for edit commands (`ControlPlane::last_base_revision()` /
-`base_revision_edits()`) and IGNORES it: the `STALE_REVISION` rejection and the live-edit banner are Story 9.10. The bridge forwards it untouched. Which command a Studio knob sends (the code is `desktop/src/part_editor.js`, `commandKind`
+`ClientMessage.base_revision = 2` (additive, `uint64`, 0 = not provided): the **Live Set revision** (`State.edits.live_set_revision = 13`, Story 9.10) the client's view was loaded at. On an edit command a value
+other than the current revision is refused with `ERROR_CODE_STALE_REVISION` (47; details `base_revision`, `current_revision`) and nothing changes; 0 is accepted as before but the edit then counts as a change from elsewhere.
+`live_set_revision` is a monotonic `uint64` counter (starts at 1) owned by `ControlPlane` that moves with every change of the sounding Live Set that is NOT a Studio edit (an edit carrying `base_revision`): the unit's own
+controls (panel, encoders, faders, MIDI: seen when the live values are captured, minus the echo of Studio's own performance edits), the device UI and any client that sends an edit without `base_revision`, a scene recall,
+the start of a Live Set switch (jump, step) and the publication of another Live Set. A Studio view therefore never makes itself stale; a second Studio computer editing at the same time is NOT detected (it also carries
+`base_revision`). `State.edits.studio_edit_active = 14` is true for 3 s after the last accepted Studio edit (the device Status Bar shows `STUDIO`; the control tick pushes the State when it flips). The bridge forwards both untouched. Which command a Studio knob sends (the code is `desktop/src/part_editor.js`, `commandKind`
 and `requests`; the bridge's message table already allows every one for a paired client, feature `params.v1` / `liveset.v1`):
 
 | registry class / scope or control | command | notes |
@@ -133,8 +137,8 @@ Story 8.12 adds one additive error code to `library_api.proto`: `LIBRARY_ERROR_C
   `HelloAck.device_version = 4`, `firmware_version = 5`, `device_id = 6`, `model = 7`, `paired = 8` (empty from the engine's own control server; from the bridge `features` is the negotiated set);
   messages `PairRequest {code, computer_name}` (`ClientMessage.pair_request = 61`) and `PairReply {paired, computer_id, pairing_token = 3}` (`ServerMessage.pair_reply = 27`; the token is returned once, the unit keeps only its SHA-256); `LibraryRequest {payload}`
   (`ClientMessage.library = 62`) and `LibraryReply {payload}` (`ServerMessage.library_reply = 28`), which carry `library_api.proto` messages (only those on the bridge's library allow-list are forwarded); error codes `NOT_PAIRED` (42),
-  `UNSUPPORTED_FEATURE` (43), `UPSTREAM_UNAVAILABLE` (44), `PAIRING_CODE_INVALID` (45), `PAIRING_CLOSED` (46). Feature names negotiated in Hello: `params.v1`, `snapshots.v1`,
-  `subscribe.v1`, `liveset.v1`, `config.v1`, `library.v1`, `pairing.v1`. The engine never produces the new messages or codes.
+  `UNSUPPORTED_FEATURE` (43), `UPSTREAM_UNAVAILABLE` (44), `PAIRING_CODE_INVALID` (45), `PAIRING_CLOSED` (46); `STALE_REVISION` (47, Story 9.10, produced by the engine). Feature names negotiated in Hello: `params.v1`, `snapshots.v1`,
+  `subscribe.v1`, `liveset.v1`, `config.v1`, `library.v1`, `pairing.v1`. The engine never produces the new messages or the codes 42..46.
 
 - Story 9.8 (additive; READ-ONLY, served by the **engine's** control plane, reached by Velora Studio through the sysd bridge): `GetLiveSetView {live_set_id}` (`ClientMessage.get_live_set_view = 63`, bridge feature `liveset.v1`, paired
   clients only) answers `LiveSetViewReply` (`ServerMessage.live_set_view_reply = 29`): `live_set_id`, `name`, `dirty` (the device holds unsaved edits for it: the ◆), `sounding`, `factory`, exactly 8 `scenes`

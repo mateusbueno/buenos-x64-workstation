@@ -251,9 +251,26 @@ class ControlPlane {
   void fill_diagnostics(ws::v1::DiagnosticsReply* out) const;   // Story 1.21: RT counters / histograms, read lock-free; uptime from the clock
 
   std::uint64_t revision() const noexcept { return revision_.load(std::memory_order_acquire); }
-  // Story 9.9: the base_revision of the last edit command that carried one (0 = none yet) and how many did. Recorded, never enforced (Story 9.10 does).
+  // Story 9.9: the base_revision of the last edit command that carried one (0 = none yet) and how many did (accepted or stale).
   std::uint64_t last_base_revision() const noexcept { return last_base_revision_.load(std::memory_order_relaxed); }
   std::uint64_t base_revision_edits() const noexcept { return base_revision_edits_.load(std::memory_order_relaxed); }
+
+  // ---- Story 9.10: the Live Set's change revision, stale edits and the Studio live-edit indicator (control thread unless noted) -------------------------------------
+  // `live_set_revision()` is a monotonic counter (starts at 1; 0 means "not provided" on the wire) of the changes the sounding Live Set received from anywhere but Velora
+  // Studio's own edits. An edit command whose base_revision differs from it is refused with STALE_REVISION (nothing changes). It moves with: an edit command WITHOUT
+  // base_revision, a scene recall, the start of a Live Set switch and the publication of another Live Set (EditSession), and a change of the live values that no Studio edit
+  // explains (the panel, encoders, faders, MIDI controllers: EditSession::sync_live_values). It is uint64: it cannot wrap before the engine restarts, and a restart makes
+  // every client's base_revision differ (clients reload on reconnect).
+  std::uint64_t live_set_revision() const noexcept { return live_set_revision_.load(std::memory_order_acquire); }
+  void note_device_change() noexcept { live_set_revision_.fetch_add(1, std::memory_order_acq_rel); }
+  // Studio is editing: true for kStudioActiveNs after the last accepted edit that carried base_revision (the device Status Bar shows STUDIO).
+  static constexpr std::uint64_t kStudioActiveNs = 3'000'000'000ull;
+  bool studio_edit_active() const noexcept;
+  // True once per change of studio_edit_active() (on to off by idle expiry, off to on): the control tick then pushes the State. Control thread only.
+  bool take_studio_activity_changed() noexcept;
+  // A live value that changed in RT: was it the echo of a Studio performance edit still on its way (so it is no device-side change)? Consumes the match. Control thread only.
+  bool consume_studio_echo(std::size_t slot, float live) noexcept;
+  std::uint64_t stale_rejections() const noexcept { return stale_rejected_.load(std::memory_order_relaxed); }
   std::size_t live_generations() const noexcept { return live_count_.load(std::memory_order_acquire); }
   std::uint64_t freed_generations() const noexcept { return freed_.load(std::memory_order_acquire); }
   std::uint64_t commands_rejected() const noexcept { return rejected_.load(std::memory_order_relaxed); }
@@ -310,6 +327,15 @@ class ControlPlane {
   std::uint32_t ledger_used_ = 0;             // bit i = ledger slot i in use
   std::atomic<std::uint64_t> revision_{0};
   std::atomic<std::uint64_t> last_base_revision_{0}, base_revision_edits_{0};
+  std::atomic<std::uint64_t> live_set_revision_{1}, stale_rejected_{0};
+  std::atomic<std::uint64_t> studio_active_until_ns_{0};  // clock_() deadline of the STUDIO indicator; 0 = never edited
+  bool studio_reported_ = false;
+  struct StudioEcho {
+    std::size_t slot;
+    float value;
+    std::uint64_t expires_ns;
+  };
+  std::vector<StudioEcho> studio_echoes_;  // performance values a Studio edit sent to RT that no live-value capture has seen yet (bounded)
   std::atomic<std::size_t> live_count_{0};
   std::atomic<std::uint64_t> freed_{0}, rejected_{0};
   const TierProfile* tier_ = &v1_profile();

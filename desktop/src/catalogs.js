@@ -510,7 +510,13 @@ export const CATALOGS = {
     "studio.group.va.osc2": "Oscillator 2",
     "studio.group.va.sub": "Sub oscillator",
     "studio.group.va.noise": "Noise",
-    "studio.group.fm.global": "Global"
+    "studio.group.fm.global": "Global",
+    "studio.footer.live_edit_on": "● LIVE EDIT ON · CHANGES PLAY ON THE VELORA",
+    "studio.footer.unsaved_scene": "UNSAVED: SCENE %d",
+    "studio.footer.unsaved_live_set": "UNSAVED: LIVE SET",
+    "studio.part_editor.stale_banner": "Changed on the Velora since you opened it",
+    "studio.part_editor.stale_reload": "Reload",
+    "studio.part_editor.stale_reloaded": "Reloaded from the Velora"
   },
   es: {
     "studio.title_bar.app_name": "Velora Studio",
@@ -1021,7 +1027,13 @@ export const CATALOGS = {
     "studio.group.va.osc2": "Oscilador 2",
     "studio.group.va.sub": "Suboscilador",
     "studio.group.va.noise": "Ruido",
-    "studio.group.fm.global": "Global"
+    "studio.group.fm.global": "Global",
+    "studio.footer.live_edit_on": "● EDICIÓN EN VIVO · LOS CAMBIOS SUENAN EN EL VELORA",
+    "studio.footer.unsaved_scene": "SIN GUARDAR: ESCENA %d",
+    "studio.footer.unsaved_live_set": "SIN GUARDAR: LIVE SET",
+    "studio.part_editor.stale_banner": "Cambiado en el Velora desde que lo abriste",
+    "studio.part_editor.stale_reload": "Recargar",
+    "studio.part_editor.stale_reloaded": "Recargado desde el Velora"
   },
   "pt-BR": {
     "studio.title_bar.app_name": "Velora Studio",
@@ -1532,6 +1544,12 @@ export const CATALOGS = {
     "studio.group.va.osc2": "Oscilador 2",
     "studio.group.va.sub": "Suboscilador",
     "studio.group.va.noise": "Ruído",
-    "studio.group.fm.global": "Global"
+    "studio.group.fm.global": "Global",
+    "studio.footer.live_edit_on": "● EDIÇÃO AO VIVO · AS MUDANÇAS SOAM NO VELORA",
+    "studio.footer.unsaved_scene": "NÃO SALVO: CENA %d",
+    "studio.footer.unsaved_live_set": "NÃO SALVO: LIVE SET",
+    "studio.part_editor.stale_banner": "Alterado no Velora desde que você abriu",
+    "studio.part_editor.stale_reload": "Recarregar",
+    "studio.part_editor.stale_reloaded": "Recarregado a partir do Velora"
   }
 };

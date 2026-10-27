@@ -465,7 +465,7 @@ test("a performance edit is sent with base_revision, shown at once and confirmed
   await r.clock.advance(5);
   const sent = r.unit.log.filter((l) => l[0] === "SetPerformanceParam");
   assert.deepEqual(sent.map((l) => l[1]), [{ param_id: def("va_filter_cutoff").id, part: 2, value: shown }]);
-  assert.equal(sent[0][2], r.unit.revision); // base_revision = the revision the view was built on
+  assert.equal(sent[0][2], r.unit.liveRevision); // base_revision = the Live Set revision the view was loaded at (Story 9.10)
   await r.clock.advance(300);
   const after = byId(r.ctl.model(), "va_filter_cutoff");
   assert.equal(after.value, shown);

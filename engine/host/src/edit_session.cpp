@@ -360,7 +360,10 @@ EditSession::EditSession(ControlPlane& plane, SceneController& scenes, liveset::
                          SwitchPort* port, EditSessionOptions options)
     : plane_(plane), scenes_(scenes), live_(live), setlists_(setlists), setlist_ctl_(setlist_ctl), port_(port), opt_(std::move(options)) {
   plane_.set_edit_handler(this);
-  scenes_.set_before_recall([this] { sync_live_values(); });
+  scenes_.set_before_recall([this] {
+    sync_live_values();
+    if (!restoring_) plane_.note_device_change();  // Story 9.10: a scene recall changes the values under any Studio view (the restore after a timbre rebuild does not)
+  });
   if (setlist_ctl_) setlist_ctl_->set_on_live_set_deleted([this](const std::string& id) { forget(id); });
   adopt_current_from_scenes();
 }
@@ -451,7 +454,7 @@ bool EditSession::sync_live_values() {
   Doc* d = current_doc();
   if (!d || !scenes_.owns_current() || restoring_ || !plane_.rt_adopted_current()) return false;
   const int scene = current_scene();
-  bool changed = false;
+  bool changed = false, foreign = false;
   for (const p::ParamDef& def : p::kParams) {
     if (def.cls != p::Class::kPerformance) continue;
     if (def.scope == p::Scope::kPart) {
@@ -461,6 +464,7 @@ bool EditSession::sync_live_values() {
         if (!near(live, edited_part_value(d->working, scene, part, def.id), eps_for(&def))) {
           store_part_value(d->working, scene, part, def.id, live);
           changed = true;
+          if (!plane_.consume_studio_echo(p::perf_slot(def, part), live)) foreign = true;  // Story 9.10: nobody at Velora Studio explains it: the unit's own controls
         }
       }
     } else if (def.id != p::kLineInLevel) {  // the line-in level is device input, not part of a Live Set
@@ -469,10 +473,12 @@ bool EditSession::sync_live_values() {
       if (!near(live, edited_master_value(d->working, scene, def.id), eps_for(&def))) {
         store_master_value(d->working, scene, def.id, live);
         changed = true;
+        if (!plane_.consume_studio_echo(p::perf_slot(def, 0), live)) foreign = true;
       }
     }
   }
   if (changed) touch(*d);
+  if (foreign) plane_.note_device_change();  // Story 9.10: a Velora Studio view of this Live Set is stale from here
   return changed;
 }
 
@@ -589,6 +595,7 @@ void EditSession::on_published(const lsp::LiveSet& built_from, const core::Snaps
     docs_[id] = std::move(d);
     ++edit_seq_;
   }
+  if (id != current_id_) plane_.note_device_change();  // Story 9.10: another Live Set sounds: every Studio view of the previous one is stale
   current_id_ = id;
   scenes_.set_source(docs_[id].working);
   ++edit_seq_;

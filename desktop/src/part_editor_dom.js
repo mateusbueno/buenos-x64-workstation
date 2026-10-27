@@ -149,8 +149,27 @@ export class PartEditorView {
     this.bannerEl.setAttribute("role", "status");
     this.msgEl = this.el("div", "pe-msg");
     this.msgEl.hidden = true;
+    // Story 9.10: "Changed on the Velora since you opened it · Reload" (announced once through the editor's polite region when it appears); Reload applies the current snapshot
+    this.staleEl = this.el("div", "pe-stale");
+    this.staleEl.hidden = true;
+    this.staleText = this.el("span", "pe-stale-text", this.tr("studio.part_editor.stale_banner"));
+    const dot = this.el("span", "pe-stale-sep", " · ");
+    dot.setAttribute("aria-hidden", "true");
+    this.reloadBtn = this.el("button", "btn pe-stale-reload", this.tr("studio.part_editor.stale_reload"));
+    this.reloadBtn.type = "button";
+    this.reloadBtn.addEventListener("click", () => {
+      this.reloadBtn.disabled = true;
+      Promise.resolve(this.controller.reload && this.controller.reload()).then((ok) => {
+        this.reloadBtn.disabled = false;
+        if (ok) this.say(this.tr("studio.part_editor.stale_reloaded"));
+      }, () => { this.reloadBtn.disabled = false; });
+    });
+    this.staleEl.appendChild(this.staleText);
+    this.staleEl.appendChild(dot);
+    this.staleEl.appendChild(this.reloadBtn);
     root.appendChild(this.live);
     root.appendChild(this.headerEl);
+    root.appendChild(this.staleEl);
     root.appendChild(this.bannerEl);
     root.appendChild(this.msgEl);
     this.labelCounts = new Map();
@@ -450,13 +469,21 @@ export class PartEditorView {
     }
     for (const k of all) this.paintKnob(k);
     this.paintErrors();
-    this.bannerEl.hidden = m.editable;
-    this.bannerEl.textContent = m.editable ? "" : this.tr(m.reason);
+    this.paintStale(m);
     for (const s of m.sections) {
       if (s.envelope) this.paintEnvelope(s.envelope);
       if (s.inserts) this.paintInserts(s);
       if (s.assign) this.paintAssign(s.assign);
     }
+  }
+
+  /** The stale banner replaces the read-only banner while the Live Set is stale (the reason is the same sentence). */
+  paintStale(m) {
+    const wasShown = !this.staleEl.hidden;
+    this.staleEl.hidden = !m.stale;
+    this.bannerEl.hidden = m.editable || !!m.stale;
+    this.bannerEl.textContent = m.editable || m.stale ? "" : this.tr(m.reason);
+    if (m.stale && !wasShown) this.say(this.tr("studio.part_editor.stale_banner"));
   }
 
   paintKnob(k) {

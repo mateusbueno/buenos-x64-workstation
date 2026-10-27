@@ -170,7 +170,7 @@ test("keys change the value through the controller and the unit plays it; aria-v
   const other = await key("a"); // not a knob key: not handled, not prevented
   assert.equal(other.prevented, undefined);
   // every edit carried base_revision
-  assert.ok(r.unit.log.filter((l) => l[0] === "SetPerformanceParam").every((l) => l[2] === r.unit.revision));
+  assert.ok(r.unit.log.filter((l) => l[0] === "SetPerformanceParam").every((l) => l[2] === r.unit.liveRevision));
   // a switch toggles with Space
   const p = r.slider("Percussion");
   p.fire("keydown", { key: " " });
@@ -584,4 +584,41 @@ test("notices: a value the unit did not apply is told as text", async () => {
   r.view.showError({ key: "p:102", code: 0, message: "", notice: "not_applied" });
   const err = r.host.all((e) => e.className === "pe-err" && !e.hidden)[0];
   assert.equal(err.textContent, "The Velora did not apply the change (it holds the earlier value).");
+});
+
+// ---- Story 9.10: the stale banner and Reload --------------------------------------------------------------------------------------------------------------------
+test("a stale edit shows 'Changed on the Velora since you opened it · Reload', the knobs go read-only, and Reload applies the current snapshot", async () => {
+  const r = await rig(3);
+  const stale = () => r.host.all((e) => e.className === "pe-stale")[0];
+  assert.equal(stale().hidden, true, "no banner while the view is current");
+  const d = r.slider("Drawbar 16'");
+  r.unit.perf.set("100:3", 2);
+  r.unit.deviceChange(); // the player changed something on the unit after Studio loaded the Live Set
+  assert.equal(stale().hidden, true, "not before an edit is refused");
+  d.focus();
+  d.fire("keydown", { key: "ArrowUp" });
+  await r.clock.advance(300);
+  assert.equal(r.unit.staleRejected, 1);
+  assert.equal(stale().hidden, false);
+  assert.equal(stale().textContent, "Changed on the Velora since you opened it · Reload");
+  assert.equal(r.host.all((e) => e.className === "sr-only")[0].textContent, "Changed on the Velora since you opened it", "announced once, through the editor's polite region");
+  const btn = r.host.all((e) => e.tagName === "BUTTON" && e.className.includes("pe-stale-reload"))[0];
+  assert.equal(btn.textContent, "Reload");
+  assert.equal(btn.type, "button");
+  assert.equal(r.slider("Drawbar 16'").attrs["aria-readonly"], "true");
+  assert.equal(r.slider("Drawbar 16'").attrs["aria-valuenow"], "2", "the knob shows what the unit holds");
+  assert.equal(r.host.all((e) => e.className === "pe-banner")[0].hidden, true, "the read-only banner does not repeat the sentence");
+  d.fire("keydown", { key: "ArrowUp" });
+  await r.clock.advance(300);
+  assert.equal(r.unit.log.filter((l) => l[0] === "SetPerformanceParam").length, 1, "nothing is sent while stale");
+  btn.fire("click");
+  await r.clock.advance(300);
+  assert.equal(stale().hidden, true);
+  assert.equal(r.slider("Drawbar 16'").attrs["aria-readonly"], undefined);
+  assert.ok(r.unit.log.some((l) => l[0] === "GetState"));
+  d.fire("keydown", { key: "ArrowUp" });
+  await r.clock.advance(300);
+  assert.equal(r.unit.perf.get("100:3"), 3);
+  assert.equal(r.unit.staleRejected, 1);
+  assert.equal(r.unit.log.filter((l) => l[0] === "SetPerformanceParam").at(-1)[2], r.unit.liveRevision);
 });

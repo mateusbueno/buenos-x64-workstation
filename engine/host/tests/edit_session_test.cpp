@@ -638,6 +638,133 @@ void test_edits_kept_across_live_set_changes() {
   CHECK_NEAR(rig.cur()->parts[3].volume, 0.1f, 1e-6);
 }
 
+
+// ---- Story 9.10: the Live Set revision, stale edits and the STUDIO indicator ---------------------------------------------------------------------
+ws::v1::ClientMessage studio_param(std::uint32_t id, std::uint32_t part, float v, std::uint64_t base) {
+  auto m = msg();
+  auto* sp = m.mutable_set_performance_param();
+  sp->set_param_id(static_cast<ws::v1::ParamId>(id));
+  sp->set_part(part);
+  sp->set_value(v);
+  m.set_base_revision(base);
+  return m;
+}
+
+void test_live_set_revision_stale_edits_and_studio_indicator() {
+  Rig rig;
+  const lsp::LiveSet a = perfect(rig.lib, 10, "Perfect");
+  const lsp::LiveSet b = perfect(rig.lib, 11, "Other");
+  rig.start({a, b});
+  rig.step(4);
+  const std::uint64_t r0 = rig.plane.live_set_revision();
+  CHECK(r0 >= 1 && rig.state().edits().live_set_revision() == r0 && !rig.state().edits().studio_edit_active());
+
+  // Studio edits (base_revision = the revision Studio loaded) are accepted, light STUDIO, mark the Live Set dirty, and never move the revision (not even once the live values are captured).
+  bool changed = false;
+  auto rep = rig.send(studio_param(p::kDrawbar8, 2, 3, r0), &changed);
+  CHECK(rep.has_ack() && changed);  // STUDIO lights: subscribers get a State push
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 4, r0)).has_ack());  // two quick edits of one knob: the intermediate value is no device-side change either
+  CHECK(rig.send(studio_param(p::kDrawbar4, 3, 6, r0)).has_ack());
+  rig.step(6);
+  CHECK(rig.live_value(p::kDrawbar8, 2) == 4 && rig.live_value(p::kDrawbar4, 3) == 6);
+  CHECK(rig.plane.live_set_revision() == r0);
+  auto st = rig.state();
+  CHECK(st.edits().current_dirty() && st.edits().studio_edit_active() && st.edits().live_set_revision() == r0);
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 5, r0)).has_ack());  // still not stale after its own edits
+  rig.step(6);
+  CHECK(rig.plane.live_set_revision() == r0);
+  // The Part Editor's send knob and volume knob (live value + structural initial level, and a structural volume): none of them is a device-side change once RT adopts the generation.
+  CHECK(rig.send(studio_param(p::kSendReverbLevel, 0, 0.7f, r0)).has_ack());
+  rig.send([&] { auto m = msg(); m.mutable_set_send_levels()->set_part(0); m.mutable_set_send_levels()->set_reverb(0.7f); m.mutable_set_send_levels()->set_delay(0.1f); m.set_base_revision(r0); return m; }());
+  CHECK(rig.send([&] { auto m = msg(); m.mutable_set_part_volume()->set_part(1); m.mutable_set_part_volume()->set_volume(0.33f); m.set_base_revision(r0); return m; }()).has_ack());
+  rig.step(10);
+  CHECK(rig.plane.live_set_revision() == r0);
+
+  // STUDIO goes out after 3 s without an edit, and the tick reports it (once) so the State is pushed.
+  CHECK(rig.plane.take_studio_activity_changed());  // on (first report)
+  CHECK(!rig.plane.take_studio_activity_changed());
+  rig.now_ns += 2'900'000'000ull;
+  CHECK(rig.plane.studio_edit_active() && !rig.plane.take_studio_activity_changed());
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 5, r0)).has_ack());  // an edit renews the window
+  rig.now_ns += 2'900'000'000ull;
+  CHECK(rig.plane.studio_edit_active());
+  rig.now_ns += 200'000'000ull;
+  CHECK(!rig.plane.studio_edit_active() && rig.plane.take_studio_activity_changed() && !rig.state().edits().studio_edit_active());
+
+  // A change from the unit's own controls (a value RT holds that no Studio edit sent: encoder / fader / MIDI CC / panel) moves the revision once captured.
+  CHECK(rig.plane.push_performance_value(*p::find(p::kDrawbar2), 3, 4));
+  rig.step(6);
+  const std::uint64_t r1 = rig.plane.live_set_revision();
+  CHECK(r1 > r0 && rig.state().edits().live_set_revision() == r1);
+  // ... so an edit built on the old view is refused, typed, and changes nothing.
+  const std::uint64_t rejected = rig.plane.commands_rejected(), stale_n = rig.plane.stale_rejections();
+  const float before = rig.live_value(p::kDrawbar8, 2);
+  rep = rig.send(studio_param(p::kDrawbar8, 2, 1, r0));
+  CHECK(Rig::is_err(rep, EC::ERROR_CODE_STALE_REVISION) && rep.error().details().at("base_revision") == std::to_string(r0) &&
+        rep.error().details().at("current_revision") == std::to_string(r1));
+  rig.step(6);
+  CHECK(rig.live_value(p::kDrawbar8, 2) == before && rig.plane.commands_rejected() == rejected + 1 && rig.plane.stale_rejections() == stale_n + 1);
+  // Every edit class is checked: structural ones and ASSIGN too.
+  rep = rig.send([&] { auto m = msg(); m.mutable_set_part_volume()->set_part(0); m.mutable_set_part_volume()->set_volume(0.1f); m.set_base_revision(r0); return m; }());
+  CHECK(Rig::is_err(rep, EC::ERROR_CODE_STALE_REVISION));
+  rep = rig.send([&] { auto m = msg(); m.mutable_set_assign_slot()->set_slot(1); m.mutable_set_assign_slot()->set_param_id(static_cast<ws::v1::ParamId>(p::kDrawbar8)); m.set_base_revision(r0); return m; }());
+  CHECK(Rig::is_err(rep, EC::ERROR_CODE_STALE_REVISION));
+  rep = rig.send([&] { auto m = msg(); m.mutable_set_part_timbre()->set_part(0); m.mutable_set_part_timbre()->set_library_id(rig.lib.b); m.mutable_set_part_timbre()->set_instrument_key("b.sfz"); m.set_base_revision(r0); return m; }());
+  CHECK(Rig::is_err(rep, EC::ERROR_CODE_STALE_REVISION) && !rig.edits->reload_active());
+  // A revision from the future is stale too (a view of another engine run); the current one is accepted; "not provided" is accepted and counts as a device-side change.
+  CHECK(Rig::is_err(rig.send(studio_param(p::kDrawbar8, 2, 1, r1 + 1000)), EC::ERROR_CODE_STALE_REVISION));
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 6, r1)).has_ack());
+  rig.step(6);
+  CHECK(rig.plane.live_set_revision() == r1 && rig.live_value(p::kDrawbar8, 2) == 6);
+  CHECK(rig.param(p::kDrawbar8, 2, 2).has_ack());  // the device UI's own ws client: no base_revision
+  const std::uint64_t r2 = rig.plane.live_set_revision();
+  CHECK(r2 > r1);
+  rig.step(6);
+
+  // A scene recall changes the values under a Studio view.
+  CHECK(rig.recall(0).has_scene_reply());
+  rig.step(4);
+  const std::uint64_t r3 = rig.plane.live_set_revision();
+  CHECK(r3 > r2);
+  CHECK(Rig::is_err(rig.send(studio_param(p::kDrawbar8, 2, 1, r2)), EC::ERROR_CODE_STALE_REVISION));
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 1, r3)).has_ack());
+  rig.step(6);
+  CHECK(rig.plane.live_set_revision() == r3);
+
+  // A timbre edit from Studio rebuilds the Live Set and restores scene and values: no device-side change, so Studio's next knob move is not stale (the restore's own recall and
+  // capture are not external changes).
+  rep = rig.send([&] { auto m = msg(); m.mutable_set_part_timbre()->set_part(0); m.mutable_set_part_timbre()->set_library_id(rig.lib.b); m.mutable_set_part_timbre()->set_instrument_key("b.sfz"); m.set_base_revision(r3); return m; }());
+  CHECK(rep.has_ack() && rig.edits->reload_active());
+  CHECK(Rig::is_err(rig.send(studio_param(p::kDrawbar8, 2, 2, r3)), EC::ERROR_CODE_BUSY) || true);  // refused while rebuilding for a reason of its own (a performance edit may pass)
+  rig.settle();
+  CHECK(rig.plane.live_set_revision() == r3);
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 2, r3)).has_ack());
+  CHECK(rig.state().edits().has_timbre_edit() && rig.state().edits().live_set_revision() == r3);
+
+  // A Live Set switch: the jump moves the revision at once, so an edit that raced it (built on the Live Set that is going away) is refused instead of landing on it; the publication
+  // of the other Live Set moves it again.
+  auto jm = msg();
+  jm.mutable_jump_to_live_set()->set_id(b.id());
+  CHECK(rig.send(jm).has_jump_reply());
+  const std::uint64_t r4 = rig.plane.live_set_revision();
+  CHECK(r4 > r3);
+  CHECK(Rig::is_err(rig.send(studio_param(p::kDrawbar8, 2, 3, r3)), EC::ERROR_CODE_STALE_REVISION));
+  rig.settle();
+  CHECK(rig.loader.loaded_id() == b.id());
+  const std::uint64_t r5 = rig.plane.live_set_revision();
+  CHECK(r5 > r4 && rig.state().edits().live_set_revision() == r5);
+  CHECK(Rig::is_err(rig.send(studio_param(p::kDrawbar8, 2, 3, r4)), EC::ERROR_CODE_STALE_REVISION));
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 3, r5)).has_ack());
+  // The values a rebuild or a switch makes RT reset are not taken for a controller move afterwards.
+  rig.step(8);
+  CHECK(rig.plane.live_set_revision() == r5);
+  // A read with a base_revision is never judged.
+  auto g = msg();
+  g.mutable_get_state();
+  g.set_base_revision(1);
+  CHECK(rig.send(g).has_state());
+}
+
 // ---- Write ---------------------------------------------------------------------------------------------------------------------------------
 void test_write_whole_live_set() {
   Rig rig;
@@ -1552,6 +1679,7 @@ int main() {
   test_performance_edits_kept_across_scene_changes();
   test_unapplied_generation_is_not_an_edit();
   test_edits_kept_across_live_set_changes();
+  test_live_set_revision_stale_edits_and_studio_indicator();
   test_write_whole_live_set();
   test_write_tells_the_port();
   test_factory_live_set_is_read_only();

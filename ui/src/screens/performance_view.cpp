@@ -68,6 +68,8 @@ PerformanceView::~PerformanceView() {
   lbl_status_voices_ = nullptr;
   lbl_status_streaming_ = nullptr;
   lbl_status_rotary_ = nullptr;
+  lbl_status_studio_ = nullptr;
+  studio_active_ = false;
   btn_status_rev_ = nullptr;
   lbl_status_rev_ = nullptr;
   lbl_status_takeover_ = nullptr;
@@ -658,6 +660,13 @@ bool PerformanceView::create(lv_obj_t* parent) {
   lv_obj_set_style_text_color(lbl_status_rotary_, p.accent, LV_PART_MAIN);
   lv_obj_align(lbl_status_rotary_, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_hidden(lbl_status_rotary_, true);
+
+  // STUDIO (Story 9.10): shown while Velora Studio edits arrive; the same label is the Status Bar's only Studio indicator
+  lbl_status_studio_ = lv_label_create(status_normal_container_);
+  lv_label_set_text(lbl_status_studio_, tr("performance.status.studio").c_str());
+  lv_obj_set_style_text_color(lbl_status_studio_, p.accent, LV_PART_MAIN);
+  lv_obj_align(lbl_status_studio_, LV_ALIGN_LEFT_MID, sp.screen_gutter + 380, 0);
+  lv_obj_set_hidden(lbl_status_studio_, !studio_active_);
 
   // REV button (opens Effects surface)
   btn_status_rev_ = lv_obj_create(status_normal_container_);
@@ -1252,7 +1261,17 @@ void PerformanceView::update_status_bar() {
   lv_label_set_text(lbl_status_rev_, rev_buf);
 }
 
+void PerformanceView::set_studio_active(bool active) {
+  studio_active_ = active;
+  if (lbl_status_studio_) lv_obj_set_hidden(lbl_status_studio_, !active);
+}
+
+bool PerformanceView::studio_indicator_visible() const {
+  return lbl_status_studio_ && !lv_obj_is_hidden(lbl_status_studio_);
+}
+
 void PerformanceView::update_from_state(const ws::v1::State& state) {
+  set_studio_active(state.has_edits() && state.edits().studio_edit_active());
   for (const auto& pv : state.performance_init()) {
     if (pv.param_id() == ws::v1::PARAM_TEMPO_BPM) {
       set_tempo(pv.value());

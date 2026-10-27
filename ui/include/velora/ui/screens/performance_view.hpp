@@ -71,6 +71,10 @@ class PerformanceView {
   void update_tempo_display();
   void set_setlist_context(const std::string& setlist_name, int32_t current_idx, int32_t total_count);
   void set_live_set(const std::string& name, int32_t index, bool dirty = false);
+  // Story 9.10: the Status Bar shows STUDIO while Part Editor / live edits from Velora Studio arrive (State.edits.studio_edit_active); the engine clears it after 3 s idle.
+  void set_studio_active(bool active);
+  bool studio_active() const { return studio_active_; }
+  bool studio_indicator_visible() const;
   void set_next_live_set(const std::string& title, const std::string& status_text, bool ready = true);
   void set_scenes(const std::vector<SceneTileData>& scenes, int32_t current_scene_idx);
   void set_modes(bool drawbars, bool scenes_mode, int32_t knob_mode, int32_t knob_part = 1);
@@ -304,6 +308,8 @@ class PerformanceView {
   lv_obj_t* lbl_status_voices_{nullptr};
   lv_obj_t* lbl_status_streaming_{nullptr};
   lv_obj_t* lbl_status_rotary_{nullptr};
+  lv_obj_t* lbl_status_studio_{nullptr};  // Story 9.10: STUDIO while Velora Studio edits arrive
+  bool studio_active_{false};
   lv_obj_t* btn_status_rev_{nullptr};
   lv_obj_t* lbl_status_rev_{nullptr};
 
