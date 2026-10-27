@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -1887,6 +1888,455 @@ static void test_loop_past_head_does_not_wrap_while_fading() {
   CHECK(el.stream_underrun_events() == 1 && el.active_voices() == 0);
 }
 
+// --- Story 13.6: choke groups and polyphony limits ---------------------------------------------------------------------------------------
+
+namespace {
+// The state of every voice that plays `note`, by slot order: 'H' held, 'S' sustained, 'R' releasing.
+std::string voice_states(const SampleEngine& e, std::uint32_t note) {
+  std::string out;
+  VoiceInfo vi;
+  for (std::uint32_t slot = 0; slot < e.voice_capacity(); ++slot)
+    if (e.voice_info(slot, vi) && vi.note == note) out += vi.state == VoiceState::kHeld ? 'H' : vi.state == VoiceState::kSustained ? 'S' : 'R';
+  return out;
+}
+// Level of a DC voice's envelope at output frame k: (output / gain - the constant rest) / its sample value.
+double dc_env(const Out& o, std::size_t k, double rest, double dc, double G) { return (o.l[k] / G - rest) / dc; }
+}  // namespace
+
+static void test_choke_groups() {
+  const double G = mono_center_gain();
+  const double rate_fast = std::exp(-9.0 / (0.006 * 48000.0));
+  // The hi-hat: note 60 (open, group 1, off_by 2) is cut by note 62 (closed, group 2). `tweak` sets the cut's off_mode on the open region.
+  auto cut_env = [&](auto&& tweak, std::size_t k) {
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.group = 1; r.has_off_by = true; r.off_by = 2; r.ampeg_release = 0.1f; tweak(r); }
+    { auto& r = ins.region(ins.dc(0.2f, 200000), 62, 62); r.group = 2; }
+    SampleEngine e(cfg());
+    CHECK(e.set_instrument(ins));
+    e.start_voice(0, 60, v16(127));
+    render(e, 100);
+    e.start_voice(0, 62, v16(127));
+    CHECK(voice_states(e, 60) == "R" && voice_states(e, 62) == "H");
+    const Out o = render(e, 6000);
+    return dc_env(o, k, 0.2, 0.1, G);
+  };
+  // fast (the default): the 6 ms exponential release, whatever ampeg_release says
+  for (std::size_t k : {0u, 70u, 143u, 287u}) CHECK_NEAR(cut_env([](ports::SampleRegionDesc&) {}, k), std::pow(rate_fast, static_cast<double>(k + 1)), 3e-3);
+  // normal: the voice's own ampeg_release (0.1 s)
+  {
+    const double rate = std::exp(-9.0 / (0.1 * 48000.0));
+    for (std::size_t k : {0u, 1199u, 2399u, 4799u}) CHECK_NEAR(cut_env([](ports::SampleRegionDesc& r) { r.off_mode = ports::SampleOffMode::kNormal; }, k), std::pow(rate, static_cast<double>(k + 1)), 3e-3);
+  }
+  // time: off_time seconds
+  {
+    const double rate = std::exp(-9.0 / (0.02 * 48000.0));
+    for (std::size_t k : {0u, 479u, 959u}) CHECK_NEAR(cut_env([](ports::SampleRegionDesc& r) { r.off_mode = ports::SampleOffMode::kTime; r.off_time = 0.02f; }, k), std::pow(rate, static_cast<double>(k + 1)), 3e-3);
+    // times below 6 ms behave as 6 ms
+    for (std::size_t k : {0u, 143u}) CHECK_NEAR(cut_env([](ports::SampleRegionDesc& r) { r.off_mode = ports::SampleOffMode::kTime; r.off_time = 0.001f; }, k), std::pow(rate_fast, static_cast<double>(k + 1)), 3e-3);
+  }
+  {  // not cut by a note outside its off_by; the cut voice ends (release, then the 50 ms fade-out) and frees its slot
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.group = 1; r.has_off_by = true; r.off_by = 2; }
+    { auto& r = ins.region(ins.dc(0.2f, 200000), 62, 62); r.group = 3; }
+    { auto& r = ins.region(ins.dc(0.3f, 200000), 64, 64); r.group = 2; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    e.start_voice(0, 62, v16(127));
+    render(e, 2000);
+    CHECK(voice_states(e, 60) == "H" && e.active_voices() == 2);
+    e.start_voice(0, 64, v16(127));
+    CHECK(voice_states(e, 60) == "R" && voice_states(e, 62) == "H");
+    render(e, 20000);
+    CHECK(voice_states(e, 60).empty() && e.active_voices() == 2);
+  }
+  {  // the cut reaches a voice that already got its note off (still ringing out), and a one-shot voice that ignores note offs
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.group = 1; r.has_off_by = true; r.off_by = 2; r.ampeg_release = 2.0f; }
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 61, 61); r.group = 1; r.has_off_by = true; r.off_by = 2; r.loop_mode = ports::SampleLoopMode::kOneShot; }
+    { auto& r = ins.region(ins.dc(0.2f, 200000), 62, 62); r.group = 2; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    e.start_voice(0, 61, v16(127));
+    render(e, 100);
+    e.stop_voice(0, 60);
+    e.stop_voice(0, 61);
+    render(e, 1000);
+    CHECK(voice_states(e, 60) == "R" && voice_states(e, 61) == "S");
+    const Out slow = render(e, 4800);  // release of 2 s: still near 1
+    CHECK(dc_env(slow, 4799, 0.0, 0.1, G) > 0.0 && slow.l[4799] / G > 0.1 * 0.8);
+    e.start_voice(0, 62, v16(127));
+    const Out o = render(e, 600);
+    CHECK_NEAR(dc_env(o, 287, 0.2, 0.2, G) * 0.0 + (o.l[287] / G - 0.2), 0.0, 3e-3);  // both are down to the 6 ms tail
+    CHECK(voice_states(e, 60) == "R" && voice_states(e, 61) == "R");
+  }
+  {  // the same group and the same note: other layers and the previous instance of the note are spared; another note of the group is cut
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 62); r.group = 1; r.has_off_by = true; r.off_by = 1; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    e.start_voice(0, 60, v16(127));
+    CHECK(voice_states(e, 60) == "HH");
+    e.start_voice(0, 61, v16(127));
+    CHECK(voice_states(e, 60) == "RR" && voice_states(e, 61) == "H");
+  }
+  {  // a group gate that no longer holds on the victim does not spare it (sfizz: ccSwitched_.all())
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.group = 1; r.has_off_by = true; r.off_by = 1; r.cc_gate_count = 1; r.cc_gates[0] = {20, 0.0f, 50.0f}; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    e.start_voice(0, 60, v16(127));
+    CHECK(voice_states(e, 60) == "HH");           // gate holds: spared
+    e.set_part_cc(0, 20, 0xFFFFFFFFu);            // the controller leaves the gate while the voices sound
+    e.set_part_cc(0, 20, 0u);                     // and comes back for the new note
+    e.start_voice(0, 60, v16(127));
+    CHECK(voice_states(e, 60) == "HHH");
+    // move it out of the gate, then retrigger: the gated region does not play, nothing is cut
+    e.set_part_cc(0, 20, 0xFFFFFFFFu);
+    e.start_voice(0, 60, v16(127));
+    CHECK(voice_states(e, 60) == "HHH");
+  }
+  {  // voices fired by a note off are never cut, and a release-trigger voice that starts also cuts (it is in a group)
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.group = 1; }
+    { auto& r = ins.region(ins.dc(0.2f, 200000), 60, 60); r.trigger = ports::SampleTrigger::kRelease; r.group = 1; r.has_off_by = true; r.off_by = 1; }
+    { auto& r = ins.region(ins.dc(0.3f, 200000), 61, 61); r.group = 1; r.has_off_by = true; r.off_by = 1; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    e.stop_voice(0, 60);  // starts the release voice (its group 1 cuts the attack voice of group 1 whose off_by is 1: it has none, so it only releases by the note off)
+    CHECK(e.active_voices() == 2);
+    e.start_voice(0, 61, v16(127));  // group 1 off_by 1: cuts voices with off_by 1 that are not release-triggered: the release voice survives
+    render(e, 200);
+    VoiceInfo vi;
+    unsigned releasing = 0, held = 0;
+    for (std::uint32_t slot = 0; slot < e.voice_capacity(); ++slot)
+      if (e.voice_info(slot, vi)) (vi.state == VoiceState::kHeld ? held : releasing)++;
+    CHECK(held == 1);  // note 61 only; the note-60 attack voice is releasing, the release voice reports releasing too
+    (void)releasing;
+  }
+  {  // determinism: the same sequence gives the same bits
+    auto run = [&]() {
+      TestInstrument ins;
+      { auto& r = ins.region(ins.ramp(30000), 60, 61); r.group = 1; r.has_off_by = true; r.off_by = 2; r.ampeg_release = 0.3f; }
+      { auto& r = ins.region(ins.ramp(30000, 0.0005f), 62, 62); r.group = 2; r.polyphony = 1; }
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      Out all;
+      for (int i = 0; i < 6; ++i) {
+        e.start_voice(0, 60 + (i % 3), v16(60 + 10 * i));
+        const Out o = render(e, 500);
+        all.l.insert(all.l.end(), o.l.begin(), o.l.end());
+        all.r.insert(all.r.end(), o.r.begin(), o.r.end());
+      }
+      return all;
+    };
+    const Out a = run(), b = run();
+    CHECK(a.l.size() == b.l.size() && std::memcmp(a.l.data(), b.l.data(), a.l.size() * sizeof(float)) == 0 && std::memcmp(a.r.data(), b.r.data(), a.r.size() * sizeof(float)) == 0);
+  }
+}
+
+// The sustain pedal: a cut is not a key release, so it does not wait for the pedal; the pedal's own deferred note off finds nothing left to do.
+static void test_choke_with_sustain_pedal() {
+  const double G = mono_center_gain();
+  auto build = [](bool choke) {
+    auto ins = std::make_unique<TestInstrument>();
+    { auto& r = ins->region(ins->dc(0.1f, 400000), 60, 60); r.group = 1; r.ampeg_release = 5.0f; if (choke) { r.has_off_by = true; r.off_by = 2; } }
+    { auto& r = ins->region(ins->dc(0.2f, 400000), 62, 62); r.group = 2; }
+    return ins;
+  };
+  struct R { std::uint32_t before_close, after_close, after_pedal_up; double level_after_close; std::string states_60, states_after_up; };
+  auto run = [&](bool choke) {
+    auto ins = build(choke);
+    auto br = std::make_unique<BlockRenderer>();
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    br->set_channel_engine(2, static_cast<std::uint32_t>(EngineTypeId::kSample));
+    CHECK(br->bind_engine(e));
+    float l[kBlockFrames], r[kBlockFrames];
+    auto block = [&]() { br->process_block(l, r); };
+    R out{};
+    br->submit({make_control_change(0, 2, Ump::kControllerSustain, 0xFFFFFFFFu), 0});
+    br->submit({make_note_on(0, 2, 60, 0xFFFF), 0});
+    block();
+    br->submit({make_note_off(0, 2, 60), 0});  // the pedal keeps the voice: the engine sees no note off
+    block();
+    out.before_close = e.active_voices();
+    br->submit({make_note_on(0, 2, 62, 0xFFFF), 0});
+    for (int i = 0; i < 6; ++i) block();  // 6 x 64 = 384 frames: past the 6 ms (288 frames) cut
+    out.states_60 = voice_states(e, 60);
+    out.level_after_close = std::fabs(static_cast<double>(l[kBlockFrames - 1])) / G;
+    for (int i = 0; i < 60; ++i) block();  // 80 ms: the cut voice has faded out
+    out.after_close = e.active_voices();
+    br->submit({make_control_change(0, 2, Ump::kControllerSustain, 0u), 0});  // the pedal up delivers the note off of 60
+    block();
+    block();
+    out.after_pedal_up = e.active_voices();
+    out.states_after_up = voice_states(e, 60);
+    return out;
+  };
+  const R cut = run(true), keep = run(false);
+  CHECK(cut.before_close == 1 && keep.before_close == 1);
+  CHECK(cut.states_60 == "R" && keep.states_60 == "H");                 // cut at once although the pedal holds the key; without off_by the pedal holds it
+  CHECK_NEAR(cut.level_after_close, 0.2, 2e-3);                          // only the closed hat is left in the mix
+  CHECK(keep.level_after_close > 0.28);                                  // 0.1 + 0.2 with the open hat held
+  CHECK(cut.after_close == 1 && keep.after_close == 2);                  // the cut voice is gone, the held one is not
+  CHECK(cut.after_pedal_up == 1 && cut.states_after_up.empty());         // the pedal up does not bring it back or start anything
+  CHECK(keep.after_pedal_up == 2 && keep.states_after_up == "R");        // without the cut, the pedal up starts the 5 s release
+}
+
+static void test_polyphony_limits() {
+  const double G = mono_center_gain();
+  (void)G;
+  {  // group polyphony: the oldest voice of the group goes when the limit is reached
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 70); r.group = 4; r.polyphony = 2; r.group_polyphony = 2; r.ampeg_release = 0.5f; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(100));
+    render(e, 50);
+    e.start_voice(0, 61, v16(100));
+    CHECK(voice_states(e, 60) == "H" && voice_states(e, 61) == "H");
+    e.start_voice(0, 62, v16(100));
+    CHECK(voice_states(e, 60) == "R" && voice_states(e, 61) == "H" && voice_states(e, 62) == "H");
+    e.start_voice(0, 63, v16(100));
+    CHECK(voice_states(e, 61) == "R" && voice_states(e, 62) == "H" && voice_states(e, 63) == "H");  // 60 is already cut and is not counted again
+    render(e, 20000);
+    CHECK(voice_states(e, 60).empty());  // the cut one ended on its own 6 ms release (not the 0.5 s of ampeg_release)
+  }
+  {  // a voice that was only released by its note off (still ringing) counts and is cut fast; the limit is per part
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 70); r.group = 4; r.group_polyphony = 1; r.ampeg_release = 2.0f; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(100));
+    e.start_voice(1, 60, v16(100));  // another part: independent
+    CHECK(voice_states(e, 60) == "HH");
+    e.stop_voice(0, 60);
+    render(e, 100);
+    e.start_voice(0, 61, v16(100));
+    const Out o = render(e, 700);
+    // part 0's ringing note was cut with the 6 ms release (a 2 s release would leave it near 0.1 x 0.1)
+    VoiceInfo vi;
+    unsigned held = 0;
+    for (std::uint32_t slot = 0; slot < e.voice_capacity(); ++slot)
+      if (e.voice_info(slot, vi) && vi.state == VoiceState::kHeld) ++held;
+    CHECK(held == 2);  // part 1's note 60 and part 0's note 61
+    (void)o;
+  }
+  {  // region polyphony (a mono region); two regions of one group share the group limit
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 64); r.polyphony = 1; }
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 70, 70); r.group = 9; r.group_polyphony = 1; }
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 72, 72); r.group = 9; r.group_polyphony = 1; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(100));
+    e.start_voice(0, 61, v16(100));
+    CHECK(voice_states(e, 60) == "R" && voice_states(e, 61) == "H");
+    e.start_voice(0, 70, v16(100));
+    e.start_voice(0, 72, v16(100));
+    CHECK(voice_states(e, 70) == "R" && voice_states(e, 72) == "H");
+  }
+  {  // the sister voices of one note on go together
+    TestInstrument ins;
+    for (int layer = 0; layer < 2; ++layer) { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.group = 7; r.group_polyphony = 2; }
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 61, 61); r.group = 7; r.group_polyphony = 2; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(100));
+    CHECK(voice_states(e, 60) == "HH");
+    e.start_voice(0, 61, v16(100));
+    CHECK(voice_states(e, 60) == "RR" && voice_states(e, 61) == "H");
+  }
+  {  // note polyphony: a retrigger of the same note releases the previous voice; another note and another group are untouched
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 62); r.note_polyphony = 1; }
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 70, 70); r.group = 3; r.note_polyphony = 1; }
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 70, 70); r.group = 5; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(100));
+    e.start_voice(0, 61, v16(100));
+    CHECK(voice_states(e, 60) == "H" && voice_states(e, 61) == "H");
+    e.start_voice(0, 60, v16(100));
+    CHECK(voice_states(e, 60) == "RH" || voice_states(e, 60) == "HR");
+    CHECK(voice_states(e, 61) == "H");
+    e.start_voice(0, 70, v16(100));
+    e.start_voice(0, 70, v16(100));
+    const std::string st70 = voice_states(e, 70);
+    CHECK(st70.size() == 4 && std::count(st70.begin(), st70.end(), 'H') == 2);  // the first note on goes whole (its group-5 layer is a sister voice), the second stays
+  }
+  {  // note_selfmask: a quieter retrigger does not cut a louder voice (default), the oldest goes with note_selfmask off; np = 2 releases the quietest first
+    auto build = [](bool mask, unsigned np) {
+      auto ins = std::make_unique<TestInstrument>();
+      auto& r = ins->region(ins->dc(0.1f, 200000), 60, 60);
+      r.note_polyphony = static_cast<std::uint16_t>(np);
+      r.note_selfmask = mask;
+      return ins;
+    };
+    {
+      auto ins = build(true, 1);
+      SampleEngine e(cfg());
+      e.set_instrument(*ins);
+      e.start_voice(0, 60, v16(100));
+      e.start_voice(0, 60, v16(40));
+      CHECK(voice_states(e, 60) == "HH");  // quieter: no cut
+      e.start_voice(0, 60, v16(120));
+      CHECK(voice_states(e, 60) == "RRH");  // louder: both go (the count is reduced for every candidate)
+    }
+    {
+      auto ins = build(false, 1);
+      SampleEngine e(cfg());
+      e.set_instrument(*ins);
+      e.start_voice(0, 60, v16(100));
+      e.start_voice(0, 60, v16(40));
+      CHECK(voice_states(e, 60) == "RH");  // off: the oldest goes whatever the velocity
+    }
+    {
+      auto ins = build(true, 2);
+      SampleEngine e(cfg());
+      e.set_instrument(*ins);
+      e.start_voice(0, 60, v16(100));  // slot order = start order here
+      e.start_voice(0, 60, v16(30));
+      CHECK(voice_states(e, 60) == "HH");
+      e.start_voice(0, 60, v16(110));
+      CHECK(voice_states(e, 60) == "HRH");  // the quietest of the two goes, not the oldest
+    }
+    {
+      auto ins = build(false, 2);
+      SampleEngine e(cfg());
+      e.set_instrument(*ins);
+      e.start_voice(0, 60, v16(100));
+      e.start_voice(0, 60, v16(30));
+      e.start_voice(0, 60, v16(110));
+      CHECK(voice_states(e, 60) == "RHH");  // the oldest
+    }
+  }
+  {  // no allocation, no growth: a long churn of limited and choking regions keeps the voice table size and stays deterministic
+    auto run = [&]() {
+      TestInstrument ins;
+      { auto& r = ins.region(ins.ramp(20000), 60, 72); r.group = 1; r.group_polyphony = 3; r.note_polyphony = 2; r.has_off_by = true; r.off_by = 2; r.ampeg_release = 0.2f; }
+      { auto& r = ins.region(ins.ramp(20000, 0.0003f), 73, 84); r.group = 2; r.polyphony = 2; r.off_mode = ports::SampleOffMode::kTime; r.off_time = 0.01f; }
+      SampleEngine e(cfg(8));
+      e.set_instrument(ins);
+      Out all;
+      std::uint32_t x = 7;
+      for (int i = 0; i < 200; ++i) {
+        x = x * 1664525u + 1013904223u;
+        e.start_voice(0, 60 + (x >> 20) % 25, v16(20 + (x >> 8) % 100));
+        if ((x >> 28) == 3) e.stop_voice(0, 60 + (x >> 12) % 25);
+        const Out o = render(e, 200);
+        all.l.insert(all.l.end(), o.l.begin(), o.l.end());
+      }
+      CHECK(e.voice_capacity() == 8);
+      return all;
+    };
+    const Out a = run(), b = run();
+    CHECK(a.l.size() == b.l.size() && std::memcmp(a.l.data(), b.l.data(), a.l.size() * sizeof(float)) == 0);
+  }
+  {  // an instrument without any of the fields: not one bit changes when other regions carry limits that never apply
+    auto run = [&](bool limits) {
+      TestInstrument ins;
+      ins.region(ins.ramp(20000), 60, 72);
+      if (limits) { auto& r = ins.region(ins.ramp(20000), 100, 110); r.group = 5; r.has_off_by = true; r.off_by = 6; r.polyphony = 2; r.group_polyphony = 3; r.note_polyphony = 1; }
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      Out all;
+      for (int i = 0; i < 12; ++i) {
+        e.start_voice(0, 60 + i, v16(30 + 7 * i));
+        if (i % 3 == 2) e.stop_voice(0, 60 + i - 1);
+        const Out o = render(e, 300);
+        all.l.insert(all.l.end(), o.l.begin(), o.l.end());
+        all.r.insert(all.r.end(), o.r.begin(), o.r.end());
+      }
+      return all;
+    };
+    const Out a = run(false), b = run(true);
+    CHECK(std::memcmp(a.l.data(), b.l.data(), a.l.size() * sizeof(float)) == 0 && std::memcmp(a.r.data(), b.r.data(), a.r.size() * sizeof(float)) == 0);
+  }
+  {  // invalid fields make the region unplayable (counted), never undefined behaviour
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 2000), 60, 60); r.off_time = std::nanf(""); }
+    { auto& r = ins.region(ins.dc(0.1f, 2000), 61, 61); r.polyphony = 300; }
+    { auto& r = ins.region(ins.dc(0.1f, 2000), 62, 62); r.off_by = 4; }  // off_by without has_off_by
+    ins.region(ins.dc(0.1f, 2000), 63, 63);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 3);
+  }
+}
+
+// Review fixes of Story 13.6: off_time=0, release-triggered voices, slot reuse.
+static void test_choke_review_fixes() {
+  const double G = mono_center_gain();
+  {  // off_time=0 (off_mode=time) is a fast cut (the 6 ms floor), not an instant one
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.group = 1; r.has_off_by = true; r.off_by = 2; r.off_mode = ports::SampleOffMode::kTime; r.off_time = 0.0f; }
+    { auto& r = ins.region(ins.dc(0.2f, 200000), 62, 62); r.group = 2; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    render(e, 100);
+    e.start_voice(0, 62, v16(127));
+    const Out o = render(e, 600);
+    const double rate = std::exp(-9.0 / (0.006 * 48000.0));
+    CHECK_NEAR(dc_env(o, 0, 0.2, 0.1, G), rate, 3e-3);
+    CHECK_NEAR(dc_env(o, 143, 0.2, 0.1, G), std::pow(rate, 144.0), 3e-3);
+  }
+  {  // (a) a release-triggered voice is never cut: its level stays flat after the choking note, and equals the run without the choke
+    auto run = [&](bool choke) {
+      TestInstrument ins;
+      { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.ampeg_release = 0.001f; }
+      { auto& r = ins.region(ins.dc(0.3f, 200000), 60, 60); r.trigger = ports::SampleTrigger::kRelease; r.group = 2; if (choke) { r.has_off_by = true; r.off_by = 5; } }
+      { auto& r = ins.region(ins.dc(0.2f, 200000), 62, 62); r.group = 5; }
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      e.start_voice(0, 60, v16(127));
+      e.stop_voice(0, 60);
+      render(e, 1000);
+      e.start_voice(0, 62, v16(127));
+      return render(e, 6000);
+    };
+    const Out a = run(true), b = run(false);
+    CHECK_NEAR(a.l[5999] / G, 0.5, 2e-3);  // 0.3 release voice + 0.2 choking note
+    CHECK(std::memcmp(a.l.data(), b.l.data(), a.l.size() * sizeof(float)) == 0);
+  }
+  {  // (b) release regions run the limit checks: polyphony=1 on a trigger=release region cuts the older release voice at the second note off
+    for (int which = 0; which < 2; ++which) {
+      TestInstrument ins;
+      { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 60); r.ampeg_release = 0.001f; }
+      { auto& r = ins.region(ins.dc(0.3f, 200000), 60, 60); r.trigger = ports::SampleTrigger::kRelease; r.group = 3;
+        if (which == 0) r.polyphony = 1; else r.group_polyphony = 1; }
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      for (int i = 0; i < 2; ++i) {
+        e.start_voice(0, 60, v16(127));
+        e.stop_voice(0, 60);
+        render(e, 500);
+      }
+      render(e, 20000);
+      CHECK(e.active_voices() == 1);  // the first release voice was cut and has faded out; the second sustains
+    }
+  }
+  {  // a slot reused after a cut starts clean (offed / mark reset): the new voice is counted and cut by the next one
+    TestInstrument ins;
+    { auto& r = ins.region(ins.dc(0.1f, 200000), 60, 70); r.group = 4; r.group_polyphony = 1; r.note_polyphony = 1; }
+    SampleEngine e(cfg(3));
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(100));      // slot 0
+    e.start_voice(0, 61, v16(100));      // cuts 60 (offed); slot 1
+    render(e, 20000);                    // 60 has faded out: slot 0 is free again
+    e.start_voice(0, 62, v16(100));      // reuses slot 0, cuts 61
+    CHECK(voice_states(e, 62) == "H" && voice_states(e, 61) == "R");
+    e.start_voice(0, 63, v16(100));      // the voice in the reused slot must count and be cut (offed / mark were reset)
+    CHECK(voice_states(e, 62) == "R" && voice_states(e, 63) == "H");
+  }
+}
+
 int main() {
   test_loop_past_head_does_not_wrap_while_fading();
   test_head_with_tail_underrun();
@@ -1910,6 +2360,10 @@ int main() {
   test_cc_modulation_at_voice_start();
   test_pseudo_ccs();
   test_cc_review_fixes();
+  test_choke_groups();
+  test_choke_with_sustain_pedal();
+  test_polyphony_limits();
+  test_choke_review_fixes();
   test_pool_missing_cost_and_info();
   test_interpolation_quality();
   test_oracle_block_stall();

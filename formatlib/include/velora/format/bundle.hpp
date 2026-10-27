@@ -46,7 +46,11 @@ inline constexpr std::uint32_t kFormatVersion = 2;
 // and CC modulation entries, then the instrument's CC defaults (set_ccN) and `<curve>` tables. The writer stamps minor 4 only when a region has a gate or a
 // modulation entry or an instrument has a default or a curve; every other bundle keeps the bytes it had (minor 0..3). Minor 4 requires at least one cc record,
 // default or curve in the bundle (kCorruptManifest otherwise). The reader accepts minor 0..4 and rejects a newer one with kUnsupportedVersion.
-inline constexpr std::uint32_t kFormatMinor = 4;
+// Minor 5 (Story 13.6) appends, after the minor 4 tables of each instrument (present, possibly empty, in a minor 5 bundle), the voice-group table: the per-region
+// choke group, off_by, off_mode / off_time and the region, group and note polyphony limits. The writer stamps minor 5 only when a region has any of them; every
+// other bundle keeps the bytes it had (minor 0..4). Minor 5 requires at least one voice-group record (kCorruptManifest otherwise). The reader accepts minor 0..5
+// and rejects a newer one with kUnsupportedVersion.
+inline constexpr std::uint32_t kFormatMinor = 5;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -89,7 +93,7 @@ struct WriterOptions {
   std::uint32_t format_version = kFormatVersion;
   // Test hook for the minor policy: 0 makes the writer refuse regions that need the extension
   // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 refuses regions that need the minor 3 amp table; 3 refuses
-  // the minor 4 cc table; 4 (default) stamps minor 1, 2, 3 or 4 only when one is needed.
+  // the minor 4 cc table; 4 refuses the minor 5 voice-group table; 5 (default) stamps minor 1, 2, 3, 4 or 5 only when one is needed.
   std::uint32_t format_minor = kFormatMinor;
 };
 

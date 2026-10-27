@@ -85,6 +85,16 @@ bool cc_sane(const velora::ports::SampleRegionDesc& d) noexcept {
   return true;
 }
 
+// Story 13.6 fields: the off time and the limits must be inside the documented ranges (a region that is not is unplayable).
+bool voice_group_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  if (static_cast<unsigned>(d.off_mode) > static_cast<unsigned>(velora::ports::SampleOffMode::kTime)) return false;
+  if (!std::isfinite(d.off_time) || d.off_time < 0.0f || d.off_time > 100.0f) return false;
+  if (!d.has_off_by && d.off_by != 0) return false;
+  if (d.group_polyphony != 0 && d.group == 0) return false;
+  return d.polyphony <= velora::ports::kSampleMaxVoiceLimit && d.group_polyphony <= velora::ports::kSampleMaxVoiceLimit &&
+         d.note_polyphony <= velora::ports::kSampleMaxVoiceLimit;
+}
+
 // The curves a region's entries name must have finite, bounded points (bad_curve[i]: the instrument's definition of curve i is not).
 bool cc_curves_ok(const velora::ports::SampleRegionDesc& d, const std::array<bool, 256>& bad_curve) noexcept {
   for (unsigned i = 0; i < d.cc_mod_count && i < velora::ports::kSampleMaxCcMods; ++i)
@@ -97,7 +107,7 @@ float engine_cc_default(unsigned cc) noexcept { return cc == 7 ? 100.0f : cc == 
 
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return extension_sane(d) && amp_sane(d) && cc_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && amp_sane(d) && cc_sane(d) && voice_group_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -402,6 +412,11 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
         }
       }
     }
+    // Story 13.6: choke groups and polyphony limits. A region with none keeps the bank's flag clear.
+    if (voice_group_sane(d)) {
+      if (d.off_mode == velora::ports::SampleOffMode::kTime) r.off_rate = seconds_to_exp_rate(std::max(d.off_time, kFastReleaseTime), sr);  // the 6 ms floor first: off_time=0 is a fast cut, not an instant one
+      if (d.has_off_by || d.polyphony != 0 || d.group_polyphony != 0 || d.note_polyphony != 0) bank->uses_voice_groups = true;
+    }
     pan_gains(pan_table_, d.pan, r.stereo, r.chan_l, r.chan_r);
 
     r.env_delay = seconds_to_samples(d.ampeg_delay, sr);
@@ -582,6 +597,7 @@ bool SampleEngine::key_released(std::uint32_t channel, std::uint32_t note) noexc
   SampleBank* bank = bank_for(channel);
   const std::uint64_t started_on = last_bank_[channel * 128u + note];
   if (!bank || (started_on && started_on != bank->id)) return false;
+  ++event_seq_;  // Story 13.6
   bool started = false;
   bool drawn = false;
   float rnd = 0.0f;  // drawn at the first candidate only, so a bank without release_key regions never moves the random sequence
@@ -605,6 +621,7 @@ bool SampleEngine::key_released(std::uint32_t channel, std::uint32_t note) noexc
       ++skipped_unplayable_;
       continue;
     }
+    if (bank->uses_voice_groups) apply_voice_limits(*bank, ri, channel, note, vel7);  // Story 13.6
     if (start_region(*bank, ri, channel, note, vel7, true)) started = true;  // a full voice pool drops the release sample, as it would a note
   }
   return started;
@@ -919,6 +936,8 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   v->bank = &bank;
   v->vel7 = vel7;
   v->start_time = clock_;
+  v->order = ++voice_order_;  // Story 13.6
+  v->event = event_seq_;
   v->pos = start_pos;
   v->ratio = cc_ratio;
   v->gain_l = base * chan_l;
@@ -949,6 +968,83 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
     }
   }
   return true;
+}
+
+// --- choke groups and polyphony limits (Story 13.6) ---------------------------------------------------
+
+// sfizz Voice::Impl::off: the release time of the cut (fast = 6 ms, time = off_time, normal = the voice's own), then the release itself. A voice released before its
+// envelope delay elapsed never sounds (dropped, as a note off does). The sustain pedal is not consulted: a cut is not a key release, so it never waits for the pedal.
+void SampleEngine::off_voice(Voice& v) noexcept {
+  const RegionRt& r = v.bank->regions[v.region];
+  if (r.d.off_mode == velora::ports::SampleOffMode::kFast) v.env.release_rate = tr_release_rate_off_;
+  else if (r.d.off_mode == velora::ports::SampleOffMode::kTime) v.env.release_rate = r.off_rate;
+  else if (part_engaged_[v.channel & 15u].test(1)) v.env.release_rate = part_release_rate_[v.channel & 15u];  // normal: the part's release knob replaces the region's
+  v.offed = true;
+  if (!env_release(v.env, r)) end_voice(v);
+}
+
+// sfizz SisterVoiceRing::offAllSisters: the voices that one note on (or note off) started are released together.
+void SampleEngine::off_sisters(std::uint64_t event) noexcept {
+  for (auto& v : voices_)
+    if (v.active && !v.stolen && !v.offed && v.event == event) off_voice(v);
+}
+
+void SampleEngine::apply_voice_limits(const SampleBank& bank, std::uint32_t ri, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) noexcept {
+  const velora::ports::SampleRegionDesc& d = bank.regions[ri].d;
+  // A voice counts for the limits while it is alive on this bank and part and has not been cut already (sfizz offedOrFree). One that was merely released by its
+  // note off and is still ringing counts, and can be cut.
+  auto live = [&](const Voice& v) { return v.active && !v.stolen && !v.offed && v.bank == &bank && v.channel == channel; };
+
+  // Synth::checkOffGroups: every voice whose region has off_by == this region's group is cut, except a voice of the same group and the same note whose own gates still
+  // hold (the other layers of the very note on). Voices fired by a note off (trigger=release / release_key) are never cut.
+  for (auto& v : voices_) {
+    if (!live(v) || v.release_trigger) continue;
+    const RegionRt& vr = bank.regions[v.region];
+    if (!vr.d.has_off_by || vr.d.off_by != d.group) continue;
+    if (vr.d.group == d.group && v.note == note && (!vr.cc_gate || cc_gate_open(vr, channel))) continue;
+    off_voice(v);
+  }
+
+  // VoiceManager::checkNotePolyphony: the voices of the group started by this note. With note_selfmask on only those that are not louder are candidates, quietest
+  // first (then oldest); off: oldest first. Each cut takes its sister voices along, and the count is reduced for every candidate visited, as sfizz.
+  if (d.note_polyphony != 0) {
+    unsigned counter = 0;
+    for (auto& v : voices_) {
+      v.mark = false;
+      if (!live(v) || v.note != note || bank.regions[v.region].d.group != d.group) continue;
+      ++counter;
+      v.mark = d.note_selfmask ? v.vel7 <= vel7 : true;
+    }
+    const unsigned target = d.note_polyphony - 1u;
+    while (counter > target) {
+      Voice* pick = nullptr;
+      for (auto& v : voices_) {
+        if (!v.mark) continue;
+        if (pick == nullptr || (d.note_selfmask ? (v.vel7 < pick->vel7 || (v.vel7 == pick->vel7 && v.order < pick->order)) : v.order < pick->order)) pick = &v;
+      }
+      if (pick == nullptr) break;
+      pick->mark = false;
+      if (!pick->offed) off_sisters(pick->event);
+      --counter;
+    }
+    for (auto& v : voices_) v.mark = false;
+  }
+
+  // checkRegionPolyphony and checkGroupPolyphony: at the limit, the oldest voice (and its sisters) goes.
+  auto oldest_at_limit = [&](unsigned limit, auto&& counts) -> Voice* {
+    unsigned n = 0;
+    Voice* oldest = nullptr;
+    for (auto& v : voices_) {
+      if (!live(v) || !counts(v)) continue;
+      ++n;
+      if (oldest == nullptr || v.order < oldest->order) oldest = &v;
+    }
+    return n >= limit ? oldest : nullptr;
+  };
+  if (d.polyphony != 0)
+    if (Voice* victim = oldest_at_limit(d.polyphony, [&](const Voice& v) { return v.region == ri; })) off_sisters(victim->event);
+  if (d.group_polyphony != 0)
+    if (Voice* victim = oldest_at_limit(d.group_polyphony, [&](const Voice& v) { return bank.regions[v.region].d.group == d.group; })) off_sisters(victim->event);
 }
 
 bool SampleEngine::playing_attack_voice(const RegionRt& r, std::uint32_t channel, bool match_velocity) const noexcept {
@@ -983,6 +1079,7 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
   }
   last_vel7_[(channel & 15u) * 128u + note] = vel7;
   last_bank_[(channel & 15u) * 128u + note] = bank->id;
+  ++event_seq_;  // Story 13.6: the voices of this note on are sisters
   const float rnd = next_random();
   note_pseudo(bank, channel, note, vel7, true);  // after rnd: a bank without a 135 / 136 entry draws nothing here
 
@@ -1007,6 +1104,7 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
       ++skipped_unplayable_;
       continue;
     }
+    if (bank->uses_voice_groups) apply_voice_limits(*bank, ri, channel, note, vel7);  // Story 13.6
     if (!start_region(*bank, ri, channel, note, vel7, false)) exhausted = true;
   }
   ks.prev = static_cast<std::int16_t>(note);  // sw_previous: the note on before the next one
@@ -1045,6 +1143,7 @@ EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t 
   }
 
   // Release-trigger regions: the note-on velocity, a fresh random draw.
+  ++event_seq_;  // Story 13.6
   const float rnd = next_random();
   std::uint8_t vel7 = last_vel7_[(channel & 15u) * 128u + note];
   const bool by_release_velocity = cfg_.release_velocity_triggers && release_velocity16 != 0;
@@ -1076,6 +1175,7 @@ EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t 
       ++skipped_unplayable_;
       continue;
     }
+    if (bank->uses_voice_groups) apply_voice_limits(*bank, ri, channel, note, vel7);  // Story 13.6
     if (start_region(*bank, ri, channel, note, vel7, true)) found = true;
     else exhausted = true;
   }

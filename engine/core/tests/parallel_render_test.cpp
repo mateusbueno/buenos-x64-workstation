@@ -119,6 +119,28 @@ struct Lcg {
   std::uint32_t next() noexcept { return s = s * 1664525u + 1013904223u; }
 };
 
+// Story 13.6: the same kind of instrument with choke groups (hi-hat style off_by, all three off modes), group, region and note polyphony. `inert` gives the plain
+// instrument() regions the machinery's flags that never fire (an off_by no group has, limits far above the load): it must change not one bit.
+Instrument& group_instrument() {
+  static Instrument ins = [] {
+    Instrument i;
+    const auto mono = i.add(6000, false, 48000, 0.05f);
+    const auto stereo = i.add(5000, true, 44100, 0.04f);
+    const auto lp = i.add(9000, false, 48000, 0.05f);
+    auto& a = i.region(mono, 24, 40);  // group 1, cut by group 2, fast
+    a.group = 1; a.has_off_by = true; a.off_by = 2; a.ampeg_release = 0.2f; a.note_polyphony = 2;
+    auto& b = i.region(stereo, 41, 56);  // group 2: cuts group 1, polyphony 6, cut by group 1 with the voice's own release
+    b.group = 2; b.has_off_by = true; b.off_by = 1; b.off_mode = ports::SampleOffMode::kNormal; b.ampeg_release = 0.05f; b.polyphony = 6; b.group_polyphony = 6;
+    auto& c = i.region(lp, 57, 72);  // group 3: loops, mono group, timed cut by group 4
+    c.group = 3; c.has_off_by = true; c.off_by = 4; c.off_mode = ports::SampleOffMode::kTime; c.off_time = 0.03f;
+    c.loop_mode = ports::SampleLoopMode::kLoopContinuous; c.has_loop_points = true; c.loop_start = 100; c.loop_end = 8000; c.group_polyphony = 12; c.ampeg_release = 0.4f;
+    auto& d = i.region(mono, 73, 96);  // group 4: cuts group 3; the same note twice releases the older (selfmask off)
+    d.group = 4; d.note_polyphony = 1; d.note_selfmask = false; d.group_polyphony = 20;
+    return i;
+  }();
+  return ins;
+}
+
 SampleEngine::Config engine_config(bool big = true) {
   SampleEngine::Config cfg;
   cfg.max_voices = big ? 320 : 16;
@@ -141,10 +163,11 @@ enum class Mode { kSerial, kPool1, kPool3 };
 
 // Runs `blocks` blocks of churn on one engine; every block's output is appended to `out` (split: 16 buses, else 1). Identical operations for
 // every Mode (the operations depend only on the LCG), so the outputs can be compared across modes.
-void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float>& out, std::uint32_t& peak) {
+void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float>& out, std::uint32_t& peak, const Instrument& ins = instrument(),
+                  std::vector<std::uint8_t>* states = nullptr) {
   WorkerPool pool;
   SampleEngine se(engine_config());
-  se.set_instrument(instrument());
+  se.set_instrument(ins);
   if (mode != Mode::kSerial) {
     pool.start(mode == Mode::kPool1 ? 1 : 3);
     se.set_parallel_voice_pool(&pool, kBlock);
@@ -181,6 +204,14 @@ void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float
       out.insert(out.end(), b.r.begin(), b.r.begin() + kBlock);
     }
     if (se.active_voices() > peak) peak = se.active_voices();
+    if (states) {  // the voice table after the block: which slots are alive and in what state (the control state must not depend on the render mode)
+      VoiceInfo vi;
+      for (std::uint32_t slot = 0; slot < se.voice_capacity(); ++slot) {
+        const bool on = se.voice_info(slot, vi);
+        states->push_back(on ? static_cast<std::uint8_t>(1 + static_cast<unsigned>(vi.state)) : 0);
+        states->push_back(on ? static_cast<std::uint8_t>(vi.note) : 0);
+      }
+    }
   }
 }
 
@@ -221,6 +252,97 @@ void test_engine_modes(bool split) {
   double energy = 0.0;
   for (float x : p3) energy += static_cast<double>(x) * x;
   CHECK(energy > 1.0);
+}
+
+// Story 13.6: the same churn with choke groups and polyphony limits. 1 and 3 threads are bit-identical; the voices alive, their states and their notes after every
+// block are identical in all three modes (the cuts happen in the serial control phase, never in the render); the audio equals the serial render within the same
+// tolerance as every other voice mix (summation order only). Voices that no limit touches are unchanged: the plain instrument with inert limits is bit-identical.
+void test_groups_in_parallel(bool split) {
+  std::vector<float> ser, p1, p3;
+  std::vector<std::uint8_t> st_s, st_1, st_3;
+  std::uint32_t pk_s = 0, pk_1 = 0, pk_3 = 0;
+  drive_engine(Mode::kSerial, split, 400, ser, pk_s, group_instrument(), &st_s);
+  drive_engine(Mode::kPool1, split, 400, p1, pk_1, group_instrument(), &st_1);
+  drive_engine(Mode::kPool3, split, 400, p3, pk_3, group_instrument(), &st_3);
+  std::size_t at = 0;
+  const bool same = bit_identical(p1, p3, at);
+  if (!same) std::printf("  groups %s: 1 vs 3 threads differ at index %zu\n", split ? "split" : "mono", at);
+  CHECK(same);
+  CHECK(st_s == st_1 && st_1 == st_3 && !st_s.empty());
+  CHECK(pk_s == pk_1 && pk_1 == pk_3);
+  const double d = max_abs_diff(ser, p3);
+  std::printf("parallel_render_tests: groups %s peak_voices=%u serial-vs-parallel max |diff| = %.3g (tolerance %.0e)\n", split ? "split" : "mono ", pk_3, d, kSerialTolerance);
+  CHECK(d <= kSerialTolerance);
+  double energy = 0.0;
+  for (float x : p3) energy += static_cast<double>(x) * x;
+  CHECK(energy > 1.0);
+  // The limits did something: the same churn on the same regions without the group fields plays more voices at the peak.
+  static Instrument plain = [] {
+    Instrument i = group_instrument();
+    for (auto& r : i.regions) r.group = 0, r.has_off_by = false, r.off_by = 0, r.off_mode = ports::SampleOffMode::kFast, r.off_time = 0.0f, r.polyphony = r.group_polyphony = r.note_polyphony = 0;
+    return i;
+  }();
+  std::vector<float> unlimited;
+  std::vector<std::uint8_t> st_u;
+  std::uint32_t pk_u = 0;
+  drive_engine(Mode::kPool3, split, 400, unlimited, pk_u, plain, &st_u);
+  auto held_voices = [](const std::vector<std::uint8_t>& v) {  // voice-blocks in the held / sustained states
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < v.size(); i += 2) n += (v[i] == 1 + static_cast<std::uint8_t>(VoiceState::kHeld) || v[i] == 1 + static_cast<std::uint8_t>(VoiceState::kSustained)) ? 1 : 0;
+    return n;
+  };
+  CHECK(held_voices(st_u) > held_voices(st_3));  // the cuts and limits released voices that would otherwise have been held
+  CHECK(unlimited != p3);
+}
+
+// A small cut scenario (a note cut by a choke group, the cutting note and a bystander; three voices, one per partition): 1 and 3 threads are bit-identical, and the
+// serial render differs only by float rounding of the two-voice sums (the compiler contracts the serial accumulate into a fused multiply-add; measured ~4e-9).
+void test_choke_one_vs_three_threads_bit_identical_serial_within_1e7() {
+  auto run = [](Mode mode) {
+    WorkerPool pool;
+    SampleEngine se(engine_config(false));
+    se.set_instrument(group_instrument());
+    if (mode != Mode::kSerial) {
+      pool.start(mode == Mode::kPool1 ? 1 : 3);
+      se.set_parallel_voice_pool(&pool, kBlock);
+    }
+    std::vector<float> out;
+    Bufs b;
+    for (std::uint32_t blk = 0; blk < 300; ++blk) {
+      if (blk == 0) { se.start_voice(0, 30, 50000); se.start_voice(0, 62, 40000); }
+      if (blk == 5) se.start_voice(0, 45, 60000);  // group 2 cuts the group-1 note 30 (off_by 2) and nothing else
+      if (blk == 40) se.stop_voice(0, 62);
+      b.clear();
+      se.render(b.l.data(), b.r.data(), kBlock);
+      out.insert(out.end(), b.l.begin(), b.l.begin() + kBlock);
+      out.insert(out.end(), b.r.begin(), b.r.begin() + kBlock);
+    }
+    return out;
+  };
+  const std::vector<float> ser = run(Mode::kSerial), p1 = run(Mode::kPool1), p3 = run(Mode::kPool3);
+  std::size_t at = 0;
+  CHECK(bit_identical(p1, p3, at));
+  CHECK(max_abs_diff(ser, p3) <= 1e-7);
+  double energy = 0.0;
+  for (float x : ser) energy += static_cast<double>(x) * x;
+  CHECK(energy > 0.01);
+}
+
+void test_inert_group_fields_change_nothing() {
+  static Instrument inert = [] {
+    Instrument i = instrument();
+    for (auto& r : i.regions) { r.has_off_by = true; r.off_by = 777; r.polyphony = 255; r.group_polyphony = 255; r.note_polyphony = 255; r.group = 5; }
+    return i;
+  }();
+  for (Mode m : {Mode::kSerial, Mode::kPool3}) {
+    std::vector<float> a, b;
+    std::uint32_t pa = 0, pb = 0;
+    drive_engine(m, false, 300, a, pa);
+    drive_engine(m, false, 300, b, pb, inert);
+    std::size_t at = 0;
+    CHECK(bit_identical(a, b, at));
+    CHECK(pa == pb);
+  }
 }
 
 // Voices of different parts land only in their own part's bus (render_split), each equal to the serial render of the same voices.
@@ -456,6 +578,10 @@ void test_renderer_affinity() {
 int main() {
   test_engine_modes(false);
   test_engine_modes(true);
+  test_groups_in_parallel(false);
+  test_groups_in_parallel(true);
+  test_choke_one_vs_three_threads_bit_identical_serial_within_1e7();
+  test_inert_group_fields_change_nothing();
   test_split_isolation();
   test_few_voices();
   test_block_loop();

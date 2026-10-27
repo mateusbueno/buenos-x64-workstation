@@ -1,0 +1,12 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.08
+<group> group=5 polyphony=2
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 loop_mode=loop_continuous loop_start=2400 loop_end=7199
+<region> sample=loop2.wav lokey=62 hikey=62 pitch_keycenter=62 loop_mode=loop_continuous loop_start=2400 loop_end=7199
+<region> sample=loop.wav lokey=64 hikey=64 pitch_keycenter=64 loop_mode=loop_continuous loop_start=2400 loop_end=7199
+<group>
+<region> sample=loop.wav lokey=67 hikey=67 pitch_keycenter=67 loop_mode=loop_continuous loop_start=2400 loop_end=7199 note_polyphony=1
+<region> sample=loop2.wav lokey=69 hikey=69 pitch_keycenter=69 loop_mode=loop_continuous loop_start=2400 loop_end=7199 note_polyphony=1 note_selfmask=off
+<region> sample=loop.wav lokey=71 hikey=71 pitch_keycenter=71 loop_mode=loop_continuous loop_start=2400 loop_end=7199 note_polyphony=2
+<region> sample=loop2.wav lokey=72 hikey=74 pitch_keycenter=73 loop_mode=loop_continuous loop_start=2400 loop_end=7199 polyphony=1

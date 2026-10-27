@@ -32,3 +32,7 @@ cc_gates          hermite  2  -60
 cc_modulation     hermite  2  -60
 cc_envelope       hermite  2  -60
 cc_pseudo         hermite  2  -60
+# Story 13.6: choke groups (group, off_by, off_mode, off_time), a cut under the sustain pedal, and polyphony limits (group, region, note_polyphony, note_selfmask).
+choke_groups      hermite  2  -60
+choke_sustain     hermite  2  -60
+polyphony_limits  hermite  2  -60

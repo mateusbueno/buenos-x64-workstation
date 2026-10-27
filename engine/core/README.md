@@ -631,6 +631,50 @@ no random number is drawn).
   target against the same region written with the summed constant, every predefined curve and a custom one, the pseudo-CCs and their determinism, ill-formed entries counted as unplayable),
   `sample_bundle_loader_test` (the fields reach the port) and the sfizz null fixtures `cc_gates`, `cc_modulation`, `cc_envelope`, `cc_pseudo`.
 
+## Choke groups and polyphony limits (Story 13.6)
+
+The port (`SampleRegionDesc`) carries, per region, `group`, `has_off_by`/`off_by`, `off_mode` (fast, normal, time) with `off_time`, `polyphony` (the region's voices),
+`group_polyphony` (the voices of the region's group; the importer gives every region of a group the group's final limit), `note_polyphony` and `note_selfmask`. They are
+read **when a voice starts**. A bank in which no region has an `off_by` or a limit (`SampleBank::uses_voice_groups` false) skips every check below, so such a bank renders
+exactly as before (tested bit for bit, also with limits that never apply). Everything runs in the control phase (note on, key up, note off), never in `render`: the cut only
+moves a voice's envelope into its release, so the three render partitions (`set_parallel_voice_pool`) see the same voice table and the same envelopes as the serial render.
+
+The order is sfizz's (`Synth::startVoice`): for every region that is about to start a voice and has passed its gates (key, velocity, trigger, keyswitch, CC gates, round robin,
+random, playable), `apply_voice_limits()` runs, then the voice is started in a slot from the shared pool (the arbiter's stealing is unchanged and still applies afterwards: a
+choke or a polyphony cut releases a voice, the arbiter steals one only when the pool is full).
+
+- **Choke** (`Synth::checkOffGroups`): every live voice of the part whose region has `off_by == the starting region's group` is cut, except a voice of the same group and the same
+  note whose own CC gates still hold (the other layers of the very note on, and the previous instance of a retriggered note: a self-choking group mutes the other notes of the group,
+  not itself). Voices fired by a note off (`trigger=release`, `release_key`) are never cut. A voice that already got its note off and is still ringing (also one held by the sustain
+  pedal, or a `one_shot` that ignores note offs) is cut; one that was cut already is not cut again.
+- **Cut time** (`off_voice`, sfizz `Voice::off`): `fast` (the default) sets the 6 ms exponential release (`tr_release_rate_off_`, the same constant as the sample-end fade), `time`
+  sets `off_time` seconds (never below 6 ms: `seconds_to_exp_rate`), `normal` leaves the voice's own release (`ampeg_release`, or the part's `part_release` knob when engaged). The
+  release starts from the voice's current envelope value, also when it is already releasing (the rate only changes), exactly as sfizz's `setReleaseTime`. A voice cut before its
+  envelope delay elapsed never sounds. **The cut does not wait for the sustain pedal**: it is not a key release (the pedal is not known to the engine, the arbiter defers the
+  note off the engine would otherwise see), so a held note under the pedal is cut at once and the pedal's later note off finds nothing to do (tested through the block
+  renderer with CC64, and against sfizz in `choke_sustain`).
+- **Limits** (`VoiceManager::checkPolyphony`, in sfizz's order): `note_polyphony` first, then the region's, then the group's. A voice counts while it is alive on this bank and part and
+  has not been cut (a voice released by its note off and still ringing counts, as sfizz). *Region and group:* when the count reaches the limit the **oldest** voice (the smallest
+  start order, `Voice::order`, which no slot index or arbiter decision can change) is released together with its **sister voices** (`Voice::event`: the voices that one note on, or one
+  note off, started, sfizz's `SisterVoiceRing`), with the victim's `off_mode`. *Note polyphony:* the voices of the group that were started by the same note; with `note_selfmask` on
+  (sfizz's default) only voices that are not louder than the new note are candidates and the quietest goes first (oldest first on equal velocity), so a quieter retrigger does not cut a louder
+  note; with `note_selfmask=off` the oldest goes. The count is reduced for every candidate visited, also one whose sisters were already released, as sfizz.
+  Deterministic: no hash, no pointer order, no randomness; ties are broken by start order. No allocation: fixed loops over the voice table and a `mark` bit in the voice.
+- **Not done / differs from sfizz.** (1) sfizz dispatches a synthetic note off for a *choked* attack voice (`checkOffGroups` -> `noteOffDispatch`), which starts that note's
+  `trigger=release` regions; the engine does not (the release region fires at the real note off or at the pedal up as before), so a library with release samples under a choke group plays
+  one release sample fewer per cut. (2) Region sets: a `polyphony` that limits all the regions of a `<global>`/`<master>`/`<group>` header is rejected by the importer (no representation) unless the region has a non-zero group set at that header or a broader one, where the group's limit stands for the set's.
+  (3) The state is per part (UMP channel) and per bank, as every other piece of per-part state; sfizz has one instance per instrument, which is the same thing for the null fixtures.
+  (4) The engine-wide polyphony check (`checkEnginePolyphony`) is the voice arbiter's budget, not repeated here. (5) `output` (routing) is not implemented.
+- **Tests.** `sample_engine_tests` (`test_choke_groups`: the three cut modes against the closed-form release at several frames, the 6 ms floor of `off_time`, a note outside the group, a cut of a voice
+  already released by its note off and of a one-shot, the same-note exemption and the gate that no longer holds, release-triggered voices, determinism; `test_choke_with_sustain_pedal`: the
+  block renderer with CC64 down, the cut at once, the pedal up changing nothing, and the control run without `off_by`; `test_polyphony_limits`: group, region, per-part, sister voices, the ringing
+  voice that counts, note polyphony with and without `note_selfmask` and with a limit of 2, a 200-note churn that is bit-identical on a second run, an instrument whose limits never apply
+  being bit-identical to one without, unplayable ill-formed fields), `parallel_render_tests` (`test_groups_in_parallel`, `test_choke_bit_identical_to_serial`, `test_inert_group_fields_change_nothing`:
+  1 and 3 threads are bit-identical with 320 voices of churn through cuts and limits, and the voice table - which slots are alive, in which state, on which note - is identical after every block
+  in the serial and both parallel modes; the audio equals the serial render within the same 1e-5 tolerance as every other mix, because the summation order differs), `sample_features_traffic_test` /
+  `rtsan_sample_features_test` (10,000 blocks of traffic with cuts and limits inside the nonblocking scope), `sample_bundle_loader_test` and the sfizz null fixtures `choke_groups`,
+  `choke_sustain` and `polyphony_limits`.
+
 ## Content integrity (Story 6.5)
 
 A *protected* library's blocks are hash-checked and AES-CTR decrypted by non-real-time threads only (the head loader, the I/O edge threads: `engine/host/README.md`,

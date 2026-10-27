@@ -17,6 +17,9 @@
 //   Story 13.5: locc/hicc/lohdcc/hihdcc, set_cc/set_hdcc (<control>), <target>_oncc/_cc/_curvecc for amplitude, volume (gain), pan, tune (pitch), offset and
 //             ampeg_<delay|start|attack|hold|decay|sustain|release>, controllers 0..127 and the pseudo-CCs 131, 135, 136, 137, 140, 141, read once when a voice
 //             starts; <curve> tables they name travel in SfzParseResult::cc_setup. ampeg_dynamic is rejected together with ampeg_*_oncc.
+//   Story 13.6: group (polyphony_group), off_by (offby), off_mode (offmode: fast|normal|time), off_time, polyphony, note_polyphony, note_selfmask, evaluated when a
+//             voice starts. polyphony is a region limit and, next to a non-zero group number, the group's limit; a polyphony in a header without a non-zero group set at that
+//             header or a broader one would limit the header's whole region set and is rejected as unsupported_value. `output` stays unsupported.
 //   Allow-listed non-sounding opcodes (label_*, image, hint_*, ...) are accepted, not stored,
 //   and reported in SfzParseResult::allowlisted. The authoritative list is sfz_opcode_table().
 // Sample paths must stay inside the SFZ's directory ("..", absolute paths elsewhere and an

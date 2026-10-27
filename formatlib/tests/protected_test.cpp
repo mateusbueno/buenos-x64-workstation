@@ -521,6 +521,23 @@ void test_roundtrip_and_seeks(const std::string& fixture_dir) {
       CHECK(!got.empty() && got.back() == a && rc.value().instruments()[0].cc_setup == setup);
     }
   }
+  // Story 13.6: the voice-group table (format minor 5) round-trips through the protected format.
+  {
+    Source s7;
+    BundleWriter wv = make_writer(s7, true);
+    Region a;
+    a.vg.group = 3; a.vg.has_off_by = true; a.vg.off_by = 3; a.vg.off_mode = OffMode::kTime; a.vg.off_time = 0.4f;
+    a.vg.polyphony = 2; a.vg.group_polyphony = 4; a.vg.note_polyphony = 1; a.vg.note_selfmask = false;
+    CHECK_ERR(wv.add_region(0, a), Error::kNone);
+    const Bytes bv = protect(wv, nonce1());
+    CHECK(L::get_u32(bv.data() + 4) == (kProtectedFormatVersion | (5u << 16)));
+    auto rv = ProtectedBundleReader::open_memory(bv, tk, test_key());
+    CHECK(rv.ok() && rv.value().info().format_minor == 5 && rv.value().verify_all() == Error::kNone);
+    if (rv.ok()) {
+      const auto& got = rv.value().instruments()[0].regions;
+      CHECK(!got.empty() && got.back() == a);
+    }
+  }
   // An empty writer is a valid (zero block) protected bundle.
   {
     BundleWriter we;
@@ -726,7 +743,7 @@ void test_tamper() {
   {
     struct V { std::uint32_t word; Error want; };
     for (const V& v : {V{4u, Error::kUnsupportedVersion}, V{2u, Error::kNotProtected}, V{1u, Error::kNotProtected}, V{0u, Error::kUnsupportedVersion},
-                       V{3u | (5u << 16), Error::kUnsupportedVersion}, V{3u | (4u << 16), Error::kCorruptManifest}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest},
+                       V{3u | (6u << 16), Error::kUnsupportedVersion}, V{3u | (5u << 16), Error::kCorruptManifest}, V{3u | (4u << 16), Error::kCorruptManifest}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest},
                        V{3u | (3u << 16), Error::kCorruptManifest}}) {
       Bytes b = good;
       for (int i = 0; i < 4; ++i) {

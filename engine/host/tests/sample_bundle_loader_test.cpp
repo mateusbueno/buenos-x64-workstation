@@ -377,7 +377,56 @@ static void test_cc_map_reaches_the_port() {
   CHECK(note_peak(0) == 0.0f);
 }
 
+static void test_voice_groups_reach_the_port() {
+  using namespace velora::format;
+  Region r;
+  r.vg.group = 3; r.vg.has_off_by = true; r.vg.off_by = -2; r.vg.off_mode = OffMode::kTime; r.vg.off_time = 0.125f;
+  r.vg.polyphony = 4; r.vg.group_polyphony = 9; r.vg.note_polyphony = 2; r.vg.note_selfmask = false;
+  const ports::SampleRegionDesc d = host::to_port_region(r);
+  CHECK(d.group == 3 && d.has_off_by && d.off_by == -2 && d.off_mode == ports::SampleOffMode::kTime && d.off_time == 0.125f);
+  CHECK(d.polyphony == 4 && d.group_polyphony == 9 && d.note_polyphony == 2 && !d.note_selfmask);
+  const ports::SampleRegionDesc plain = host::to_port_region(Region{});
+  CHECK(plain.group == 0 && !plain.has_off_by && plain.off_mode == ports::SampleOffMode::kFast && plain.polyphony == 0 && plain.note_selfmask);
+  // Through a real bundle (format 2.5): two regions of one group, the second cuts the first, played by the engine.
+  BundleWriter w;
+  const auto inst = w.add_instrument("Vg", "Vg.sfz");
+  std::vector<std::int32_t> pcm(60000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 60000, pcm});
+  Region a;
+  a.key_lo = a.key_hi = a.key_center = 60;
+  a.vg.group = 1; a.vg.has_off_by = true; a.vg.off_by = 2;
+  Region b = a;
+  b.key_lo = b.key_hi = b.key_center = 62;
+  b.vg = VoiceGroup{};
+  b.vg.group = 2;
+  CHECK(w.add_region(inst.value(), a) == Error::kNone);
+  CHECK(w.add_region(inst.value(), b) == Error::kNone);
+  const auto bundle_bytes = w.finalize().take();
+  auto rd = BundleReader::open_memory(bundle_bytes);
+  CHECK(rd.ok() && rd.value().format_minor() == 5);
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  const ports::InstrumentView v = loaded.instrument->instrument();
+  CHECK(v.regions[0].group == 1 && v.regions[0].has_off_by && v.regions[0].off_by == 2 && v.regions[1].group == 2 && !v.regions[1].has_off_by);
+  velora::core::SampleEngine::Config cfg;
+  cfg.max_voices = 4;
+  velora::core::SampleEngine eng(cfg);
+  eng.set_instrument(*loaded.instrument);
+  eng.start_voice(0, 60, 0xFFFF);
+  std::vector<float> l(256), rr(256);
+  eng.render(l.data(), rr.data(), 256);
+  eng.start_voice(0, 62, 0xFFFF);
+  velora::core::VoiceInfo vi;
+  unsigned releasing = 0, held = 0;
+  for (std::uint32_t slot = 0; slot < eng.voice_capacity(); ++slot)
+    if (eng.voice_info(slot, vi)) (vi.state == velora::core::VoiceState::kHeld ? held : releasing)++;
+  CHECK(held == 1 && releasing == 1);  // the note-60 voice was cut by the note-62 voice
+}
+
 int main() {
+  test_voice_groups_reach_the_port();
   test_cc_map_reaches_the_port();
   test_amp_map_reaches_the_port();
   test_trigger_and_end_reach_the_port();

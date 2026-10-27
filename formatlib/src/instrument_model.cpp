@@ -16,9 +16,24 @@ bool has_amp_extension(const Region& r) { return r.amp != AmpMap{}; }
 
 bool has_cc_extension(const Region& r) { return r.cc != CcMap{}; }
 
+bool has_vg_extension(const Region& r) { return r.vg != VoiceGroup{}; }
+
+
 namespace {
 // -0.0 == 0.0 as a number but not as bytes: one encoding per value.
 bool neg_zero(float v) { return v == 0.f && std::signbit(v); }
+
+Error validate_vg(const VoiceGroup& g) {
+  constexpr std::int32_t kLim = 2147483647;
+  if (g.group < -kLim || g.group > kLim || g.off_by < -kLim || g.off_by > kLim) return Error::kInvalidArgument;
+  if (!g.has_off_by && g.off_by != 0) return Error::kInvalidArgument;
+  if (static_cast<std::uint8_t>(g.off_mode) > kMaxOffMode) return Error::kInvalidArgument;
+  if (!std::isfinite(g.off_time) || g.off_time < 0.f || g.off_time > 100.f || neg_zero(g.off_time)) return Error::kInvalidArgument;
+  if (g.off_mode != OffMode::kTime && g.off_time != 0.f) return Error::kInvalidArgument;  // one encoding per behaviour
+  if (g.group_polyphony != 0 && g.group == 0) return Error::kInvalidArgument;  // a group limit needs a group
+  if (g.polyphony > kMaxVoiceLimit || g.group_polyphony > kMaxVoiceLimit || g.note_polyphony > kMaxVoiceLimit) return Error::kInvalidArgument;
+  return Error::kNone;
+}
 
 Error validate_cc(const CcMap& m) {
   if (m.gate_count > kMaxCcGates || m.mod_count > kMaxCcMods) return Error::kInvalidArgument;
@@ -165,6 +180,7 @@ Error validate_region(const Region& r, std::uint64_t frames) {
   if (validate_extension(r) != Error::kNone) return Error::kInvalidArgument;
   if (validate_amp(r.amp) != Error::kNone) return Error::kInvalidArgument;
   if (validate_cc(r.cc) != Error::kNone) return Error::kInvalidArgument;
+  if (validate_vg(r.vg) != Error::kNone) return Error::kInvalidArgument;
   if (r.offset >= frames) return Error::kInvalidArgument;
   if (r.has_loop_points) {
     if (r.loop_start > r.loop_end || r.loop_end >= frames) return Error::kInvalidArgument;

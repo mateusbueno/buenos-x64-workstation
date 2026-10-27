@@ -319,8 +319,8 @@ void test_rejections_leave_nothing() {
     pfx::write_bytes(d / "bundle.vlrp", pfx::resign(p.bundle, K1().seed, [](Bytes& manifest, Bytes&) { manifest[96 + 3] ^= 0x01; }));
     expect(d.string(), ws::v1::INSTALL_REASON_HASH_LIST_MISMATCH, "hash list root");
     pfx::write_bytes(d / "bundle.vlrp", pfx::resign(p.bundle, K1().seed, [](Bytes& manifest, Bytes& header) {
-                       manifest[2] = 5;
-                       header[6] = 5;
+                       manifest[2] = 6;
+                       header[6] = 6;
                      }));
     expect(d.string(), ws::v1::INSTALL_REASON_UNSUPPORTED_VERSION, "unknown minor");
     // an unprotected (format 2) bundle

@@ -544,9 +544,117 @@ int main() {
     // determinism: the same text imports to the same regions
     CHECK(parse("<region> sample=a.wav key=60 amp_velcurve_30=0.3 amp_velcurve_90=0.8\n").regions == parse("<region> sample=a.wav key=60 amp_velcurve_90=0.8 amp_velcurve_30=0.3\n").regions);
   }
+  {  // Story 13.6: choke groups (group, off_by, off_mode, off_time) and polyphony limits (polyphony, note_polyphony, note_selfmask)
+    const std::string R = "<region> sample=a.wav key=60 ";
+    {  // defaults: a region without the opcodes has the default VoiceGroup (no table record)
+      auto r = parse(R + "\n");
+      CHECK(r.ok() && r.regions.size() == 1 && r.regions[0].vg == VoiceGroup{} && !has_vg_extension(r.regions[0]));
+    }
+    {  // group / off_by / off_mode / off_time with their aliases; inheritance from <group>
+      auto r = parse("<group> group=2 off_by=1 off_mode=normal\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61 group=3 offby=2 offmode=fast\n"
+                     "<region> sample=a.wav key=62 polyphony_group=-4 off_time=0.5\n<region> sample=a.wav key=63 off_mode=time\n<region> sample=a.wav key=64 off_time=0.5 off_mode=fast\n");
+      CHECK(r.ok() && r.regions.size() == 5);
+      if (r.regions.size() == 5) {
+        VoiceGroup g0; g0.group = 2; g0.has_off_by = true; g0.off_by = 1; g0.off_mode = OffMode::kNormal;
+        CHECK(r.regions[0].vg == g0);
+        CHECK(r.regions[1].vg.group == 3 && r.regions[1].vg.off_by == 2 && r.regions[1].vg.off_mode == OffMode::kFast && r.regions[1].vg.off_time == 0.f);
+        CHECK(r.regions[2].vg.group == -4 && r.regions[2].vg.off_by == 1 && r.regions[2].vg.off_mode == OffMode::kTime && r.regions[2].vg.off_time == 0.5f);  // off_time implies time
+        CHECK(r.regions[3].vg.off_mode == OffMode::kTime && r.regions[3].vg.off_time == 0.006f);  // off_mode=time alone: sfizz's 6 ms
+        CHECK(r.regions[4].vg.off_mode == OffMode::kFast && r.regions[4].vg.off_time == 0.f);     // a later off_mode replaces the one off_time implied (over the group's normal)
+        for (const Region& g : r.regions) CHECK(validate_region(g, 1000) == Error::kNone);
+      }
+    }
+    {  // off_mode fast after off_time in the same region: canonical (no stray off_time), and an out-of-range off_time is clamped with a log entry
+      auto r = parse(R + "off_time=0.5 off_mode=fast\n");
+      CHECK(r.ok() && r.regions[0].vg.off_mode == OffMode::kFast && r.regions[0].vg.off_time == 0.f);
+      auto c = parse(R + "off_time=500\n");
+      CHECK(c.ok() && c.regions[0].vg.off_time == 100.f && c.ignored_values.size() == 1);
+    }
+    {  // polyphony: a region limit, and with a non-zero group the whole group's limit (the last assignment wins for every region of the group)
+      auto r = parse("<region> sample=a.wav key=60 group=1 polyphony=2\n<region> sample=a.wav key=61 group=1\n<region> sample=a.wav key=62 group=1 polyphony=3\n"
+                     "<region> sample=a.wav key=63 polyphony=4\n<region> sample=a.wav key=64 group=2\n");
+      CHECK(r.ok() && r.regions.size() == 5);
+      if (r.regions.size() == 5) {
+        CHECK(r.regions[0].vg.polyphony == 2 && r.regions[0].vg.group_polyphony == 3);
+        CHECK(r.regions[1].vg.polyphony == 0 && r.regions[1].vg.group_polyphony == 3);
+        CHECK(r.regions[2].vg.polyphony == 3 && r.regions[2].vg.group_polyphony == 3);
+        CHECK(r.regions[3].vg.polyphony == 4 && r.regions[3].vg.group_polyphony == 0);  // group 0: only the region
+        CHECK(r.regions[4].vg.group == 2 && r.regions[4].vg.group_polyphony == 0 && r.regions[4].vg.polyphony == 0);
+      }
+      // polyphony in <group> next to group=N (in <group> or <master>) is the group's limit too
+      auto g = parse("<master>group=5\n<group>polyphony=1\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61\n");
+      CHECK(g.ok() && g.regions.size() == 2 && g.regions[0].vg.polyphony == 1 && g.regions[1].vg.group_polyphony == 1);
+      auto g2 = parse("<group>group=5 polyphony=1\n<region> sample=a.wav key=60\n");
+      CHECK(g2.ok() && g2.regions[0].vg.group == 5 && g2.regions[0].vg.group_polyphony == 1);
+      // 256 is sfizz's default: no limit stored
+      CHECK(parse(R + "polyphony=256 note_polyphony=256\n").regions[0].vg == VoiceGroup{});
+      CHECK(parse(R + "polyphony=255 group=1\n").regions[0].vg.polyphony == 255);
+    }
+    {  // region sets: a polyphony that limits all the regions of a header is rejected, naming the opcode at its own line
+      for (const char* text : {"<global>polyphony=8\n<region> sample=a.wav key=60\n", "<master>polyphony=8\n<region> sample=a.wav key=60\n",
+                               "<master>polyphony=8 group=2\n<group>group=3\n<region> sample=a.wav key=60\n",   // a region under it leaves group 2
+                               "<master>polyphony=8 group=2\n<region> sample=a.wav key=60 group=4\n",
+                               "<group>polyphony=2\n<region> sample=a.wav key=60\n", "<group>polyphony=2\n<region> sample=a.wav key=60 group=3\n",
+                               "<global>polyphony=8 group=2\n<group>group=3\n<region> sample=a.wav key=60\n"}) {
+        auto d = parse(text);
+        CHECK(!d.ok() && has(d, SfzIssueKind::kUnsupportedValue, "region set"));
+        bool named = false;
+        for (const auto& i : d.issues) named = named || (i.opcode == "polyphony" && is_unsupported_feature(i.kind) && i.line >= 1);
+        CHECK(named);
+      }
+      {  // the Salamander pedal pattern: <master> group=N polyphony=P, every region under it keeps N: the group's limit stands for the set's
+        auto m = parse("<master>\nlokey=-1 hikey=-1 group=1 polyphony=1 off_time=0.1\n<group>\nvolume=-20\n<region> sample=a.wav lorand=0 hirand=0.5\n<region> sample=a.wav lorand=0.5 hirand=1\n");
+        CHECK(m.ok() && m.regions.size() == 2);
+        for (const auto& g : m.regions) CHECK(g.vg.group == 1 && g.vg.polyphony == 1 && g.vg.group_polyphony == 1 && g.vg.off_mode == OffMode::kTime && g.vg.off_time == 0.1f);
+      }
+      {  // Salamander's pedal.txt: the same under a <global>; and a group set at a broader header than the polyphony
+        auto m = parse("<global>\nmaster_label=pedalAction\nlokey=-1 hikey=-1 group=1 polyphony=1 off_time=0.1\n<group>\n<region> sample=a.wav\n");
+        CHECK(m.ok() && m.regions.size() == 1 && m.regions[0].vg.group_polyphony == 1 && m.regions[0].vg.polyphony == 1);
+        auto n = parse("<global>group=3\n<group>polyphony=2\n<region> sample=a.wav key=60\n");
+        CHECK(n.ok() && n.regions.size() == 1 && n.regions[0].vg.group == 3 && n.regions[0].vg.group_polyphony == 2);
+      }
+      {  // a deeper polyphony would hide the header's region-set limit: rejected, naming the header's opcode, at every header level
+        for (const char* text : {"<group>group=1 polyphony=2\n<region> sample=a.wav key=60 polyphony=5\n",
+                                 "<master>group=1 polyphony=2\n<group>polyphony=3\n<region> sample=a.wav key=60\n",
+                                 "<master>group=1 polyphony=2\n<region> sample=a.wav key=60 polyphony=5\n",
+                                 "<global>group=1 polyphony=2\n<region> sample=a.wav key=60 polyphony=5\n",
+                                 "<global>group=1 polyphony=2\n<master>polyphony=4\n<region> sample=a.wav key=60\n"}) {
+          auto d = parse(text);
+          CHECK(!d.ok() && has(d, SfzIssueKind::kUnsupportedValue, "later polyphony overrides"));
+          bool named = false;
+          for (const auto& i : d.issues) named = named || (i.opcode == "polyphony" && i.line == 1);
+          CHECK(named);
+        }
+        CHECK(parse("<group>group=1\n<region> sample=a.wav key=60 polyphony=5\n").ok());  // no header limit: a region limit is fine
+      }
+      CHECK(!parse("<region> sample=a.wav key=60 polyphony=0\n").ok());  // sfizz 0: not represented
+      CHECK(parse("<region> sample=a.wav key=60 polyphony=-1\n").ok() && parse("<region> sample=a.wav key=60 polyphony=999\n").ignored_values.size() == 1);
+    }
+    {  // note_polyphony / note_selfmask
+      CHECK(parse(R + "note_polyphony=1 note_selfmask=off\n" + R + "note_polyphony=1 note_selfmask=mask\n").regions[1].vg.note_selfmask);
+      auto r = parse(R + "note_polyphony=1\n" + R + "note_polyphony=2 note_selfmask=off\n" + R + "note_polyphony=0\n");
+      CHECK(r.ok() && r.regions.size() == 3);
+      if (r.regions.size() == 3) {
+        CHECK(r.regions[0].vg.note_polyphony == 1 && r.regions[0].vg.note_selfmask);
+        CHECK(r.regions[1].vg.note_polyphony == 2 && !r.regions[1].vg.note_selfmask);
+        CHECK(r.regions[2].vg.note_polyphony == 0 && r.ignored_values.size() == 1);
+      }
+    }
+    {  // bad values
+      CHECK(!parse(R + "off_mode=slow\n").ok() && has(parse(R + "off_mode=slow\n"), SfzIssueKind::kUnsupportedValue, "off_mode"));
+      CHECK(!parse(R + "note_selfmask=maybe\n").ok());
+      CHECK(!parse(R + "group=abc\n").ok() && !parse(R + "off_by=1.5\n").ok());
+      CHECK(has(parse(R + "group=9999999999\n"), SfzIssueKind::kUnsupportedValue, "group"));
+      CHECK(!parse(R + "off_time=abc\n").ok());
+    }
+    for (const char* op : {"group", "polyphony_group", "off_by", "offby", "off_mode", "offmode", "off_time", "polyphony", "note_polyphony", "note_selfmask"})
+      CHECK(classify_opcode(op) == OpcodeClass::kSupported);
+    // determinism
+    CHECK(parse(R + "group=1 off_by=2 polyphony=3\n").regions == parse(R + "polyphony=3 off_by=2 group=1\n").regions);
+  }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
     const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_oncc1", "width_oncc1", "volume_stepcc1", "pan_smoothcc2",
-                         "effect1", "output", "group", "off_by", "polyphony", "note_offset", "octave_offset",
+                         "effect1", "output", "note_offset", "octave_offset",
                          "amp_veltrack_oncc7", "sample_quality", "delay", "rt_decay", "amp_random", "ampeg_vel2delay", "amp_veltrack_curvecc3", "xfin_lovel", "cutoff2", "fil2_type", "pitch_keytrack"};
     for (const char* op : bad) {
       auto r = parse(std::string("<region> sample=a.wav key=60 ") + op + "=1\n");

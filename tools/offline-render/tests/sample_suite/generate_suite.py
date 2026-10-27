@@ -8,6 +8,7 @@ which is why the outputs are committed and the goldens are rendered from the com
     python3 generate_suite.py            # (re)writes samples/, sfz/, midi/ next to this script
     python3 generate_suite.py story134   # only the Story 13.4 cases (no existing file is touched)
     python3 generate_suite.py story135   # only the Story 13.5 cases (no existing file is touched)
+    python3 generate_suite.py story136   # only the Story 13.6 cases (no existing file is touched)
 
 MIDI timing: the files use 32000 PPQ at 500000 us per quarter, i.e. 0.75 audio frames per tick at
 48 kHz. A frame is mapped to a tick that puts the event at a quarter-frame fraction (never on an
@@ -591,6 +592,66 @@ def build_story135_cases():
 """, ev, ccs)
 
 
+def build_story136_cases():
+    """Story 13.6: choke groups (group, off_by, off_mode, off_time), the sustain pedal, and polyphony limits (group polyphony, region polyphony, note_polyphony
+    with and without note_selfmask). Every cut is a release the engine and sfizz both start at the note on of the cutting voice. The voices are looped samples
+    (they sound until released) so a missing or late cut shows as energy in the residual."""
+    loop = "loop_mode=loop_continuous loop_start=2400 loop_end=7199"
+
+    # Choke groups. 60 (fast, the default 6 ms), 61 (normal: its own 0.12 s release), 63 (off_time=0.08) are open hats cut by the closed hat 65 (group 2). 67 and 69 share
+    # group 3 with off_by=3: another note of the group cuts, a retrigger of the same note does not. The last block cuts a note that already got its note off (a release in
+    # progress) with the fast release.
+    ev = notes([
+        (secs(0.05), secs(0.55), 60, 100), (secs(0.25), secs(0.30), 65, 100),
+        (secs(0.80), secs(1.40), 61, 100), (secs(1.00), secs(1.05), 65, 100),
+        (secs(1.70), secs(2.30), 63, 100), (secs(1.90), secs(1.95), 65, 100),
+        (secs(2.60), secs(3.30), 67, 100), (secs(2.75), secs(3.30), 69, 100), (secs(2.97), secs(3.40), 69, 100),
+        (secs(3.90), secs(4.10), 60, 100), (secs(4.14), secs(4.19), 65, 100),
+    ])
+    ev.sort(key=lambda e: (e[0], e[1]))
+    case("choke_groups", HEADER + f"""<global> ampeg_release=0.12
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 {loop} group=1 off_by=2
+<region> sample=loop2.wav lokey=61 hikey=61 pitch_keycenter=61 {loop} group=1 off_by=2 off_mode=normal
+<region> sample=loop.wav lokey=63 hikey=63 pitch_keycenter=63 {loop} group=1 off_by=2 off_time=0.08
+<region> sample=short.wav lokey=65 hikey=65 pitch_keycenter=65 group=2
+<region> sample=loop.wav lokey=67 hikey=67 pitch_keycenter=67 {loop} group=3 off_by=3
+<region> sample=loop2.wav lokey=69 hikey=69 pitch_keycenter=69 {loop} group=3 off_by=3
+""", ev, ())
+
+    # The sustain pedal (CC64) is down from the start: 60 (open hat, off_by=2) and 62 (no choke) are released with the pedal down and keep sounding; the closed hat 65
+    # cuts 60 at its note on although the pedal holds it, 62 rings on until the pedal comes up at 1.2 s.
+    ev = notes([(secs(0.05), secs(0.30), 60, 100), (secs(0.05), secs(0.30), 62, 100), (secs(0.55), secs(0.60), 65, 100)])
+    ev.sort(key=lambda e: (e[0], e[1]))
+    case("choke_sustain", HEADER + f"""<global> ampeg_release=0.4
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 {loop} group=1 off_by=2
+<region> sample=loop2.wav lokey=62 hikey=62 pitch_keycenter=62 {loop}
+<region> sample=short.wav lokey=65 hikey=65 pitch_keycenter=65 group=2
+""", ev, [(secs(0.02), 64, 127), (secs(1.20), 64, 0)])
+
+    # Polyphony. Keys 60, 62, 64 are three regions of group 5 with polyphony=2: the third note cuts the oldest, a fourth cuts the next. Keys 67 / 69 / 71: note_polyphony=1
+    # (a retrigger at the same or a higher velocity cuts the previous voice, a quieter one does not), note_selfmask=off (the oldest goes whatever the velocity) and
+    # note_polyphony=2 (the quietest of the older voices goes). Keys 72..74 are one region with polyphony=1.
+    ev = notes([
+        (secs(0.05), secs(1.00), 60, 100), (secs(0.20), secs(1.00), 62, 100), (secs(0.35), secs(1.00), 64, 100), (secs(0.50), secs(1.00), 60, 100),
+        (secs(1.30), secs(2.50), 67, 100), (secs(1.45), secs(2.50), 67, 100), (secs(1.60), secs(2.50), 67, 60),
+        (secs(2.80), secs(3.80), 69, 100), (secs(2.95), secs(3.80), 69, 50),
+        (secs(4.10), secs(5.40), 71, 100), (secs(4.25), secs(5.40), 71, 60), (secs(4.40), secs(5.40), 71, 110),
+        (secs(5.70), secs(6.40), 72, 100), (secs(5.85), secs(6.40), 74, 100),
+    ])
+    ev.sort(key=lambda e: (e[0], e[1]))
+    case("polyphony_limits", HEADER + f"""<global> ampeg_release=0.08
+<group> group=5 polyphony=2
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 {loop}
+<region> sample=loop2.wav lokey=62 hikey=62 pitch_keycenter=62 {loop}
+<region> sample=loop.wav lokey=64 hikey=64 pitch_keycenter=64 {loop}
+<group>
+<region> sample=loop.wav lokey=67 hikey=67 pitch_keycenter=67 {loop} note_polyphony=1
+<region> sample=loop2.wav lokey=69 hikey=69 pitch_keycenter=69 {loop} note_polyphony=1 note_selfmask=off
+<region> sample=loop.wav lokey=71 hikey=71 pitch_keycenter=71 {loop} note_polyphony=2
+<region> sample=loop2.wav lokey=72 hikey=74 pitch_keycenter=73 {loop} polyphony=1
+""", ev, ())
+
+
 def make_demo_probe():
     """midi/demo_probe.mid: a short phrase over the keyboard range for the env-gated real-library null test."""
     keys = [28, 40, 52, 64, 76, 88, 100]
@@ -623,10 +684,11 @@ def make_demo_features():
 
 
 def main():
-    if sys.argv[1:] not in ([], ["story134"], ["story135"]):
-        sys.exit("usage: generate_suite.py [story134|story135]")
-    if sys.argv[1:] in (["story134"], ["story135"]):  # only that story's cases (leaves every older file untouched)
-        (build_story134_cases if sys.argv[1] == "story134" else build_story135_cases)()
+    stories = {"story134": build_story134_cases, "story135": build_story135_cases, "story136": build_story136_cases}
+    if sys.argv[1:] != [] and not (len(sys.argv) == 2 and sys.argv[1] in stories):
+        sys.exit("usage: generate_suite.py [story134|story135|story136]")
+    if len(sys.argv) == 2:  # only that story's cases (leaves every older file untouched)
+        stories[sys.argv[1]]()
         for name, (sfz, events, ccs, setup) in CASES.items():
             with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
                 f.write(sfz)
@@ -640,6 +702,7 @@ def main():
     build_story52_cases()
     build_story134_cases()
     build_story135_cases()
+    build_story136_cases()
     for name, (sfz, events, ccs, setup) in CASES.items():
         with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
             f.write(sfz)

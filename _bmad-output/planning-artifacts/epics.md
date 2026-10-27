@@ -7204,11 +7204,13 @@ So that hi-hats, noise releases and mono instruments behave correctly.
 **Given** `polyphony` and `note_polyphony`
 **When** the limit is reached
 **Then** the oldest voice of that group or note is released, deterministically, with no allocation in the render thread
-**And** parallel voice render (3 partitions) stays bit-identical to the serial result
+**And** parallel voice render (3 partitions) is bit-identical to the 1-thread parallel render and equal to the serial render within the repository's 1e-5 contract (the partition sums differ from the serial accumulation only by float rounding), with the same voice table after every block
 
 **Given** the null test against sfizz
 **When** a fixture uses groups
 **Then** it passes, or the divergence of sfizz's stealing and `off_mode` timing is documented with evidence
+
+> **Status note (Story 13.6 run):** `group`, `off_by`, `off_mode`, `off_time`, `polyphony`, `note_polyphony` (and `note_selfmask`) land with bundle format minor 5; sfizz null fixtures `choke_groups`, `choke_sustain` and `polyphony_limits` pass at -62.5, -62.6 and -64.4 dB, so no divergence of sfizz's stealing or `off_mode` timing needed documenting beyond the two limits in the spec (no synthetic note off for a choked voice; region-set `polyphony` rejected). Parallel render: as the AC above states, 1 and 3 threads are bit-identical and the voice table equals the serial one after every block; the audio matches the serial render within the 1e-5 contract. Corpus: `group`/`off_by`/`note_polyphony` no longer block Osiris, but `sustain_cc`, `ampeg_release_shape`, `..` map paths and the 13.5 `ampeg_dynamic` + `ampeg_*_oncc` rejection still do; no library that did not import before imports now (VSCO2 and Manthey Klaviano still do).
 
 ### Story 13.7: Pitch bend and CC-triggered voices
 

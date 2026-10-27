@@ -789,7 +789,7 @@ void test_extensions() {
     CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
     const Bytes good = w.finalize().take();
     CHECK(BundleReader::open_memory(good).ok());
-    { Bytes b = good; wr32(b, 4, 2u | (5u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 2u | (6u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 3u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 1u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 2u); CHECK(!BundleReader::open_memory(b).ok()); }  // word differs from the manifest's
@@ -1381,7 +1381,150 @@ void test_cc_table() {
     wr32(b, mo, 2u | (4u << 16));
     rehash(b);
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    wr32(b, 4, 2u | (6u << 16));
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
+  }
+}
+
+// Story 13.6: format 2.5, the voice-group table (group, off_by, off_mode / off_time, polyphony limits).
+void test_vg_table() {
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
+  auto version_word = [](const Bytes& b) { return layout::get_u32(b.data() + 4); };
+  Region plain;
+  Region choke = plain;
+  choke.vg.group = 2; choke.vg.has_off_by = true; choke.vg.off_by = 1; choke.vg.off_mode = OffMode::kNormal;
+  Region timed = sample_region(0);
+  timed.vg.group = -7; timed.vg.has_off_by = true; timed.vg.off_by = -7; timed.vg.off_mode = OffMode::kTime; timed.vg.off_time = 0.25f;
+  timed.vg.polyphony = 3; timed.vg.group_polyphony = 255; timed.vg.note_polyphony = 1; timed.vg.note_selfmask = false;
+  Region all = ext_region(0);  // minors 1..5 content in one region
+  all.trigger = TriggerMode::kLegato; all.has_end = true; all.end = 900; all.amp.veltrack = 40.f;
+  all.cc.gate_count = 1; all.cc.gates[0] = {1, 10.f, 20.f};
+  all.vg = timed.vg;
+  Region mono = plain;
+  mono.vg.polyphony = 1;
+  const std::vector<Region> regs = {plain, choke, timed, all, mono};
+  {  // round trip: two instruments, only the first has records; the second still carries the empty table
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    for (const auto& r : regs) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, plain), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (5u << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == 5);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == regs);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && r.value().instruments()[1].regions[0] == plain);
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    CHECK(w.finalize().take() == b);  // deterministic
+    // The N-1 writer (minor ceiling 4) refuses voice-group regions.
+    BundleWriter w4(WriterOptions{kFormatVersion, 4});
+    const std::size_t j0 = w4.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w4.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w4.add_region(j0, choke), Error::kNone);
+    CHECK_ERR(w4.finalize().error(), Error::kInvalidArgument);
+  }
+  {  // bundles without voice groups keep their exact bytes whatever the writer's ceiling (minor 0..4 content)
+    Region trig = plain; trig.trigger = TriggerMode::kReleaseKey;
+    Region amp = plain; amp.amp.veltrack = 10.f;
+    Region ccr = plain; ccr.cc.gate_count = 1; ccr.cc.gates[0] = {64, 64.f, 100.f};
+    for (const Region& rg : {plain, sample_region(0), ext_region(0), trig, amp, ccr}) {
+      Bytes by[6];
+      for (std::uint32_t m = 0; m < 6; ++m) {
+        if ((m == 0 && has_extension(rg)) || (m < 2 && has_trigger_extension(rg)) || (m < 3 && has_amp_extension(rg)) || (m < 4 && has_cc_extension(rg))) continue;
+        BundleWriter x(WriterOptions{kFormatVersion, m});
+        const std::size_t k = x.add_instrument("A", "a.sfz").value();
+        CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+        CHECK_ERR(x.add_region(k, rg), Error::kNone);
+        by[m] = x.finalize().take();
+      }
+      for (std::uint32_t m = 0; m < 5; ++m) CHECK(by[5] == by[m] || by[m].empty());
+      const std::uint32_t want = has_cc_extension(rg) ? 4u : has_amp_extension(rg) ? 3u : has_trigger_extension(rg) ? 2u : has_extension(rg) ? 1u : 0u;
+      CHECK(version_word(by[5]) == (2u | (want << 16)));
+    }
+  }
+  // Writer-side validation.
+  {
+    BundleWriter v;
+    const std::size_t vi = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(vi, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad = [&](auto mutate) { Region x = timed; mutate(x); return v.add_region(vi, x); };
+    CHECK_ERR(bad([](Region&) {}), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.vg.has_off_by = false; }), Error::kInvalidArgument);               // off_by without the flag: two encodings
+    CHECK_ERR(bad([](Region& x) { x.vg.off_mode = OffMode::kFast; }), Error::kInvalidArgument);        // off_time without off_mode time
+    CHECK_ERR(bad([](Region& x) { x.vg.off_mode = static_cast<OffMode>(3); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.off_time = 100.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.off_time = -0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.off_time = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.polyphony = 256; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.group_polyphony = 256; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.note_polyphony = 1000; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.group = 0; }), Error::kInvalidArgument);  // a group limit needs a group
+    CHECK_ERR(bad([](Region& x) { x.vg.group = -2147483647 - 1; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.vg.off_mode = OffMode::kTime; x.vg.off_time = 0.f; }), Error::kNone);  // time with 0 s is a legal instant cut
+  }
+  // Corruption of the table (the tail of the manifest: one record).
+  BundleWriter u;
+  const std::size_t ui = u.add_instrument("A", "a.sfz").value();
+  CHECK_ERR(u.add_sample(ui, {"s", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(u.add_region(ui, plain), Error::kNone);
+  CHECK_ERR(u.add_region(ui, timed), Error::kNone);
+  const Bytes good = u.finalize().take();
+  const std::size_t end = rd64(good, 8) + rd64(good, 16);
+  const std::size_t rec = end - layout::kVgRecordSize;
+  CHECK(layout::kVgRecordSize == 28);
+  CHECK(layout::get_u32(good.data() + rec - 4) == 1u && layout::get_u32(good.data() + rec) == 1u);  // n_vg, region index 1
+  auto put_f32 = [](Bytes& by, std::size_t at, float v) { std::uint32_t u32; std::memcpy(&u32, &v, 4); wr32(by, at, u32); };
+  auto expect_bad = [&](Bytes bad_bytes, const char* what) {
+    rehash(bad_bytes);
+    auto rb = BundleReader::open_memory(bad_bytes);
+    if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL vg table corruption not rejected: %s\n", what); ++g_fail; }
+  };
+  { Bytes b = good; b[rec + 12] = 4; expect_bad(b, "unknown flag bit"); }
+  { Bytes b = good; b[rec + 13] = 3; expect_bad(b, "unknown off_mode"); }
+  { Bytes b = good; b[rec + 14] = 1; expect_bad(b, "padding"); }
+  { Bytes b = good; b[rec + 12] = 0; expect_bad(b, "off_by without its flag"); }
+  { Bytes b = good; b[rec + 13] = 0; expect_bad(b, "off_time without off_mode time"); }
+  { Bytes b = good; put_f32(b, rec + 16, 200.f); expect_bad(b, "off_time above 100"); }
+  { Bytes b = good; put_f32(b, rec + 16, std::nanf("")); expect_bad(b, "NaN off_time"); }
+  { Bytes b = good; b[rec + 20] = 0; b[rec + 21] = 1; expect_bad(b, "polyphony above 255"); }
+  { Bytes b = good; b[rec + 26] = 1; expect_bad(b, "trailing padding"); }
+  { Bytes b = good; wr32(b, rec + 4, 0); expect_bad(b, "group_polyphony with group 0"); }
+  { Bytes b = good; wr32(b, rec, 5); expect_bad(b, "region index out of range"); }
+  { Bytes b = good; wr32(b, rec - 4, 3); expect_bad(b, "n_vg larger than regions"); }
+  for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+    CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+  for (std::size_t off = rec - 4; off < end; ++off)
+    for (int bit = 0; bit < 8; ++bit) {
+      Bytes bad_bytes = good;
+      bad_bytes[off] ^= std::uint8_t(1 << bit);
+      rehash(bad_bytes);
+      auto r3 = BundleReader::open_memory(bad_bytes);
+      if (!r3.ok() && r3.error() != Error::kCorruptManifest) { std::printf("FAIL vg flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error())); ++g_fail; }
+    }
+  // A record that holds the default VoiceGroup is non-canonical.
+  { Bytes b = good; for (std::size_t i = rec + 4; i < end; ++i) b[i] = 0; expect_bad(b, "record with the default values"); }
+  // A minor 5 stamp on a bundle with no voice-group record is non-canonical; so is a newer minor.
+  {
+    BundleWriter x;
+    const std::size_t k = x.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(x.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+    Region a = plain; a.cc.gate_count = 1; a.cc.gates[0] = {64, 64.f, 100.f};
+    CHECK_ERR(x.add_region(k, a), Error::kNone);
+    Bytes b = x.finalize().take();  // minor 4
+    const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+    b.insert(b.begin() + mo + ms, 4, std::uint8_t(0));  // n_vg = 0
+    wr64(b, 16, ms + 4); wr64(b, 24, io + 4); wr64(b, 40, rd64(b, 40) + 4); wr64(b, 56, rd64(b, 56) + 4);
+    for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
     wr32(b, 4, 2u | (5u << 16));
+    wr32(b, mo, 2u | (5u << 16));
+    rehash(b);
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    wr32(b, 4, 2u | (6u << 16));
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
   }
 }
@@ -1648,6 +1791,7 @@ int main() {
   test_regions();
   test_extensions();
   test_cc_table();
+  test_vg_table();
   test_float_goldens();
   test_identity();
   test_file_io();

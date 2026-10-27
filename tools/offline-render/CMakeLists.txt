@@ -819,6 +819,10 @@ endforeach()
 foreach(_neg cc_gates cc_modulation cc_envelope cc_pseudo)
   add_test(NAME sample_null_neg_strip135_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip135)
 endforeach()
+# Story 13.6: the group and polyphony cases must fail when the same instrument is imported without those opcodes.
+foreach(_neg choke_groups choke_sustain polyphony_limits)
+  add_test(NAME sample_null_neg_strip136_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip136)
+endforeach()
 add_test(NAME sample_render_cli_errors COMMAND sample_suite_test cli-errors)
 # Story 1.18: --voice-threads 3 equals --voice-threads 1 bit for bit; 2 and a non-sample engine exit 2.
 add_test(NAME sample_render_voice_threads COMMAND sample_suite_test voice-threads)

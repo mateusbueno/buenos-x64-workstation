@@ -79,6 +79,7 @@ class Cursor {
   std::size_t remaining() const { return n_ - pos_; }
   bool done() const { return pos_ == n_; }
   std::uint8_t u8() { return take(1) ? p_[pos_ - 1] : 0; }
+  std::uint16_t u16() { const std::uint16_t lo = u8(); const std::uint16_t hi = u8(); return static_cast<std::uint16_t>(lo | (hi << 8)); }
   std::uint32_t u32() { return take(4) ? get_u32(p_ + pos_ - 4) : 0; }
   std::uint64_t u64() { return take(8) ? get_u64(p_ + pos_ - 8) : 0; }
   float f32() { return bits_to_float(static_cast<std::int32_t>(u32())); }
@@ -279,7 +280,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
-  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0;
+  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0, total_vg = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -503,6 +504,36 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
         if (validate_cc_setup(ins.cc_setup) != Error::kNone) return Error::kCorruptManifest;
         if (ins.cc_setup.any()) ++total_cc_setup;
       }
+      if (minor >= 5) {  // the voice-group table (Story 13.6) follows the minor 4 tables
+        const std::uint32_t n_vg = c.u32();
+        if (!c.ok() || n_vg > n_regions || n_vg > c.remaining() / kVgRecordSize) return Error::kCorruptManifest;
+        total_vg += n_vg;
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_vg; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          VoiceGroup& g = rg.vg;
+          g.group = static_cast<std::int32_t>(c.u32());
+          g.off_by = static_cast<std::int32_t>(c.u32());
+          const std::uint8_t flags = c.u8(), mode = c.u8();
+          const std::uint8_t p0 = c.u8(), p1 = c.u8();
+          g.off_time = c.f32();
+          g.polyphony = c.u16();
+          g.group_polyphony = c.u16();
+          g.note_polyphony = c.u16();
+          const std::uint16_t q = c.u16();
+          if (!c.ok() || (flags & ~3u) || mode > kMaxOffMode || p0 || p1 || q) return Error::kCorruptManifest;
+          g.has_off_by = (flags & 1u) != 0;
+          g.note_selfmask = (flags & 2u) == 0;
+          g.off_mode = static_cast<OffMode>(mode);
+          // Canonical: a record exists only for a region that really needs it.
+          if (!has_vg_extension(rg) ||
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+      }
     }
     r.instruments.push_back(std::move(ins));
   }
@@ -513,7 +544,8 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   if (minor == 1 && total_ext == 0) return Error::kCorruptManifest;
   if (minor == 2 && total_trig == 0) return Error::kCorruptManifest;
   if (minor == 3 && total_amp == 0) return Error::kCorruptManifest;
-  if (minor >= 4 && total_cc == 0 && total_cc_setup == 0) return Error::kCorruptManifest;
+  if (minor == 4 && total_cc == 0 && total_cc_setup == 0) return Error::kCorruptManifest;
+  if (minor >= 5 && total_vg == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index.resize(n_blocks);

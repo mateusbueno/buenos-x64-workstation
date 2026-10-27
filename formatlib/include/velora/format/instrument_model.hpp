@@ -186,6 +186,31 @@ struct InstrumentCcSetup {
 // Checks the invariants of a setup (ranges, ordering, finite values). kNone or kInvalidArgument.
 Error validate_cc_setup(const InstrumentCcSetup& s);
 
+// Story 13.6 (bundle format 2.5): choke groups and polyphony limits, evaluated when a voice starts (sfizz Synth::checkOffGroups and VoiceManager::checkPolyphony).
+// `group` / `off_by`: a voice that starts in group G releases every voice of its part whose region has off_by == G (a voice of the same group and the same note is
+// spared while its own gates still hold, as sfizz); the cut uses the victim's off_mode: fast = 6 ms, normal = the victim's own release, time = off_time seconds.
+// polyphony = at most that many voices of this region, group_polyphony = at most that many voices of the region's group (the importer gives every region of a
+// group the group's final limit), note_polyphony = at most that many voices of the group for the same note (a quieter retrigger does not cut a louder voice
+// unless note_selfmask is false). When a limit is reached the oldest voice (and the voices of its note on) is released with the victim's off_mode.
+// 0 in a limit = none. The importer stores at most 255: sfizz's default (256) is no limit.
+enum class OffMode : std::uint8_t {
+  kFast = 0,    // off_mode=fast (the default): 6 ms
+  kNormal = 1,  // off_mode=normal: the voice's own ampeg_release
+  kTime = 2,    // off_mode=time, or any off_time: off_time seconds
+};
+inline constexpr std::uint8_t kMaxOffMode = 2;
+inline constexpr std::uint32_t kMaxVoiceLimit = 255;
+struct VoiceGroup {
+  std::int32_t group = 0;
+  bool has_off_by = false;
+  std::int32_t off_by = 0;      // 0 when !has_off_by
+  OffMode off_mode = OffMode::kFast;
+  float off_time = 0;           // seconds 0..100, only with kTime (0 otherwise)
+  std::uint16_t polyphony = 0, group_polyphony = 0, note_polyphony = 0;
+  bool note_selfmask = true;    // note_selfmask=on (the default)
+  friend bool operator==(const VoiceGroup&, const VoiceGroup&) = default;
+};
+
 struct Region {
   std::uint32_t sample = 0;  // index into the owning instrument's samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -214,6 +239,8 @@ struct Region {
   AmpMap amp;
   // Story 13.5 extension (bundle format 2.4).
   CcMap cc;
+  // Story 13.6 extension (bundle format 2.5).
+  VoiceGroup vg;
 
   friend bool operator==(const Region&, const Region&) = default;
 };
@@ -230,6 +257,9 @@ bool has_amp_extension(const Region& r);
 
 // True when the region needs a record in the format 2.4 cc table: any gate or CC modulation entry.
 bool has_cc_extension(const Region& r);
+
+// True when the region needs a record in the format 2.5 voice-group table: any VoiceGroup field other than its default.
+bool has_vg_extension(const Region& r);
 
 // Checks every range invariant of a region against its sample length (`sample_frames`). Returns
 // kNone or kInvalidArgument. Used by the writer, the reader (as kCorruptManifest) and the importer.

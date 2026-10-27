@@ -101,7 +101,12 @@ std::shared_ptr<Instrument> make_instrument(std::uint32_t k) {
   {
     auto& hi = t->region(mono, 90, 127); hi.filter_type = ports::SampleFilterType::kLpf2p; hi.filter_cutoff_hz = 19999.0f; hi.filter_resonance_db = 12.0f;
     auto& lo = t->region(stereo, 0, 39); lo.filter_type = ports::SampleFilterType::kHpf2p; lo.filter_cutoff_hz = 1.0f;
-    t->region(mono, 0, 127);                            // plain, bit-exact bypass
+    auto& all = t->region(mono, 0, 127);                // plain (no filter, no crossfade)
+    // Story 13.6: choke groups and polyphony limits on the busiest regions, so cuts, limit steals and the three off modes run inside the nonblocking scope too.
+    all.group = 1; all.has_off_by = true; all.off_by = 2; all.off_mode = ports::SampleOffMode::kTime; all.off_time = 0.02f;
+    all.group_polyphony = 24; all.note_polyphony = 3;
+    lo.group = 2; lo.has_off_by = true; lo.off_by = 1; lo.off_mode = ports::SampleOffMode::kNormal; lo.polyphony = 4;
+    hi.group = 1; hi.polyphony = 8; hi.group_polyphony = 24; hi.note_polyphony = 2; hi.note_selfmask = false;
   }
   return t;
 }

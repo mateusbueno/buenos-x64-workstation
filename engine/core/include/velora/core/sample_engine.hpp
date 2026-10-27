@@ -225,6 +225,11 @@ class SampleEngine final : public Engine {
     bool ended = false;            // sample data exhausted: fast release in progress
     bool stalled = false;          // oracle_block_frames emulation: the one-frame hold already happened
     bool stolen = false;           // fading out under an arbiter steal ramp
+    // Story 13.6 (sfizz Voice::offed_ and the voice's age). offed: released by a choke group or a polyphony limit (such a voice is not counted again and not cut
+    // again). order: the start order of the voice, the engine's notion of "oldest" (smaller = older); event: the note on / note off that started it (its sister
+    // voices share it); mark: scratch bit of the note polyphony check.
+    bool offed = false, mark = false;
+    std::uint64_t order = 0, event = 0;
     std::uint32_t fade_left = 0, fade_total = 1;
     std::uint32_t channel = 0, note = 0, region = 0;
     const SampleBank* bank = nullptr;  // the instrument this voice started on
@@ -302,6 +307,11 @@ class SampleEngine final : public Engine {
   SampleBank* bank_for(std::uint32_t channel) const noexcept {
     return part_bound_[channel & 15u] ? part_bank_[channel & 15u] : default_bank_.get();
   }
+  // Story 13.6, sfizz's order at a voice start: choke groups (Synth::checkOffGroups), then the note, region and group polyphony limits (VoiceManager::
+  // checkPolyphony; the engine-wide limit is the voice pool's arbiter). Real-time safe: fixed loops over the voice table, no allocation.
+  void apply_voice_limits(const SampleBank& bank, std::uint32_t region, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) noexcept;
+  void off_voice(Voice& v) noexcept;
+  void off_sisters(std::uint64_t event) noexcept;  // the sisters that have not been cut yet
   bool playing_attack_voice(const RegionRt& r, std::uint32_t channel, bool match_velocity = true) const noexcept;
   // Story 5.2 helpers.
   void reset_part_keys(std::uint32_t channel) noexcept;
@@ -347,6 +357,7 @@ class SampleEngine final : public Engine {
   float tr_release_rate_off_ = 0.0f;  // exp rate of the 6 ms fast release
   std::uint64_t rng_ = 1;
   std::uint64_t clock_ = 0;
+  std::uint64_t voice_order_ = 0, event_seq_ = 0;  // Story 13.6: start order of voices and the id of the current note on / off (sister voices share it)
   float gain_ = 1.0f;
   std::uint32_t unplayable_regions_ = 0;
   std::uint64_t skipped_unplayable_ = 0;

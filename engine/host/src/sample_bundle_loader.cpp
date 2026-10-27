@@ -163,6 +163,19 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   for (unsigned i = 0; i < std::min<unsigned>(r.cc.gate_count, ports::kSampleMaxCcGates); ++i) d.cc_gates[i] = {r.cc.gates[i].cc, r.cc.gates[i].lo, r.cc.gates[i].hi};
   for (unsigned i = 0; i < std::min<unsigned>(r.cc.mod_count, ports::kSampleMaxCcMods); ++i)
     d.cc_mods[i] = {static_cast<ports::SampleCcTarget>(static_cast<std::uint8_t>(r.cc.mods[i].target)), r.cc.mods[i].cc, r.cc.mods[i].curve, r.cc.mods[i].depth};
+  // Story 13.6: choke groups and polyphony limits travel unchanged.
+  static_assert(ports::kSampleMaxVoiceLimit == fmt::kMaxVoiceLimit);
+  static_assert(static_cast<int>(ports::SampleOffMode::kFast) == static_cast<int>(fmt::OffMode::kFast) && static_cast<int>(ports::SampleOffMode::kNormal) == static_cast<int>(fmt::OffMode::kNormal) &&
+                static_cast<int>(ports::SampleOffMode::kTime) == static_cast<int>(fmt::OffMode::kTime));
+  d.group = r.vg.group;
+  d.has_off_by = r.vg.has_off_by;
+  d.off_by = r.vg.off_by;
+  d.off_mode = static_cast<ports::SampleOffMode>(static_cast<std::uint8_t>(r.vg.off_mode));
+  d.off_time = r.vg.off_time;
+  d.polyphony = r.vg.polyphony;
+  d.group_polyphony = r.vg.group_polyphony;
+  d.note_polyphony = r.vg.note_polyphony;
+  d.note_selfmask = r.vg.note_selfmask;
   return d;
 }
 

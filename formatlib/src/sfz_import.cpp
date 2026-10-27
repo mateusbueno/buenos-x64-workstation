@@ -167,6 +167,17 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       // Story 13.5: ampeg_dynamic makes sfizz re-read ampeg_* (including its _oncc values) every chunk. This importer reads the CC once at voice start, so the
       // flag is no longer inert: a region with ampeg_dynamic=1 and any ampeg_*_oncc<N> is rejected (unsupported_value). Without an _oncc it changes nothing
       // (ampeg_vel2* reads the trigger velocity, constant for the life of the voice, Story 13.4), so VSCO2's ampeg_dynamic=1 imports as before.
+      // Story 13.6: choke groups and polyphony limits, evaluated when a voice starts (see the importer comment in sfz_import.hpp).
+      {"group", C::kSupported, "integer, the region's choke / polyphony group (default 0); a <group> header is unaffected (Story 13.6)"},
+      {"polyphony_group", C::kSupported, "alias of group (Story 13.6)"},
+      {"off_by", C::kSupported, "integer: the voices of every group with this number are cut when this region starts a voice (Story 13.6)"},
+      {"offby", C::kSupported, "alias of off_by (Story 13.6)"},
+      {"off_mode", C::kSupported, "fast (6 ms, the default), normal (the voice's own ampeg_release), time (off_time) (Story 13.6)"},
+      {"offmode", C::kSupported, "alias of off_mode (Story 13.6)"},
+      {"off_time", C::kSupported, "s 0..100, implies off_mode=time (sfizz); times below 6 ms behave as 6 ms (Story 13.6)"},
+      {"polyphony", C::kSupported, "1..255 voices; in <region>, or in a header together with a non-zero group set at that header or a broader one (the group's limit); otherwise a region-set limit, rejected (Story 13.6)"},
+      {"note_polyphony", C::kSupported, "1..255 voices of the group for one note (Story 13.6)"},
+      {"note_selfmask", C::kSupported, "on or mask (default: a quieter retrigger does not cut a louder voice) or off (Story 13.6)"},
       {"ampeg_dynamic", C::kSupported, "flag; rejected together with ampeg_*_oncc<N> (continuous envelope modulation is not implemented), otherwise no effect (Story 13.5)"},
   };
   return t;
@@ -240,6 +251,12 @@ struct Acc {
   std::map<int, GateAcc> gates;
   std::map<std::pair<int, int>, ModAcc> mods;
   bool dynamic = false;
+  // Story 13.6. group / polyphony and the header level (0 global, 1 master, 2 group, 3 region) they were last given at; off_time defaults to sfizz's 6 ms.
+  std::int64_t group = 0, poly = 0;  // poly: 0 = not given or the default (256)
+  int group_level = -1, poly_level = -1;
+  const Op* poly_op = nullptr;
+  const Op* hdr_poly_op = nullptr;  // the first polyphony given in a <global>/<master>/<group> header (a region-set limit in sfizz)
+  float off_time = 0.006f;
 };
 
 // Story 13.5: a recognised CC opcode split into its parts. gate: locc/hicc/lohdcc/hihdcc (lo = true for the low end, hd = normalized value); def: set_cc/set_hdcc;
@@ -747,6 +764,47 @@ class Importer final : public sfz::ParserListener {
       else if (v == "release_key") r.trigger = TriggerMode::kReleaseKey;
       else { unsupported_value(op); return false; }
     }
+    else if (k == "group" || k == "polyphony_group") {  // sfizz Int64Spec {-int32_max, uint32_max}; this importer keeps the int32 range
+      if (!parse_int(op.value, n)) { bad(op, "expected an integer"); return false; }
+      if (n < -2147483647 || n > 2147483647) { unsupported_value(op); return false; }
+      acc.group = n;
+    }
+    else if (k == "off_by" || k == "offby") {
+      if (!parse_int(op.value, n)) { bad(op, "expected an integer"); return false; }
+      if (n < -2147483647 || n > 2147483647) { unsupported_value(op); return false; }
+      r.vg.has_off_by = true;
+      r.vg.off_by = std::int32_t(n);
+    }
+    else if (k == "off_mode" || k == "offmode") {
+      const std::string v = trim(op.value);
+      if (v == "fast") r.vg.off_mode = OffMode::kFast;
+      else if (v == "normal") r.vg.off_mode = OffMode::kNormal;
+      else if (v == "time") r.vg.off_mode = OffMode::kTime;
+      else { unsupported_value(op); return false; }
+    }
+    else if (k == "off_time") {  // sfizz: off_time also selects off_mode=time
+      if (!as_clamped(op, 0, 100, d)) return false;
+      acc.off_time = float(d);
+      r.vg.off_mode = OffMode::kTime;
+    }
+    else if (k == "polyphony") {
+      if (!parse_int(op.value, n)) { bad(op, "expected an integer"); return false; }
+      if (n == 0) { unsupported_value(op); return false; }
+      if (n < 0 || n > 256) { ignore(op, "outside 1..256 (sfizz enforces the bounds); no limit", true); acc.poly = 0; return true; }
+      acc.poly = n >= 256 ? 0 : n;  // 256 is sfizz's default: no limit
+      acc.poly_op = &op;
+    }
+    else if (k == "note_polyphony") {
+      if (!parse_int(op.value, n)) { bad(op, "expected an integer"); return false; }
+      if (n < 1 || n > 256) { ignore(op, "outside 1..256 (sfizz enforces the bounds); no limit", true); r.vg.note_polyphony = 0; return true; }
+      r.vg.note_polyphony = n >= 256 ? 0 : std::uint16_t(n);
+    }
+    else if (k == "note_selfmask") {
+      const std::string v = trim(op.value);
+      if (v == "on" || v == "mask") r.vg.note_selfmask = true;
+      else if (v == "off") r.vg.note_selfmask = false;
+      else { unsupported_value(op); return false; }
+    }
     else if (k == "amp_veltrack") { if (!as_clamped(op, -100, 100, d)) return false; r.amp.veltrack = float(d); }
     else if (k == "amplitude") { if (!as_clamped(op, 0, 10000, d)) return false; r.amp.amplitude = float(d); }
     else if (k == "global_amplitude" || k == "master_amplitude" || k == "group_amplitude") {
@@ -839,11 +897,19 @@ class Importer final : public sfz::ParserListener {
     Region r;
     Acc acc;
     const Op* sample_op = nullptr;
-    for (const Level* lv : {&global_, &master_, &group_, &region_})
+    int level = 0;
+    for (const Level* lv : {&global_, &master_, &group_, &region_}) {
       for (const Op& op : *lv) {
         if (op.name == "sample") sample_op = &op;
         apply(r, acc, op, false);  // values were validated when read
+        if (op.name == "group" || op.name == "polyphony_group") acc.group_level = level;
+        else if (op.name == "polyphony") {
+          acc.poly_level = level;
+          if (level <= 2 && !acc.hdr_poly_op) acc.hdr_poly_op = &op;
+        }
       }
+      ++level;
+    }
     const SfzLoopSpec ls = acc.ls;
     // Story 13.4: volumes add and amplitudes multiply, as sfizz does; the amp map keeps the velocity curve.
     if (acc.vol_set) {
@@ -898,6 +964,37 @@ class Importer final : public sfz::ParserListener {
         return;
       }
       r.cc = m;
+    }
+    {  // Story 13.6: choke groups and polyphony limits
+      VoiceGroup& g = r.vg;
+      g.group = std::int32_t(acc.group);
+      if (g.off_mode == OffMode::kTime) g.off_time = acc.off_time;
+      if (acc.hdr_poly_op && acc.hdr_poly_op != acc.poly_op) {
+        // A deeper polyphony replaces the header's value for this region, but sfizz still limits the header's whole region set with the header's own value.
+        issue(SfzIssueKind::kUnsupportedValue, Loc{acc.hdr_poly_op->file, acc.hdr_poly_op->line},
+              "polyphony in a <global>/<master>/<group> header that a later polyphony overrides: the header's region-set limit would be lost", "polyphony");
+        return;
+      }
+      if (acc.poly != 0) {
+        // sfizz: a polyphony in a <global>, <master> or <group> header is also a limit on that header's region set (all its regions together; RegionSet), which
+        // this importer has no representation for. A region keeps the whole story when it has a non-zero group number that is set at the same header or a broader
+        // one (so every region under the header is in that group, or the file is rejected through the region that leaves it): sfizz then also limits the group
+        // (Synth::setGroupPolyphony, from the flattened region) with the same value, the set is part of that group, and the group limit stands for both. They differ
+        // only when the group has regions under another header with a different final limit. Without such a group (none, or one a deeper header or the region
+        // changes) the set limit would be lost, so the file is rejected. A polyphony in a <region> is not a set limit.
+        const bool set_limit = acc.poly_level <= 2 && (acc.group == 0 || acc.group_level > acc.poly_level);
+        if (set_limit) {
+          issue(SfzIssueKind::kUnsupportedValue, Loc{acc.poly_op->file, acc.poly_op->line},
+                "polyphony in a <global>/<master>/<group> header limits the voices of all the regions under that header (a region set); it is imported only together with "
+                "a non-zero group=N set at that header or a broader one (then it is the group's limit), or in a <region>",
+                "polyphony");
+          return;
+        }
+        g.polyphony = std::uint16_t(acc.poly);
+        if (acc.group != 0) g.group_polyphony = std::uint16_t(acc.poly);  // resolved per group at the end of the file
+      }
+      if (g.off_mode != OffMode::kTime) g.off_time = 0;
+      if (!g.has_off_by) g.off_by = 0;
     }
     r.has_loop_points = ls.start_set || ls.end_set;
     // Story 5.1: filter, keyswitch and crossfade state.
@@ -1059,6 +1156,18 @@ void build_cc_setup(SfzParseResult& r, bool report) {
   r.cc_setup = std::move(out);
 }
 
+// Story 13.6: sfizz sets a group's polyphony each time a region or a <group> header gives a group number and a polyphony, and the last one wins for the whole
+// group (VoiceManager::setGroupPolyphony). Every region of a group carries the final limit, so the engine needs no group table.
+void resolve_group_polyphony(SfzParseResult& r) {
+  std::map<std::int32_t, std::uint16_t> limit;
+  for (const Region& g : r.regions)
+    if (g.vg.group != 0 && g.vg.group_polyphony != 0) limit[g.vg.group] = g.vg.group_polyphony;
+  for (Region& g : r.regions) {
+    const auto it = limit.find(g.vg.group);
+    g.vg.group_polyphony = (g.vg.group != 0 && it != limit.end()) ? it->second : std::uint16_t(0);
+  }
+}
+
 }  // namespace
 
 std::size_t drop_never_note_triggered(SfzParseResult& r) {
@@ -1125,6 +1234,7 @@ SfzParseResult parse_sfz_file(const std::string& sfz_path) {
       i.message += " (recursive #include?)";
   std::sort(imp.result.included_files.begin(), imp.result.included_files.end());
   build_cc_setup(imp.result, true);
+  resolve_group_polyphony(imp.result);
   return std::move(imp.result);
 }
 

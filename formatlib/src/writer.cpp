@@ -87,6 +87,20 @@ void put_cc(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) 
   }
 }
 
+void put_vg(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  const VoiceGroup& g = r.vg;
+  put_u32(v, index);
+  put_u32(v, static_cast<std::uint32_t>(g.group));
+  put_u32(v, static_cast<std::uint32_t>(g.off_by));
+  put_u8(v, static_cast<std::uint8_t>((g.has_off_by ? 1u : 0u) | (g.note_selfmask ? 0u : 2u)));
+  put_u8(v, static_cast<std::uint8_t>(g.off_mode));
+  put_u8(v, 0); put_u8(v, 0);
+  put_f32(v, g.off_time);
+  for (std::uint16_t lim : {g.polyphony, g.group_polyphony, g.note_polyphony, std::uint16_t{0}}) {
+    put_u8(v, static_cast<std::uint8_t>(lim & 0xFF)); put_u8(v, static_cast<std::uint8_t>(lim >> 8));
+  }
+}
+
 void put_cc_setup(std::vector<std::uint8_t>& v, const InstrumentCcSetup& s) {
   put_u32(v, static_cast<std::uint32_t>(s.defaults.size()));
   for (const auto& d : s.defaults) {
@@ -273,13 +287,17 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
     needs_cc = needs_cc || ins.cc_setup.any();
     for (const auto& r : ins.regions) needs_cc = needs_cc || has_cc_extension(r);
   }
+  bool needs_vg = false;
+  for (const auto& ins : instruments_)
+    for (const auto& r : ins.regions) needs_vg = needs_vg || has_vg_extension(r);
+  if (needs_vg && opt_.format_minor < 5) return Error::kInvalidArgument;
   if (needs_cc && opt_.format_minor < 4) return Error::kInvalidArgument;
   if (needs_amp && opt_.format_minor < 3) return Error::kInvalidArgument;
   if (needs_trig && opt_.format_minor < 2) return Error::kInvalidArgument;
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
   // a minor N bundle carries the tables of every lower minor too (possibly empty)
-  const std::uint32_t minor = needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
+  const std::uint32_t minor = needs_vg ? 5u : needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
   const std::uint32_t version_word =
       (protect ? kProtectedFormatVersion : opt_.format_version) | (minor << kMinorShift);
   Uuid library_id = library_id_;
@@ -407,6 +425,13 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
         for (std::size_t k = 0; k < ins.regions.size(); ++k)
           if (has_cc_extension(ins.regions[k])) put_cc(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
         put_cc_setup(manifest, ins.cc_setup);
+      }
+      if (minor >= 5) {
+        std::uint32_t n_vg = 0;
+        for (const auto& r : ins.regions) n_vg += has_vg_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_vg);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_vg_extension(ins.regions[k])) put_vg(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
       }
     }
   }

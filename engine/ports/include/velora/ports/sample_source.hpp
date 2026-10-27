@@ -109,6 +109,12 @@ struct SampleCcDefault {
   float value = 0.0f;  // CC units
 };
 
+// Story 13.6: choke groups and polyphony limits (see formatlib VoiceGroup). A voice that starts in group G releases every voice of its part whose region has
+// off_by == G (kFast: a 6 ms release, kNormal: the victim's own release, kTime: off_time seconds); a limit that is reached releases the oldest voice (and the
+// voices of its note on). 0 in a limit = none.
+enum class SampleOffMode : std::uint8_t { kFast = 0, kNormal = 1, kTime = 2 };
+inline constexpr unsigned kSampleMaxVoiceLimit = 255;
+
 struct SampleRegionDesc {
   std::uint32_t sample_index = 0;  // into InstrumentView::samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -150,6 +156,15 @@ struct SampleRegionDesc {
   std::uint8_t cc_gate_count = 0, cc_mod_count = 0;
   SampleCcGate cc_gates[kSampleMaxCcGates]{};
   SampleCcMod cc_mods[kSampleMaxCcMods]{};
+  // Story 13.6: choke group, off_by, off mode and time (seconds, only with kTime), region / group / per-note polyphony limits, note_selfmask. The defaults mean the
+  // region is in no choke relation and has no limit: the engine then does nothing extra for it.
+  std::int32_t group = 0;
+  bool has_off_by = false;
+  std::int32_t off_by = 0;
+  SampleOffMode off_mode = SampleOffMode::kFast;
+  float off_time = 0.0f;
+  std::uint16_t polyphony = 0, group_polyphony = 0, note_polyphony = 0;
+  bool note_selfmask = true;
 };
 
 // Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.

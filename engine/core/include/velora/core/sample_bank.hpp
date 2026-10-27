@@ -40,6 +40,8 @@ struct SampleBankRegion {
   // Story 13.5: the region has CC gates (cc_gate), CC modulation entries (cc_mod) and, among them, entries on the amplitude envelope (eg_cc) or the pseudo-CCs
   // 135 / 136 (a bank with one draws two extra random numbers per note on, see SampleBank::uses_cc_random).
   bool cc_gate = false, cc_mod = false, eg_cc = false;
+  // Story 13.6: the exponential release rate of an off_mode=time cut (off_time seconds, at least sfizz's 6 ms); unused for the other modes.
+  float off_rate = 0.0f;
   bool uses_sequence = false;
   bool loops = false;  // loop_continuous / loop_sustain with a valid loop range
   std::int64_t loop_start = 0, loop_end = 0, loop_size = 0;
@@ -86,6 +88,9 @@ struct SampleBank {
   std::array<std::int16_t, 256> cc_curve_slot = [] { std::array<std::int16_t, 256> a{}; a.fill(-1); return a; }();
   std::vector<velora::ports::SampleCcDefault> cc_defaults;
   bool uses_cc_random = false;
+  // Story 13.6: some region has an off_by or a polyphony limit, so every voice start of this bank runs the choke / limit checks (a bank without any skips them
+  // entirely and renders exactly as before).
+  bool uses_voice_groups = false;
   std::vector<std::array<float, 128>> vel_tables;  // Story 13.4: the amp_velcurve_N curves, one table of 128 entries per region that has points
   std::vector<std::uint32_t> note_list;         // region indices, grouped by note
   std::array<std::uint32_t, 129> note_begin{};  // note n uses note_list[note_begin[n], note_begin[n+1])

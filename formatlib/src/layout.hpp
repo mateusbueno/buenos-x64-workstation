@@ -62,6 +62,11 @@ inline constexpr std::size_t kCcModSize = 4 + 4;
 inline constexpr std::size_t kCcDefaultSize = 4 + 4;
 inline constexpr std::size_t kCcCurveFixedSize = 4;
 inline constexpr std::size_t kCcPointSize = 4 + 4;
+// Format 2.5 (Story 13.6) voice-group table, per instrument, after the minor 4 tables:
+//   u32 n_vg_regions, then per region (ascending by region index; a record exists only for a region with a non-default VoiceGroup):
+//     u32 region_index, i32 group, i32 off_by (0 without off_by), u8 flags (bit 0 has_off_by, bit 1 note_selfmask off, others 0), u8 off_mode (0 fast, 1 normal, 2 time),
+//     u16 0, f32 off_time (0 unless off_mode is time), u16 polyphony, u16 group_polyphony, u16 note_polyphony (each 0..255, 0 = none), u16 0
+inline constexpr std::size_t kVgRecordSize = 4 + 4 + 4 + 1 + 1 + 2 + 4 + 2 + 2 + 2 + 2;
 inline constexpr unsigned kMinorShift = 16;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }
