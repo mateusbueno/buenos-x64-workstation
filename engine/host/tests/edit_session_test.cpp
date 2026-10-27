@@ -798,6 +798,57 @@ void test_write_whole_live_set() {
   CHECK(f.scenes(0).parts_size() >= 3);
 }
 
+// Story 9.12: Velora Studio's Write carries base_revision. A Write built on an older view of the Live Set is refused (STALE_REVISION, nothing written, the edits stay dirty), one on the
+// current revision is accepted for every scope, never moves live_set_revision (it is not an edit and not a device-side change) and never lights STUDIO; a Write without it (the device UI)
+// behaves as before; a refused Write does not count as a Studio edit either.
+void test_write_with_base_revision() {
+  Rig rig;
+  const lsp::LiveSet a = perfect(rig.lib, 10, "Perfect");
+  rig.start({a});
+  rig.step(4);
+  const std::uint64_t r0 = rig.plane.live_set_revision();
+  auto wr = [&](ws::v1::WriteScope scope, std::uint64_t base, const char* name = nullptr) {
+    auto m = msg();
+    m.mutable_write_live_set()->set_scope(scope);
+    if (name) m.mutable_write_live_set()->set_new_name(name);
+    m.set_base_revision(base);
+    return rig.send(m);
+  };
+  CHECK(rig.send([&] { auto m = msg(); m.mutable_set_part_volume()->set_part(0); m.mutable_set_part_volume()->set_volume(0.35f); m.set_base_revision(r0); return m; }()).has_ack());
+  rig.step(6);
+  CHECK(rig.plane.live_set_revision() == r0 && rig.state().edits().current_dirty());
+  const std::string path = rig.live->path_for(a.id());
+  const std::string before = slurp(path);
+  const std::uint64_t stale_n = rig.plane.stale_rejections();
+  // A view from the future and a view from the past are both refused; nothing is written.
+  for (std::uint64_t bad : {r0 + 1, r0 + 1000}) {
+    const auto rep = wr(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET, bad);
+    CHECK(Rig::is_err(rep, EC::ERROR_CODE_STALE_REVISION) && rep.error().details().at("base_revision") == std::to_string(bad) &&
+          rep.error().details().at("current_revision") == std::to_string(r0));
+  }
+  CHECK(Rig::is_err(wr(ws::v1::WRITE_SCOPE_SAVE_AS_NEW, r0 + 1, "Copy"), EC::ERROR_CODE_STALE_REVISION));
+  CHECK(rig.plane.stale_rejections() == stale_n + 3 && rig.live->mutations() == 0 && slurp(path) == before && rig.edits->is_dirty(a.id()));
+  // The unit's own controls change the Live Set after the view was built: the Write on the old revision is refused, the one on the new revision goes through.
+  CHECK(rig.plane.push_performance_value(*p::find(p::kDrawbar2), 3, 4));
+  rig.step(6);
+  const std::uint64_t r1 = rig.plane.live_set_revision();
+  CHECK(r1 > r0);
+  CHECK(Rig::is_err(wr(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET, r0), EC::ERROR_CODE_STALE_REVISION) && rig.live->mutations() == 0 && rig.edits->is_dirty(a.id()));
+  // Save as new on the current revision: a new file, the current Live Set keeps its edits and the revision stays.
+  const auto copy = wr(ws::v1::WRITE_SCOPE_SAVE_AS_NEW, r1, "Copy");
+  CHECK(copy.has_write_reply() && copy.write_reply().written_name() == "Copy" && rig.plane.live_set_revision() == r1 && rig.edits->is_dirty(a.id()));
+  const auto whole = wr(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET, r1);
+  CHECK(whole.has_write_reply() && !whole.write_reply().current_dirty() && !rig.state().edits().current_dirty());
+  CHECK(rig.plane.live_set_revision() == r1 && rig.state().edits().live_set_revision() == r1);  // a Write is not a device-side change: Studio's base stays valid
+  CHECK_NEAR(rig.read_file(a.id()).parts(0).volume(), 0.35f, 1e-6);
+  // Nothing dirty any more: the same Write says so, the revision still stays; a Write without base_revision is accepted like before and does not move it either.
+  const auto again = wr(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET, r1);
+  CHECK(again.has_write_reply() && again.write_reply().nothing_to_write() && rig.plane.live_set_revision() == r1);
+  CHECK(rig.write(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET).write_reply().nothing_to_write() && rig.plane.live_set_revision() == r1);
+  // An edit built on r1 is still accepted after the Writes (Studio does not have to reload after writing).
+  CHECK(rig.send(studio_param(p::kDrawbar8, 2, 6, r1)).has_ack());
+}
+
 // Story 6.9: a factory Live Set (LiveSet.factory) is read-only. Write (whole / scene) is refused with WRITE_SCOPE_UNAVAILABLE factory_read_only, nothing is written and
 // the edits stay in memory; Save as new makes an ordinary copy without the mark.
 void test_factory_live_set_is_read_only() {
@@ -1681,6 +1732,7 @@ int main() {
   test_edits_kept_across_live_set_changes();
   test_live_set_revision_stale_edits_and_studio_indicator();
   test_write_whole_live_set();
+  test_write_with_base_revision();
   test_write_tells_the_port();
   test_factory_live_set_is_read_only();
   test_write_moves_a_non_canonical_file();

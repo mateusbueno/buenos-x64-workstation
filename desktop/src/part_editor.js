@@ -601,6 +601,33 @@ export class EditSender {
     this.entries = new Map();
     this.sent = 0;
     this.maxInFlight = 0; // the most requests of ONE key in flight at once (always 1): a measurement for the tests
+    this.idleWaiters = [];
+  }
+
+  /**
+   * Story 9.12: resolves true once nothing is in flight or waiting for any key (every edit made so far has been ANSWERED by the unit), false after `timeoutMs`. Write to Velora flushes
+   * with this first, so a knob still being dragged (a coalesced edit waiting its turn) is on the unit before the unit is told to save.
+   */
+  whenIdle(timeoutMs = 5000) {
+    if (!this.busy) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const w = { resolve, timer: null };
+      w.timer = this.setTimer(() => {
+        this.idleWaiters = this.idleWaiters.filter((x) => x !== w);
+        resolve(false);
+      }, timeoutMs);
+      this.idleWaiters.push(w);
+    });
+  }
+
+  _checkIdle() {
+    if (this.idleWaiters.length === 0 || this.busy) return;
+    const ws = this.idleWaiters;
+    this.idleWaiters = [];
+    for (const w of ws) {
+      this.clearTimer(w.timer);
+      w.resolve(true);
+    }
   }
 
   submit(key, build, meta) {
@@ -648,6 +675,7 @@ export class EditSender {
           // a failing callback never stops the key's queue
         } finally {
           this._pump(key);
+          this._checkIdle();
         }
       });
   }
@@ -664,6 +692,7 @@ export class EditSender {
       e.timer = null;
       e.latest = null;
     }
+    this._checkIdle();
   }
 }
 
@@ -1038,6 +1067,32 @@ export class PartEditorController {
     if (!reply || !reply.body || !reply.body.Ack) return fail("the Velora gave no answer");
     this._notify();
     return { ok: true, revision: num(reply.revision, 0) };
+  }
+
+  /**
+   * Story 9.12: resolves true once every edit already made has been answered by the unit (see EditSender.whenIdle). Write to Velora calls it before it sends the Write, so a coalesced
+   * edit still waiting for its turn is on the unit first; false when the unit did not answer in `timeoutMs` (the Write must not be sent then).
+   */
+  flush(timeoutMs = 5000) {
+    return this.sender.whenIdle(timeoutMs);
+  }
+
+  /**
+   * Story 9.12: what a Write to Velora needs to judge the view it was made from: the Live Set revision this view was loaded at (`base`, 0 = unknown / an older unit), whether it is
+   * known for `liveSetId`, and the reload token (so an answer to a Write sent on a base the view has since left is not believed).
+   */
+  writeContext(liveSetId) {
+    return { base: this.baseFor === liveSetId ? this.baseRev : 0, known: this.baseFor === liveSetId, stale: !!this.stale, token: this._reloadToken };
+  }
+
+  /**
+   * Story 9.12: the unit refused a WRITE as STALE_REVISION: the same banner and read-only knobs as a refused edit. Ignored when the view has moved on since the Write was sent
+   * (`ctx` is what writeContext() returned then). Returns whether the banner was raised.
+   */
+  noteStale(err, ctx) {
+    if (!ctx || ctx.token !== this._reloadToken || ctx.base !== this.baseRev) return false;
+    this._markStale(err);
+    return true;
   }
 
   // -- answers --

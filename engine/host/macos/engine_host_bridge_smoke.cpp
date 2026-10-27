@@ -377,6 +377,7 @@ int main(int argc, char** argv) {
     CHECK(slurp(d + "/studio.log").find("view of \"Smoke Set\": 8 parts") != std::string::npos);  // Story 9.8: the Rust client read the Live Set created above through GetLiveSetView
     CHECK(slurp(d + "/studio.log").find("real_bridge_setlists_round_trip: ok") != std::string::npos);  // Story 9.13: the Rust client ran the Setlists view's commands and read them back
     if (!librarian.empty()) CHECK(slurp(d + "/studio.log").find("real_timbre_flow: ok") != std::string::npos);  // Story 9.11: the picker's list and the assignment through the real librarian, bridge and engine
+    CHECK(slurp(d + "/studio.log").find("real_write_flow: ok") != std::string::npos);  // Story 9.12: the Rust client sent the device's Write command (stale, Save as new, Scene, Whole) and read the unsaved state clear
     CHECK(slurp(d + "/studio.log").find("real_part_edit_flow: ok") != std::string::npos);  // Story 9.9: the Rust client sent the Part Editor's edits (with base_revision) and the State showed the structural ones
     if (rc != 0 || g_fail) std::printf("---- studio.log ----\n%s\n", slurp(d + "/studio.log").c_str());
   }

@@ -1353,6 +1353,117 @@ void test_part_editor_edits_carry_base_revision() {
   CHECK(c.recv(rep) == 1 && rep.request_id() == 991 && rep.has_ack());
 }
 
+// Story 9.12: Write to Velora. The device's own Write command (WriteLiveSet, the one the unit's Write Dialog sends) is a paired engine route of "liveset.v1", already in the table: no new row was
+// needed and none is added (the table-is-total tests above keep counting every ClientMessage body). It passes with scope, new_name and ClientMessage.base_revision intact, and the engine's typed
+// answers (WriteReply, NAME_IN_USE with its suggestion, WRITE_SCOPE_UNAVAILABLE with its reason, STORAGE_FULL, STALE_REVISION) reach Studio unchanged. A bridge that cannot reach the engine
+// answers UPSTREAM_UNAVAILABLE with reason connect_failed (nothing was sent), which Studio treats as "definitely not written".
+void test_write_to_velora_is_a_paired_engine_command() {
+  const auto* rule = sd::BridgeServer::rule_for(ws::v1::ClientMessage::kWriteLiveSet);
+  CHECK(rule != nullptr && std::string(rule->name) == "write_live_set" && std::string(rule->feature) == "liveset.v1");
+  CHECK(rule && rule->route == sd::BridgeServer::Route::kEngine && !rule->unpaired_allowed);
+  // the neighbours that must stay closed: the panel-side commands never pass
+  for (int body : {ws::v1::ClientMessage::kSetEncoderMode, ws::v1::ClientMessage::kSelectPart, ws::v1::ClientMessage::kSetLed}) {
+    const auto* denied = sd::BridgeServer::rule_for(body);
+    CHECK(denied != nullptr && denied->route == sd::BridgeServer::Route::kDenied);
+  }
+  Rig r;
+  FakeUds eng;
+  std::atomic<std::uint64_t> seen_base{0};
+  std::atomic<int> seen_scope{0}, seen_writes{0};
+  std::mutex mu;
+  std::string seen_name;
+  eng.start(r.tmp.path + "/e.sock", false);
+  eng.handler = [&](const std::string& payload, std::vector<std::string>& replies) {
+    ws::v1::ClientMessage m;
+    m.ParseFromString(payload);
+    ws::v1::ServerMessage rep;
+    rep.set_request_id(m.request_id());
+    rep.set_revision(7);
+    if (!m.has_write_live_set()) {
+      rep.mutable_ack();
+    } else {
+      ++seen_writes;
+      seen_base = m.base_revision();
+      seen_scope = static_cast<int>(m.write_live_set().scope());
+      {
+        std::lock_guard<std::mutex> lk(mu);
+        seen_name = m.write_live_set().has_new_name() ? m.write_live_set().new_name() : "";
+      }
+      if (m.base_revision() == 0xBAD) {
+        auto* e = rep.mutable_error();
+        e->set_code(ws::v1::ERROR_CODE_STALE_REVISION);
+        (*e->mutable_details())["current_revision"] = "9";
+      } else if (m.write_live_set().has_new_name() && m.write_live_set().new_name() == "Perfect") {
+        auto* e = rep.mutable_error();
+        e->set_code(ws::v1::ERROR_CODE_NAME_IN_USE);
+        (*e->mutable_details())["name"] = "Perfect";
+        (*e->mutable_details())["suggested_name"] = "Perfect 2";
+      } else if (m.write_live_set().scope() == ws::v1::WRITE_SCOPE_SCENE) {
+        auto* e = rep.mutable_error();
+        e->set_code(ws::v1::ERROR_CODE_WRITE_SCOPE_UNAVAILABLE);
+        (*e->mutable_details())["reason"] = "timbre_change";
+      } else if (m.write_live_set().scope() == ws::v1::WRITE_SCOPE_UNSPECIFIED) {
+        auto* e = rep.mutable_error();
+        e->set_code(ws::v1::ERROR_CODE_STORAGE_FULL);
+      } else {
+        auto* w = rep.mutable_write_reply();
+        w->set_scope(m.write_live_set().scope());
+        w->set_written_name(m.write_live_set().new_name());
+        w->set_written_count(3);
+        w->set_current_dirty(m.write_live_set().scope() == ws::v1::WRITE_SCOPE_SAVE_AS_NEW);
+      }
+    }
+    replies.push_back(rep.SerializeAsString());
+  };
+  CHECK(r.start([&](sd::BridgeOptions& o) {
+    o.engine_socket = eng.path;
+    o.dev_bypass_pairing = true;
+  }));
+  Client c;
+  CHECK(c.connect_to(r.port()));
+  c.hello(kAll, "mac-write");
+  auto send = [&](ws::v1::WriteScope scope, std::uint64_t base, const char* name, std::uint64_t id) {
+    ws::v1::ClientMessage m;
+    m.set_request_id(id);
+    m.set_base_revision(base);
+    m.mutable_write_live_set()->set_scope(scope);
+    if (name) m.mutable_write_live_set()->set_new_name(name);
+    c.send(m);
+    ws::v1::ServerMessage rep;
+    CHECK(c.recv(rep) == 1 && rep.request_id() == id);
+    return rep;
+  };
+  auto rep = send(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET, 11, nullptr, 1001);
+  CHECK(rep.has_write_reply() && rep.write_reply().scope() == ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET && rep.write_reply().written_count() == 3 && !rep.write_reply().current_dirty());
+  CHECK(seen_base.load() == 11 && seen_scope.load() == ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET);
+  rep = send(ws::v1::WRITE_SCOPE_SAVE_AS_NEW, 12, "Encore", 1002);
+  CHECK(rep.has_write_reply() && rep.write_reply().written_name() == "Encore" && rep.write_reply().current_dirty());
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    CHECK(seen_name == "Encore");
+  }
+  rep = send(ws::v1::WRITE_SCOPE_SAVE_AS_NEW, 12, "Perfect", 1003);
+  CHECK(rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_NAME_IN_USE && rep.error().details().at("suggested_name") == "Perfect 2" && rep.error().details().at("name") == "Perfect");
+  rep = send(ws::v1::WRITE_SCOPE_SCENE, 12, nullptr, 1004);
+  CHECK(rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_WRITE_SCOPE_UNAVAILABLE && rep.error().details().at("reason") == "timbre_change");
+  rep = send(ws::v1::WRITE_SCOPE_UNSPECIFIED, 12, nullptr, 1005);
+  CHECK(rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_STORAGE_FULL);
+  rep = send(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET, 0xBAD, nullptr, 1006);
+  CHECK(rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_STALE_REVISION && rep.error().details().at("current_revision") == "9");
+  CHECK(seen_writes.load() == 6);
+  // A client that did not negotiate liveset.v1 gets UNSUPPORTED_FEATURE and nothing reaches the engine.
+  Client b;
+  CHECK(b.connect_to(r.port()));
+  b.hello({"snapshots.v1"}, "mac-write-2");
+  ws::v1::ClientMessage m;
+  m.set_request_id(1010);
+  m.mutable_write_live_set()->set_scope(ws::v1::WRITE_SCOPE_WHOLE_LIVE_SET);
+  b.send(m);
+  ws::v1::ServerMessage u;
+  CHECK(b.recv(u) == 1 && u.request_id() == 1010 && u.has_error() && u.error().code() == ws::v1::ERROR_CODE_UNSUPPORTED_FEATURE && u.error().details().at("feature") == "liveset.v1");
+  CHECK(seen_writes.load() == 6);
+}
+
 int main() {
   ::signal(SIGPIPE, SIG_IGN);
   test_pairing_window_unit();
@@ -1371,6 +1482,7 @@ int main() {
   test_message_tables_are_total();
   test_live_set_view_is_a_paired_read();
   test_part_editor_edits_carry_base_revision();
+  test_write_to_velora_is_a_paired_engine_command();
   test_unpaired_cap_and_pending_timeout();
   std::printf(g_fail ? "sysd_bridge_tests: FAILED (%d)\n" : "sysd_bridge_tests: ok\n", g_fail);
   return g_fail ? 1 : 0;

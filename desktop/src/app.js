@@ -1,4 +1,4 @@
-// Velora Studio App Shell, Part Editor for FM & VA, Backup & Restore (Stories 9.5, 9.16, 9.17, 12.13), Live Set view (Story 9.8), Part Editor with Studio Knobs (Story 9.9)
+// Velora Studio App Shell, Part Editor for FM & VA, Backup & Restore (Stories 9.5, 9.16, 9.17, 12.13), Live Set view (Story 9.8), Part Editor with Studio Knobs (Story 9.9), Write to Velora (Story 9.12)
 
 import { CATALOGS } from "./catalogs.js";
 import {
@@ -24,6 +24,8 @@ import { SetlistsController } from "./setlists_view.js";
 import { SetlistsView } from "./setlists_dom.js";
 import { TimbrePickerController } from "./timbre_picker.js";
 import { TimbrePickerView } from "./timbre_picker_dom.js";
+import { WriteController, foldName } from "./write_to_velora.js";
+import { WriteBannerView, WriteDialogView, announceText } from "./write_to_velora_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -254,6 +256,7 @@ window.addEventListener("DOMContentLoaded", () => {
       renderEditor();
       updateManageButton();
       if (setlistsUi.view) { setlistsUi.view.setLabels(); setlistsUi.view.render(); } // Story 9.13: the Setlists view follows the language
+      if (writeUi.banner) writeUi.banner.setLabels(); // Story 9.12
     });
   }
 
@@ -295,7 +298,9 @@ window.addEventListener("DOMContentLoaded", () => {
     const st = deviceStore.state;
     const sounding = !!st && !!liveCtl.liveSetId && st.live_set_id === liveCtl.liveSetId;
     const f = liveEditFooter(sounding ? st : null);
-    if (f.on) footerStatus.textContent = localeMgr.tr("studio.footer.live_edit_on");
+    footerStatus.classList.toggle("foot-writing", writeUi.ctl.writing);
+    if (writeUi.ctl.writing) footerStatus.textContent = localeMgr.tr("studio.footer.writing"); // Story 9.12: from the confirmation until the unit answers
+    else if (f.on) footerStatus.textContent = localeMgr.tr("studio.footer.live_edit_on");
     else footerStatus.textContent = localeMgr.tr(liveCtl.model && liveCtl.model.dirty ? "studio.part_editor.live_edit_edited" : "studio.part_editor.live_edit_clean");
     if (unsaved) {
       unsaved.hidden = f.scope.kind === "none";
@@ -314,8 +319,10 @@ window.addEventListener("DOMContentLoaded", () => {
     const unsavedEl = document.getElementById("footer-unsaved-scope");
     if (unsavedEl && !real) unsavedEl.hidden = true;
     if (badge) badge.style.display = isDirty && !real ? "inline-block" : "none"; // paired: the real marker is the diamond after the Live Set name
-    if (writeBtn && isConnected && deviceLinkActive) {
-      writeBtn.disabled = true; // a real unit is connected but the editor still shows simulated Live Sets (until Stories 9.8 / 9.13): never write them
+    if (writeBtn && real) {
+      paintWriteButton(); // Story 9.12: the real Write to Velora (the Live Set that sounds, its unsaved edits)
+    } else if (writeBtn && isConnected && deviceLinkActive) {
+      writeBtn.disabled = true; // a real unit is connected but the editor still shows simulated Live Sets (until the paired view is up): never write them
       writeBtn.title = localeMgr.tr("studio.write.simulated");
     } else if (writeBtn && isConnected) {
       writeBtn.disabled = !isDirty;
@@ -776,6 +783,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // Write to Velora persistence handler
   const writeBtn = document.getElementById("btn-write");
   writeBtn?.addEventListener("click", () => {
+    if (pairedReal()) { openWriteDialog(); return; } // Story 9.12: the real Write dialog; the branches below are the simulated device
     if (window.__TAURI__?.core?.invoke && currentDeviceState) {
       const curLs = currentDeviceState.live_sets?.[activeLiveSetIndex];
       if (curLs) {
@@ -966,6 +974,7 @@ window.addEventListener("DOMContentLoaded", () => {
     // Story 9.10: Reload applied the current snapshot of the unit: the Live Set view is read again too (the ◆, scenes and strips), and the footer follows the State
     onReloaded: (st) => {
       if (liveCtl.liveSetId) liveCtl.select(liveCtl.liveSetId);
+      if (writeUi.ctl.banner && writeUi.ctl.banner.kind === "stale") writeUi.ctl.dismissBanner(); // Story 9.12: a Reload answers the stale Write banner too
       paintLiveEditFooter();
     },
   });
@@ -1081,6 +1090,102 @@ window.addEventListener("DOMContentLoaded", () => {
     const strip = liveUi.grids && liveUi.grids.partCells[i];
     timbrePick.view.open(strip || null);
     timbrePick.ctl.open({ liveSetId: liveCtl.liveSetId, part: i });
+  }
+
+  // ---- Write to Velora (Story 9.12) ---------------------------------------------------------------------------------------------------------------------
+  // "Write to Velora" (title bar) opens a modal Studio Dialog for the Live Set that sounds and has unsaved edits: what changed, and the device's own scopes (Scene, Whole Live Set,
+  // Save as new...). Confirming sends THE device command, WriteLiveSet (the one the unit's Write Dialog sends), carrying base_revision (a stale view is refused) after every edit still
+  // waiting in the Part Editor's sender has been flushed. The Footer reads WRITING TO VELORA... and both Primary Buttons are disabled until the unit answers; success is announced
+  // ("Written to Velora") and the diamond goes by itself: it is State.edits.current_dirty, read again. A failure is a Studio Banner and the edits stay on the unit (◆). The model is
+  // write_to_velora.js, the DOM write_to_velora_dom.js.
+  const writeUi = { ctl: null, view: null, banner: null };
+  const wrHost = document.createElement("div");
+  wrHost.className = "wr-host";
+  document.body.appendChild(wrHost);
+  const wrBannerEl = document.getElementById("write-banner");
+
+  function paintWriteButton() {
+    const b = document.getElementById("btn-write");
+    if (!b || !pairedReal()) return;
+    const a = writeUi.ctl.availability(liveCtl.liveSetId);
+    b.disabled = !a.enabled;
+    b.title = a.enabled ? tr("studio.write.tooltip_ready") : tr(a.reason);
+  }
+
+  // The names a new Live Set must not take, as the unit judges them: the loaded setlist's Live Sets (every Live Set when none is loaded). Only a hint: the unit stays the authority.
+  function knownLiveSetNames() {
+    const st = deviceStore.state;
+    const loaded = st && st.setlists && st.setlists.loaded_setlist_id;
+    const rows = (loaded ? sidebar.entries.get(loaded) : sidebar.all) || [];
+    return new Set(rows.filter((r) => r && r.name).map((r) => foldName(r.name)));
+  }
+
+  writeUi.ctl = new WriteController({
+    request: (r) => window.veloraDevice.request(r),
+    flush: () => partEditorCtl.flush(),
+    writeContext: (id) => partEditorCtl.writeContext(id),
+    noteStale: (err, ctx) => partEditorCtl.noteStale(err, ctx),
+    state: () => deviceStore.state,
+    isPaired: () => pairedReal(),
+    takenNames: knownLiveSetNames,
+    deviceName: () => (deviceStore.status && deviceStore.status.model) || "Velora", // HelloAck.model ("Velora 73"); a plain "Velora" while the unit does not say
+    onChange: () => {
+      writeUi.view.render();
+      writeUi.banner.render();
+      paintWriteButton();
+      paintLiveEditFooter();
+    },
+    onClose: (reason) => {
+      writeUi.view.close();
+      if (reason === "cancelled") quietAnnounce(tr("studio.write.closed_cancelled"));
+    },
+    onAnnounce: (a) => quietAnnounce(announceText(a, tr)),
+    onWritten: () => afterWrite(),
+    onStale: () => {
+      // the Part Editor's own banner (with Reload) explains it when it is on screen; otherwise this banner does
+      if (peEls.host.hidden || setlistsUi.open) writeUi.ctl.showBanner("stale");
+    },
+  });
+  writeUi.view = new WriteDialogView({
+    doc: document,
+    host: wrHost,
+    tr,
+    controller: writeUi.ctl,
+    // the Write button is disabled once everything is written: the focus then goes to the main area, never to nowhere
+    restore: () => { const b = document.getElementById("btn-write"); return b && !b.disabled ? b : document.getElementById("main-region"); },
+  });
+  writeUi.banner = new WriteBannerView({ doc: document, el: wrBannerEl, tr, controller: writeUi.ctl, onReload: () => { partEditorCtl.reload().then((ok) => { if (ok) writeUi.ctl.dismissBanner(); }); } });
+
+  // What the unit holds after a Write: the State (the footer and the diamond follow State.edits.current_dirty), the Live Set view and the sidebar (Save as new adds a Live Set).
+  async function afterWrite() {
+    try {
+      const reply = await window.veloraDevice.request({ body: { GetState: {} } });
+      const st = reply && reply.body && reply.body.State;
+      if (st) {
+        deviceStore.state = st;
+        deviceStore.stateListeners.forEach((cb) => { try { cb(st); } catch (e) { /* ignore */ } });
+        onDeviceState(st);
+      }
+    } catch (e) { /* the pushes that follow a Write carry the same State */ }
+    if (liveCtl.liveSetId) liveCtl.select(liveCtl.liveSetId);
+    sidebar.key = null;
+    refreshSidebar();
+    if (setlistsUi.open) setlistsCtl.refreshNow();
+    paintLiveEditFooter();
+    paintWriteButton();
+  }
+
+  async function openWriteDialog() {
+    if (!pairedReal() || writeUi.ctl.isOpen) return;
+    const id = liveCtl.liveSetId;
+    const m = liveCtl.model;
+    if (!id || !m) return;
+    const a = writeUi.ctl.availability(id);
+    if (!a.enabled) { quietAnnounce(tr(a.reason)); return; }
+    const st = deviceStore.state;
+    const loaded = st && st.setlists && st.setlists.loaded_setlist_id;
+    if (loaded && !sidebar.entries.has(loaded)) await loadEntries(loaded); // the names of the loaded setlist, for the free-name suggestion
+    writeUi.ctl.open({ liveSetId: id, liveSetName: m.name, factory: !!m.factory });
   }
 
   // For Story 9.9 (Part Editor): the selection of the Live Set view.
@@ -1318,7 +1423,9 @@ window.addEventListener("DOMContentLoaded", () => {
     if (!st || !pairedReal()) return;
     liveCtl.onState(st);
     partEditorCtl.onState(st);
+    writeUi.ctl.onState(st); // Story 9.12: an open Write dialog follows it; an unconfirmed Write is judged by it after a reconnect
     paintLiveEditFooter();
+    paintWriteButton();
     if (setlistsUi.open) setlistsCtl.onState(st);
     const setlists = st.setlists || {};
     const key = `${setlists.library_revision || 0}/${setlists.loaded_setlist_id || ""}`;
@@ -1484,6 +1591,11 @@ window.addEventListener("DOMContentLoaded", () => {
     } else {
       currentDeviceState = null;
       deviceStore.state = null; // a State from before the outage is never shown again
+      writeUi.ctl.onLinkLost(); // Story 9.12: an open Write dialog closes (nothing sent); a Write that is out stays UNKNOWN until the unit is read again
+      if (wasPaired) {
+        const wb = document.getElementById("btn-write");
+        if (wb) { wb.disabled = true; wb.title = tr("studio.offline.hint"); }
+      }
       liveCtl.reset();
       partEditorCtl.reset();
       timbrePick.ctl.abort("disconnected"); // Story 9.11: an open picker closes; nothing is assigned by it

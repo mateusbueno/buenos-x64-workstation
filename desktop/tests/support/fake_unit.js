@@ -7,7 +7,7 @@
 // until `expireStudio()`. Not a copy of the engine: the C++ tests are the authority; this is what lets the page and the model run without one.
 import { REGISTRY } from "../../src/params_registry.js";
 
-export const CODE = { INVALID_COMMAND: 5, UNKNOWN_PARAM: 6, OUT_OF_RANGE: 7, INVALID_PART: 8, WRONG_CLASS: 9, WRONG_SCOPE: 10, INVALID_SLOT: 11, BUSY: 13, FX_BUDGET: 15, NOT_ASSIGNABLE: 37, STALE_REVISION: 47 };
+export const CODE = { NAME_IN_USE: 34, WRITE_SCOPE_UNAVAILABLE: 35, STORAGE_FULL: 36, NO_LIVE_SET: 17, INVALID_COMMAND: 5, UNKNOWN_PARAM: 6, OUT_OF_RANGE: 7, INVALID_PART: 8, WRONG_CLASS: 9, WRONG_SCOPE: 10, INVALID_SLOT: 11, BUSY: 13, FX_BUDGET: 15, NOT_ASSIGNABLE: 37, STALE_REVISION: 47 };
 
 const BY_ID = new Map(REGISTRY.params.map((d) => [d.id, d]));
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -22,6 +22,18 @@ export class FakeUnit {
     this.revision = 10;
     this.liveRevision = 5; // State.edits.live_set_revision (Story 9.10)
     this.dirty = false;
+    // Story 9.12: Write. `changes` is State.edits.change_summary (one ChangeItem per kind of edit made since the last Write), `writesDone` the engine's counter of files written;
+    // `factory` makes the Live Set read-only (Save as new only), `storageFull` makes every Write answer STORAGE_FULL (the store's inject_write_errno), `takenNames` are the folded names
+    // already used in the loaded setlist, `writeHook(body)` may answer instead (a refusal, or a Promise that never settles to hold the Write out), `writeLog` every WriteLiveSet body
+    this.changes = [];
+    this.writesDone = 0;
+    this.factory = false;
+    this.storageFull = false;
+    this.takenNames = new Set();
+    this.writeHook = null;
+    this.writeLog = [];
+    this.liveSetName = "Perfect";
+    this.loadedSetlist = "";
     this.studioActive = false;
     this.hasTimbreEdit = false;
     this.staleRejected = 0;
@@ -67,18 +79,18 @@ export class FakeUnit {
 
   state() {
     return clone({
-      revision: this.revision, live_set_loaded: this.sounding, live_set_id: this.sounding ? this.liveSetId : "", current_scene: this.scene, scene_count: 2,
+      revision: this.revision, live_set_loaded: this.sounding, live_set_id: this.sounding ? this.liveSetId : "", live_set_name: this.sounding ? this.liveSetName : "", current_scene: this.scene, scene_count: 2,
       parts: this.parts, master: [], performance_init: [...this.perf].map(([k, value]) => {
         const [id, part] = k.split(":").map(Number);
         return { param_id: id, part, value };
       }),
       encoders: { mode: 3, selected_part: 0, assign: this.assignMap },
       edits: {
-        available: true, dirty_live_set_ids: this.dirty ? [this.liveSetId] : [], current_dirty: this.dirty, change_summary: [], change_count: this.dirty ? 1 : 0, writes_done: 0,
+        available: true, dirty_live_set_ids: this.dirty ? [this.liveSetId] : [], current_dirty: this.dirty, change_summary: this.changes, change_count: this.changes.length || (this.dirty ? 1 : 0), writes_done: this.writesDone,
         has_timbre_edit: this.hasTimbreEdit, scene_write_available: !this.hasTimbreEdit, scene_write_blocked_reason: this.hasTimbreEdit ? "timbre_change" : "",
         live_set_revision: this.liveRevision, studio_edit_active: this.studioActive,
       },
-      setlists: { library_revision: 1 },
+      setlists: { library_revision: 1, loaded_setlist_id: this.loadedSetlist },
     });
   }
 
@@ -127,9 +139,10 @@ export class FakeUnit {
       const c = this.fail(name, b);
       if (c) return this.err(c, "injected");
     }
+    const writeJudged = name === "WriteLiveSet" && (msg.base_revision || 0) !== 0; // Story 9.12: a Write is judged like an edit, but is not one
     const edit = ["SetInsertChain", "SetSendLevels", "SetPartOutput", "SetMasterParams", "SetPerformanceParam", "SetPartTimbre", "SetPartVolume", "SetAssignSlot", "ClearAssignSlot"].includes(name);
     const base = msg.base_revision || 0;
-    if (edit && base !== 0 && base !== this.liveRevision) {
+    if ((edit || writeJudged) && base !== 0 && base !== this.liveRevision) {
       this.staleRejected++;
       return { request_id: 0, revision: this.revision, body: { Error: { code: CODE.STALE_REVISION, message: "stale", details: { base_revision: String(base), current_revision: String(this.liveRevision) } } } };
     }
@@ -140,9 +153,62 @@ export class FakeUnit {
       else this.studioActive = true;
       const was = this.dirty;
       this.dirty = true;
+      if (this.noteChange(name, b)) this.push(); // like the engine: every structural change publishes a State carrying the new change list
       if (!was || (base !== 0 && !wasActive) || base === 0) this.push(); // like the engine: a State push when something visible flipped
     }
     return reply;
+  }
+
+  /** Records the ChangeItem of an accepted edit (State.edits.change_summary), once per kind. */
+  noteChange(name, b) {
+    const item = { SetPartVolume: { key: "part.volume", part: b.part }, SetSendLevels: { key: "part.send_reverb", part: b.part }, SetPartOutput: { key: "part.output", part: b.part },
+      SetInsertChain: { key: "part.inserts", part: b.part }, SetPartTimbre: { key: "part.timbre", part: b.part }, SetPerformanceParam: { key: "part.param", part: b.part, param_id: b.param_id },
+      SetMasterParams: { key: "master.param", param_id: b.values && b.values[0] && b.values[0].param_id }, SetAssignSlot: { key: "assign.slot", slot: b.slot - 1 }, ClearAssignSlot: { key: "assign.slot", slot: b.slot - 1 } }[name];
+    if (!item) return false;
+    const same = (x) => x.key === item.key && x.part === item.part && x.param_id === item.param_id && x.slot === item.slot;
+    if (this.changes.some(same)) return false;
+    this.changes.push({ part: null, param_id: null, scene: null, slot: null, text: "", ...item });
+    return true;
+  }
+
+  /** WriteLiveSet with engine/host/src/edit_session.cpp do_write's rules (the C++ tests are the authority). */
+  async write(b) {
+    this.writeLog.push(clone(b));
+    if (this.writeHook) {
+      const r = await this.writeHook(b);
+      if (r) return r;
+    }
+    const e = (code, message, details = {}) => ({ request_id: 0, revision: this.revision, body: { Error: { code, message, details } } });
+    if (![1, 2, 3].includes(b.scope)) return e(CODE.INVALID_COMMAND, "needs a scope");
+    if (!this.sounding) return e(CODE.NO_LIVE_SET, "no Live Set is loaded");
+    if (b.scope !== 3 && this.factory) return e(CODE.WRITE_SCOPE_UNAVAILABLE, "factory", { reason: "factory_read_only" });
+    let name = this.liveSetName;
+    if (b.scope === 3) {
+      if (b.new_name != null) {
+        name = String(b.new_name).trim();
+        if (!name || /[\u0000-\u001f]/.test(name) || new TextEncoder().encode(name).length > 64) return e(25, "invalid name");
+        if (this.takenNames.has(name.replace(/[a-z]/g, (c) => c.toUpperCase()))) {
+          let n = 2;
+          while (this.takenNames.has(`${name.replace(/ \d+$/, "").replace(/[a-z]/g, (c) => c.toUpperCase())} ${n}`)) n++;
+          return e(CODE.NAME_IN_USE, "name in use", { name, suggested_name: `${name.replace(/ \d+$/, "")} ${n}` });
+        }
+      } else name = `${this.liveSetName} 2`;
+    }
+    if (b.scope === 1) {
+      if (this.hasTimbreEdit) return e(CODE.WRITE_SCOPE_UNAVAILABLE, "Timbre changes are saved with the Live Set", { reason: "timbre_change" });
+    }
+    if (this.storageFull && this.dirty) return e(CODE.STORAGE_FULL, "the storage is full; nothing was written and the edits stay in memory");
+    const mine = b.scope === 1 ? this.changes.filter((c) => c.scene === this.scene) : this.changes;
+    const nothing = b.scope !== 3 && mine.length === 0 && !(b.scope === 2 && this.dirty);
+    if (!nothing) {
+      this.writesDone++;
+      if (b.scope === 2) { this.changes = []; this.dirty = false; this.hasTimbreEdit = false; }
+      else if (b.scope === 1) { this.changes = this.changes.filter((c) => c.scene !== this.scene); this.dirty = this.changes.length > 0; }
+      this.revision++; // the Write moves the generic revision, never live_set_revision
+      this.push();
+    }
+    return { request_id: 0, revision: this.revision, body: { WriteReply: { scope: b.scope, live_set_id: this.liveSetId, written_live_set_id: b.scope === 3 ? "ls-new" : this.liveSetId, written_name: name, scene: b.scope === 1 ? this.scene : -1,
+      written: mine, written_count: nothing ? 0 : mine.length, nothing_to_write: nothing, current_dirty: this.dirty, remaining_changes: this.changes.length, not_durable: false, setlist_id: "", setlist_index: -1 } } };
   }
 
   /** What the engines consume of the registry's part parameters (engine/core: only OrganEngine overrides set_part_param; the sends belong to the mixer). */
@@ -189,6 +255,7 @@ export class FakeUnit {
       case "GetSetlists":
         return { revision: this.revision, body: { SetlistsReply: { setlists: [], tags: [], status: { available: true, library_revision: 1 }, detail_setlist_id: "", entries: [], all_live_sets: [{ live_set_id: this.liveSetId, name: "Perfect", missing: false }] } } };
       case "GetState": return { revision: this.revision, body: { State: this.state() } };
+      case "WriteLiveSet": return this.write(b);
       case "GetPerformanceValues":
         return { revision: this.revision, body: { PerformanceValues: { values: [...this.perf].map(([k, value]) => { const [id, part] = k.split(":").map(Number); return { param_id: id, part, value }; }), current_scene: this.scene } } };
       case "SetPerformanceParam": {

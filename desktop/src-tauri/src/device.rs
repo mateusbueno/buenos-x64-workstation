@@ -1449,6 +1449,64 @@ mod tests {
         assert_eq!(serde_json::to_value(&e).unwrap()["body"]["Error"]["code"], ErrorCode::NoSuchLiveSet as i32);
     }
 
+    /// Story 9.12: the Write to Velora command, as the JSON the page builds (write_to_velora.js: `{ base_revision?, body: { WriteLiveSet: { scope, new_name? } } }`), maps onto the
+    /// device's own WriteLiveSet (scope is the enum number 1 / 2 / 3, `new_name` only for Save as new), and the answers it reads (WriteReply, and the typed refusals with their
+    /// details) come back as the JSON it parses.
+    #[test]
+    fn write_to_velora_messages_map_to_json() {
+        use crate::ws_v1::{WriteReply, WriteScope};
+        let parse = |v: serde_json::Value| -> ClientMessage { serde_json::from_value(v).expect("the page's JSON must map onto a ClientMessage") };
+        let m = parse(serde_json::json!({"base_revision": 42, "body": {"WriteLiveSet": {"scope": 2}}}));
+        assert_eq!(m.base_revision, 42);
+        assert!(matches!(m.body, Some(CBody::WriteLiveSet(ref w)) if w.scope == WriteScope::WholeLiveSet as i32 && w.new_name.is_none()));
+        let m = parse(serde_json::json!({"body": {"WriteLiveSet": {"scope": 3, "new_name": "Ballad take"}}}));
+        assert_eq!(m.base_revision, 0); // an older unit: nothing is judged
+        assert!(matches!(m.body, Some(CBody::WriteLiveSet(ref w)) if w.scope == WriteScope::SaveAsNew as i32 && w.new_name.as_deref() == Some("Ballad take")));
+        let m = parse(serde_json::json!({"body": {"WriteLiveSet": {"scope": 1}}}));
+        assert!(matches!(m.body, Some(CBody::WriteLiveSet(ref w)) if w.scope == WriteScope::Scene as i32));
+        // the reply the page reads
+        let reply = ServerMessage {
+            request_id: 9,
+            revision: 31,
+            body: Some(SBody::WriteReply(WriteReply {
+                scope: WriteScope::SaveAsNew as i32,
+                live_set_id: "a".into(),
+                written_live_set_id: "b".into(),
+                written_name: "Ballad take".into(),
+                scene: -1,
+                written_count: 2,
+                current_dirty: true,
+                remaining_changes: 2,
+                setlist_index: -1,
+                ..Default::default()
+            })),
+        };
+        let j = serde_json::to_value(&reply).unwrap();
+        let w = &j["body"]["WriteReply"];
+        assert_eq!(w["scope"], 3);
+        assert_eq!(w["written_name"], "Ballad take");
+        assert_eq!(w["current_dirty"], true);
+        assert_eq!(w["nothing_to_write"], false);
+        assert_eq!(w["remaining_changes"], 2);
+        assert_eq!(j["revision"], 31);
+        // the refusals write_to_velora.js reacts to: name in use (details name + suggested_name), scope unavailable (details reason), storage full, stale revision
+        for (c, n) in [(ErrorCode::NameInUse, 34), (ErrorCode::WriteScopeUnavailable, 35), (ErrorCode::StorageFull, 36), (ErrorCode::StaleRevision, 47), (ErrorCode::UpstreamUnavailable, 44), (ErrorCode::InvalidName, 25), (ErrorCode::StorageFailed, 33)] {
+            assert_eq!(c as i32, n);
+        }
+        let err = ServerMessage {
+            request_id: 1,
+            revision: 0,
+            body: Some(SBody::Error(WsError {
+                code: ErrorCode::NameInUse as i32,
+                message: "name in use".into(),
+                details: [("name".to_string(), "Perfect".to_string()), ("suggested_name".to_string(), "Perfect 2".to_string())].into_iter().collect(),
+            })),
+        };
+        let j = serde_json::to_value(&err).unwrap();
+        assert_eq!(j["body"]["Error"]["code"], 34);
+        assert_eq!(j["body"]["Error"]["details"]["suggested_name"], "Perfect 2");
+    }
+
     /// Story 9.9: every edit the Part Editor sends, as the JSON the page builds (part_editor.js `requests`, plus `base_revision` on the envelope), maps onto the real
     /// ClientMessage (the enum fields are numbers, `part` of a master ParamValue is absent), and a message without `base_revision` still parses (0 = not provided).
     #[test]
@@ -1609,6 +1667,7 @@ mod tests {
         if std::env::var("VELORA_TEST_TIMBRES").is_ok() {
             real_timbre_flow(&c);
         }
+        real_write_flow(&c);
         eprintln!("real_bridge_round_trip: status {:?}", c.status());
         c.disconnect();
         let _ = std::fs::remove_dir_all(&dir);
@@ -1745,6 +1804,110 @@ mod tests {
         assert_eq!(part["timbre_name"], "", "a missing library never shows another timbre's name");
         assert_eq!(part["empty"], false);
         eprintln!("real_timbre_flow: ok ({} timbres listed)", timbres.len());
+    }
+
+    /// Story 9.12 against a REAL bridge and engine (called by real_bridge_round_trip with its paired client, after the edits and timbre flows left the Live Set with unsaved
+    /// edits): the Write command the device's own Write Dialog sends, as the page's JSON with base_revision. A Write on a stale revision is refused and writes nothing; Save as new
+    /// with the Live Set's own name is NAME_IN_USE with a suggested free name, and with that name creates a NEW Live Set while the sounding one keeps its edits; Scene is refused
+    /// with `timbre_change` when the edits include a timbre change; Whole Live Set clears the unsaved state on the engine (State.edits.current_dirty / dirty_live_set_ids) without
+    /// moving live_set_revision, so Studio's next edit on the same base still works; a repeated Write says nothing_to_write. (Storage full needs the store's test hook, which the
+    /// engine binary does not expose: it is covered by engine/host/tests/edit_session_test.cpp test_storage_full.)
+    fn real_write_flow(c: &DeviceClient) {
+        let call = |v: serde_json::Value| -> serde_json::Value {
+            let m: ClientMessage = serde_json::from_value(v).expect("page JSON maps onto a ClientMessage");
+            serde_json::to_value(c.request(m, Duration::from_secs(15)).expect("a reply")).unwrap()
+        };
+        let state = || call(serde_json::json!({"body": {"GetState": {}}}))["body"]["State"].clone();
+        let st = state();
+        assert_eq!(st["live_set_loaded"], true, "the smoke engine has no Live Set loaded");
+        assert_eq!(st["edits"]["available"], true, "the engine runs no edit session");
+        let rev = || state()["edits"]["live_set_revision"].as_u64().unwrap();
+        let writes = || state()["edits"]["writes_done"].as_u64().unwrap();
+        let settle = |f: &dyn Fn(&serde_json::Value) -> bool| {
+            let end = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < end {
+                let s = state();
+                if f(&s) && s["loading"]["loading"] != true {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        };
+        assert!(settle(&|_| true));
+        // an unsaved Studio edit (a structural volume edit with the revision the view was loaded at)
+        let base = rev();
+        let r = call(serde_json::json!({"base_revision": base, "body": {"SetPartVolume": {"part": 0, "volume": 0.37}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack, got {}", r);
+        assert!(settle(&|s| s["edits"]["current_dirty"] == true));
+        let st = state();
+        let has_timbre = st["edits"]["has_timbre_edit"] == true;
+        let items: Vec<String> = st["edits"]["change_summary"].as_array().unwrap().iter().map(|i| i["key"].as_str().unwrap().to_string()).collect();
+        assert!(items.iter().any(|k| k == "part.volume"), "the change list does not say the volume changed: {:?}", items);
+        assert_eq!(rev(), base, "a Studio edit does not move the revision");
+        assert!(st["edits"]["dirty_live_set_ids"].as_array().unwrap().iter().any(|i| *i == st["live_set_id"]));
+        let before = writes();
+        // a Write on a view older than the unit's Live Set is refused (like an edit) and writes nothing; one with no scope is INVALID_COMMAND
+        let stale = call(serde_json::json!({"base_revision": base + 7, "body": {"WriteLiveSet": {"scope": 2}}}));
+        assert_eq!(stale["body"]["Error"]["code"], 47, "expected STALE_REVISION, got {}", stale);
+        assert_eq!(stale["body"]["Error"]["details"]["current_revision"], base.to_string());
+        assert_eq!(writes(), before);
+        assert_eq!(state()["edits"]["current_dirty"], true, "a refused Write changed nothing");
+        assert_eq!(call(serde_json::json!({"base_revision": base, "body": {"WriteLiveSet": {"scope": 0}}}))["body"]["Error"]["code"], 5);
+        // Save as new: the Live Set's own name is taken (the device's NAME_IN_USE with a free name); the free name creates a NEW Live Set and the current one keeps its edits
+        let own = st["live_set_name"].as_str().unwrap().to_string();
+        let taken = call(serde_json::json!({"base_revision": base, "body": {"WriteLiveSet": {"scope": 3, "new_name": own}}}));
+        assert_eq!(taken["body"]["Error"]["code"], 34, "expected NAME_IN_USE, got {}", taken);
+        let suggested = taken["body"]["Error"]["details"]["suggested_name"].as_str().expect("a suggested name").to_string();
+        assert_ne!(suggested, own);
+        assert_eq!(writes(), before, "a refused name wrote nothing");
+        let copy = call(serde_json::json!({"base_revision": base, "body": {"WriteLiveSet": {"scope": 3, "new_name": suggested}}}));
+        let w = &copy["body"]["WriteReply"];
+        assert!(w.is_object(), "expected WriteReply, got {}", copy);
+        assert_eq!(w["scope"], 3);
+        assert_eq!(w["written_name"], suggested.as_str());
+        assert_ne!(w["written_live_set_id"], st["live_set_id"]);
+        assert_eq!(w["current_dirty"], true, "the sounding Live Set keeps its unsaved edits after Save as new");
+        assert_eq!(state()["edits"]["current_dirty"], true);
+        assert_eq!(writes(), before + 1);
+        assert_eq!(rev(), base, "Save as new does not move live_set_revision");
+        let listed = call(serde_json::json!({"body": {"GetSetlists": {"setlist_id": "", "include_all_live_sets": true}}}));
+        assert!(listed["body"]["SetlistsReply"]["all_live_sets"].as_array().unwrap().iter().any(|l| l["name"] == suggested.as_str()), "the new Live Set is not listed");
+        // Scene: refused with the device's reason when the edits include a timbre change (the timbre flow ran before this one when the librarian is there)
+        let scene = call(serde_json::json!({"base_revision": base, "body": {"WriteLiveSet": {"scope": 1}}}));
+        if has_timbre {
+            assert_eq!(scene["body"]["Error"]["code"], 35, "expected WRITE_SCOPE_UNAVAILABLE, got {}", scene);
+            assert_eq!(scene["body"]["Error"]["details"]["reason"], "timbre_change");
+            assert_eq!(writes(), before + 1);
+        } else {
+            assert!(scene["body"].get("WriteReply").is_some() || scene["body"]["Error"]["code"] == 35, "unexpected Scene answer {}", scene);
+        }
+        // Whole Live Set: written; the unsaved state is gone on the engine, live_set_revision did not move, and the next edit on the same base is accepted
+        let before_whole = writes();
+        let whole = call(serde_json::json!({"base_revision": base, "body": {"WriteLiveSet": {"scope": 2}}}));
+        let w = &whole["body"]["WriteReply"];
+        assert!(w.is_object(), "expected WriteReply, got {}", whole);
+        assert_eq!(w["scope"], 2);
+        assert_eq!(w["nothing_to_write"], false);
+        assert_eq!(w["current_dirty"], false);
+        assert_eq!(w["remaining_changes"], 0);
+        assert!(w["written_count"].as_u64().unwrap() >= 1);
+        assert!(settle(&|s| s["edits"]["current_dirty"] == false));
+        let after = state();
+        assert_eq!(after["edits"]["has_timbre_edit"], false);
+        assert!(after["edits"]["dirty_live_set_ids"].as_array().unwrap().is_empty(), "the engine still lists dirty Live Sets: {}", after["edits"]["dirty_live_set_ids"]);
+        assert_eq!(after["edits"]["writes_done"].as_u64().unwrap(), before_whole + 1);
+        assert_eq!(after["edits"]["live_set_revision"].as_u64().unwrap(), base, "a Write is not a change of the Live Set");
+        // the pushed State says the same (what the Studio footer and the diamond read)
+        assert!(wait_for(|| c.latest_state().map(|s| s["edits"]["current_dirty"] == false).unwrap_or(false)), "the pushed State still says unsaved");
+        // nothing left: the same Write says so and touches nothing
+        let again = call(serde_json::json!({"base_revision": base, "body": {"WriteLiveSet": {"scope": 2}}}));
+        assert_eq!(again["body"]["WriteReply"]["nothing_to_write"], true, "got {}", again);
+        assert_eq!(writes(), before_whole + 1);
+        // and Studio's view is still current: an edit on the same base is accepted
+        let r = call(serde_json::json!({"base_revision": base, "body": {"SetPartVolume": {"part": 0, "volume": 0.5}}}));
+        assert!(r["body"].get("Ack").is_some(), "expected Ack after the Write, got {}", r);
+        eprintln!("real_write_flow: ok (timbre edit present: {})", has_timbre);
     }
 
     /// Story 9.13 against a REAL bridge and engine (called by real_bridge_round_trip with its paired client: the bridge's pairing window closes at the first pairing, so

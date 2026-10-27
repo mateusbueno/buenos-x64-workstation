@@ -1886,3 +1886,118 @@ nav.jump a:hover {
 .tp-name {
   overflow-wrap: anywhere;
 }
+
+/* Write to Velora (Story 9.12): the Write dialog reuses the Setlists dialog (.sv-backdrop, .sv-dialog); the banner is the Studio Banner. Tokens only; the focus ring is the global one. */
+.wr-dialog {
+  width: min(32rem, calc(100vw - 2rem));
+}
+
+.wr-head {
+  margin: var(--spacing-1) 0 0;
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wr-changes {
+  margin: 0;
+  padding: var(--spacing-1) var(--spacing-2) var(--spacing-1) var(--spacing-4);
+  max-height: min(10rem, 25vh);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  font-size: var(--font-desktop-body);
+}
+
+.wr-change {
+  overflow-wrap: anywhere;
+}
+
+.wr-more {
+  color: var(--muted);
+  list-style: none;
+  margin-inline-start: calc(var(--spacing-4) * -1);
+}
+
+.wr-scopes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.wr-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  font-size: var(--font-desktop-body);
+  cursor: pointer;
+}
+
+.wr-scope.on {
+  border-color: var(--accent);
+  background-color: var(--raised);
+}
+
+.wr-scope.on .wr-scope-label::before {
+  content: "● ";
+}
+
+.wr-scope:not(.on) .wr-scope-label::before {
+  content: "○ ";
+}
+
+.wr-scope.disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.wr-scope-label {
+  font-weight: 600;
+}
+
+.wr-scope-desc, .wr-reason {
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+}
+
+.wr-reason {
+  padding-inline-start: var(--spacing-2);
+}
+
+.wr-name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.foot-writing {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.wr-banner {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-desktop-sm);
+  background-color: var(--bg);
+  color: var(--text);
+  font-size: var(--font-desktop-body);
+}
+
+.wr-banner-text {
+  flex: 1 1 20rem;
+}

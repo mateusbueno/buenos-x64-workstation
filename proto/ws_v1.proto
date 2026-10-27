@@ -853,7 +853,8 @@ message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
   // Story 9.9 (additive): the Live Set revision (State.edits.live_set_revision) the client's view was built on when it made this edit (0 = not provided: accepted exactly as
   // before, and the edit counts as a device-side change). Story 9.10: on an edit command (SetInsertChain .. SetPerformanceParam, SetPartTimbre, SetPartVolume, SetAssignSlot,
-  // ClearAssignSlot) a value other than the current revision is refused with ERROR_CODE_STALE_REVISION, nothing changes.
+  // ClearAssignSlot) a value other than the current revision is refused with ERROR_CODE_STALE_REVISION, nothing changes. Story 9.12: WriteLiveSet is judged the same way (nothing is
+  // written when stale) but is not an edit: it does not light STUDIO and does not move the revision.
   uint64 base_revision = 2;
   oneof body {
     Hello hello = 10;

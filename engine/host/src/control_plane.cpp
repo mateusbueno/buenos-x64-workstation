@@ -590,7 +590,10 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   const bool is_edit = (bc >= B::kSetInsertChain && bc <= B::kSetPerformanceParam) || bc == B::kSetPartTimbre || bc == B::kSetPartVolume || bc == B::kSetAssignSlot ||
                        bc == B::kClearAssignSlot;
   const bool studio_edit = is_edit && msg.base_revision() != 0;
-  const bool stale = studio_edit && msg.base_revision() != live_set_revision();
+  // Story 9.12: a Write that carries base_revision is judged like an edit (a Studio view that is older than the unit's Live Set must not persist values it never showed), but it is NOT an
+  // edit: it never lights STUDIO, never counts as a Studio edit and never moves the revision. A Write without base_revision (the device UI) is accepted exactly as before.
+  const bool write_judged = bc == B::kWriteLiveSet && msg.base_revision() != 0;
+  const bool stale = (studio_edit || write_judged) && msg.base_revision() != live_set_revision();
   if (studio_edit) {
     last_base_revision_.store(msg.base_revision(), std::memory_order_relaxed);
     base_revision_edits_.fetch_add(1, std::memory_order_relaxed);
