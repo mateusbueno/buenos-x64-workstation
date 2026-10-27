@@ -7,13 +7,13 @@ baseline_revision: '99cea91e64fdabfd6e07b2603c521af359d53f45'
 review_loop_iteration: 0
 followup_review_recommended: false
 context: ['{project-root}/desktop/README.md', '{project-root}/proto/params.json', '{project-root}/_bmad-output/planning-artifacts/ux-designs/ux-buenos-x64-workstation-2026-10-18/mockups/key-screen-studio.html', '{project-root}/_bmad-output/planning-artifacts/ux-designs/ux-buenos-x64-workstation-2026-10-18/mockups/studio-part-editor-fm-va.html']
-warnings: ['KNOWN LIMITATION (review A1): FmEngine, VaEngine and SampleEngine do not consume registry part parameters (only OrganEngine overrides Engine::set_part_param; ids 402..408 are consumed by nothing), so edits to FM / VA / sample knobs and the whole Amp envelope + EQ section are stored but NOT audible. Audible: organ parameters, sends, output, part volume, inserts, ASSIGN. See desktop/README.md.']
+warnings: ['REMAINING LIMITATION (engine follow-up, see Auto Run Result addendum): three Part Editor knobs are stored but NOT audible: part_attack / part_release on organ and FM parts (the organ has no amp envelope; the FM contour is its operator envelopes) and va_unison_spread (the VA voice sums its unison voices to mono before the filter). Everything else is audible: organ, FM (fm_*: the part''s next note; fm_brightness live), VA (va_*: continuous ones live and smoothed, discrete ones next note), sample part_attack / part_release, part_brightness / part_eq_* on every engine, sends, output, volume, inserts, ASSIGN. See desktop/README.md and engine/core/README.md.']
 deferred:
   - summary: >-
-      MAIN GAP (engine, outside Studio): FmEngine, VaEngine and SampleEngine do not consume registry part parameters (BlockRenderer::apply_param stores the value and calls engine->set_part_param, which only OrganEngine overrides; ids 402..408 part_brightness/attack/release/eq_* are consumed by nothing). Edits to FM/VA/sample knobs and the whole Amp envelope + EQ section are stored but not audible; only organ parameters, sends, output, volume, inserts and ASSIGN take effect. The AC "plays on the unit immediately" therefore holds only for those. Inert knobs carry a hint (INERT_BY_ENGINE table).
+      WHAT STAYS of the former engine gap (the gap itself is closed, see the Auto Run Result addendum): part_attack / part_release are still stored only on organ and FM parts (organ: no amp envelope; FM: the contour is the six operator envelopes and the registry says nothing about how a second amp envelope combines with them), and va_unison_spread is stored only (the VA voice sums the unison voices to one mono signal before the filter; a stereo spread needs a stereo filter path). FM / VA discrete patch parameters apply to the part's NEXT note (patch copied at note start), not to sounding notes. Not verified on real hardware (host build only).
     evidence: |-
-      desktop/README.md, part_editor.js header.
-    severity: high
+      engine/core/README.md "Registry part parameters in the engines", part_editor.js INERT_BY_ENGINE, engine/core/tests/part_params_test.cpp.
+    severity: medium
   - summary: >-
       Other deferrals: SetPartZone and SetPartArp commands (zone, keyboard, octave, transpose, arpeggiator are read-only in the editor; no existing ws.v1 command, the device UI edits them in-process only), ASSIGN part-scope params land on State.encoders.selected_part, one tab stop per knob (spec asked roving order), insert param labels generic, base_revision recorded and ignored until Story 9.10, only the sounding Live Set is editable, --no-audio host snaps perf edits back (no render thread), Studio not checked in the real Tauri webview, 1280 px window computed not measured.
     evidence: |-
@@ -76,6 +76,7 @@ deferred:
 
 ## Spec Change Log
 
+- 9.9 engine follow-up: INERT_BY_ENGINE shrank from "everything but the organ" to part_attack / part_release (organ, FM) and va_unison_spread; FakeUnit.consumes mirrors the engines.
 - 9.9 review: the editor hints inert knobs (INERT_BY_ENGINE), sends send both SetPerformanceParam and SetSendLevels, tab order is one stop per knob (deviation from the roving order the spec asked for), the VA amp envelope replaces the generic attack / release for VA parts.
 
 ## Review Triage Log
@@ -85,6 +86,15 @@ deferred:
   - `[high]` `patch` part switch with a queued send applied another part's value (SetPerformanceParam part 2 value 0); a send knob stayed pending forever; read-back raced the RT apply and snapped knobs back; structural drags flooded the generation ledger; DOM signature rebuilds destroyed focus and broke drags; send semantics (initial vs live); VA oscillator groups produced identically named sliders; linear steps unusable on ms/Hz ranges; reflow depended on window width
   - `[high]` `defer` engines do not consume registry part parameters (see deferred) — Studio marks inert knobs
   - `[medium]` `patch` accessibility (live regions, modifiers, colour-only pending), unit formatting, missing labels, zone ranges, README overclaims
+
+### 2026-10-27 — Engine follow-up (closes the deferred MAIN GAP), self-review
+- findings:
+  - `[high]` `patch` defaults vs base patch: the block loop forwards the registry defaults as initial values, and the FM engine's base patch (EP) is not the registry default, so wiring the parameters naively would have changed every existing FM sound. Fixed with "engagement" (engine/core/include/velora/core/part_params.hpp): an initial value engages only when it differs from the default, a live edit (new `Engine::set_part_param_edit`, used by `BlockRenderer::apply_param`) always engages, `reset_play_state()` at a Live Set switch restores the base patch. Tested bit-identical.
+  - `[high]` `patch` a value that comes back through the 32-bit event scale is not exactly the default (0 dB arrives as ~3.5e-9 dB), which would have kept the Mixer routed and the tone stage running for a knob "at its default": 0.001 dB dead band in `PartTone::set`.
+  - `[medium]` `patch` denormals: `EqEffect` kept double states that decay to 1e-308 and the float output could cross 1e-38 inside a block; states are flushed below 1e-30 (`eq.cpp`, also helps the master EQ), `PartTone` flushes state and output. Smoothers snap onto their target (VA live parameters, FM brightness, VA sustain glide), so no endless tail and the voice returns to the unsmoothed path.
+  - `[medium]` `patch` VA sustain level stepped when edited in the sustain stage: now glides (~10 ms), bit-identical when unchanged.
+  - races reviewed, none found: engines are written only from the render thread between segments (UMP queue / generation adoption), the Mixer reads the RT-owned last-value table; sample envelope state is voice-local (workers read only their voices), part_attack / part_release arrays are written between segments while workers idle at the barrier; 1 vs 3 partitions bit-identical under moving part_attack / part_release (test).
+  - `[medium]` `defer` part_attack / part_release (organ, FM) and va_unison_spread stay inert, see deferred. `[low]` `defer` the part tone stage is not counted in the FX budget (fill_fx_costs).
 
 ## Verification
 
@@ -97,3 +107,9 @@ deferred:
 
 Summary: registry -> desktop/src/params_registry.js (generated, drift-tested, grouping and engine applicability derived from data), part_editor.js (four-section model, Studio Knob rules, command table, coalescing sender with optimistic/confirm/revert, inert-by-engine hints), part_editor_dom.js (ARIA sliders, keyboard, drag, wheel, value entry, focus-preserving in-place updates, rem-based reflow), ClientMessage.base_revision (recorded, ignored until 9.10), ~200 locale keys.
 Verification: ctest control/sysd/bridge/params/smoke/desktop 28/28; node tests 169; cargo tests 23; lints pass; full ctest only the 4 pre-existing failures. Status stays in-progress: most FM/VA/sample parameters have no audible effect yet (engine gap).
+
+### Addendum: engine follow-up (2026-10-27) -- the deferred MAIN GAP
+Summary: the engines now play the registry part parameters. FmEngine: ids 1000..1103 edit the part's patch (next note; fm_brightness also live). VaEngine: ids 1200..1266 edit the patch; the continuous ones also move sounding notes (per-sample ~5 ms one pole, cutoff in the octave domain, ADSR re-timed in place, sustain glides, LFO rate). SampleEngine: part_attack / part_release replace the region's ampeg attack / release. Mixer: new per-part `PartTone` (brightness shelf + 3-band EQ, RT-safe biquads, identity = bit-exact and trivial routing) plays part_brightness / part_eq_* for EVERY engine incl. the organ. New `Engine::set_part_param_edit` and "engagement" keep every default sound unchanged. Studio: INERT_BY_ENGINE shrank to part_attack / part_release (organ, FM) and va_unison_spread; FakeUnit.consumes mirrors the engines; desktop/README.md, proto/README.md, engine/core/README.md updated.
+Stays inert and why: part_attack / part_release on organ and FM (no amp envelope on the organ; the FM contour is the operator envelopes and the registry does not say how a second envelope combines); va_unison_spread (mono unison sum, a stereo spread means a stereo filter path).
+Verification (local, no CI, no Docker): cmake build + `ctest -j4` (704 tests; only setlist_controller_tests failed once under parallel load and passes alone: pre-existing flake), new `part_params_tests`; `node --test desktop/tests` 276; `cargo test --offline` 26; `check_core_deps.py`, `check_ui_strings.py`, `check_no_color_literals.py`, `proto/tests/test_gen_params.py` pass. RTSan variant (`rtsan_part_params_test`) is Docker/Linux only and was not run.
+Status stays `in-progress`, deliberately: (1) SetPartZone / SetPartArp are still deferred (zone, keyboard, octave, transpose and the arpeggiator are read-only in the editor, so "edit every parameter of the selected part" is not wholly met); (2) the reflow AC was computed, not measured in the real Tauri webview; (3) audibility was verified in the host engine tests only, not on the unit; (4) FM / VA discrete parameters sound on the next note, not on a sounding one.

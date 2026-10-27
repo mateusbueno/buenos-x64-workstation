@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "velora/core/engine.hpp"
+#include "velora/core/part_params.hpp"
 #include "velora/core/sample_bank.hpp"
 #include "velora/core/ump.hpp"
 #include "velora/core/worker_pool.hpp"
@@ -115,6 +116,13 @@ class SampleEngine final : public Engine {
   float part_cc(std::uint32_t part, std::uint32_t cc) const noexcept { return cc_[part & 15u][cc & 127u]; }
   void key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING override;
   void reset_play_state() noexcept VELORA_NONBLOCKING override;
+  // Registry part parameters part_attack (403, ms) and part_release (404, ms) (Story 9.9 follow-up; see part_params.hpp "engagement"). Once moved off
+  // their registry defaults (10 ms / 300 ms) they REPLACE the instrument's own ampeg_attack / ampeg_release for the part: the attack applies to
+  // voices that start afterwards, the release is applied when a voice is released (so a held note follows the knob), through the same linear attack
+  // and exponential release shapes the regions use. Untouched, the instrument's own envelope plays (sfizz-exact). part_brightness / part_eq_*
+  // (402, 405..408) are not engine parameters: the Mixer's per-part tone stage takes them for every engine.
+  void set_part_param(std::uint32_t part, std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
+  void set_part_param_edit(std::uint32_t part, std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
   // The part's current "last keyswitch" (sw_last state), -1 = none yet.
   int part_last_keyswitch(std::uint32_t part) const noexcept { return ks_[part & 15u].last; }
   bool part_key_held(std::uint32_t part, std::uint32_t key) const noexcept { return key < 128 && ks_[part & 15u].is_held(static_cast<int>(key)); }
@@ -202,6 +210,7 @@ class SampleEngine final : public Engine {
     std::int32_t delay_left = 0, hold_left = 0;
     float transition_delta = 0.0f;
     float release_rate = 0.0f;
+    float attack_step = 1.0f;  // per-voice copy of the attack rate (the region's, or the part's part_attack override)
   };
 
   struct Voice {
@@ -269,7 +278,7 @@ class SampleEngine final : public Engine {
     release_stream(v);
     v.active = false;
   }
-  void init_env(Env& e, const RegionRt& r) const noexcept;
+  void init_env(Env& e, const RegionRt& r, std::uint32_t channel) const noexcept;
   float env_next(Env& e, const RegionRt& r) const noexcept;
   // false: the voice must be dropped (released before its envelope delay elapsed).
   bool env_release(Env& e, const RegionRt& r) const noexcept;
@@ -286,6 +295,7 @@ class SampleEngine final : public Engine {
   bool region_switched(const RegionRt& r, const KeyState& ks) const noexcept;
   float crossfade_target(const RegionRt& r, std::uint32_t channel) const noexcept;
   float next_random() noexcept;
+  void put_part_param(std::uint32_t part, std::uint32_t param_id, float value, bool edit) noexcept;
   void render_voice(Voice& v, float* left, float* right, std::uint32_t frames) noexcept;
   // Story 1.18 parallel path. render_parallel() runs the partitions on the pool, then sums; render_partition() is one partition's work.
   bool parallel_applicable(std::uint32_t frames) const noexcept;
@@ -331,6 +341,10 @@ class SampleEngine final : public Engine {
   std::array<std::uint32_t, WorkerPool::kPartitions> partition_mask_{};  // channels (bit c; bit 0 when not split) each partition rendered into
   std::uint32_t par_frames_ = 0;
   bool par_split_ = false;
+  // part_attack / part_release overrides (set_part_param): engaged flags (bit 0 attack, bit 1 release) and the converted rates per part.
+  std::array<part_params::EngagedSet, 16> part_engaged_{};
+  std::array<float, 16> part_attack_step_{};
+  std::array<float, 16> part_release_rate_{};
   std::int32_t xf_frames_ = 240;                        // CC crossfade smoothing time in frames (sfizz xfadeSmoothing = 5 ms)
 };
 

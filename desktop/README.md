@@ -129,12 +129,15 @@ Smoke-viewed (not a full visual check) in the browser pane at about 800 px wide,
 
 ## Part Editor with Studio Knobs (Story 9.9)
 
-> **MOST KNOBS ARE STORED BUT NOT AUDIBLE YET (the main deferred engine gap).** The engine stores every registry part parameter (`BlockRenderer::apply_param`) and calls
-> `Engine::set_part_param`, but only `OrganEngine` overrides it: `FmEngine`, `VaEngine` and `SampleEngine` ignore it, and ids 402..408 (`part_brightness`, `part_attack`, `part_release`,
-> `part_eq_*`) are consumed by **no** engine. So edits to FM / VA / sample knobs and the whole **Amp envelope + EQ** section change the *stored* value, and what the read-back
-> (`GetPerformanceValues`) confirms is that stored value, **not the sound**. What takes effect: **organ parameters, the sends, the output, the part volume, the insert chain and ASSIGN.**
-> Each inert knob carries a tooltip / `aria-description` ("No audible effect on this engine yet") driven by `INERT_BY_ENGINE` in `src/part_editor.js` (a small table: remove a row when an
-> engine starts consuming those parameters), and the Amp envelope + EQ section says so in a note. Which engine owns which parameters is for the engine stories to decide.
+> **What is audible (Story 9.9 engine follow-up; the engine gap of the first review is closed except for three knobs).** Every registry part parameter reaches its engine: organ parameters (`OrganEngine`),
+> `fm_*` (`FmEngine`: they edit the part's patch, so they sound on the **next note**; `fm_brightness` also moves sounding notes), `va_*` (`VaEngine`: the continuous ones, i.e. oscillator detune / pulse width, mixer,
+> filter cutoff / resonance / drive / key tracking / envelope amount, ADSR times, LFO rate and depths, unison detune and brightness, also move sounding notes, smoothed; waveforms, octave / semitone, sync, sub / noise
+> switches, filter type, voice mode, unison voices and glide apply to the next note), `part_attack` / `part_release` on **sample** parts (they replace the instrument's own attack / release once edited) and
+> `part_brightness` / `part_eq_*` on **every** engine (a per-part brightness shelf and three-band EQ on the part bus, before the inserts). Plus the sends, output, part volume, insert chain and ASSIGN as before.
+> **Still stored but NOT audible** (`INERT_BY_ENGINE` in `src/part_editor.js`, one tooltip / `aria-description` "No audible effect on this engine yet" per knob, and a note in the Amp envelope + EQ section while one is shown):
+> `part_attack` / `part_release` on **organ and FM** parts (the organ has no amp envelope; an FM part's contour is its operator envelopes) and `va_unison_spread` (the VA voice sums its unison voices to one mono signal).
+> The read-back (`GetPerformanceValues`) still confirms the *stored* value, not that it sounds. Engine details and the "a default never overrides an FM / VA base patch" rule: `engine/core/README.md`,
+> "Registry part parameters in the engines".
 
 While the unit is **paired** and a part is selected in the Live Set view, the area below the strips is the real Part Editor (offline / unpaired, the simulated editor of Stories 9.5 / 12.13 is unchanged). Four hairline-divided
 sections, no menus, no tabs: **Sound** (the part volume, then the engine's cards: organ drawbars / percussion / vibrato / tone / rotary, FM algorithm / global / LFO / pitch env / OP 1..6, VA oscillator 1 / oscillator 2 / sub / noise /

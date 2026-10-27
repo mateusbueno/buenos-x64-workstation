@@ -336,7 +336,24 @@ void SampleEngine::clear_part_banks() noexcept {
 }
 
 void SampleEngine::reset_play_state() noexcept {
-  for (std::uint32_t ch = 0; ch < 16; ++ch) reset_part_keys(ch);
+  for (std::uint32_t ch = 0; ch < 16; ++ch) {
+    reset_part_keys(ch);
+    part_engaged_[ch].clear();  // the new Live Set's stored part_attack / part_release arrive right after and engage again where they differ from the default
+  }
+}
+
+void SampleEngine::set_part_param(std::uint32_t part, std::uint32_t param_id, float value) noexcept { put_part_param(part, param_id, value, false); }
+void SampleEngine::set_part_param_edit(std::uint32_t part, std::uint32_t param_id, float value) noexcept { put_part_param(part, param_id, value, true); }
+
+void SampleEngine::put_part_param(std::uint32_t part, std::uint32_t param_id, float value, bool edit) noexcept {
+  if (part >= 16 || (param_id != params::kPartAttack && param_id != params::kPartRelease) || !std::isfinite(value)) return;
+  if (edit) part_params::engage(part_engaged_[part], param_id - params::kPartAttack);
+  else if (!part_params::should_apply(part_engaged_[part], param_id - params::kPartAttack, param_id, value)) return;
+  const params::ParamDef* d = params::find(param_id);
+  const float ms = d ? std::clamp(value, static_cast<float>(d->min), static_cast<float>(d->max)) : value;
+  const float sr = static_cast<float>(cfg_.sample_rate);
+  if (param_id == params::kPartAttack) part_attack_step_[part] = seconds_to_lin_rate(ms * 0.001f, sr);
+  else part_release_rate_[part] = seconds_to_exp_rate(ms * 0.001f, sr);
 }
 
 bool SampleEngine::set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept {
@@ -382,13 +399,14 @@ std::uint32_t SampleEngine::active_voices() const noexcept {
 
 // --- amplitude envelope: a sample-by-sample port of sfizz's ADSREnvelope --------------------------
 
-void SampleEngine::init_env(Env& e, const RegionRt& r) const noexcept {
+void SampleEngine::init_env(Env& e, const RegionRt& r, std::uint32_t channel) const noexcept {
   e.s = EnvState::kDelay;
   e.v = r.env_start;
   e.delay_left = r.env_delay;
   e.hold_left = r.env_hold;
   e.transition_delta = 0.0f;
   e.release_rate = r.env_release_rate;
+  e.attack_step = part_engaged_[channel & 15u].test(0) ? part_attack_step_[channel & 15u] : r.env_attack_step;
 }
 
 float SampleEngine::env_next(Env& e, const RegionRt& r) const noexcept {
@@ -403,7 +421,7 @@ float SampleEngine::env_next(Env& e, const RegionRt& r) const noexcept {
         e.s = EnvState::kAttack;
         continue;
       case EnvState::kAttack:
-        e.v += r.env_attack_step;
+        e.v += e.attack_step;
         if (e.v < 1.0f) return e.v;
         e.v = 1.0f;
         e.s = EnvState::kHold;
@@ -508,7 +526,7 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   v->gain_l = base * r.chan_l;
   v->gain_r = base * r.chan_r;
   v->base_gain = base;
-  init_env(v->env, r);
+  init_env(v->env, r, channel);
   if (r.has_xfade) {  // sfizz resetCrossfades(): the smoother starts at the current gain, so a new note does not ramp
     v->xf_tgt = crossfade_target(r, channel);
     v->xf_cur = v->xf_tgt;
@@ -612,7 +630,10 @@ EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t 
     }
     if (!env_release(v.env, r)) {
       end_voice(v);
-    } else if (const float scale = half_pedal_scale(cc_[channel][64]); scale < 1.0f) {
+      continue;
+    }
+    if (part_engaged_[channel].test(1)) v.env.release_rate = part_release_rate_[channel];  // part_release replaces the region's release time
+    if (const float scale = half_pedal_scale(cc_[channel][64]); scale < 1.0f) {
       v.env.release_rate = std::pow(v.env.release_rate, scale);  // Story 3.11: half-pedal damping (see half_pedal_scale)
     }
   }

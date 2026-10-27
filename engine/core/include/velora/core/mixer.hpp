@@ -22,6 +22,8 @@
 // so such renders are bit-identical to the pre-2.7 goldens. The master EQ and compressor count as trivial when they cannot change
 // the signal: bypassed (cross-fade finished) or at identity settings (EQ 0 dB on every band, compressor ratio 1 and makeup 0 dB).
 //
+// Part tone (Story 9.9 follow-up, part_tone.hpp): every part has a brightness shelf and a three-band EQ on its bus before the insert chain; both are
+// transparent at the registry defaults, and the mixer counts a part whose tone stage is not identity as routed (non-trivial).
 // Master section (Story 2.8): the master_eq_* / master_comp_* registry values of the adopted snapshot drive one EqEffect and one
 // CompressorEffect per output bus (the same settings on Main and Aux, separate state). master_eq_bypass / master_comp_bypass cross-fade
 // (a flag value >= 0.5 bypasses, anything else -- 0, 0 < v < 0.5, NaN -- does not) the stage out and in over kFadeFrames (dry/wet mix, no click); a stage that is fully bypassed does not run and its state is cleared.
@@ -35,6 +37,7 @@
 #include "velora/core/delay.hpp"
 #include "velora/core/eq.hpp"
 #include "velora/core/fx.hpp"
+#include "velora/core/part_tone.hpp"
 #include "velora/core/reverb.hpp"
 #include "velora/core/snapshot.hpp"
 #include "velora/core/voice_arbiter.hpp"
@@ -149,6 +152,10 @@ class Mixer {
     bool has_pending = false;
     Ramp main_g, aux_g, rev_g, dly_g;
     float main_target = 1.0f, aux_target = 0.0f;
+    // Per-part tone stage (part_brightness, part_eq_*: part_tone.hpp), before the insert chain; tone_last = the five live values it was last set from.
+    PartTone tone;
+    std::array<float, 5> tone_last{};
+    bool tone_valid = false;
   };
 
   void push_chain(Part& p, FxChain* chain, std::uint32_t ledger, bool instant, bool ref_held = false) noexcept VELORA_NONBLOCKING;
@@ -164,6 +171,7 @@ class Mixer {
   bool routed_ = false;
   std::int16_t master_level_index_ = -1;
   bool instant_levels_ = true;  // level targets apply without a ramp (before and in the block of the first adopted generation)
+  std::array<std::int16_t, 5> tone_perf_{};  // perf_index of part_brightness, part_eq_low, _mid, _mid_freq, _high (-1: not in the registry, neutral)
   std::int16_t send_rev_perf_ = -1, send_dly_perf_ = -1, line_slot_ = -1;  // -1: not in the registry (the level stays 0)
 
   // The sends, owned by the mixer, built at construction: the reverb (Story 2.10) and the delay (Story 2.11), one instance per output bus.

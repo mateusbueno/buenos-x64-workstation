@@ -34,6 +34,7 @@ class VaVoice {
     steal_fade_step_ = 0.0f;
     start_time_ = 0;
     params_ = params;
+    init_live(params_);
 
     // Base pitch frequency (A4 = 440 Hz at note 69)
     float target_freq = 440.0f * std::pow(2.0f, (static_cast<float>(note_) - 69.0f) / 12.0f);
@@ -133,6 +134,24 @@ class VaVoice {
 
   void set_brightness_offset(uint8_t brightness) noexcept {
     params_.brightness_offset = brightness;
+    bright_tgt_ = static_cast<float>(brightness);
+    live_moving_ = true;
+  }
+
+  // Live edit of the registry parameters that can move while the note sounds (Story 9.9 follow-up). The CONTINUOUS ones (oscillator detune and
+  // pulse width, mix, filter cutoff / resonance / drive / key tracking / envelope amount, LFO depths, unison detune and spread, brightness) are
+  // not copied into the voice: they become the targets of a one-pole smoother (~5 ms, the cutoff in the log domain) the render loop advances
+  // per sample while it moves, so a knob never steps the sound. The envelope times and the LFO rate are re-timed in place (stage and level are
+  // kept; the sustain level glides). Everything else (waveforms, octave / semitone, sync, sub / noise switches, filter type, LFO wave / delay /
+  // key sync, voice mode, unison voices, glide) is read at the note start only. No allocation: only plain floats are copied.
+  void set_live_targets(const VaVoiceParameters& p) noexcept {
+    for (std::size_t i = 0; i < kLiveCount; ++i) live_tgt_[i] = p.*kLive[i];
+    cutoff_tgt_ = p.cutoff_hz;
+    bright_tgt_ = static_cast<float>(p.brightness_offset);
+    amp_env_.set_times(p.amp_attack_ms, p.amp_decay_ms, p.amp_sustain_level, p.amp_release_ms);
+    filter_env_.set_times(p.filter_attack_ms, p.filter_decay_ms, p.filter_sustain_level, p.filter_release_ms);
+    lfo_.set_rate(p.lfo_rate_hz);
+    live_moving_ = true;
   }
 
   void begin_steal_fade(uint32_t ramp_frames) noexcept {
@@ -173,6 +192,7 @@ class VaVoice {
         active_ = false;
         break;
       }
+      if (live_moving_) advance_live();
 
       // Smooth glide towards target frequency
       current_freq_ += glide_coeff_ * (target_freq_ - current_freq_);
@@ -270,8 +290,8 @@ class VaVoice {
       // Filter cutoff calculation with modulations
       float base_cutoff = params_.cutoff_hz;
       // Knob 2 Brightness: centered at 64
-      if (params_.brightness_offset != 64) {
-        float bright_mult = std::pow(2.0f, (static_cast<float>(params_.brightness_offset) - 64.0f) / 32.0f);
+      if (bright_cur_ != 64.0f) {
+        float bright_mult = std::pow(2.0f, (bright_cur_ - 64.0f) / 32.0f);
         base_cutoff *= bright_mult;
       }
       // Key tracking
@@ -312,6 +332,50 @@ class VaVoice {
   }
 
  private:
+  // The smoothed (live) parameters: a member-pointer table into VaVoiceParameters, the targets and the one-pole step.
+  static constexpr float VaVoiceParameters::* kLive[] = {
+      &VaVoiceParameters::osc1_detune_cents, &VaVoiceParameters::osc1_pulse_width, &VaVoiceParameters::osc2_detune_cents,
+      &VaVoiceParameters::osc2_pulse_width,  &VaVoiceParameters::mix_osc1,         &VaVoiceParameters::mix_osc2,
+      &VaVoiceParameters::mix_sub,           &VaVoiceParameters::mix_noise,        &VaVoiceParameters::resonance,
+      &VaVoiceParameters::drive,             &VaVoiceParameters::filter_key_track, &VaVoiceParameters::filter_env_amount,
+      &VaVoiceParameters::lfo_to_pitch,      &VaVoiceParameters::lfo_to_filter,    &VaVoiceParameters::lfo_to_amp,
+      &VaVoiceParameters::lfo_to_pwm,        &VaVoiceParameters::unison_detune_cents, &VaVoiceParameters::unison_spread};
+  static constexpr std::size_t kLiveCount = sizeof(kLive) / sizeof(kLive[0]);
+
+  void init_live(const VaVoiceParameters& p) noexcept {
+    for (std::size_t i = 0; i < kLiveCount; ++i) live_tgt_[i] = p.*kLive[i];
+    cutoff_tgt_ = p.cutoff_hz;
+    bright_cur_ = bright_tgt_ = static_cast<float>(p.brightness_offset);
+    live_k_ = 1.0f - std::exp(-1.0f / (0.005f * sample_rate_));
+    live_moving_ = false;
+  }
+
+  // One sample of smoothing. Snaps onto the target inside a tiny window so the value settles exactly (no endless denormal tail, and the voice
+  // returns to the bit-exact unsmoothed path once everything has arrived).
+  void advance_live() noexcept {
+    bool moving = false;
+    for (std::size_t i = 0; i < kLiveCount; ++i) {
+      float& c = params_.*kLive[i];
+      const float t = live_tgt_[i];
+      if (c == t) continue;
+      c += live_k_ * (t - c);
+      if (std::abs(t - c) < 1e-6f + 1e-6f * std::abs(t)) c = t;
+      else moving = true;
+    }
+    if (params_.cutoff_hz != cutoff_tgt_) {  // octave domain: equal steps in pitch
+      const float ratio = cutoff_tgt_ / std::max(params_.cutoff_hz, 1.0f);
+      params_.cutoff_hz *= std::exp2(live_k_ * std::log2(std::max(ratio, 1e-6f)));
+      if (std::abs(cutoff_tgt_ - params_.cutoff_hz) < 1e-4f * cutoff_tgt_) params_.cutoff_hz = cutoff_tgt_;
+      else moving = true;
+    }
+    if (bright_cur_ != bright_tgt_) {
+      bright_cur_ += live_k_ * (bright_tgt_ - bright_cur_);
+      if (std::abs(bright_tgt_ - bright_cur_) < 0.01f) bright_cur_ = bright_tgt_;
+      else moving = true;
+    }
+    live_moving_ = moving;
+  }
+
   float render_osc(VaWaveform wave, float phase, float dt, float pw, float& tri_state) noexcept {
     switch (wave) {
       case VaWaveform::kSaw: {
@@ -376,6 +440,13 @@ class VaVoice {
   std::array<float, kMaxUnison> tri2_states_{};
 
   uint32_t rng_state_{0x12345678};
+
+  std::array<float, kLiveCount> live_tgt_{};
+  float cutoff_tgt_{2000.0f};
+  float bright_cur_{64.0f};
+  float bright_tgt_{64.0f};
+  float live_k_{0.004f};
+  bool live_moving_{false};
 };
 
 } // namespace velora::core

@@ -1,6 +1,7 @@
 #include "velora/core/fm_engine.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace velora::core {
@@ -9,6 +10,7 @@ FmEngine::FmEngine(float sample_rate, uint32_t voice_capacity)
     : sample_rate_(sample_rate), voices_(voice_capacity) {
   for (uint32_t p = 0; p < kPartCount; ++p) {
     part_params_[p] = create_ep_fm_voice();
+    base_params_[p] = part_params_[p];
     part_sustain_[p] = false;
     part_pitch_bend_[p] = 0.0f;
   }
@@ -17,6 +19,8 @@ FmEngine::FmEngine(float sample_rate, uint32_t voice_capacity)
 void FmEngine::set_part_voice_params(uint32_t part_idx, const FmVoiceParameters& params) noexcept {
   if (part_idx < kPartCount) {
     part_params_[part_idx] = params;
+    base_params_[part_idx] = params;
+    engaged_[part_idx].clear();
   }
 }
 
@@ -132,6 +136,80 @@ void FmEngine::set_param(uint32_t param_id, float value) noexcept {
     if (sub_param == 1) { // Brightness
       set_brightness_offset(part_idx, static_cast<uint8_t>(std::clamp(value, 0.0f, 127.0f)));
     }
+  }
+}
+
+namespace {
+constexpr uint32_t kFmFirstId = params::kFmAlgorithm;
+constexpr uint32_t kFmOpFirstId = params::kFmOp1Rate1;
+constexpr uint32_t kFmOpStride = params::kFmOp2Rate1 - params::kFmOp1Rate1;  // 14 parameters per operator
+constexpr uint32_t kFmLastId = params::kFmOp6AmpModSens;
+
+// The registry's own range of `id`, applied to an integer parameter.
+int fm_int(uint32_t id, float v) noexcept {
+  const params::ParamDef* d = params::find(id);
+  return d ? part_params::to_int(v, static_cast<int>(d->min), static_cast<int>(d->max)) : 0;
+}
+
+// Writes registry parameter `id` into the patch. Mapping (registry unit -> FmVoiceParameters field): the DX-style 0..99 / 0..7 steps are the
+// fields' own units, so the integer value is stored as is; fm_op*_detune is the -7..7 detune step; the LFO wave enum order equals the field's.
+void apply_fm_param(FmVoiceParameters& p, uint32_t id, float v) noexcept {
+  if (id >= kFmOpFirstId) {
+    FmOperatorParameters& op = p.operators[(id - kFmOpFirstId) / kFmOpStride];
+    const uint32_t k = (id - kFmOpFirstId) % kFmOpStride;
+    const int n = fm_int(id, v);
+    if (k < 4) op.rates[k] = static_cast<uint8_t>(n);
+    else if (k < 8) op.levels[k - 4] = static_cast<uint8_t>(n);
+    else if (k == 8) op.total_level = static_cast<uint8_t>(n);
+    else if (k == 9) op.freq_coarse = static_cast<uint8_t>(n);
+    else if (k == 10) op.freq_fine = static_cast<uint8_t>(n);
+    else if (k == 11) op.detune = static_cast<int8_t>(n);
+    else if (k == 12) op.velocity_sens = static_cast<uint8_t>(n);
+    else op.amp_mod_sens = static_cast<uint8_t>(n);
+    return;
+  }
+  const int n = fm_int(id, v);
+  switch (id) {
+    case params::kFmAlgorithm: p.algorithm = static_cast<uint8_t>(n); break;
+    case params::kFmFeedback: p.feedback = static_cast<uint8_t>(n); break;
+    case params::kFmOscKeySync: p.osc_key_sync = n != 0; break;
+    case params::kFmLfoSpeed: p.lfo_speed = static_cast<uint8_t>(n); break;
+    case params::kFmLfoDelay: p.lfo_delay = static_cast<uint8_t>(n); break;
+    case params::kFmLfoPitchModDepth: p.lfo_pitch_mod_depth = static_cast<uint8_t>(n); break;
+    case params::kFmLfoAmpModDepth: p.lfo_amp_mod_depth = static_cast<uint8_t>(n); break;
+    case params::kFmLfoKeySync: p.lfo_key_sync = n != 0; break;
+    case params::kFmLfoWave: p.lfo_wave = static_cast<uint8_t>(n); break;
+    case params::kFmLfoPitchModSens: p.lfo_pitch_mod_sens = static_cast<uint8_t>(n); break;
+    case params::kFmTranspose: p.transpose = static_cast<int8_t>(n); break;
+    case params::kFmBrightness: p.brightness_offset = static_cast<uint8_t>(n); break;
+    default:
+      if (id >= params::kFmPitchEnvRate1 && id <= params::kFmPitchEnvRate4) p.pitch_env_rates[id - params::kFmPitchEnvRate1] = static_cast<uint8_t>(n);
+      else if (id >= params::kFmPitchEnvLevel1 && id <= params::kFmPitchEnvLevel4) p.pitch_env_levels[id - params::kFmPitchEnvLevel1] = static_cast<uint8_t>(n);
+      break;
+  }
+}
+}  // namespace
+
+void FmEngine::set_part_param(uint32_t part, uint32_t param_id, float value) noexcept { put_part_param(part, param_id, value, false); }
+void FmEngine::set_part_param_edit(uint32_t part, uint32_t param_id, float value) noexcept { put_part_param(part, param_id, value, true); }
+
+void FmEngine::put_part_param(uint32_t part, uint32_t param_id, float value, bool edit) noexcept {
+  if (part >= kPartCount || param_id < kFmFirstId || param_id > kFmLastId || !std::isfinite(value)) return;
+  if (edit) part_params::engage(engaged_[part], param_id - kFmFirstId);
+  else if (!part_params::should_apply(engaged_[part], param_id - kFmFirstId, param_id, value)) return;
+  apply_fm_param(part_params_[part], param_id, value);
+  if (param_id == params::kFmBrightness) {  // the one parameter that also moves sounding notes (smoothed in the voice)
+    const uint8_t b = part_params_[part].brightness_offset;
+    for (auto& v : voices_)
+      if (v.is_active() && v.channel() == part) v.set_brightness_target(b);
+  }
+}
+
+void FmEngine::reset_play_state() noexcept {
+  for (uint32_t p = 0; p < kPartCount; ++p) {
+    if (!engaged_[p].any()) continue;
+    part_params_[p] = base_params_[p];
+    engaged_[p].clear();
   }
 }
 

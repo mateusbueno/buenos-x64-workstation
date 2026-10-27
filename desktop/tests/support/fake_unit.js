@@ -211,12 +211,19 @@ export class FakeUnit {
       written: mine, written_count: nothing ? 0 : mine.length, nothing_to_write: nothing, current_dirty: this.dirty, remaining_changes: this.changes.length, not_durable: false, setlist_id: "", setlist_index: -1 } } };
   }
 
-  /** What the engines consume of the registry's part parameters (engine/core: only OrganEngine overrides set_part_param; the sends belong to the mixer). */
+  /** What the engines consume of the registry's part parameters (engine/core: OrganEngine, FmEngine (fm_*), VaEngine (va_*, not va_unison_spread: mono unison sum), SampleEngine (part_attack /
+   * part_release only), and the Mixer's per-part tone stage for part_brightness / part_eq_* on every engine; the sends belong to the mixer). Engine type ids: 1 sample, 2 organ, 3 FM, 4 VA. */
   consumes(part, id) {
     const d = BY_ID.get(id);
     if (!d) return false;
     if (d.name === "send_reverb_level" || d.name === "send_delay_level") return true;
-    return this.parts[part].engine_type_id === 2 && /^(drawbar_|percussion_|vibrato_chorus_|key_click|leakage|rotary_)/.test(d.name);
+    if (/^part_(brightness|eq_)/.test(d.name)) return true;
+    const type = this.parts[part].engine_type_id;
+    if (type === 2) return /^(drawbar_|percussion_|vibrato_chorus_|key_click|leakage|rotary_)/.test(d.name);
+    if (type === 3) return /^fm_/.test(d.name);
+    if (type === 4) return /^va_/.test(d.name) && d.name !== "va_unison_spread";
+    if (type === 1) return /^part_(attack|release)$/.test(d.name);
+    return false;
   }
 
   /** The RT plane applies a queued performance edit: after `rtDelay` turns, or never without a render thread. */

@@ -12,6 +12,7 @@ set(VELORA_CORE_SOURCES
   src/voice_arbiter.cpp
   src/fx.cpp
   src/eq.cpp
+  src/part_tone.cpp
   src/compressor.cpp
   src/chorus_phaser.cpp
   src/ep_amp.cpp
@@ -101,6 +102,13 @@ add_executable(va_engine_tests tests/va_engine_test.cpp)
 target_link_libraries(va_engine_tests PRIVATE velora_core)
 target_compile_definitions(va_engine_tests PRIVATE VELORA_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_test(NAME va_engine_tests COMMAND va_engine_tests)
+
+# Story 9.9 follow-up: registry part parameters inside the FM / VA / sample engines and the per-part tone stage (mapping, audible effect, defaults unchanged, smoothing,
+# EQ stability, parallel equivalence, allocation-free flood). The allocation hook is process wide; the RTSan build of the same file is in the RTSan block below.
+add_executable(part_params_tests tests/part_params_test.cpp)
+target_link_libraries(part_params_tests PRIVATE velora_core)
+add_test(NAME part_params_tests COMMAND part_params_tests)
+set_tests_properties(part_params_tests PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
 
 add_executable(organ_tests tests/organ_test.cpp)
 target_link_libraries(organ_tests PRIVATE velora_core)
@@ -300,6 +308,12 @@ if(VELORA_RTSAN)
     target_link_options(rtsan_parallel_traffic_test PRIVATE -fsanitize=realtime)
     add_test(NAME rtsan_parallel_traffic_test COMMAND rtsan_parallel_traffic_test)
     set_tests_properties(rtsan_parallel_traffic_test PROPERTIES TIMEOUT 300)
+    add_executable(rtsan_part_params_test tests/part_params_test.cpp)
+    target_link_libraries(rtsan_part_params_test PRIVATE velora_core)
+    target_compile_options(rtsan_part_params_test PRIVATE -fsanitize=realtime -g)
+    target_link_options(rtsan_part_params_test PRIVATE -fsanitize=realtime)
+    add_test(NAME rtsan_part_params_test COMMAND rtsan_part_params_test)
+    set_tests_properties(rtsan_part_params_test PROPERTIES TIMEOUT 300 FAIL_REGULAR_EXPRESSION "FAIL")
     add_executable(rtsan_integrity_test tests/rtsan_integrity_test.cpp)
     target_link_libraries(rtsan_integrity_test PRIVATE velora_core)
     target_compile_options(rtsan_integrity_test PRIVATE -fsanitize=realtime -g)

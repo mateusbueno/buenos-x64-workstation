@@ -561,8 +561,9 @@ test("every slider of every engine has a distinct accessible name", async () => 
 
 test("inert knobs carry the hint; the Amp envelope + EQ section says so; showError before the first render is safe", async () => {
   const r = await rig(1); // FM
-  const op = r.slider("OP 1 · Level 1");
+  const op = r.slider("Attack"); // part_attack on an FM part: no engine plays it (the FM contour is the operator envelopes)
   assert.equal(op.attrs["data-inert"], "true");
+  assert.equal(r.slider("OP 1 · Level 1").attrs["data-inert"], undefined); // the FM patch parameters sound
   assert.match(op.title, /No audible effect on this engine yet/);
   assert.match(op.attrs["aria-description"], /No audible effect/);
   assert.ok(r.host.all((e) => e.className === "pe-note").length >= 1);

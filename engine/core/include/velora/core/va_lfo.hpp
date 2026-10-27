@@ -28,6 +28,12 @@ class VaLfo {
     }
   }
 
+  // A live rate change: the phase keeps running, only its increment changes (no jump).
+  void set_rate(float rate_hz) noexcept {
+    rate_hz_ = rate_hz > 0.01f ? rate_hz : 1.0f;
+    phase_inc_ = rate_hz_ / sample_rate_;
+  }
+
   void reset() noexcept {
     if (key_sync_) {
       phase_ = 0.0f;

@@ -29,7 +29,7 @@ class FmVoice {
     is_steal_fading_ = false;
     steal_fade_gain_ = 1.0f;
     steal_fade_step_ = 0.0f;
-    brightness_offset_ = params.brightness_offset;
+    bright_cur_ = bright_target_ = static_cast<float>(params.brightness_offset);
     start_time_ = 0; // will be updated by engine frame clock
 
     alg_def_ = get_fm_algorithm_def(params.algorithm);
@@ -55,7 +55,7 @@ class FmVoice {
                        op_params.left_depth, op_params.right_depth,
                        op_params.left_curve, op_params.right_curve, sample_rate_);
 
-      op_phases_[i] = 0.0f;
+      if (params.osc_key_sync) op_phases_[i] = 0.0f;  // key sync off: the oscillator keeps running from where the slot's last note left it
       op_fb_history_[i][0] = 0.0f;
       op_fb_history_[i][1] = 0.0f;
 
@@ -104,6 +104,11 @@ class FmVoice {
     pitch_bend_semitones_ = semitones;
   }
 
+  // fm_brightness moved while the note sounds: the modulator gain factor glides to the new value (one pole, ~5 ms) instead of stepping.
+  void set_brightness_target(uint8_t brightness) noexcept {
+    bright_target_ = static_cast<float>(brightness);
+  }
+
   void begin_steal_fade(uint32_t ramp_frames) noexcept {
     is_steal_fading_ = true;
     steal_fade_step_ = (ramp_frames > 0) ? (steal_fade_gain_ / static_cast<float>(ramp_frames)) : 1.0f;
@@ -119,8 +124,14 @@ class FmVoice {
     }
 
     float pb_ratio = std::pow(2.0f, pitch_bend_semitones_ / 12.0f);
+    const float bright_k = 1.0f - std::exp(-1.0f / (0.005f * sample_rate_));
 
     for (uint32_t f = 0; f < frames; ++f) {
+      if (bright_cur_ != bright_target_) {  // smoothed brightness (only while it moves)
+        bright_cur_ += bright_k * (bright_target_ - bright_cur_);
+        if (std::abs(bright_target_ - bright_cur_) < 0.01f) bright_cur_ = bright_target_;
+      }
+      const float bright_factor = bright_cur_ != 64.0f ? std::pow(2.0f, (bright_cur_ - 64.0f) / 32.0f) : 1.0f;
       // 1. Advance LFO & Pitch Envelope
       float lfo_pitch = 0.0f, lfo_amp = 0.0f;
       lfo_.step(lfo_pitch, lfo_amp);
@@ -135,8 +146,7 @@ class FmVoice {
 
       for (int i = 0; i < 6; ++i) {
         float g = op_envs_[i].step();
-        if (i >= 1 && brightness_offset_ != 64) {
-          float bright_factor = std::pow(2.0f, (static_cast<float>(brightness_offset_) - 64.0f) / 32.0f);
+        if (i >= 1 && bright_cur_ != 64.0f) {
           g = std::clamp(g * bright_factor, 0.0f, 2.0f);
         }
 
@@ -247,7 +257,8 @@ class FmVoice {
   bool is_steal_fading_{false};
   float steal_fade_gain_{1.0f};
   float steal_fade_step_{0.0f};
-  uint8_t brightness_offset_{64};
+  float bright_cur_{64.0f};
+  float bright_target_{64.0f};
 
   uint32_t channel_{0};
   uint8_t note_{60};

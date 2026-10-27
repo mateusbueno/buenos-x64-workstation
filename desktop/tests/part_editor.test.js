@@ -904,24 +904,31 @@ test("B6: the 0.8 s structural settle says so when it gives back a value the uni
   assert.equal(r.errors.at(-1).notice, "unconfirmed");
 });
 
-test("A1: knobs the unit stores but does not play are marked inert; organ drawbars, sends, output, volume, inserts and ASSIGN are not", () => {
+test("A1: only the knobs no engine plays are marked inert (organ / FM amp attack + release, VA unison spread); everything else is audible", () => {
   const inert = (engine) => knobs(buildPartEditorModel({ registry: REGISTRY, partIndex: 0, engine, editable: true, live: true, state: { parts: [{ part: 0 }] } })).filter((k) => k.inert).map((k) => k.id);
+  assert.deepEqual(inert("fm").sort(), ["part_attack", "part_release"]);
+  assert.deepEqual(inert("organ").sort(), ["part_attack", "part_release"]);
+  assert.deepEqual(inert("va"), ["va_unison_spread"]);
+  assert.deepEqual(inert("sample"), []);
   const fm = inert("fm");
-  assert.ok(fm.includes("fm_algorithm") && fm.includes("part_attack") && fm.includes("part_eq_low") && fm.includes("part_brightness"));
+  assert.ok(!fm.includes("fm_algorithm") && !fm.includes("part_eq_low") && !fm.includes("part_brightness"));
   assert.ok(!fm.includes("send_reverb_level") && !fm.includes("part_output") && !fm.includes("part_volume") && !fm.includes("arp_mode"));
-  assert.ok(inert("va").includes("va_filter_cutoff"));
-  assert.ok(inert("sample").includes("part_release"));
   const organ = inert("organ");
   assert.deepEqual(organ.filter((n) => n.startsWith("drawbar_") || n.startsWith("rotary_") || n === "key_click"), []);
-  assert.ok(organ.includes("part_attack") && organ.includes("part_eq_mid"));
   const m = buildPartEditorModel({ registry: REGISTRY, partIndex: 0, engine: "fm", editable: true, live: true, state: { parts: [{ part: 0 }] } });
-  assert.equal(m.sections[1].inert, true); // the whole Amp envelope + EQ section
-  // the fake unit's engines agree with the table: only these reach the sound
+  assert.equal(m.sections[1].inert, true); // the Amp envelope + EQ section carries the note while part_attack / part_release are in it
+  const ms = buildPartEditorModel({ registry: REGISTRY, partIndex: 0, engine: "sample", editable: true, live: true, state: { parts: [{ part: 0 }] } });
+  assert.equal(ms.sections[1].inert, false);
+  // the table agrees with the fake unit's engines (engine type ids: 1 sample, 2 organ, 3 FM, 4 VA): every inert knob is unconsumed, every other registry knob of the engine is consumed
   const unit = new FakeUnit();
-  assert.equal(unit.consumes(1, 1000), false); // FM
-  assert.equal(unit.consumes(2, 1231), false); // VA
-  assert.equal(unit.consumes(0, 403), false); // sample, part_attack
-  assert.equal(unit.consumes(3, 403), false); // organ, part_attack: no engine consumes 402..408
+  for (const [engine, idx] of [["fm", 1], ["va", 2], ["sample", 0], ["organ", 3]]) {
+    const m2 = buildPartEditorModel({ registry: REGISTRY, partIndex: idx, engine, editable: true, live: true, state: { parts: [{ part: idx }] } });
+    for (const k of knobs(m2)) {
+      const d = REGISTRY.params.find((p) => p.id === k.numericId || p.name === k.id);
+      if (!d || d.class !== "performance" || d.scope !== "part" || k.command !== "perf") continue;
+      assert.equal(unit.consumes(idx, d.id), !k.inert, `${engine} ${d.name}`);
+    }
+  }
   assert.equal(unit.consumes(3, 102), true);
   assert.equal(unit.consumes(0, 400), true);
 });

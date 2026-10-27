@@ -271,7 +271,8 @@ class BlockRenderer {
 
   void release_deferred(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
   void adopt_generation() noexcept VELORA_NONBLOCKING;
-  void forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept VELORA_NONBLOCKING;
+  // `edit`: a live edit (apply_param) rather than an initial / re-synced value (Engine::set_part_param_edit vs set_part_param).
+  void forward_part_param(const params::ParamDef& d, std::uint32_t part, float value, bool edit = false) noexcept VELORA_NONBLOCKING;
   void sync_part_params(std::uint32_t channel) noexcept VELORA_NONBLOCKING;
   void apply_param(const ParamEvent& ev) noexcept VELORA_NONBLOCKING;
   void apply_reserved_event(std::uint32_t id, const Ump& ump) noexcept VELORA_NONBLOCKING;

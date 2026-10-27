@@ -7,12 +7,13 @@
 // to (derive_ui in proto/gen_params.py, see proto/README.md "Part Editor grouping"). The few controls that are not registry parameters (part volume, the zone, the insert chain,
 // the ASSIGN map) are the "builtin" controls below, each tied to the engine command that edits it.
 //
-// !! READ THIS FIRST (Story 9.9 review, A1): MOST KNOBS HERE ARE STORED BUT NOT AUDIBLE YET. The engine stores every registry part parameter
-// (BlockRenderer::apply_param) and calls Engine::set_part_param, but only OrganEngine overrides it: FmEngine, VaEngine and SampleEngine ignore it, and ids 402..408
-// (part_brightness, part_attack, part_release, part_eq_*) are consumed by NO engine. So an edit to an FM / VA / sample knob and the whole "Amp envelope + EQ" section changes
-// the stored value (and what GetPerformanceValues reads back: that confirms the STORED value, not the sound) but not the sound. What does take effect: organ parameters,
-// the sends, the output, the part volume, the insert chain and ASSIGN. `INERT_BY_ENGINE` below is the data table the UI uses to hint this on each inert knob. This is the main
-// deferred engine gap (which engine owns which registry parameters): when an engine starts consuming a parameter, remove it from the table.
+// AUDIBILITY (Story 9.9 review A1, mostly resolved by the engine follow-up). Every registry part parameter reaches its engine through Engine::set_part_param / set_part_param_edit:
+// organ parameters (OrganEngine), fm_* (FmEngine), va_* (VaEngine), part_attack / part_release for sample parts (SampleEngine), and part_brightness / part_eq_* for EVERY engine
+// (the Mixer's per-part tone stage). FM and VA patch parameters edit the patch the part's NEXT notes start with (VA's continuous ones, and fm_brightness, also move notes that
+// already sound, smoothed). What is still STORED BUT NOT AUDIBLE is the short table `INERT_BY_ENGINE` below: part_attack / part_release on organ and FM parts (the organ has no
+// amp envelope; an FM part's contour is its six operator envelopes, a second amp envelope would double-shape it) and va_unison_spread (the VA voice sums its unison voices to
+// one mono signal before the filter, so there is no stereo spread to move). Those knobs carry a hint (tooltip / aria-description) and their section a note; remove a row when an
+// engine starts consuming the parameter. The read-back (GetPerformanceValues) confirms the STORED value, never that it sounds.
 //
 // ASSIGN note (A4): a part-scope parameter assigned to K1..K8 lands on State.encoders.selected_part (the unit's selected part, SelectPart is denied over the bridge), not on the
 // part being edited here. ZONE / ARPEGGIATOR (A3): the minimal additive commands that would make them editable are SetPartZone { part, optional low_key, high_key, octave, transpose,
@@ -65,10 +66,12 @@ export function columnsFor(containerPx, rootPx) {
 }
 
 /**
- * Knobs that are STORED but NOT AUDIBLE yet (review A1): per engine, a pattern over registry parameter names (performance, part scope) whose engine does not consume them.
- * organ: only ids 402..408 (part_*); fm / va / sample: every one (those engines do not override Engine::set_part_param). Sends, output, volume, inserts and ASSIGN are never listed.
+ * Knobs that are STORED but NOT AUDIBLE (still), per engine: a pattern over registry parameter names (performance, part scope) whose engine does not consume them.
+ * organ and fm: part_attack / part_release (no amp envelope on the organ; the FM contour is the operator envelopes). va: va_unison_spread (mono unison sum, see the header).
+ * sample is absent: part_attack / part_release are its amp envelope overrides and part_brightness / part_eq_* are played by the Mixer's tone stage for every engine.
+ * Sends, output, volume, inserts and ASSIGN are never listed.
  */
-export const INERT_BY_ENGINE = Object.freeze({ organ: /^part_(brightness|attack|release|eq_)/, fm: /./, va: /./, sample: /./ });
+export const INERT_BY_ENGINE = Object.freeze({ organ: /^part_(attack|release)$/, fm: /^part_(attack|release)$/, va: /^va_unison_spread$/ });
 export function isInert(def, engine) {
   const re = INERT_BY_ENGINE[engine];
   return !!re && def.class === "performance" && def.scope === "part" && commandKind(def) === "perf" && re.test(def.name);

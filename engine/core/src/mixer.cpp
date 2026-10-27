@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace velora::core {
 
@@ -19,6 +20,13 @@ Mixer::Mixer(SnapshotExchange& exchange) : exchange_(exchange) {
   master_g_.cur = master_g_.tgt = 1.0f;
   const params::ParamDef* lvl = params::find(params::kMasterLevel);
   master_level_index_ = lvl ? lvl->master_index : -1;
+  {
+    static constexpr std::uint16_t kToneIds[5] = {params::kPartBrightness, params::kPartEqLow, params::kPartEqMid, params::kPartEqMidFreq, params::kPartEqHigh};
+    for (std::size_t i = 0; i < 5; ++i) {
+      const params::ParamDef* d = params::find(kToneIds[i]);
+      tone_perf_[i] = d ? d->perf_index : static_cast<std::int16_t>(-1);
+    }
+  }
   if (const params::ParamDef* d = params::find(params::kSendReverbLevel)) send_rev_perf_ = d->perf_index;
   if (const params::ParamDef* d = params::find(params::kSendDelayLevel)) send_dly_perf_ = d->perf_index;
   if (const params::ParamDef* d = params::find(params::kSendReverbMaster)) rev_master_slot_ = static_cast<std::int16_t>(params::perf_slot(*d, 0));
@@ -199,9 +207,20 @@ bool Mixer::begin_block(LastValueTable& live) noexcept {
     p.aux_g.retarget(p.aux_target, fade);
     if (send_rev_perf_ >= 0) p.rev_g.retarget(clamp01(live.load(static_cast<std::size_t>(send_rev_perf_) * kParts + i)), ramp);
     if (send_dly_perf_ >= 0) p.dly_g.retarget(clamp01(live.load(static_cast<std::size_t>(send_dly_perf_) * kParts + i)), ramp);
+    // Part tone (brightness + EQ): re-set only when one of the five live values changed (set() restarts the smoothing), identity = trivial.
+    {
+      std::array<float, 5> v{50.0f, 0.0f, 0.0f, 1000.0f, 0.0f};
+      for (std::size_t k = 0; k < 5; ++k)
+        if (tone_perf_[k] >= 0) v[k] = live.load(static_cast<std::size_t>(tone_perf_[k]) * kParts + i);
+      if (!p.tone_valid || std::memcmp(v.data(), p.tone_last.data(), sizeof(float) * 5) != 0) {
+        p.tone.set(v[0], v[1], v[2], v[3], v[4], /*instant=*/instant_levels_);
+        p.tone_last = v;
+        p.tone_valid = true;
+      }
+    }
     // A send counts as zero when the part's own level or the REV master level is steadily 0 (the master is checked below).
     trivial = trivial && p.main_g.steady(1.0f) && p.aux_g.steady(0.0f) && (p.rev_g.steady(0.0f) || rev_master_off) && p.dly_g.steady(0.0f) &&
-              p.count == 1 && p.entries[0].chain == nullptr;
+              p.count == 1 && p.entries[0].chain == nullptr && p.tone.is_identity();
   }
   for (const auto& r : reverb_send_) trivial = trivial && r->quiet();  // a tail that still rings is not transparent
   for (const auto& d : delay_send_) trivial = trivial && d->quiet();
@@ -310,6 +329,7 @@ void Mixer::finish(const OutputBuses& out, LastValueTable& live) noexcept {
       dly_in[0] = dly_in[0] || !p.main_g.steady(0.0f);
       dly_in[1] = dly_in[1] || !p.aux_g.steady(0.0f);
     }
+    p.tone.process(in);  // brightness + EQ of the part, before its inserts (transparent and free at the defaults)
     float acc_l[kN], acc_r[kN];
     const float* ol;
     const float* orr;

@@ -19,6 +19,17 @@ class VaAdsrEnvelope {
   void init(float attack_ms, float decay_ms, float sustain_level, float release_ms, float sample_rate) noexcept {
     sample_rate_ = sample_rate > 0.0f ? sample_rate : 48000.0f;
     sustain_ = std::clamp(sustain_level, 0.0f, 1.0f);
+    sustain_k_ = 1.0f - std::exp(-1.0f / (0.010f * sample_rate_));
+    set_times(attack_ms, decay_ms, sustain_level, release_ms);
+
+    state_ = VaEnvState::kIdle;
+    level_ = 0.0f;
+  }
+
+  // Retimes a running envelope: the coefficients change, the stage and the level do not (so no step); the sustain level is approached by a ~10 ms
+  // one pole once the envelope sits in its sustain stage. init() = this plus the reset to idle.
+  void set_times(float attack_ms, float decay_ms, float sustain_level, float release_ms) noexcept {
+    sustain_ = std::clamp(sustain_level, 0.0f, 1.0f);
 
     float att_ms = std::max(attack_ms, 0.5f);
     float dec_ms = std::max(decay_ms, 1.0f);
@@ -32,9 +43,6 @@ class VaAdsrEnvelope {
     // Exponential decay/release: 4.6 time constants reaches ~1% of target
     decay_coeff_ = 1.0f - std::exp(-4.6f / std::max(dec_samples, 1.0f));
     release_coeff_ = 1.0f - std::exp(-4.6f / std::max(rel_samples, 1.0f));
-
-    state_ = VaEnvState::kIdle;
-    level_ = 0.0f;
   }
 
   void trigger() noexcept {
@@ -73,7 +81,10 @@ class VaAdsrEnvelope {
         break;
 
       case VaEnvState::kSustain:
-        level_ = sustain_;
+        if (level_ != sustain_) {  // the sustain level moved (live edit): glide, never step
+          level_ += sustain_k_ * (sustain_ - level_);
+          if (std::abs(level_ - sustain_) < 1e-5f) level_ = sustain_;
+        }
         break;
 
       case VaEnvState::kRelease:
@@ -104,6 +115,7 @@ class VaAdsrEnvelope {
   float attack_step_{0.01f};
   float decay_coeff_{0.01f};
   float release_coeff_{0.01f};
+  float sustain_k_{0.002f};
   float sample_rate_{48000.0f};
 };
 

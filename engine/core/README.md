@@ -208,6 +208,41 @@ protobuf dependency; the wire format lives in `engine/host`.
 
 Tests: `assign_tests` (the flag, every step rule incl. an exhaustive sweep, event shapes, routing for int / float / enum / bool / master scope, no pickup, empty slot, mode gating, selected part, the map following the generation and a scene-like generation, refusals and malformed events, timing inside a block, a 4,000-step storm run twice), `assign_traffic_test` / `rtsan_assign_test` (10,000 blocks of organ traffic with the pedal, 1..6 encoder steps per block incl. saturating and malformed ones, mode / part events and fences, and a new generation with another ASSIGN map every 3 blocks, run twice and compared; the latter under RealtimeSanitizer, Docker/Linux clang only).
 
+## Registry part parameters in the engines (Story 9.9 follow-up)
+
+Every registry performance parameter of part scope reaches the engine of its part through `Engine::set_part_param` (initial / re-synced values, at a generation change or a part remap) and
+`Engine::set_part_param_edit` (a live edit: UMP parameter event from a knob / ws.v1 / MIDI CC, an encoder step). Both run on the render thread between render segments, at the event's frame; the
+control thread never touches an engine (the only way in is the UMP queue and the snapshot generation, so there is no data race to guard: nothing here is atomic and nothing needs to be).
+
+| ids | engine | what they do | when |
+|---|---|---|---|
+| 100..117, 200..201 | organ | unchanged (Story 2.2 ff.) | ramped (5 ms) |
+| 1000..1103 `fm_*` | `FmEngine` | edit the part's `FmVoiceParameters` (the DX-style 0..99 / 0..7 steps are the field units: algorithm, feedback, osc key sync, LFO speed / delay / pitch depth / AM depth / key sync / wave / pitch sens, transpose, pitch envelope rates + levels, per operator rate 1-4, level 1-4, total level, coarse, fine, detune, velocity sens, AM sens) | the NEXT note of the part (the patch is copied at the note start: the usual FM patch-edit behaviour). `fm_brightness` also moves sounding notes, one pole ~5 ms |
+| 1200..1266 `va_*` | `VaEngine` | edit the part's `VaVoiceParameters`: percent -> /100 (pulse width, mixer, resonance, drive, key tracking, filter env amount, velocity sens, sustain, LFO depths, spread), `va_lfo_rate` deciHz -> Hz, times in ms, cutoff Hz, detune cents, enums share the C++ enum order | continuous ones (osc detune / pulse width, mixer, cutoff, resonance, drive, key tracking, env amount, LFO depths, unison detune, brightness) also move sounding notes through a ~5 ms one pole per sample (cutoff in the octave domain), ADSR times and LFO rate are re-timed in place (stage and level kept, the sustain level glides ~10 ms); waveforms, octave / semitone, sync, sub / noise switches, filter type, LFO wave / delay / key sync, voice mode, unison voices, glide, velocity sens apply to the next note |
+| 403, 404 `part_attack`, `part_release` | `SampleEngine` | replace the region's `ampeg_attack` / `ampeg_release` (same linear attack and exponential release shapes) | attack: voices that start afterwards; release: when the voice is released (a held note follows the knob) |
+| 402 `part_brightness`, 405..408 `part_eq_*` | every engine, in `Mixer` (`PartTone`, `part_tone.hpp`) | high shelf at 2.5 kHz, +-9 dB (value - 50) / 50 * 9, and the Story 2.8 three-band EQ (100 Hz shelf, peak at `part_eq_mid_freq`, 4 kHz shelf) on the part bus, before the inserts | per-block one pole (~10 ms) on the dB values / mid frequency |
+
+Still stored and NOT audible: `part_attack` / `part_release` on organ and FM parts (the organ has no amp envelope; an FM part's contour is its six operator envelopes, a second amp envelope would
+double-shape it, and no registry semantics says how the two combine) and `va_unison_spread` (the VA voice sums its unison voices to one mono signal before the filter, so a stereo spread has nothing to move;
+implementing it means a stereo filter path, which is a DSP change beyond this item). VA parts do not show `part_attack` / `part_release` (they have `va_amp_*`).
+
+**Engagement (why a default does not change a sound).** The block loop forwards every registry value of a part, the initial ones too, and those are the registry defaults. The FM engine starts a part on an
+electric-piano patch (`create_ep_fm_voice`, the registry default is the init patch) and `set_part_voice_params()` installs other patches (offline render), so a default must not overwrite the patch.
+A parameter is "engaged" when it is live-edited (any value, so a knob typed to exactly the default works) or when an initial / re-synced value differs from the registry default; an engaged parameter follows every value
+(returning to the default included). `Engine::reset_play_state()` (called at a Live Set switch before the new values are forwarded) disengages everything and restores the base patch. Consequences: untouched
+parts are bit-identical to before (tests compare a render with every registry default forwarded against one without); a part that moves FM -> VA -> FM keeps its values (the engine state survives and
+`sync_part_params` re-forwards the live ones, exactly as for the organ); a Live Set that STORES the registry default for a parameter over an FM base patch that differs keeps the patch's value.
+
+**Part tone stage.** `PartTone` (one per part inside `Mixer::Part`) = `EqEffect` + one RBJ high shelf, in double, transposed direct form II. At the registry defaults (50 %, 0 dB, 0 dB, 1000 Hz, 0 dB) it is exactly
+transparent and the Mixer keeps its trivial routing (bit-identical to before); any non-neutral part makes the Mixer routed (the voices render into the part buses, summed per part, so a routed render differs from
+the trivial one only by float summation order). Values that come back through the 32-bit event scale (0 dB as ~1e-9 dB, 50 % as 50.000000012) fall in a 0.001 dB dead band and count as neutral. Non-finite input is
+replaced by 0; the filter states and the output are flushed to 0 below 1e-30 (the master EQ's states are flushed the same way), so tails never reach the subnormal range. Not counted in the FX budget
+(`fill_fx_costs`): 2 biquads + a shelf per part, at most 16 parts.
+
+Tests: `part_params_tests` (mapping of every FM / VA id, refusal of out-of-range and non-finite values, audible effect per engine, defaults bit-identical, smoothing of live changes, `PartTone` response and
+stability at all 64 extremes with random jumps, NaN / Inf input and no subnormal output, block-loop events, isolation between parts, remap keeps values, 1 vs 3 partitions bit-identical with `part_attack` /
+`part_release` moving, a 1,000-block flood of random registry events with an allocation hook armed run twice and compared); `rtsan_part_params_test` is the same file under RealtimeSanitizer (Docker/Linux clang only).
+
 ## Tonewheel organ (Story 2.2)
 
 `OrganEngine` (type id Organ=2, "tonewheel organ"): shared 91-wheel generator per part in the new `Engine::begin_block` phase-2 hook,

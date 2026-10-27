@@ -76,7 +76,7 @@ and `requests`; the bridge's message table already allows every one for a paired
 
 | registry class / scope or control | command | notes |
 |---|---|---|
-| performance / part (all but the two sends) | `SetPerformanceParam {param_id, part, value}` | queued as a timestamped UMP (applied at the next block when audio runs; only the organ engine consumes part parameters today), not saved; read back with `GetPerformanceValues` |
+| performance / part (all but the two sends) | `SetPerformanceParam {param_id, part, value}` | queued as a timestamped UMP (applied at the next block when audio runs), not saved; read back with `GetPerformanceValues` (the STORED value). Who plays it: organ ids by `OrganEngine`; `fm_*` (1000..1103) by `FmEngine` (the part's NEXT note; `fm_brightness` also sounding notes); `va_*` (1200..1266) by `VaEngine` (continuous ones also sounding notes, smoothed; the rest the next note); `part_attack` / `part_release` by `SampleEngine`; `part_brightness` / `part_eq_*` by the Mixer's per-part tone stage for every engine. STILL STORED ONLY: `part_attack` / `part_release` on organ and FM parts, `va_unison_spread`. Table, units and the "engagement" rule (a default never overrides a base patch): `engine/core/README.md`, "Registry part parameters in the engines" |
 | `send_reverb_level`, `send_delay_level` | `SetPerformanceParam` (the live value, shown) AND `SetSendLevels {part, reverb, delay}` | the second is structural (a generation; persists, marks the Live Set dirty); both levels are sent |
 | `part_output` | `SetPartOutput {part, output}` | |
 | insert type / bypass / `insert_param_N`, add / remove / reorder | `SetInsertChain {part, slots}` | always the FULL chain |

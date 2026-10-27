@@ -115,6 +115,13 @@ class Engine {
     (void)value;
   }
 
+  // The same parameter, but as a live EDIT (a UMP parameter event from a knob / ws.v1 / MIDI CC, an encoder step) instead of an initial or re-synced value
+  // (generation change, part remap). An engine whose base patch is not the registry default uses the difference (part_params.hpp, "engagement"): an edit always
+  // takes effect, an initial value only when it differs from the registry default. Default: the same as set_part_param().
+  virtual void set_part_param_edit(std::uint32_t part, std::uint32_t param_id, float value) noexcept VELORA_NONBLOCKING {
+    set_part_param(part, param_id, value);
+  }
+
   // Key contact events (Story 2.5, contact_events.hpp). An engine that can follow a multi-contact keybed (the tonewheel organ)
   // returns true from supports_contacts() and handles set_contact(): contact `contact` (1-based) of key (channel, note) changed
   // to `closed`, at the in-block frame the block loop calls it for (between render segments). Malformed sequences are the

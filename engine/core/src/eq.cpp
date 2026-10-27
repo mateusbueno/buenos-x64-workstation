@@ -165,8 +165,9 @@ void EqEffect::process(StereoBlock& block) noexcept {
         z2 = k.b2 * in - k.a2 * y;
         x[i] = static_cast<float>(y);
       }
-      s.z1[c] = z1;
-      s.z2[c] = z2;
+      // Flush the state below -600 dB: a tail in silence never decays into subnormal doubles (and the float output never into subnormal floats).
+      s.z1[c] = std::fabs(z1) < 1e-30 ? 0.0 : z1;
+      s.z2[c] = std::fabs(z2) < 1e-30 ? 0.0 : z2;
     }
   }
 }

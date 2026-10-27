@@ -184,10 +184,12 @@ void BlockRenderer::adopt_live_set_parts(const Snapshot& s, std::array<bool, par
   }
 }
 
-void BlockRenderer::forward_part_param(const params::ParamDef& d, std::uint32_t part, float value) noexcept {
+void BlockRenderer::forward_part_param(const params::ParamDef& d, std::uint32_t part, float value, bool edit) noexcept {
   if (d.scope != params::Scope::kPart || part >= 16) return;  // channel = part
   Engine* engine = nullptr;
-  if (registry_.resolve(channel_engine_[part], engine) == EngineStatus::kOk) engine->set_part_param(part, d.id, value);
+  if (registry_.resolve(channel_engine_[part], engine) != EngineStatus::kOk) return;
+  if (edit) engine->set_part_param_edit(part, d.id, value);
+  else engine->set_part_param(part, d.id, value);
 }
 
 void BlockRenderer::sync_part_params(std::uint32_t channel) noexcept {
@@ -199,7 +201,7 @@ void BlockRenderer::sync_part_params(std::uint32_t channel) noexcept {
 
 void BlockRenderer::apply_param(const ParamEvent& ev) noexcept {
   last_.store(params::perf_slot(*ev.def, ev.part), ev.value);
-  forward_part_param(*ev.def, ev.part, ev.value);
+  forward_part_param(*ev.def, ev.part, ev.value, /*edit=*/true);
   param_applied_.fetch_add(1, std::memory_order_relaxed);
 }
 

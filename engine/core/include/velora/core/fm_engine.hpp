@@ -8,6 +8,7 @@
 #include "velora/core/params_gen.hpp"
 #include "velora/core/fm_voice.hpp"
 #include "velora/core/fm_parameters.hpp"
+#include "velora/core/part_params.hpp"
 
 namespace velora::core {
 
@@ -31,6 +32,13 @@ class FmEngine final : public Engine {
   EngineStatus stop_voice(uint32_t channel, uint32_t note) noexcept override;
   void key_released(uint32_t channel, uint32_t note) noexcept override;
   void set_param(uint32_t param_id, float value) noexcept override;
+  // Registry part parameters ids 1000..1103 (fm_*), see part_params.hpp ("engagement"): they edit the part's patch, so they sound on the
+  // NEXT note of the part (a sounding note keeps the patch it started with, the usual FM patch-edit behaviour); fm_brightness also follows the
+  // notes that already sound, through a smoothed ramp. Not engaged (never moved off the registry default) = the part's base patch.
+  void set_part_param(uint32_t part, uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
+  void set_part_param_edit(uint32_t part, uint32_t param_id, float value) noexcept VELORA_NONBLOCKING override;
+  // A Live Set switch: every registry override is dropped and the base patch (set_part_voice_params / the constructor's) is back.
+  void reset_play_state() noexcept VELORA_NONBLOCKING override;
   void render(float* left, float* right, uint32_t frames) noexcept override;
   void render_split(float* const* left, float* const* right, uint32_t frames) noexcept override;
 
@@ -56,11 +64,14 @@ class FmEngine final : public Engine {
 
  private:
   uint32_t allocate_voice_slot(uint32_t channel, uint32_t note) noexcept;
+  void put_part_param(uint32_t part, uint32_t param_id, float value, bool edit) noexcept;
 
   float sample_rate_{48000.0f};
   uint64_t frame_clock_{0};
 
-  std::array<FmVoiceParameters, kPartCount> part_params_{};
+  std::array<FmVoiceParameters, kPartCount> part_params_{};  // the patch new notes start with: base_params_ plus the engaged registry overrides
+  std::array<FmVoiceParameters, kPartCount> base_params_{};
+  std::array<part_params::EngagedSet, kPartCount> engaged_{};
   std::array<bool, kPartCount> part_sustain_{};
   std::array<float, kPartCount> part_pitch_bend_{};
 
