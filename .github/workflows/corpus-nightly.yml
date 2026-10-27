@@ -1,0 +1,52 @@
+name: corpus-nightly
+# Story 5.4: the reference-corpus job (fetch + hash verify + import + sfizz null tests of the real libraries).
+# MANUAL-ONLY like ci.yml (Actions minutes are limited, validation runs locally): `on:` has workflow_dispatch and nothing else.
+# To make it nightly, add the two lines below under `on:` after the founder decides (kept commented out on purpose):
+#   schedule:
+#     - cron: "17 2 * * *"
+# The job fails (non-zero exit of tools/corpus/corpus.py run) on any fetch / hash / import failure and on any null-test failure.
+# Corpus audio lives only in the runner's cache directory, never in the checkout (tools/corpus/corpus.py guard enforces it).
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    runs-on: macos-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libFLAC and protobuf
+        run: brew install flac protobuf openssl@3
+      - name: Offline unit tests and repository guard
+        run: |
+          python3 -m unittest discover -s tools/corpus/tests
+          python3 tools/corpus/corpus.py check --require-pins
+          python3 tools/corpus/corpus.py guard
+      - name: Build host tools
+        run: |
+          cmake -S . -B build
+          cmake --build build --target librarian velora-offline-render velora-null-test
+      - name: Build the sfizz oracle (test tooling only, never shipped)
+        run: tools/oracle/build-sfizz-render.sh
+      - name: Restore the corpus cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/velora-corpus
+          key: velora-corpus-${{ hashFiles('tools/corpus/manifest.json') }}
+      - name: Run the corpus (fails on any import or null-test failure)
+        run: python3 tools/corpus/corpus.py run --out build/corpus-report
+      - name: Upload the report (no audio)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-report
+          path: |
+            build/corpus-report/report.md
+            build/corpus-report/report.json

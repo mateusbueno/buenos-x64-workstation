@@ -1,0 +1,195 @@
+{
+  "schema": 1,
+  "comment": "Story 5.4 reference corpus. sha256 is the hash of the downloaded archive (trust on first use, see README). Audio is never committed.",
+  "default_tolerance_db": -60,
+  "max_null_instruments": 3,
+  "libraries": [
+    {
+      "id": "salamander-grand-piano-v3",
+      "name": "Salamander Grand Piano V3 (SFZ, 48 kHz 24 bit FLAC, remap by kinwie)",
+      "kind": "required",
+      "source_url": "https://codeload.github.com/sfzinstruments/SalamanderGrandPiano/tar.gz/3382bf9496bba2486f5ab0de55a264d1dfc38404",
+      "source_page": "https://github.com/sfzinstruments/SalamanderGrandPiano",
+      "version": "v3 (repo commit 2022-01-03)",
+      "commit": "3382bf9496bba2486f5ab0de55a264d1dfc38404",
+      "sha256": "f36bef84632067387909ba03064daee6e81afdea3f93526c4ee56a22e12613ba",
+      "license": "Creative Commons Attribution 3.0 Unported (CC BY 3.0); LICENSE file of the repository at the pinned commit. Attribution: Alexander Holm (Salamander Grand Piano V3), SFZ remap kinwie.",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/SalamanderGrandPiano/3382bf9496bba2486f5ab0de55a264d1dfc38404/LICENSE",
+      "notes": ""
+    },
+    {
+      "id": "vsco2-community",
+      "name": "VSCO 2 Community Edition (vanilla SFZ, release 1.1.0)",
+      "kind": "required",
+      "source_url": "https://codeload.github.com/sgossner/VSCO-2-CE/tar.gz/28092772094b2d9f1148d84cea97f4545b8c687d",
+      "source_page": "https://github.com/sgossner/VSCO-2-CE",
+      "version": "1.1.0 (tag, 'SFZ Download' release)",
+      "commit": "28092772094b2d9f1148d84cea97f4545b8c687d",
+      "sha256": "f59b03626c0a19ef534ed791920b8e5e042ad00caa44d38e04460e5a4b1012e5",
+      "license": "CC0 1.0 Universal (public domain dedication); LICENSE file of the repository at the pinned commit; versilian-studios.com/vsco-community states CC0",
+      "license_url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/28092772094b2d9f1148d84cea97f4545b8c687d/LICENSE",
+      "notes": ""
+    },
+    {
+      "id": "sonatina-symphonic-orchestra",
+      "name": "Sonatina Symphonic Orchestra (peastman/sso maintained release)",
+      "kind": "required",
+      "source_url": "https://codeload.github.com/peastman/sso/tar.gz/64a66eda18c5cc1039a56c902d0555df56742300",
+      "source_page": "https://github.com/peastman/sso",
+      "version": "v4.0 (tag)",
+      "commit": "64a66eda18c5cc1039a56c902d0555df56742300",
+      "sha256": "8fc8a7a7bef176fb0af328309d683fc18680abc5fda2b3e5aaef9cef4d0625a3",
+      "license": "Creative Commons Sampling Plus 1.0 (https://creativecommons.org/licenses/sampling+/1.0/); the repository LICENSE says the library 'may be used and distributed under the terms of' it.",
+      "license_url": "https://raw.githubusercontent.com/peastman/sso/64a66eda18c5cc1039a56c902d0555df56742300/LICENSE",
+      "notes": "Restrictions recorded (Sampling Plus 1.0): verbatim copying and distribution only non-commercially; sampling/derivative use of parts allowed, also commercially, but the whole work may not be used as a derivative except as an insubstantial portion; no advertising use; attribution and licence text required; no sublicensing. Corpus use is internal test use, the audio is never redistributed or committed. Creative Commons has retired this licence. The original torrent and the Zynthian mirror were not used: the maintained GitHub release is the author's own continuation (Peter Eastman) and is reachable.",
+      "limits": {
+        "max_archive_bytes": 3221225472
+      }
+    },
+    {
+      "id": "karoryfer-scarypiano",
+      "name": "Karoryfer Scarypiano",
+      "kind": "karoryfer",
+      "source_url": "https://codeload.github.com/sfzinstruments/karoryfer.scarypiano/tar.gz/46305e8cb71239bfa861fbe8487dd12b8d8de40c",
+      "source_page": "https://github.com/sfzinstruments/karoryfer.scarypiano",
+      "version": "repo commit 2022-11-04",
+      "commit": "46305e8cb71239bfa861fbe8487dd12b8d8de40c",
+      "sha256": "47ed26ddf562ea7671f342166a19b4773e2778b508132fc058769cee59a33c66",
+      "license": "CC0 1.0 Universal (public domain dedication); LICENSE file of the repository at the pinned commit",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.scarypiano/46305e8cb71239bfa861fbe8487dd12b8d8de40c/LICENSE",
+      "notes": ""
+    },
+    {
+      "id": "karoryfer-meatbass",
+      "name": "Karoryfer Meatbass",
+      "kind": "karoryfer",
+      "source_url": "https://codeload.github.com/sfzinstruments/karoryfer.meatbass/tar.gz/ac9e859564bda286ab5ec672d00ff1aa2fef2895",
+      "source_page": "https://github.com/sfzinstruments/karoryfer.meatbass",
+      "version": "repo commit 2022-11-04",
+      "commit": "ac9e859564bda286ab5ec672d00ff1aa2fef2895",
+      "sha256": "2b95e73354d4ae6d0fda780e50f8f0fba85bb3b27d4d4d9d24bac0427804ea7f",
+      "license": "CC0 1.0 Universal (public domain dedication); LICENSE file of the repository at the pinned commit",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.meatbass/ac9e859564bda286ab5ec672d00ff1aa2fef2895/LICENSE",
+      "notes": ""
+    },
+    {
+      "id": "karoryfer-weresax",
+      "name": "Karoryfer Weresax",
+      "kind": "karoryfer",
+      "source_url": "https://codeload.github.com/sfzinstruments/karoryfer.weresax/tar.gz/a4d756b21d2a573aca0d840cce7e71ba5effd4c6",
+      "source_page": "https://github.com/sfzinstruments/karoryfer.weresax",
+      "version": "repo commit 2025-06-14",
+      "commit": "a4d756b21d2a573aca0d840cce7e71ba5effd4c6",
+      "sha256": "33b5acbb829f8611bb8e092c8cd9873837c96212db5af49b28827dcf05377e18",
+      "license": "CC0 1.0 Universal (public domain dedication); LICENSE file of the repository at the pinned commit",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.weresax/a4d756b21d2a573aca0d840cce7e71ba5effd4c6/LICENSE",
+      "notes": ""
+    },
+    {
+      "id": "karoryfer-bear-sax",
+      "name": "Karoryfer Bear Sax",
+      "kind": "karoryfer",
+      "source_url": "https://codeload.github.com/sfzinstruments/karoryfer.bear-sax/tar.gz/7abb3c652525a15dfac80e1b5dfbba9964ee568f",
+      "source_page": "https://github.com/sfzinstruments/karoryfer.bear-sax",
+      "version": "repo commit 2022-11-04",
+      "commit": "7abb3c652525a15dfac80e1b5dfbba9964ee568f",
+      "sha256": "d091b80ee5307868b412e9e72a64f763b09990022858e790beb5b1dcb2759366",
+      "license": "CC0 1.0 Universal (public domain dedication); LICENSE file of the repository at the pinned commit",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.bear-sax/7abb3c652525a15dfac80e1b5dfbba9964ee568f/LICENSE",
+      "notes": ""
+    },
+    {
+      "id": "pianobook-kamoepiano301",
+      "name": "Pianobook: kamoepiano301 (washiyamagiken, upright piano)",
+      "kind": "pianobook",
+      "source_page": "https://www.pianobook.co.uk/packs/kamoepiano301/",
+      "excluded": {
+        "reason": "Pianobook requires a signed-in account to download ('Log in to download' on the pack page) and the pack page states no licence (site terms only, no CC0/CC-BY statement per pack); the project rules forbid signing in, accepting terms or using credentials, and require a clear licence on the pack page. Listed as SFZ-tagged candidate, not fetched."
+      }
+    },
+    {
+      "id": "pianobook-antz",
+      "name": "Pianobook: antz",
+      "kind": "pianobook",
+      "source_page": "https://www.pianobook.co.uk/packs/antz/",
+      "excluded": {
+        "reason": "Pianobook requires a signed-in account to download ('Log in to download' on the pack page) and the pack page states no licence (site terms only, no CC0/CC-BY statement per pack); the project rules forbid signing in, accepting terms or using credentials, and require a clear licence on the pack page. Listed as SFZ-tagged candidate, not fetched."
+      }
+    },
+    {
+      "id": "pianobook-dead-man-orchestra",
+      "name": "Pianobook: Dead Man Orchestra",
+      "kind": "pianobook",
+      "source_page": "https://www.pianobook.co.uk/packs/dead-man-orchestra/",
+      "excluded": {
+        "reason": "Pianobook requires a signed-in account to download ('Log in to download' on the pack page) and the pack page states no licence (site terms only, no CC0/CC-BY statement per pack); the project rules forbid signing in, accepting terms or using credentials, and require a clear licence on the pack page. Listed as SFZ-tagged candidate, not fetched."
+      }
+    },
+    {
+      "id": "pianobook-kantele-thefinnishzither",
+      "name": "Pianobook: Kantele, the Finnish zither",
+      "kind": "pianobook",
+      "source_page": "https://www.pianobook.co.uk/packs/kantele-thefinnishzither/",
+      "excluded": {
+        "reason": "Pianobook requires a signed-in account to download ('Log in to download' on the pack page) and the pack page states no licence (site terms only, no CC0/CC-BY statement per pack); the project rules forbid signing in, accepting terms or using credentials, and require a clear licence on the pack page. Listed as SFZ-tagged candidate, not fetched."
+      }
+    },
+    {
+      "id": "pianobook-jouhikko-thefinnishbowedlyre",
+      "name": "Pianobook: Jouhikko, the Finnish bowed lyre",
+      "kind": "pianobook",
+      "source_page": "https://www.pianobook.co.uk/packs/jouhikko-thefinnishbowedlyre/",
+      "excluded": {
+        "reason": "Pianobook requires a signed-in account to download ('Log in to download' on the pack page) and the pack page states no licence (site terms only, no CC0/CC-BY statement per pack); the project rules forbid signing in, accepting terms or using credentials, and require a clear licence on the pack page. Listed as SFZ-tagged candidate, not fetched."
+      }
+    },
+    {
+      "id": "pianobook-accordion-la-melodiosa",
+      "name": "Pianobook: Accordion La Melodiosa",
+      "kind": "pianobook",
+      "source_page": "https://www.pianobook.co.uk/packs/accordion-la-melodiosa/",
+      "excluded": {
+        "reason": "Pianobook requires a signed-in account to download ('Log in to download' on the pack page) and the pack page states no licence (site terms only, no CC0/CC-BY statement per pack); the project rules forbid signing in, accepting terms or using credentials, and require a clear licence on the pack page. Listed as SFZ-tagged candidate, not fetched."
+      }
+    },
+    {
+      "id": "osiris-piano",
+      "name": "Osiris Piano (Versilian Studios and Karoryfer Samples) -- STAND-IN, not a Pianobook pack",
+      "kind": "extra",
+      "source_url": "https://codeload.github.com/sfzinstruments/Osiris_Piano/tar.gz/18c6afccb60cff458edbf7c394571783e074e1e9",
+      "source_page": "https://github.com/sfzinstruments/Osiris_Piano",
+      "version": "repo commit 2026-07-04",
+      "commit": "18c6afccb60cff458edbf7c394571783e074e1e9",
+      "sha256": "da8b961f582df163b1b65fb6b9725946a0fbb49fe583129f2ded99eceb3e63df",
+      "license": "CC0 1.0 Universal (public domain dedication); LICENSE file of the repository at the pinned commit",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/Osiris_Piano/18c6afccb60cff458edbf7c394571783e074e1e9/LICENSE",
+      "notes": "Extra coverage while the Pianobook selection is excluded; does not count towards the Pianobook AC."
+    },
+    {
+      "id": "steel-drum-jlearman",
+      "name": "Chromatic C tenor steel drum (jlearman) -- STAND-IN",
+      "kind": "extra",
+      "source_url": "https://codeload.github.com/sfzinstruments/jlearman.SteelDrum/tar.gz/dc15a36ad69a43b0d240fcbd0cc78fbc61b2b47e",
+      "source_page": "https://github.com/sfzinstruments/jlearman.SteelDrum",
+      "version": "repo commit 2026-10-01",
+      "commit": "dc15a36ad69a43b0d240fcbd0cc78fbc61b2b47e",
+      "sha256": "c6dc676c0dd80cc2db97f2f0e87828519d961f43afcf1f3aad6f58df07d97672",
+      "license": "The Unlicense (public domain); LICENSE file of the repository at the pinned commit",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/jlearman.SteelDrum/dc15a36ad69a43b0d240fcbd0cc78fbc61b2b47e/LICENSE",
+      "notes": "Extra coverage; not a Pianobook pack."
+    },
+    {
+      "id": "headroom-piano",
+      "name": "Headroom Piano, Yamaha C3 (Bengt Nilsson) -- STAND-IN",
+      "kind": "extra",
+      "source_url": "https://codeload.github.com/sfzinstruments/BengtNilsson.HeadroomPiano/tar.gz/2a7df3f7252227a3484202c1d61bc1bfe352a971",
+      "source_page": "https://github.com/sfzinstruments/BengtNilsson.HeadroomPiano",
+      "version": "repo commit 2022-01-03",
+      "commit": "2a7df3f7252227a3484202c1d61bc1bfe352a971",
+      "sha256": "a77abcabb977c8d0d61b8558e47a91b428278ee8a9a9319ac59b44758ded9956",
+      "license": "Creative Commons Attribution 4.0 International (CC BY 4.0); LICENSE file of the repository at the pinned commit. Attribution: Bengt Nilsson.",
+      "license_url": "https://raw.githubusercontent.com/sfzinstruments/BengtNilsson.HeadroomPiano/2a7df3f7252227a3484202c1d61bc1bfe352a971/LICENSE",
+      "notes": "Extra coverage; not a Pianobook pack."
+    }
+  ]
+}

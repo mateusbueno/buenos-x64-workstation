@@ -17,3 +17,14 @@ node_modules/
 /.yocto-work/
 /.kas-venv/
 /out/
+
+# Story 5.4: the reference corpus is fetched into ~/.cache/velora-corpus (outside the tree); audio under tools/corpus is never committed
+/tools/corpus/.cache/
+/tools/corpus/work/
+/tools/corpus/**/*.wav
+/tools/corpus/**/*.flac
+/tools/corpus/**/*.ogg
+/tools/corpus/**/*.aif
+/tools/corpus/**/*.aiff
+/tools/corpus/**/*.mp3
+/tools/corpus/**/*.wv

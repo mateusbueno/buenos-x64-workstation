@@ -207,6 +207,14 @@ int main() {
     // An allow-listed opcode outside any header is still a structural error.
     CHECK(has(parse("label_cc1=x\n<region> sample=a.wav\n"), SfzIssueKind::kParse, "outside any header"));
   }
+  {  // Story 5.4: ampeg_dynamic (every VSCO2 file) is accepted and never stored; the opcodes that would make it matter still reject the file
+    auto r = parse("<group>\nampeg_dynamic=1 ampeg_release=0.8\n<region> sample=a.wav key=60\n");
+    CHECK(r.ok() && r.regions.size() == 1 && r.regions[0].ampeg.release == 0.8f);
+    CHECK(r.allowlisted.size() == 1 && r.allowlisted[0].opcode == "ampeg_dynamic" && r.allowlisted[0].line == 2);
+    CHECK(classify_opcode("ampeg_dynamic") == OpcodeClass::kAllowListed);
+    CHECK(has(parse("<group>\nampeg_dynamic=1 ampeg_release_oncc72=2\n<region> sample=a.wav key=60\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_oncc72'"));
+    CHECK(has(parse("<region> sample=a.wav key=60 ampeg_vel2release=1\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_vel2release'"));
+  }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
     const char* bad[] = {"script", "set_cc1", "set_hdcc1", "lfo01_freq", "eg01_time1", "amplitude_oncc1",
                          "effect1", "output", "group", "off_by", "polyphony", "note_offset", "octave_offset",

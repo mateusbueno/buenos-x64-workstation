@@ -58,6 +58,14 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME core_deps_purity_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_core_deps.py
                    --self-test)
+  # Story 5.4: offline tests of the reference-corpus tooling (manifest, hash pinning, safe extraction) and the "no corpus audio in the tree" guard.
+  # The real corpus run needs the network and the oracle and is NOT a ctest (tools/corpus/README.md).
+  add_test(NAME corpus_tooling_unit_tests
+           COMMAND ${Python3_EXECUTABLE} -I -m unittest discover -s ${CMAKE_SOURCE_DIR}/tools/corpus/tests)
+  add_test(NAME corpus_manifest_check
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/corpus/corpus.py --manifest ${CMAKE_SOURCE_DIR}/tools/corpus/manifest.json check)
+  add_test(NAME corpus_no_audio_guard
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/corpus/corpus.py guard --root ${CMAKE_SOURCE_DIR})
   # Story 4.1 (AD-27): nothing branches on the tier ID outside the profile table
   add_test(NAME tier_branching_check
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_tier_branching.py

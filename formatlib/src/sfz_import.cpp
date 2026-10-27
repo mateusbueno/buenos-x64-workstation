@@ -89,6 +89,10 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"sw_label", C::kAllowListed, "keyswitch name"},
       {"image", C::kAllowListed, "instrument picture"},
       {"hint_*", C::kAllowListed, "editor hints"},
+      // Story 5.4 (real VSCO2: 75 of 75 files used it and nothing else outside the subset): a flag that only makes sfizz re-read the
+      // ampeg_* values while a voice sounds. The values it could change come from ampeg_*_oncc<N> / ampeg_vel2*, which are unsupported
+      // opcodes and reject the file by themselves, so without them the flag cannot change the sound; with them the file is rejected anyway.
+      {"ampeg_dynamic", C::kAllowListed, "flag, no effect without ampeg_*_oncc<N> (Story 5.4)"},
   };
   return t;
 }

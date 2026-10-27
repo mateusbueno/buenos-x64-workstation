@@ -115,6 +115,10 @@ documented no-resonance filter gap -9 dB), so `ctest` needs no FluidSynth. The S
 Tolerances, measured residuals, FluidSynth's departures from the SoundFont specification (compensated in the oracle's copy of the file) and its remaining artefacts are
 in `tests/sf2_suite/README.md`. `velora-offline-render --engine sample --instrument 0:0` plays preset `bank:preset` of an SF2 bundle exactly as it plays an SFZ one.
 
+## Reference corpus (Story 5.4)
+
+`tools/corpus/` runs this same importer -> `velora-offline-render --engine sample` -> `velora-null-test` chain, against sfizz renders made on the fly, for the real libraries of the reference corpus (fetched into a cache outside the repository). It supersedes the env-gated `sample_demo_null_test` for the corpus; see `tools/corpus/README.md`.
+
 ## Oracle rule
 
 A reference oracle (sfizz's full engine for SFZ, FluidSynth for SF2) may only be used offline to produce reference renders for null tests. It is never linked
