@@ -2,7 +2,7 @@
 """Story 5.4 reference corpus: manifest check, fetch, run, repository guard. See README.md.
 
   corpus.py check                       validate the manifest (offline)
-  corpus.py fetch [--pin] [--deep] [--only ID ...]
+  corpus.py fetch [--pin] [--deep] [--only ID ...] [--local ID=PATH ...]
   corpus.py run   [--only ID ...] [--out DIR] [--pin] [--keep-work]
   corpus.py guard [--root DIR]          fail if corpus audio is anywhere in the repository tree
 """
@@ -39,8 +39,13 @@ def tool_paths(build_dir):
 def cmd_check(args):
     m = cl.load_manifest(args.manifest)
     inc, exc = cl.included(m), cl.excluded(m)
-    unpinned = [e["id"] for e in inc if not e.get("sha256")]
+    unpinned = [e["id"] for e in inc if not cl.pin_of(e)]
     print("manifest ok: %d included, %d excluded, %d without a pinned hash" % (len(inc), len(exc), len(unpinned)))
+    overrides = cl.parse_local_overrides(getattr(args, "local", []))
+    for e in inc:
+        if cl.is_local(e):
+            src = cl.resolve_local(e, overrides, repo=REPO)  # refuses a path inside the repository tree
+            print("  local_dir %s: %s (%s)" % (e["id"], src if src else "source NOT set on this machine; set %s or --local" % cl.local_env_name(e["id"]), e["local_hint"]))
     for e in exc:
         print("  excluded %s: %s" % (e["id"], e["excluded"]["reason"][:100]))
     if unpinned and args.require_pins:
@@ -60,15 +65,23 @@ def selected(m, only):
     return inc
 
 
+def cmd_ids(args):
+    for e in cl.included(cl.load_manifest(args.manifest)):
+        if not (args.no_local and cl.is_local(e)):
+            print(e["id"])
+    return 0
+
+
 def cmd_fetch(args):
     m = cl.load_manifest(args.manifest)
     rc = 0
     for e in selected(m, args.only):
         try:
-            tree, sha = cl.fetch(e, args.cache, pin_manifest=args.manifest if args.pin else None, deep=args.deep)
+            tree, sha = cl.fetch_entry(e, args.cache, pin_manifest=args.manifest if args.pin else None, deep=args.deep,
+                                       overrides=cl.parse_local_overrides(args.local), repo=REPO)
             print("%s: ok %s %s" % (e["id"], sha, tree))
-            if args.pin and not e.get("sha256"):
-                e["sha256"] = sha
+            if args.pin and not cl.pin_of(e):
+                e[cl.pin_key(e)] = sha
         except cl.CorpusError as exc:
             print("%s: FAIL %s" % (e["id"], exc))
             rc = 1
@@ -107,7 +120,7 @@ class Runner:
 
     def library(self, entry, tree, work):
         res = {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "version": entry["version"], "license": entry["license"],
-               "license_url": entry["license_url"], "source_url": entry["source_url"], "sha256": entry.get("sha256"),
+               "license_url": entry["license_url"], "source_url": entry.get("source_url") or ("local_dir: " + entry["local_hint"]), "sha256": cl.pin_of(entry),
                "status": "pass", "failures": [], "imported": 0, "import_failed": 0, "skipped_listed": [], "instruments": []}
         tree = os.path.abspath(tree)
         tol = entry.get("tolerance_db", self.m.get("default_tolerance_db", -60))
@@ -263,9 +276,10 @@ def cmd_run(args):
         shutil.rmtree(work, ignore_errors=True)
         os.makedirs(work)
         try:
-            tree, sha = cl.fetch(e, args.cache, pin_manifest=args.manifest if args.pin else None, deep=args.deep)
-            if args.pin and not e.get("sha256"):
-                e["sha256"] = sha
+            tree, sha = cl.fetch_entry(e, args.cache, pin_manifest=args.manifest if args.pin else None, deep=args.deep,
+                                       overrides=cl.parse_local_overrides(args.local), repo=REPO)
+            if args.pin and not cl.pin_of(e):
+                e[cl.pin_key(e)] = sha
             res = runner.library(e, tree, work)
         except cl.CorpusError as exc:
             res = {"id": e["id"], "name": e["name"], "kind": e["kind"], "status": "fail", "failures": ["fetch/verify: %s" % exc], "instruments": []}
@@ -354,11 +368,15 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check")
     c.add_argument("--require-pins", action="store_true")
+    c.add_argument("--local", action="append", default=[], metavar="ID=PATH")
+    i = sub.add_parser("ids", help="print the ids of the included entries (one per line)")
+    i.add_argument("--no-local", action="store_true", help="leave out local_dir entries (they cannot run on a machine without the founder's files)")
     for name in ("fetch", "run"):
         s = sub.add_parser(name)
         s.add_argument("--cache", default=os.environ.get("VELORA_CORPUS_CACHE", DEFAULT_CACHE))
         s.add_argument("--only", nargs="*", default=[])
         s.add_argument("--pin", action="store_true", help="trust on first use: pin the hash of a first download into the manifest")
+        s.add_argument("--local", action="append", default=[], metavar="ID=PATH", help="directory of a local_dir entry (else $VELORA_CORPUS_LOCAL_<ID>); repeatable")
         s.add_argument("--deep", action="store_true", help="re-hash every cached file instead of the path+size listing")
         if name == "run":
             s.add_argument("--build", default=os.path.join(REPO, "build"))
@@ -370,7 +388,7 @@ def main(argv=None):
     g.add_argument("--root", default=REPO)
     args = ap.parse_args(argv)
     try:
-        return {"check": cmd_check, "fetch": cmd_fetch, "run": cmd_run, "guard": cmd_guard}[args.cmd](args)
+        return {"check": cmd_check, "fetch": cmd_fetch, "ids": cmd_ids, "run": cmd_run, "guard": cmd_guard}[args.cmd](args)
     except cl.CorpusError as exc:
         print("FAIL: %s" % exc)
         return 1

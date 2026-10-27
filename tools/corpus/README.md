@@ -7,9 +7,10 @@ tools (`build/librarian/librarian`, `velora-offline-render --engine sample`, `ve
 second importer or second oracle. Test tooling only: nothing here is linked into a shipped target.
 
 ```
-python3 tools/corpus/corpus.py check [--require-pins]       # manifest valid? (offline)
-python3 tools/corpus/corpus.py fetch [--pin] [--deep] [--only ID ...]
-python3 tools/corpus/corpus.py run   [--only ID ...] [--out DIR] [--pin] [--deep] [--keep-work] [--timeout S]
+python3 tools/corpus/corpus.py check [--require-pins] [--local ID=PATH ...]   # manifest valid? (offline)
+python3 tools/corpus/corpus.py fetch [--pin] [--deep] [--only ID ...] [--local ID=PATH ...]
+python3 tools/corpus/corpus.py run   [--only ID ...] [--out DIR] [--pin] [--deep] [--keep-work] [--timeout S] [--local ID=PATH ...]
+python3 tools/corpus/corpus.py ids   [--no-local]            # ids of the included entries (the nightly workflow uses --no-local)
 python3 tools/corpus/corpus.py guard                         # fails if corpus audio is in the repository tree
 python3 -m unittest discover -s tools/corpus/tests           # offline unit tests (fake archives, no network)
 ```
@@ -28,6 +29,29 @@ One entry per library. Included entries have `source_url` (https, allow-listed h
 (at least 10 characters) and is never fetched; the report lists every exclusion with its reason. "No corpus file is skipped except entries explicitly listed
 with a reason" is enforced three ways: an `.sfz` that fails or skips on import fails the job unless it is in `skip_files`; a stale `skip_files` entry fails; an
 entry that is neither complete nor excluded is a manifest error.
+
+## Local sources (`source_kind: "local_dir"`)
+
+Some libraries are supplied by the founder from local disk (the Pianobook packs: no scripted download, no licence statement to rely on). Such an entry
+has `source_kind: "local_dir"`, `local_hint` (a machine-independent description, never an absolute or home path; the manifest check refuses `/...`,
+`/Users/` and `/home/`), `version`, `license`, `license_url`, optional `source_page`, and `expected_tree_sha256` instead of `source_url` / `sha256`.
+
+- **Where the files are**: `--local ID=PATH` (repeatable) or the environment variable `VELORA_CORPUS_LOCAL_<ID>` (id upper-cased, every non-alphanumeric
+  character becomes `_`, e.g. `VELORA_CORPUS_LOCAL_PIANOBOOK_MANTHEY_KLAVIANO`). The flag wins. A path inside the repository tree is refused, and so is a cache inside it.
+- **Copy, never use in place**: only `.sfz` and audio files (not dot-files) are copied into `<cache>/<id>/<tree digest>/tree`. Images, `.dspreset`, readmes,
+  `.DS_Store` and everything else stay behind. Hardening matches archive extraction: a symlinked top directory, any symlink or special file anywhere below
+  it (even an unneeded one), unsafe/over-long/duplicate (case- and Unicode-insensitive) names, and the per-file / total / member limits fail the entry;
+  sources are opened `O_NOFOLLOW` and must still be regular files of the planned size, targets are `O_EXCL | O_NOFOLLOW`, mode 0644, sizes re-checked while
+  streaming. The source folder is only ever read (a unit test compares size, mtime and hash before and after).
+- **The pin** is a deterministic tree digest: sha256 over the lines `relative path NUL size NUL sha256(file) LF` of the copied files, sorted by relative path.
+  Trust on first use exactly as for archives (`fetch --pin` writes `expected_tree_sha256` once, never overwrites; nobody attested the first copy), then any
+  difference is `HASH MISMATCH`, a hard failure. `fetch --deep` recomputes the tree digest from the cache and re-hashes every byte.
+- **A machine without the files**: the entry fails with `local source not available on this machine (set VELORA_CORPUS_LOCAL_<ID> or pass --local ...)`. It is
+  never skipped silently. The only way to leave such an entry out is to list it under `excluded` with a reason in the manifest (or select others with `--only`).
+  One deliberate convenience: when a verified cached copy for the pinned digest exists (listing check, `--deep` for all bytes) it is used without the source, since
+  its bytes are already proven equal to the pin.
+- **Licence field**: records what the package states (nothing, for the two current entries), where the work comes from, and that distribution needs a licence
+  the founder must confirm from the pack page. No licence is invented. These libraries are for local internal testing, never redistributed or committed.
 
 ## Hash pinning is trust-on-first-use
 
@@ -72,7 +96,7 @@ changed to make a run pass without a written reason in the manifest and the stor
 
 ## Licences
 
-Every entry carries the licence name and the URL of the licence text at the pinned commit. Sonatina Symphonic Orchestra is Creative Commons Sampling Plus 1.0
+Local Pianobook entries record "no licence stated" (see Local sources). Every other entry carries the licence name and the URL of the licence text at the pinned commit. Sonatina Symphonic Orchestra is Creative Commons Sampling Plus 1.0
 (restrictions recorded in the manifest notes). The audio is used for internal tests only and is never committed, redistributed or shipped.
 
 ## Corpus audio is never committed
@@ -82,5 +106,7 @@ tests) fails when git would add an audio file outside the small test-fixture dir
 
 ## CI
 
-`.github/workflows/corpus-nightly.yml` is `workflow_dispatch` only (CI is manual-only for this project). The nightly `schedule:` is present as a comment to enable when decided.
+`.github/workflows/corpus-nightly.yml` is `workflow_dispatch` only (CI is manual-only for this project). `local_dir` entries cannot run on a hosted runner (the founder's
+files are not there): the workflow runs only the entries printed by `corpus.py ids --no-local`, says so with a `::notice::` listing the local entries it did not run, and
+the `only` input can name entries explicitly (a named local entry then fails with "local source not available"). Run those entries on the founder's Mac with the commands above. The nightly `schedule:` is present as a comment to enable when decided.
 Local equivalent: the commands above.

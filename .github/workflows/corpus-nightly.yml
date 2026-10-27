@@ -6,8 +6,16 @@ name: corpus-nightly
 #     - cron: "17 2 * * *"
 # The job fails (non-zero exit of tools/corpus/corpus.py run) on any fetch / hash / import failure and on any null-test failure.
 # Corpus audio lives only in the runner's cache directory, never in the checkout (tools/corpus/corpus.py guard enforces it).
+# local_dir entries (founder-supplied Pianobook packs) CANNOT run on a hosted runner: their files exist only on the founder's machine and are never
+# committed. By default this job runs `corpus.py ids --no-local` and prints a notice naming the local entries it did not run; run those locally
+# (tools/corpus/README.md, "Local sources"). Naming one in the `only` input makes it fail with "local source not available", on purpose.
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Space-separated entry ids to run (empty = every entry that does not need a local folder)"
+        required: false
+        default: ""
 
 concurrency:
   group: corpus-nightly
@@ -41,7 +49,14 @@ jobs:
           path: ~/.cache/velora-corpus
           key: velora-corpus-${{ hashFiles('tools/corpus/manifest.json') }}
       - name: Run the corpus (fails on any import or null-test failure)
-        run: python3 tools/corpus/corpus.py run --out build/corpus-report
+        env:
+          ONLY: ${{ github.event.inputs.only }}
+        run: |
+          python3 tools/corpus/corpus.py ids --no-local > build/ids-hosted.txt
+          python3 tools/corpus/corpus.py ids > build/ids-all.txt
+          echo "::notice::NOT RUN on this runner (local_dir entries, files exist only on the founder's machine): $(comm -13 <(sort build/ids-hosted.txt) <(sort build/ids-all.txt) | tr '\n' ' ')"
+          if [ -z "$ONLY" ]; then ONLY="$(tr '\n' ' ' < build/ids-hosted.txt)"; fi
+          python3 tools/corpus/corpus.py run --out build/corpus-report --only $ONLY
       - name: Upload the report (no audio)
         if: always()
         uses: actions/upload-artifact@v4

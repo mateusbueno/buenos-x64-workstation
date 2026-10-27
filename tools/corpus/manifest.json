@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "comment": "Story 5.4 reference corpus. sha256 is the hash of the downloaded archive (trust on first use, see README). Audio is never committed.",
+  "comment": "Story 5.4 reference corpus. sha256 is the hash of the downloaded archive (trust on first use, see README). Audio is never committed. Entries with source_kind local_dir are founder-supplied local folders, pinned by expected_tree_sha256 (tree digest, trust on first use), resolved via VELORA_CORPUS_LOCAL_<ID> or --local, and never committed.",
   "default_tolerance_db": -60,
   "max_null_instruments": 3,
   "libraries": [
@@ -100,12 +100,35 @@
     },
     {
       "id": "pianobook-kamoepiano301",
-      "name": "Pianobook: kamoepiano301 (washiyamagiken, upright piano)",
+      "name": "Pianobook: kamoepiano301 (washiyamagiken, upright piano, SFZ)",
       "kind": "pianobook",
+      "source_kind": "local_dir",
+      "local_hint": "~/Downloads/kamoepiano301/ (kamoepiano301.sfz + samples/); set VELORA_CORPUS_LOCAL_PIANOBOOK_KAMOEPIANO301 or --local pianobook-kamoepiano301=PATH",
       "source_page": "https://www.pianobook.co.uk/packs/kamoepiano301/",
-      "excluded": {
-        "reason": "Pianobook requires a signed-in account to download ('Log in to download' on the pack page) and the pack page states no licence (site terms only, no CC0/CC-BY statement per pack); the project rules forbid signing in, accepting terms or using credentials, and require a clear licence on the pack page. Listed as SFZ-tagged candidate, not fetched."
-      }
+      "version": "1.0 (2026-02-22), by washiyamagiken",
+      "license": "NO licence is stated: the package's readme states none and the pack page was not consulted for terms. Work from pianobook.co.uk, supplied by the founder from local disk for local internal testing ONLY; it must NEVER be redistributed, committed or shipped. The licence/terms MUST be confirmed by the founder from the pack page before any distribution. No licence is assumed or invented here.",
+      "license_url": "https://www.pianobook.co.uk/profile/washiyamagiken",
+      "notes": "Author profile: pianobook.co.uk/profile/washiyamagiken. 212 MB, 48 kHz 24 bit WAV, 3 velocity layers, velocity-driven filtering (readme). Only .sfz and audio files are copied into the cache (no readme, .DS_Store).",
+      "limits": {
+        "max_total_bytes": 1073741824
+      },
+      "expected_tree_sha256": "f2c7e73b095bc69e7384694e5af5cd9840994a4c0973c2608196ab95b2b64f6b"
+    },
+    {
+      "id": "pianobook-manthey-klaviano",
+      "name": "Pianobook: Manthey Klaviano (Michele Pedrazzi, spinet piano, SFZ)",
+      "kind": "pianobook",
+      "source_kind": "local_dir",
+      "local_hint": "~/Downloads/Manthey Klaviano/ (Manthey Klaviano.sfz + samples/); set VELORA_CORPUS_LOCAL_PIANOBOOK_MANTHEY_KLAVIANO or --local pianobook-manthey-klaviano=PATH",
+      "source_page": "https://www.pianobook.co.uk/packs/manthey-klaviano/",
+      "version": "1.1 (2022-07-02), by Michele Pedrazzi",
+      "license": "NO licence is stated: the package's readme states none and the pack page was not consulted for terms. Work from pianobook.co.uk, supplied by the founder from local disk for local internal testing ONLY; it must NEVER be redistributed, committed or shipped. The licence/terms MUST be confirmed by the founder from the pack page before any distribution. No licence is assumed or invented here.",
+      "license_url": "https://www.pianobook.co.uk/profile/bobmeanza",
+      "notes": "Author profile: pianobook.co.uk/profile/bobmeanza. 454 MB, four dynamic layers, two round robins, release samples (readme). The pack's .dspreset, images and resources/ are not copied. The source_page URL is the expected pack page, not verified.",
+      "limits": {
+        "max_total_bytes": 1610612736
+      },
+      "expected_tree_sha256": "bac35a4b87dc470b942b0e77c7fbeda11ebd1e176501a3abbc54b2aa447e3b18"
     },
     {
       "id": "pianobook-antz",

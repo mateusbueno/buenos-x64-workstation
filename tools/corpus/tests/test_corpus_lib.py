@@ -330,6 +330,192 @@ def quiet_main(argv):
         return corpus.main(argv)
 
 
+def local_entry(**kw):
+    e = {"id": "pb-x", "name": "PB X", "kind": "pianobook", "source_kind": "local_dir", "local_hint": "~/Downloads/pb-x/", "version": "1",
+         "license": "none stated", "license_url": "https://www.pianobook.co.uk/profile/someone"}
+    e.update(kw)
+    return e
+
+
+def make_local(root, extra=None):
+    os.makedirs(os.path.join(root, "samples"))
+    files = {"x.sfz": b"<region> sample=samples/a.wav\n", "samples/a.wav": b"RIFF-a", "samples/B.WAV": b"RIFF-bb",
+             ".DS_Store": b"junk", "readme.txt": b"hi", "cover.jpg": b"jpg", "x.dspreset": b"<xml/>", "samples/._a.wav": b"apple"}
+    files.update(extra or {})
+    for rel, data in files.items():
+        with open(os.path.join(root, *rel.split("/")), "wb") as fh:
+            fh.write(data)
+
+
+class LocalDirTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.src = os.path.join(self.tmp, "src")
+        self.cache = os.path.join(self.tmp, "cache")
+        make_local(self.src)
+        self.mf = os.path.join(self.tmp, "m.json")
+        self.e = local_entry()
+        with open(self.mf, "w") as fh:
+            json.dump({"schema": 1, "libraries": [self.e]}, fh)
+        self.log = lambda *_: None
+
+    def fetch(self, entry=None, **kw):
+        return cl.fetch_local(entry or self.e, self.cache, overrides={self.e["id"]: self.src}, log=self.log, **kw)
+
+    def test_manifest_rules(self):
+        cl.validate_entry(local_entry())
+        for bad in ({"local_hint": "/Users/someone/Downloads/x"}, {"local_hint": "C:\\\\x"}, {"local_hint": "foo/home/x"}, {"source_url": "https://github.com/a/b"},
+                    {"sha256": "0" * 64}, {"expected_tree_sha256": "xyz"}):
+            with self.assertRaises(cl.CorpusError, msg=str(bad)):
+                cl.validate_entry(local_entry(**bad))
+        with self.assertRaises(cl.CorpusError):
+            cl.validate_entry(entry(local_hint="x"))
+
+    def test_digest_is_deterministic_and_selects_only_sfz_and_audio(self):
+        d1, n, c = cl.copy_local(self.src, os.path.join(self.tmp, "c1"))
+        d2, _, _ = cl.copy_local(self.src, os.path.join(self.tmp, "c2"))
+        self.assertEqual(d1, d2)
+        self.assertEqual(c, 3)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, "c1"))), ["samples", "x.sfz"])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, "c1", "samples"))), ["B.WAV", "a.wav"])
+        self.assertEqual(cl.local_tree_digest(os.path.join(self.tmp, "c1")), d1)
+        self.assertEqual(os.stat(os.path.join(self.tmp, "c1", "x.sfz")).st_mode & 0o777, 0o644)
+
+    def test_digest_changes_with_content_size_and_name(self):
+        base, _, _ = cl.copy_local(self.src, os.path.join(self.tmp, "c1"))
+        with open(os.path.join(self.src, "samples", "a.wav"), "wb") as fh:
+            fh.write(b"RIFF-X")  # same size, other bytes
+        d, _, _ = cl.copy_local(self.src, os.path.join(self.tmp, "c2"))
+        self.assertNotEqual(base, d)
+        os.rename(os.path.join(self.src, "samples", "a.wav"), os.path.join(self.src, "samples", "c.wav"))
+        d3, _, _ = cl.copy_local(self.src, os.path.join(self.tmp, "c3"))
+        self.assertNotIn(d3, (base, d))
+
+    def test_tofu_pin_then_mismatch_is_hard_failure(self):
+        tree, digest = self.fetch(pin_manifest=self.mf)
+        with open(self.mf) as fh:
+            self.assertEqual(json.load(fh)["libraries"][0]["expected_tree_sha256"], digest)
+        self.assertEqual(os.path.basename(os.path.dirname(tree)), digest)
+        with open(os.path.join(self.src, "samples", "a.wav"), "ab") as fh:
+            fh.write(b"tampered")
+        pinned = dict(self.e, expected_tree_sha256=digest)
+        other_cache = os.path.join(self.tmp, "cache2")
+        with self.assertRaisesRegex(cl.CorpusError, "HASH MISMATCH"):
+            cl.fetch_local(pinned, other_cache, overrides={"pb-x": self.src}, log=self.log)
+        self.assertEqual(os.listdir(os.path.join(other_cache, "pb-x")), [])  # no stage left behind
+
+    def test_no_pin_without_flag_refuses(self):
+        with self.assertRaisesRegex(cl.CorpusError, "no expected_tree_sha256"):
+            self.fetch()
+
+    def test_repin_refused(self):
+        _, digest = self.fetch(pin_manifest=self.mf)
+        with self.assertRaises(cl.CorpusError):
+            cl.pin_hash(self.mf, "pb-x", "0" * 64)
+
+    def test_cache_hit_needs_no_source_and_detects_tampering(self):
+        tree, digest = self.fetch(pin_manifest=self.mf)
+        pinned = dict(self.e, expected_tree_sha256=digest)
+        t2, _ = cl.fetch_local(pinned, self.cache, env={}, log=self.log)  # source gone, verified cache is used
+        self.assertEqual(t2, tree)
+        p = os.path.join(tree, "samples", "a.wav")
+        with open(p, "r+b") as fh:
+            fh.write(b"RIFF-Z")  # same size
+        cl.fetch_local(pinned, self.cache, env={}, log=self.log)  # listing check does not see it
+        with self.assertRaisesRegex(cl.CorpusError, "deep"):
+            cl.fetch_local(pinned, self.cache, env={}, deep=True, log=self.log)
+        os.unlink(p)
+        with self.assertRaisesRegex(cl.CorpusError, "changed since copy"):
+            cl.fetch_local(pinned, self.cache, env={}, log=self.log)
+
+    def test_missing_source_is_a_hard_failure_with_guidance(self):
+        pinned = dict(self.e, expected_tree_sha256="0" * 64)
+        with self.assertRaisesRegex(cl.CorpusError, "local source not available.*VELORA_CORPUS_LOCAL_PB_X"):
+            cl.fetch_local(pinned, self.cache, env={}, log=self.log)
+        with self.assertRaisesRegex(cl.CorpusError, "local source not available"):
+            cl.fetch_local(pinned, self.cache, overrides={"pb-x": os.path.join(self.tmp, "nope")}, env={}, log=self.log)
+
+    def test_env_var_and_flag_resolution(self):
+        self.assertEqual(cl.local_env_name("pianobook-manthey-klaviano"), "VELORA_CORPUS_LOCAL_PIANOBOOK_MANTHEY_KLAVIANO")
+        e = {"id": "pb-x"}
+        self.assertIsNone(cl.resolve_local(e, {}, {}))
+        self.assertEqual(cl.resolve_local(e, {}, {"VELORA_CORPUS_LOCAL_PB_X": self.src}), self.src)
+        self.assertEqual(cl.resolve_local(e, {"pb-x": "/flag"}, {"VELORA_CORPUS_LOCAL_PB_X": self.src}), "/flag")  # flag wins
+        self.assertEqual(cl.parse_local_overrides(["a=/b=c"]), {"a": "/b=c"})
+        with self.assertRaises(cl.CorpusError):
+            cl.parse_local_overrides(["nopath"])
+
+    def test_source_inside_repository_refused(self):
+        with self.assertRaisesRegex(cl.CorpusError, "inside the repository"):
+            cl.resolve_local({"id": "pb-x"}, {"pb-x": self.src}, {}, repo=self.tmp)
+        with self.assertRaisesRegex(cl.CorpusError, "cache directory is inside"):
+            cl.fetch_local(dict(self.e, expected_tree_sha256="0" * 64), self.cache, repo=self.tmp, log=self.log)
+
+    def test_symlink_special_and_traversal_refused(self):
+        os.symlink(os.path.join(self.src, "x.sfz"), os.path.join(self.src, "samples", "link.wav"))
+        with self.assertRaisesRegex(cl.CorpusError, "symlink"):
+            cl.copy_local(self.src, os.path.join(self.tmp, "c1"))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "c1")) and os.listdir(os.path.join(self.tmp, "c1")))
+        os.unlink(os.path.join(self.src, "samples", "link.wav"))
+        os.symlink(self.tmp, os.path.join(self.src, "dirlink"))  # symlinked directory, even though unneeded
+        with self.assertRaisesRegex(cl.CorpusError, "symlink"):
+            cl.plan_local(self.src, cl.DEFAULT_LIMITS)
+        os.unlink(os.path.join(self.src, "dirlink"))
+        os.mkfifo(os.path.join(self.src, "pipe"))
+        with self.assertRaisesRegex(cl.CorpusError, "special"):
+            cl.plan_local(self.src, cl.DEFAULT_LIMITS)
+        os.unlink(os.path.join(self.src, "pipe"))
+        link_top = os.path.join(self.tmp, "toplink")
+        os.symlink(self.src, link_top)
+        with self.assertRaisesRegex(cl.CorpusError, "plain directory"):
+            cl.plan_local(link_top, cl.DEFAULT_LIMITS)
+
+    def test_limits_and_case_duplicates(self):
+        with self.assertRaisesRegex(cl.CorpusError, "limit"):
+            cl.plan_local(self.src, dict(cl.DEFAULT_LIMITS, max_file_bytes=3))
+        with self.assertRaisesRegex(cl.CorpusError, "expands beyond"):
+            cl.plan_local(self.src, dict(cl.DEFAULT_LIMITS, max_total_bytes=10))
+        with self.assertRaisesRegex(cl.CorpusError, "too many"):
+            cl.plan_local(self.src, dict(cl.DEFAULT_LIMITS, max_members=1))
+        if os.path.exists(os.path.join(self.src, "samples", "A.wav")):
+            self.skipTest("case-insensitive filesystem cannot hold both names")
+        with open(os.path.join(self.src, "samples", "A.wav"), "wb") as fh:
+            fh.write(b"x")
+        if len(os.listdir(os.path.join(self.src, "samples"))) == 4:  # case-sensitive filesystem: both names exist
+            with self.assertRaisesRegex(cl.CorpusError, "duplicate"):
+                cl.plan_local(self.src, cl.DEFAULT_LIMITS)
+
+    def test_source_is_never_modified(self):
+        def snap():
+            out = {}
+            for dp, _, fs in os.walk(self.src):
+                for f in fs:
+                    p = os.path.join(dp, f)
+                    out[p] = (os.path.getsize(p), os.path.getmtime(p), cl.sha256_file(p))
+            return out
+        before = snap()
+        self.fetch(pin_manifest=self.mf)
+        self.assertEqual(before, snap())
+
+    def test_check_command_reports_local_entries(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = corpus.main(["--manifest", self.mf, "check"])
+        self.assertEqual(rc, 0)
+        self.assertIn("source NOT set on this machine", buf.getvalue())
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = corpus.main(["--manifest", self.mf, "check", "--require-pins"])
+        self.assertEqual(rc, 1)
+
+    def test_ids_no_local(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            corpus.main(["--manifest", self.mf, "ids", "--no-local"])
+        self.assertEqual(buf.getvalue(), "")
+
+
 class GuardAndSuiteTests(unittest.TestCase):
     def test_guard_fails_on_corpus_audio_and_passes_on_clean_tree(self):
         with tempfile.TemporaryDirectory() as d:

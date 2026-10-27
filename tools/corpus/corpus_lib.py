@@ -82,17 +82,32 @@ def validate_entry(e):
         if not isinstance(ex, dict) or not isinstance(ex.get("reason"), str) or len(ex["reason"].strip()) < 10:
             raise CorpusError(where + ": excluded needs a reason of at least 10 characters")
         return
-    for key in ("source_url", "version", "license", "license_url"):
+    local = is_local(e)
+    if e.get("source_kind", "archive") not in ("archive", "local_dir"):
+        raise CorpusError(where + ": source_kind must be archive or local_dir")
+    for key in (("local_hint",) if local else ("source_url",)) + ("version", "license", "license_url"):
         if not isinstance(e.get(key), str) or not e[key].strip():
             raise CorpusError("%s: %s required" % (where, key))
-    check_url(e["source_url"], where + ".source_url")
+    if local:
+        hint = e["local_hint"]
+        if hint.startswith("/") or "\\" in hint or re.search(r"(^|/)(Users|home)/", hint) or "\x00" in hint:
+            raise CorpusError("%s: local_hint must be a machine-independent hint (no absolute path, no home directory); the path comes from VELORA_CORPUS_LOCAL_<ID> or --local" % where)
+        if "source_url" in e or "sha256" in e or "archive" in e:
+            raise CorpusError(where + ": a local_dir entry has no source_url, archive or sha256 (the pin is expected_tree_sha256)")
+        if e.get("source_page"):
+            check_url(e["source_page"], where + ".source_page", hosts=None)
+    else:
+        check_url(e["source_url"], where + ".source_url")
+        if "expected_tree_sha256" in e or "local_hint" in e:
+            raise CorpusError(where + ": expected_tree_sha256 / local_hint belong to source_kind local_dir")
     check_url(e["license_url"], where + ".license_url", hosts=None)
     fmt = e.get("archive", "tar.gz")
     if fmt not in ("tar.gz", "zip"):
         raise CorpusError(where + ": archive must be tar.gz or zip")
-    sha = e.get("sha256")
-    if sha is not None and not (isinstance(sha, str) and SHA256_RE.match(sha)):
-        raise CorpusError(where + ": sha256 must be 64 lowercase hex characters")
+    for key in ("sha256", "expected_tree_sha256"):
+        sha = e.get(key)
+        if sha is not None and not (isinstance(sha, str) and SHA256_RE.match(sha)):
+            raise CorpusError("%s: %s must be 64 lowercase hex characters" % (where, key))
     tol = e.get("tolerance_db")
     if tol is not None and not (isinstance(tol, (int, float)) and -400 <= tol < 0):
         raise CorpusError(where + ": tolerance_db must be a negative number of dB")
@@ -141,15 +156,28 @@ def excluded(manifest):
     return [e for e in manifest["libraries"] if "excluded" in e]
 
 
+def is_local(entry):
+    return entry.get("source_kind", "archive") == "local_dir"
+
+
+def pin_key(entry):
+    return "expected_tree_sha256" if is_local(entry) else "sha256"
+
+
+def pin_of(entry):
+    return entry.get(pin_key(entry))
+
+
 def pin_hash(manifest_path, entry_id, sha256):
-    """Trust-on-first-use: writes `sha256` into the entry only when none is pinned. Never overwrites."""
+    """Trust-on-first-use: writes `sha256` into the entry only when none is pinned. Never overwrites.
+    The field is `sha256` (archive hash) or, for a local_dir entry, `expected_tree_sha256` (tree digest)."""
     with open(manifest_path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
     for e in data["libraries"]:
         if e["id"] == entry_id:
-            if e.get("sha256"):
+            if pin_of(e):
                 raise CorpusError("%s: a hash is already pinned; refusing to overwrite it" % entry_id)
-            e["sha256"] = sha256
+            e[pin_key(e)] = sha256
             tmp = manifest_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2, ensure_ascii=False)
@@ -549,6 +577,208 @@ def fetch(entry, cache_dir, pin_manifest=None, opener=None, deep=False, log=prin
 def _read_stamp(final):
     with open(os.path.join(final, "stamp.json"), "r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+# ---------------------------------------------------------------------------------------------
+# local_dir sources (supplied by the founder from local disk; see README "Local sources")
+
+LOCAL_EXTS = (".sfz",) + AUDIO_EXTS  # the only files copied into the cache: SFZ text and audio, nothing else (no images, dspreset, .DS_Store, readmes)
+
+
+def local_env_name(entry_id):
+    return "VELORA_CORPUS_LOCAL_" + re.sub(r"[^A-Z0-9]", "_", entry_id.upper())
+
+
+def parse_local_overrides(items):
+    out = {}
+    for it in items or []:
+        if "=" not in it:
+            raise CorpusError("--local expects ID=PATH, got %r" % it)
+        k, v = it.split("=", 1)
+        out[k] = v
+    return out
+
+
+def in_repository(path, repo):
+    p, r = os.path.realpath(path), os.path.realpath(repo)
+    return os.path.commonpath([p, r]) == r
+
+
+def resolve_local(entry, overrides=None, env=None, repo=None):
+    """The directory for a local_dir entry: `--local ID=PATH`, else $VELORA_CORPUS_LOCAL_<ID>. Returns None when neither is set.
+    A path inside the repository tree is refused (corpus audio must never sit in the checkout); so is a symlinked top directory."""
+    env = os.environ if env is None else env
+    path = (overrides or {}).get(entry["id"]) or env.get(local_env_name(entry["id"]))
+    if not path:
+        return None
+    path = os.path.abspath(os.path.expanduser(path))
+    if repo and in_repository(path, repo):
+        raise CorpusError("%s: local source %s is inside the repository tree; corpus audio must stay outside it" % (entry["id"], path))
+    return path
+
+
+def local_tree_digest(root):
+    """Deterministic pin of a (copied) local tree: sha256 over lines `relpath NUL size NUL sha256-of-file LF`, sorted by relative path
+    (byte order of the UTF-8 name). Independent of mtimes, modes, inode order and of where the tree sits."""
+    rows = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for f in filenames:
+            p = os.path.join(dirpath, f)
+            if os.path.islink(p):
+                raise CorpusError("symlink in tree: %s" % p)
+            rows.append((os.path.relpath(p, root).replace(os.sep, "/"), os.path.getsize(p), sha256_file(p)))
+    return _digest_rows(rows)
+
+
+def _digest_rows(rows):
+    h = hashlib.sha256()
+    for rel, size, sha in sorted(rows, key=lambda r: r[0].encode("utf-8", "surrogateescape")):
+        h.update(rel.encode("utf-8", "surrogateescape") + b"\0" + str(size).encode() + b"\0" + sha.encode() + b"\n")
+    return h.hexdigest()
+
+
+def plan_local(src, limits):
+    """Walks `src` without following anything and returns [(relpath, size)] of the files to copy. Refuses a symlinked top directory,
+    any symlink or special file anywhere below it (even an unneeded one), unsafe or duplicate names and any size limit breach.
+    Only LOCAL_EXTS files that are not dot-files are selected."""
+    try:
+        st = os.lstat(src)
+    except OSError as exc:
+        raise CorpusError("local source not readable: %s" % exc)
+    if not stat.S_ISDIR(st.st_mode):
+        raise CorpusError("local source %s is not a plain directory (a symlink or a file is refused)" % src)
+    members = []
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
+        for name in dirnames + filenames:
+            p = os.path.join(dirpath, name)
+            m = os.lstat(p).st_mode
+            if stat.S_ISLNK(m):
+                raise CorpusError("symlink in local source: %s (refused)" % p)
+            if not (stat.S_ISDIR(m) or stat.S_ISREG(m)):
+                raise CorpusError("special file in local source: %s (refused)" % p)
+        for name in filenames:
+            if name.startswith(".") or not name.lower().endswith(LOCAL_EXTS):
+                continue
+            p = os.path.join(dirpath, name)
+            members.append((os.path.relpath(p, src).replace(os.sep, "/"), "file", os.lstat(p).st_size))
+    if not members:
+        raise CorpusError("local source %s holds no .sfz or audio file" % src)
+    plan, _ = _plan_members(members, limits, 0)
+    return [(n, s) for n, _, s in plan]
+
+
+def copy_local(src, dest_dir, limits=None):
+    """Copies the plan_local() files into `dest_dir` (must not exist), hardened like archive extraction: every source file is opened with
+    O_NOFOLLOW and must still be a regular file of the planned size, every target is created with O_EXCL | O_NOFOLLOW, mode 0644, sizes
+    re-checked while streaming. The source is only ever read. Returns (tree digest, bytes, file count)."""
+    limits = dict(DEFAULT_LIMITS, **(limits or {}))
+    if os.path.lexists(dest_dir):
+        raise CorpusError("copy target already exists: %s" % dest_dir)
+    plan = plan_local(src, limits)
+    os.makedirs(dest_dir)
+    rows, written = [], 0
+    try:
+        for rel, size in plan:
+            s_path = os.path.join(src, *rel.split("/"))
+            target = os.path.join(dest_dir, *rel.split("/"))
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            try:
+                sfd = os.open(s_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            except OSError as exc:
+                raise CorpusError("cannot open %s: %s" % (s_path, exc))
+            with os.fdopen(sfd, "rb") as inp:
+                if not stat.S_ISREG(os.fstat(inp.fileno()).st_mode):
+                    raise CorpusError("%s is not a regular file" % s_path)
+                tfd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                h, n = hashlib.sha256(), 0
+                with os.fdopen(tfd, "wb") as out:
+                    while True:
+                        b = inp.read(1 << 20)
+                        if not b:
+                            break
+                        n += len(b)
+                        if n > limits["max_file_bytes"] or written + n > limits["max_total_bytes"]:
+                            raise CorpusError("%s grew beyond the limits while copying" % rel)
+                        h.update(b)
+                        out.write(b)
+            if n != size:
+                raise CorpusError("%s changed while copying (%d bytes, planned %d)" % (rel, n, size))
+            written += n
+            rows.append((rel, n, h.hexdigest()))
+    except BaseException:
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
+    return _digest_rows(rows), written, len(rows)
+
+
+def fetch_local(entry, cache_dir, pin_manifest=None, deep=False, overrides=None, env=None, repo=None, log=print):
+    """local_dir counterpart of fetch(): returns (tree dir, tree digest). Cache layout <cache>/<id>/<tree digest>/{tree,stamp.json}.
+    * The pin is `expected_tree_sha256`; the copy must hash to it (HASH MISMATCH otherwise). Without a pin the fetch refuses
+      unless `pin_manifest` is given (trust on first use of what the founder supplied).
+    * A verified cached copy (listing check, or every byte with deep=True, which also recomputes the pin digest) is reused, so
+      the source folder is not needed again; with no cached copy and no source the entry fails with 'local source not available'.
+    * The source folder is never written to."""
+    eid = entry["id"]
+    if repo and in_repository(cache_dir, repo):
+        raise CorpusError("%s: the cache directory is inside the repository tree" % eid)
+    limits = effective_limits(entry)
+    lib_dir = os.path.join(cache_dir, eid)
+    pinned = pin_of(entry)
+    if pinned:
+        final = os.path.join(lib_dir, pinned)
+        if os.path.isfile(os.path.join(final, "stamp.json")):
+            stamp = _read_stamp(final)
+            tree = os.path.join(final, "tree")
+            if stamp.get("tree_sha256") != pinned or not os.path.isdir(tree):
+                raise CorpusError("%s: cache stamp does not match the pin; delete %s" % (eid, final))
+            if deep and local_tree_digest(tree) != pinned:
+                raise CorpusError("%s: cached tree no longer hashes to the pin (deep check); delete %s" % (eid, final))
+            digest = tree_content_digest(tree) if deep else tree_listing_digest(tree)
+            if digest != stamp["content_digest" if deep else "listing_digest"]:
+                raise CorpusError("%s: cached tree changed since copy (%s check); delete %s" % (eid, "deep" if deep else "listing", final))
+            log("%s: cache hit (%s)" % (eid, "deep verified" if deep else "listing verified"))
+            return tree, pinned
+    elif pin_manifest is None:
+        raise CorpusError("%s: no expected_tree_sha256 pinned in the manifest; run `corpus.py fetch --pin --local %s=PATH` once to pin the first copy (trust on first use)" % (eid, eid))
+    src = resolve_local(entry, overrides, env, repo)
+    if src is None:
+        raise CorpusError("%s: local source not available on this machine (set %s or pass --local %s=PATH; hint: %s). Not skipped: list the entry under `excluded` with a reason to leave it out" % (eid, local_env_name(eid), eid, entry["local_hint"]))
+    if not os.path.isdir(src):
+        raise CorpusError("%s: local source not available: %s is not a directory" % (eid, src))
+    os.makedirs(lib_dir, exist_ok=True)
+    stage = os.path.join(lib_dir, ".stage-%d" % os.getpid())
+    shutil.rmtree(stage, ignore_errors=True)
+    os.makedirs(stage)
+    try:
+        tree = os.path.join(stage, "tree")
+        log("%s: copying local source (hint: %s)" % (eid, entry["local_hint"]))
+        digest, written, nfiles = copy_local(src, tree, limits)
+        if pinned and digest != pinned:
+            raise CorpusError("%s: HASH MISMATCH: manifest pins tree %s, local source hashes to %s" % (eid, pinned, digest))
+        if not pinned:
+            log("%s: pinning first copy %s (trust on first use)" % (eid, digest))
+        stamp = {"tree_sha256": digest, "bytes": written, "files": nfiles, "listing_digest": tree_listing_digest(tree), "content_digest": tree_content_digest(tree)}
+        with open(os.path.join(stage, "stamp.json"), "w", encoding="utf-8") as fh:
+            json.dump(stamp, fh, indent=1)
+        final = os.path.join(lib_dir, digest)
+        if os.path.lexists(final):
+            raise CorpusError("%s: %s exists but has no valid stamp; delete it" % (eid, final))
+        try:
+            os.rename(stage, final)
+        except OSError as exc:
+            raise CorpusError("%s: could not publish %s (%s); a concurrent fetch? rerun" % (eid, final, exc))
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    if not pinned:
+        pin_hash(pin_manifest, eid, digest)
+    return os.path.join(final, "tree"), digest
+
+
+def fetch_entry(entry, cache_dir, pin_manifest=None, opener=None, deep=False, overrides=None, env=None, repo=None, log=print):
+    if is_local(entry):
+        return fetch_local(entry, cache_dir, pin_manifest, deep, overrides, env, repo, log)
+    return fetch(entry, cache_dir, pin_manifest, opener, deep, log)
 
 
 def find_audio_in_tree(root, skip_dirs=()):
