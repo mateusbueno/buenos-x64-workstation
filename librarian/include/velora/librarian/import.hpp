@@ -213,6 +213,7 @@ struct ImportResult {
   std::string failing_path;                    // reason_code damaged: the file that is missing, unreadable or malformed
   std::vector<ImportWarning> warnings;         // e.g. ignored_opcode (logged, counted, never a reason to skip)
   std::vector<AllowListedUse> allowlisted;     // accepted non-sounding opcodes (logged, never a reason to skip)
+  std::vector<AllowListedUse> ignored_values;  // Story 13.2: values replaced by the opcode default (opcode/file/line; logged, never a reason to skip)
   std::vector<std::string> reasons;  // one line per problem ("file:line: ..."), or the failure text
   std::string library_id;            // canonical UUID string (empty before it is known)
   std::string bundle_id;             // 64 lowercase hex

@@ -4,6 +4,7 @@
 #include "velora/ui/theme.hpp"
 #include "velora/ui/font_manager.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <algorithm>
 

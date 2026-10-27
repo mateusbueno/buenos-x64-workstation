@@ -1,7 +1,9 @@
 #include "velora/format/sysex_6op.hpp"
 #include "velora/format/parametric_bundle.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <iostream>
 #include <vector>
 

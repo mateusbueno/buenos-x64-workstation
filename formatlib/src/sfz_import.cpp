@@ -92,6 +92,8 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       // Story 5.4 (real VSCO2: 75 of 75 files used it and nothing else outside the subset): a flag that only makes sfizz re-read the
       // ampeg_* values while a voice sounds. The values it could change come from ampeg_*_oncc<N> / ampeg_vel2*, which are unsupported
       // opcodes and reject the file by themselves, so without them the flag cannot change the sound; with them the file is rejected anyway.
+      // INERT ONLY WHILE no ampeg_*_oncc<N> / ampeg_vel2* opcode is supported: the moment one is, this entry must leave the allow-list
+      // (Story 13.5 revisits it).
       {"ampeg_dynamic", C::kAllowListed, "flag, no effect without ampeg_*_oncc<N> (Story 5.4)"},
   };
   return t;
@@ -143,6 +145,7 @@ struct Acc {
   bool cutoff_set = false, type_set = false;
   FilterType type = FilterType::kLpf2p;
   std::map<int, XfPart> in, out;  // by controller number, ascending
+  bool never_note = false;        // hikey=-1 (the last hikey wins, so a later valid hikey clears it)
   const Op* type_op = nullptr;  // fil_type / resonance as given (for ignored_opcode warnings)
   const Op* res_op = nullptr;
 };
@@ -239,6 +242,13 @@ class Importer final : public sfz::ParserListener {
       ++result.source_region_count;
     } else if (header == "control") {
       cur_ = Cur::kControl;
+    } else if (header == "curve") {
+      cur_ = Cur::kCurve;
+      SfzCurve c;
+      c.file = loc.file;
+      c.line = loc.line;
+      if (result.curves.size() < 256) result.curves.push_back(std::move(c));
+      else issue(SfzIssueKind::kUnsupportedValue, loc, "more than 256 <curve> blocks", "<curve>");
     } else {
       issue(SfzIssueKind::kUnsupportedHeader, loc, "unsupported header <" + header + ">", "<" + header + ">");
       cur_ = Cur::kIgnored;
@@ -254,6 +264,9 @@ class Importer final : public sfz::ParserListener {
         issue(SfzIssueKind::kParse, loc, "opcode '" + name + "' outside any header");
         return;
       case Cur::kIgnored:
+        return;
+      case Cur::kCurve:
+        curve_opcode(op);
         return;
       default:
         break;
@@ -306,7 +319,7 @@ class Importer final : public sfz::ParserListener {
   }
 
  private:
-  enum class Cur { kNone, kGlobal, kMaster, kGroup, kRegion, kControl, kIgnored };
+  enum class Cur { kNone, kGlobal, kMaster, kGroup, kRegion, kControl, kCurve, kIgnored };
   struct Loc {
     std::string file;
     std::size_t line = 0;
@@ -344,6 +357,36 @@ class Importer final : public sfz::ParserListener {
     return true;
   }
 
+  // <curve>: curve_index and vNNN points are stored inert (bounded: 256 curves, 256 points each); anything else is unsupported.
+  void curve_opcode(const Op& op) {
+    report_ = true;  // called once per opcode
+    SfzCurve& c = result.curves.back();
+    const std::string& k = op.name;
+    std::int64_t n = 0;
+    double d = 0;
+    if (k == "curve_index") {
+      if (parse_int(op.value, n) && n >= 0 && n <= 255) c.index = int(n);
+      else ignore(op, "expected curve index 0..255");
+    } else if (k.size() >= 2 && k.size() <= 4 && k[0] == 'v' &&
+               k.find_first_not_of("0123456789", 1) == std::string::npos) {
+      const int pt = std::atoi(k.c_str() + 1);
+      if (pt > 255) ignore(op, "curve point index above 255");
+      else if (!parse_double(op.value, d) || !std::isfinite(d)) ignore(op, "expected a finite number");
+      else if (c.points.size() >= 256) ignore(op, "more than 256 points in one curve");
+      else c.points.emplace_back(pt, d);
+    } else {
+      add(SfzIssueKind::kUnsupportedOpcode, op.file, op.line, "unsupported opcode '" + k + "' in <curve>", k);
+    }
+  }
+
+  // Records a value replaced by the opcode default (once per opcode occurrence: only on the reporting pass).
+  void ignore(const Op& op, const char* why, bool default_used = true) {
+    if (!report_) return;
+    result.ignored_values.push_back({op.name, op.value, op.file, op.line,
+                                     "ignored value '" + op.value + "' for opcode '" + op.name + "' (" + why +
+                                         ")" + (default_used ? "; the opcode default is used" : "")});
+  }
+
   void bad(const Op& op, const char* why) {
     if (!report_) return;
     add(SfzIssueKind::kInvalidValue, op.file, op.line,
@@ -377,6 +420,13 @@ class Importer final : public sfz::ParserListener {
     return true;
   }
 
+  // lokey/hikey/key (sfizz): an unparseable or out-of-range note is not an error; the caller keeps the default.
+  bool as_note_or_ignore(const Op& op, std::int64_t& out) {
+    if (parse_note(op.value, out)) return true;
+    ignore(op, "not a MIDI note 0..127");
+    return false;
+  }
+
   // Applies one opcode to `r`. Returns false for an invalid value (reported when `report`).
   bool apply(Region& r, Acc& acc, const Op& op, bool report) {
     SfzLoopSpec& ls = acc.ls;
@@ -386,9 +436,21 @@ class Importer final : public sfz::ParserListener {
     const std::string& k = op.name;
     const std::int64_t kMaxFrames = std::int64_t(1) << 40;
     if (k == "sample") return true;
-    if (k == "lokey") { if (!as_note(op, n)) return false; r.key_lo = std::uint8_t(n); }
-    else if (k == "hikey") { if (!as_note(op, n)) return false; r.key_hi = std::uint8_t(n); }
-    else if (k == "key") { if (!as_note(op, n)) return false; r.key_lo = r.key_hi = r.key_center = std::uint8_t(n); }
+    if (k == "lokey") {
+      r.key_lo = as_note_or_ignore(op, n) ? std::uint8_t(n) : Region{}.key_lo;
+    } else if (k == "hikey") {
+      std::int64_t raw = 0;
+      if (parse_int(op.value, raw) && raw == -1) {  // sfizz: no note triggers this region
+        acc.never_note = true;
+        ignore(op, "hikey=-1: the region never triggers from a note and is not imported yet", false);
+        return true;
+      }
+      acc.never_note = false;
+      r.key_hi = as_note_or_ignore(op, n) ? std::uint8_t(n) : Region{}.key_hi;
+    } else if (k == "key") {
+      if (as_note_or_ignore(op, n)) { r.key_lo = r.key_hi = r.key_center = std::uint8_t(n); acc.never_note = false; }
+      else { const Region d0; r.key_lo = d0.key_lo; r.key_hi = d0.key_hi; r.key_center = d0.key_center; }
+    }
     else if (k == "pitch_keycenter") { if (!as_note(op, n)) return false; r.key_center = std::uint8_t(n); }
     else if (k == "lovel") { if (!as_int(op, 0, 127, n)) return false; r.vel_lo = std::uint8_t(n); }
     else if (k == "hivel") { if (!as_int(op, 0, 127, n)) return false; r.vel_hi = std::uint8_t(n); }
@@ -563,6 +625,7 @@ class Importer final : public sfz::ParserListener {
     }
     r.sample = static_cast<std::uint32_t>(idx);
     result.regions.push_back(r);
+    result.never_note_triggered.push_back(acc.never_note);
     result.loops.push_back(ls);
     result.region_sources.push_back({region_loc_.file, region_loc_.line});
   }
@@ -579,6 +642,24 @@ class Importer final : public sfz::ParserListener {
 };
 
 }  // namespace
+
+std::size_t drop_never_note_triggered(SfzParseResult& r) {
+  std::size_t out = 0, dropped = 0;
+  for (std::size_t i = 0; i < r.regions.size(); ++i) {
+    if (i < r.never_note_triggered.size() && r.never_note_triggered[i]) { ++dropped; continue; }
+    if (out != i) {
+      r.regions[out] = r.regions[i];
+      r.loops[out] = r.loops[i];
+      r.region_sources[out] = r.region_sources[i];
+    }
+    ++out;
+  }
+  r.regions.resize(out);
+  r.loops.resize(out);
+  r.region_sources.resize(out);
+  r.never_note_triggered.assign(out, false);
+  return dropped;
+}
 
 bool resolve_loop_points(Region& r, const SfzLoopSpec& spec, std::uint64_t frames, std::string* why) {
   const bool loops = r.loop_mode == LoopMode::kLoopContinuous || r.loop_mode == LoopMode::kLoopSustain;

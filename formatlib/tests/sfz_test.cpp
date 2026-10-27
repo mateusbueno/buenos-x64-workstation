@@ -62,6 +62,67 @@ int main() {
     }
     if (!r.samples.empty()) CHECK(r.samples[0].name == "sub/b.wav");
   }
+  {  // Story 13.2: sfizz value rules (fallback to the opcode default, logged), hikey=-1, inert <curve>
+    for (const char* v : {"lokey=-1", "lokey=c-2", "lokey=zz"}) {
+      auto r = parse(std::string("<region> sample=a.wav ") + v + "\n");
+      CHECK(r.ok() && r.regions.size() == 1 && r.regions[0].key_lo == 0 && r.regions[0].key_hi == 127);
+      CHECK(r.ignored_values.size() == 1 && r.ignored_values[0].opcode == "lokey" && r.ignored_values[0].line == 1);
+      CHECK(r.never_note_triggered.size() == 1 && !r.never_note_triggered[0]);
+    }
+    {
+      auto r = parse("<group>\nlokey=10\n<region> sample=a.wav lokey=-1\n");  // the default wins over the inherited value
+      CHECK(r.ok() && r.regions[0].key_lo == 0 && r.ignored_values.size() == 1);
+    }
+    {
+      auto r = parse("<region> sample=a.wav hikey=128\n");
+      CHECK(r.ok() && r.regions[0].key_hi == 127 && r.ignored_values.size() == 1 && !r.never_note_triggered[0]);
+    }
+    {
+      auto r = parse("<region> sample=a.wav hikey=-1\n<region> sample=a.wav key=60\n");
+      CHECK(r.ok() && r.regions.size() == 2 && r.never_note_triggered.size() == 2);
+      CHECK(r.never_note_triggered[0] && !r.never_note_triggered[1] && r.ignored_values.size() == 1);
+      CHECK(r.ignored_values[0].opcode == "hikey");
+      CHECK(drop_never_note_triggered(r) == 1 && r.regions.size() == 1 && r.regions[0].key_lo == 60 &&
+            r.loops.size() == 1 && r.region_sources.size() == 1 && r.region_sources[0].line == 2);
+    }
+    {  // a valid key sets hikey too, so it clears hikey=-1 (same region or inherited)
+      auto r = parse("<region> sample=a.wav hikey=-1 key=60\n");
+      CHECK(r.ok() && !r.never_note_triggered[0] && r.regions[0].key_hi == 60);
+      auto g = parse("<group>\nhikey=-1\n<region> sample=a.wav key=60\n");
+      CHECK(g.ok() && !g.never_note_triggered[0] && g.regions[0].key_hi == 60);
+    }
+    {  // curve points: index above 255 is ignored and logged
+      auto r = parse("<curve>\ncurve_index=1 v000=0 v999=1\n<region> sample=a.wav key=60\n");
+      CHECK(r.ok() && r.curves.size() == 1 && r.curves[0].points.size() == 1 && r.ignored_values.size() == 1 &&
+            r.ignored_values[0].opcode == "v999");
+    }
+    {  // a later valid hikey clears the flag
+      auto r = parse("<group>\nhikey=-1\n<region> sample=a.wav hikey=70\n");
+      CHECK(r.ok() && !r.never_note_triggered[0] && r.regions[0].key_hi == 70);
+    }
+    {
+      auto r = parse("<region> sample=a.wav key=-1\n");
+      CHECK(r.ok() && r.regions[0].key_lo == 0 && r.regions[0].key_hi == 127 && r.regions[0].key_center == 60 &&
+            r.ignored_values.size() == 1 && r.ignored_values[0].opcode == "key");
+    }
+    {  // regular regions: nothing ignored
+      auto r = parse("<region> sample=a.wav key=60\n");
+      CHECK(r.ok() && r.ignored_values.empty() && r.curves.empty() && !r.never_note_triggered[0]);
+    }
+    {
+      auto r = parse("<curve>\ncurve_index=1 v000=0 v127=1\n<region> sample=a.wav key=60\n");
+      CHECK(r.ok() && r.curves.size() == 1 && r.curves[0].index == 1 && r.curves[0].points.size() == 2 &&
+            r.curves[0].points[1].first == 127 && r.curves[0].points[1].second == 1.0 && r.regions.size() == 1);
+    }
+    {  // a curve used through an unsupported opcode still skips the file, naming it
+      auto r = parse("<curve>\ncurve_index=1 v000=0 v127=1\n<region> sample=a.wav key=60 amp_velcurve_1=0.5\n");
+      CHECK(!r.ok() && has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_velcurve_1'"));
+    }
+    {
+      auto r = parse("<group>\nampeg_dynamic=1\n<region> sample=a.wav key=60\n");
+      CHECK(r.ok() && r.allowlisted.size() == 1 && r.regions.size() == 1);
+    }
+  }
   {  // #define and $variables, defaults of every field
     auto r = parse("#define $K 64\n#define $S a.wav\n<region> sample=$S key=$K\n");
     CHECK(r.ok() && r.regions.size() == 1);
@@ -228,7 +289,7 @@ int main() {
       CHECK(r.allowlisted.empty());
       CHECK(classify_opcode(op) == OpcodeClass::kUnsupported);
     }
-    for (const char* h : {"effect", "curve", "midi", "sample"}) {
+    for (const char* h : {"effect", "midi", "sample"}) {
       auto r = parse(std::string("<") + h + ">\nfoo=1\n<region> sample=a.wav\n");
       bool found = false;
       for (const auto& i : r.issues)

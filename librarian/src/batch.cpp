@@ -199,6 +199,12 @@ std::string report_file_line(const FileReport& f) {
     if (i) o += ",";
     o += "{\"opcode\":" + esc(x.opcode) + ",\"file\":" + esc(x.file) + ",\"line\":" + std::to_string(x.line) + "}";
   }
+  o += "],\"ignored_values_count\":" + std::to_string(r.ignored_values.size()) + ",\"ignored_values\":[";
+  for (std::size_t i = 0; i < r.ignored_values.size(); ++i) {
+    const AllowListedUse& x = r.ignored_values[i];
+    if (i) o += ",";
+    o += "{\"opcode\":" + esc(x.opcode) + ",\"file\":" + esc(x.file) + ",\"line\":" + std::to_string(x.line) + "}";
+  }
   o += "],\"warnings\":[";
   for (std::size_t i = 0; i < r.warnings.size(); ++i) {
     const ImportWarning& x = r.warnings[i];

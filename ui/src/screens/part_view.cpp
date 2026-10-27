@@ -3,6 +3,7 @@
 #include "velora/ui/locale.hpp"
 #include "velora/ui/ws_client.hpp"
 
+#include <cmath>
 #include <algorithm>
 #include <cstdio>
 

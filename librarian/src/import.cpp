@@ -620,6 +620,7 @@ ImportResult import_sfz(const ImportOptions& opt) {
   res.source_region_count = parsed.source_region_count;
   for (const auto& a : parsed.allowlisted) res.allowlisted.push_back({a.opcode, a.file, a.line});
   for (const auto& w : parsed.warnings) res.warnings.push_back({"ignored_opcode", w.opcode, w.file, w.line, w.message, {}});
+  for (const auto& v : parsed.ignored_values) res.ignored_values.push_back({v.opcode, v.file, v.line});
   if (!parsed.ok() && confirmed_gone(opt)) return removed(res, "reading " + opt.sfz_path);
   if (!parsed.ok()) {
     res.status = Status::kSkipped;
@@ -637,11 +638,14 @@ ImportResult import_sfz(const ImportOptions& opt) {
     res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
     return res;
   }
+  // Story 13.2: regions that never trigger from a note (hikey=-1) are not written until Story 13.7 (controller-triggered voices).
+  const std::size_t never_note = fmt::drop_never_note_triggered(parsed);
   if (parsed.regions.empty()) {
     res.status = Status::kSkipped;
     res.reason_code = ReasonCode::kDamaged;
     res.failing_path = opt.sfz_path;
-    res.reasons.push_back(opt.sfz_path + ": no regions in SFZ file");
+    res.reasons.push_back(opt.sfz_path + ": no regions in SFZ file" +
+                          (never_note ? " that a note can trigger (hikey=-1 regions are not imported yet)" : ""));
     return res;
   }
 

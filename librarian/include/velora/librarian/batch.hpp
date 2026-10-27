@@ -8,6 +8,7 @@
 //   {"type":"file","file":S,"status":"imported|unchanged|skipped|failed","reason":"none|unsupported_features|damaged",
 //    "failing_path":S,"offenders":[{"opcode":S,"file":S,"line":N,"message":S}],
 //    "allowlisted_count":N,"allowlisted":[{"opcode":S,"file":S,"line":N}],
+//    "ignored_values_count":N,"ignored_values":[{"opcode":S,"file":S,"line":N}],
 //    "warnings":[{"code":"ignored_opcode","opcode":S,"file":S,"line":N,"message":S}],"warning_count":N,
 //    "messages":[S],"library_id":S,"bundle_id":S,"samples":N,"regions":N,"detail":S,"suggested_category":S}
 //   `suggested_category` (Story 5.5) is a category key ("category.piano") or "none"; a suggestion only.

@@ -40,6 +40,7 @@ processing order, then one `summary` object:
 {"type":"file","file":S,"status":"imported|unchanged|skipped|failed","reason":"none|unsupported_features|damaged",
  "failing_path":S,"offenders":[{"opcode":S,"file":S,"line":N,"message":S}],
  "allowlisted_count":N,"allowlisted":[{"opcode":S,"file":S,"line":N}],
+ "ignored_values_count":N,"ignored_values":[{"opcode":S,"file":S,"line":N}],
  "messages":[S],"library_id":S,"bundle_id":S,"samples":N,"regions":N,"detail":S}
 {"type":"summary","files":N,"imported":N,"unchanged":N,"skipped":N,"failed":N}
 ```
@@ -62,6 +63,11 @@ is an infrastructure problem (I/O error, busy lock, failed verification, bad arg
 Non-sounding opcodes on the allow-list (`label_cc<N>`, `label_key<N>`, `*_label`, `image`, `hint_*`; the table is in
 `formatlib/README.md`) never skip a file: they are accepted, ignored, logged in `allowlisted` and counted in
 `allowlisted_count`.
+
+Story 13.2: an unparseable or out-of-range `lokey`/`hikey`/`key` value (`lokey=-1`, `lokey=c-2`, `hikey=128`) falls back to
+the opcode default, as in sfizz, and is logged in `ignored_values`; the file still imports. `hikey=-1` marks a region that
+no note triggers; it is not written to the bundle (logged in `ignored_values`) until Story 13.7 adds controller-triggered
+voices. `<curve>` blocks are parsed and stored inert.
 
 Supported SFZ subset: see `formatlib/README.md` (authoritative opcode table: supported, allow-listed, everything else
 unsupported). It now includes keyswitches, CC crossfades, loops and basic filters (Story 5.1). A bundle that uses none of the

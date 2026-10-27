@@ -327,6 +327,7 @@ Analysis analyze_sfz(const fs::path& file, const fs::path* root, Counter& cnt) {
     return skip(damaged ? RowStatus::kSkippedDamaged : RowStatus::kSkippedUnsupportedFeatures,
                 outside ? path + ": a file outside the source has a problem (details withheld)" : first.to_string());
   }
+  fmt::drop_never_note_triggered(parsed);  // Story 13.2: the importer writes none of these regions
   if (parsed.regions.empty()) return skip(RowStatus::kSkippedDamaged, path + ": no regions in SFZ file");
 
   std::vector<std::uint64_t> frames(parsed.samples.size(), 0);

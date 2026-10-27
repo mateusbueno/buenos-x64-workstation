@@ -22,6 +22,7 @@
 // below it; within a region, later opcodes win.
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "velora/format/instrument_model.hpp"
@@ -110,6 +111,23 @@ struct SfzWarning {
   std::string message;
 };
 
+// Story 13.2: a value outside an opcode's range or unparseable that the importer replaced by the opcode default
+// (sfizz behaviour), e.g. lokey=-1 or lokey=c-2. Reported as `ignored_value`, never a reason to skip the file.
+struct SfzIgnoredValue {
+  std::string opcode, value, file;
+  std::size_t line = 0;
+  std::string message;
+};
+
+// Story 13.2: a <curve> block, parsed and stored inert (nothing in the subset consumes a curve; an opcode that
+// would, like amp_velcurve_N, is unsupported and skips the file by itself).
+struct SfzCurve {
+  int index = -1;                                 // curve_index, -1 when not given
+  std::vector<std::pair<int, double>> points;     // (vNNN point number 0..255, value), source order
+  std::string file;
+  std::size_t line = 0;                           // <curve> header
+};
+
 struct SfzParseResult {
   std::vector<SfzSample> samples;          // unique, in first-use order; Region::sample indexes it
   std::vector<Region> regions;             // in source order (loops not yet resolved)
@@ -118,10 +136,18 @@ struct SfzParseResult {
   std::vector<SfzIssue> issues;            // errors and unsupported constructs, in source order
   std::vector<SfzWarning> warnings;        // ignored_opcode warnings, in source order
   std::vector<SfzAllowListed> allowlisted; // accepted non-sounding opcodes, in source order
+  std::vector<SfzIgnoredValue> ignored_values;  // Story 13.2: values replaced by the opcode default, in source order
+  std::vector<SfzCurve> curves;            // Story 13.2: <curve> blocks, stored inert
+  std::vector<bool> never_note_triggered;  // Story 13.2: parallel to regions; hikey=-1 (no note ever triggers it)
   std::vector<std::string> included_files; // every file the parser read (main file included)
   std::size_t source_region_count = 0;     // number of <region> headers seen
   bool ok() const { return issues.empty(); }
 };
+
+// Story 13.2: removes the regions flagged never_note_triggered (and their parallel entries) so a bundle is built
+// without them, until controller-triggered voices exist (Story 13.7). Returns how many were removed. Samples used
+// only by removed regions stay in `samples`.
+std::size_t drop_never_note_triggered(SfzParseResult& r);
 
 // Parses and maps `sfz_path`. Never throws; failures are listed in `issues` (the other fields
 // are then incomplete and must not be used to build a bundle).

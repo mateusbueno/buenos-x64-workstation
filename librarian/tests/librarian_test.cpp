@@ -248,13 +248,13 @@ void test_unsupported_opcode() {
              "<group>\nlovel=1\n"
              "<region> sample=samples/a.wav key=60 amp_veltrack=50\n"
              "<region> sample=samples/a.wav key=61 lfo01_freq=3\n"
-             "<curve>\ncurve_index=1\n"
+             "<effect>\ntype=lofi\n"
              "<region> sample=samples/b.wav key=62\n");
   const auto r = import_sfz(e.opts());
   CHECK(r.status == Status::kSkipped);
   CHECK(mentions(r, "Piano.sfz:3: unsupported opcode 'amp_veltrack'"));
   CHECK(mentions(r, "Piano.sfz:4: unsupported opcode 'lfo01_freq'"));
-  CHECK(mentions(r, "Piano.sfz:5: unsupported header <curve>"));
+  CHECK(mentions(r, "Piano.sfz:5: unsupported header <effect>"));
   CHECK(r.reasons.size() == 3);
   CHECK(r.library_id.empty() && r.bundle_id.empty());
   // Previous `current` intact, nothing new published.
@@ -265,9 +265,9 @@ void test_unsupported_opcode() {
   const auto r2 = import_sfz(e.opts());
   CHECK(r2.status == Status::kSkipped && mentions(r2, "Piano.sfz:1: unsupported value 'legato'"));
   // A bad number is reported with its location too.
-  write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav\nkey=abc\n");
+  write_file(e.src / "Piano.sfz", "<region> sample=samples/a.wav\npan=abc\n");
   const auto r3 = import_sfz(e.opts());
-  CHECK(r3.status == Status::kSkipped && mentions(r3, "Piano.sfz:2: invalid value 'abc' for opcode 'key'"));
+  CHECK(r3.status == Status::kSkipped && mentions(r3, "Piano.sfz:2: invalid value 'abc' for opcode 'pan'"));
 }
 
 void test_missing_sample_and_includes() {

@@ -285,7 +285,7 @@ void test_unsupported_features() {
       {"lfo", "<group>\nlfo01_freq=3\n<region> sample=samples/a.wav key=60\n", "lfo01_freq", 2},
       {"eg", "<region> sample=samples/a.wav key=60\neg01_time1=0.1\n", "eg01_time1", 2},
       {"amplitude_oncc", "<region> sample=samples/a.wav key=60 amplitude_oncc1=100\n", "amplitude_oncc1", 1},
-      {"curve header", "<curve>\ncurve_index=1\n<region> sample=samples/a.wav key=60\n", "<curve>", 1},
+      {"effect header", "<effect>\ntype=lofi\n<region> sample=samples/a.wav key=60\n", "<effect>", 1},
       {"set_cc", "<control>\nset_cc1=100\n<region> sample=samples/a.wav key=60\n", "set_cc1", 2},
       {"unsupported fil_type", "<region> sample=samples/a.wav key=60 fil_type=lpf_4p cutoff=100\n", "fil_type", 1},
       {"unsupported loop_mode", "<region> sample=samples/a.wav key=60 loop_mode=loop_bidir\n", "loop_mode", 1},
@@ -347,12 +347,28 @@ void test_allowlist() {
   CHECK(line.find("\"status\":\"imported\"") != std::string::npos && line.find("\"reason\":\"none\"") != std::string::npos);
 }
 
+void test_never_note() {  // Story 13.2: hikey=-1 regions are logged and not written
+  Env e("nevernote");
+  write_file(e.src / "N.sfz", "<region> sample=samples/a.wav key=60 hikey=-1\n<region> sample=samples/b.wav key=62\n");
+  const ImportResult r = import_sfz(e.opts("N.sfz"));
+  CHECK(r.ok() && r.region_count == 1);
+  CHECK(r.ignored_values.size() == 1 && r.ignored_values[0].opcode == "hikey" && r.ignored_values[0].line == 1);
+  auto b = fmt::BundleReader::open_file(r.bundle_dir + "/bundle.vlb");
+  CHECK(b.ok() && b.value().instruments()[0].regions.size() == 1);
+  const std::string line = report_file_line(FileReport{(e.src / "N.sfz").string(), r});
+  CHECK(line.find("\"ignored_values_count\":1") != std::string::npos && line.find("\"ignored_values\":[{\"opcode\":\"hikey\"") != std::string::npos);
+  write_file(e.src / "O.sfz", "<region> sample=samples/a.wav key=60 hikey=-1\n");
+  const ImportResult o = import_sfz(e.opts("O.sfz"));
+  CHECK(o.status == Status::kSkipped && o.reason_code == ReasonCode::kDamaged);
+  CHECK(mentions(o, "hikey=-1 regions are not imported yet"));
+}
+
 void test_damaged() {
   Env e("damaged");
   // Unparsable value, structural error, missing sample, missing include, region without sample.
   struct Case { const char* what; std::string sfz; };
   const std::vector<Case> cases = {
-      {"bad number", "<region> sample=samples/a.wav key=abc\n"},
+      {"bad number", "<region> sample=samples/a.wav key=60 pan=abc\n"},
       {"opcode outside header", "key=60\n<region> sample=samples/a.wav\n"},
       {"missing include", "#include \"gone.sfz\"\n<region> sample=samples/a.wav key=60\n"},
       {"region without sample", "<region> key=60\n"},
@@ -691,6 +707,7 @@ int main() {
   test_unextended_stays_epic1();
   test_unsupported_features();
   test_allowlist();
+  test_never_note();
   test_damaged();
   test_warnings_and_misc();
   test_walk_and_dedupe();
