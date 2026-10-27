@@ -1,9 +1,9 @@
 // Null test of the sample engine against committed sfizz renders (Story 1.15), through the shipped tools:
 //   librarian import (in process)  ->  velora-offline-render --engine sample  ->  velora-null-test --case
-// Usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip|strip134]
+// Usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip|strip134|strip135]
 //   no flag     the render must pass the case's null test (tolerance in golden/<case>.case)
 //   --negative  a deliberately wrong render (1 dB gain error / the other interpolation / the Story 5.2 opcodes
-//               stripped from the SFZ: keyswitches, CC crossfades and filters; strip134: the Story 13.4 velocity and amplitude opcodes) must FAIL the same null test
+//               stripped from the SFZ: keyswitches, CC crossfades and filters; strip134: the Story 13.4 velocity and amplitude opcodes; strip135: the Story 13.5 CC opcodes) must FAIL the same null test
 //               on residual, proving the test can fail
 //   cli-errors  as the case name: exercises the sample-engine argument errors of velora-offline-render
 // Needs no sfizz: the goldens are committed. Regenerating them needs tools/oracle (see its README).
@@ -58,9 +58,23 @@ static long counter(const std::string& out, const std::string& label) {
 // whitespace separated key=value words, headers and comments stay as they are.
 // With story134 it is the Story 13.4 velocity and amplitude opcodes instead (amp_veltrack, amp_velcurve_N, amp_keytrack, amp_keycenter, amplitude,
 // group_/master_/global_ volume and amplitude, ampeg_vel2*).
-static std::string strip_story52(const std::string& sfz, int& stripped, bool story134 = false) {
-  auto drop = [story134](const std::string& w) {
+// mode 2 (Story 13.5): the CC opcodes: locc/hicc/lohdcc/hihdcc, set_cc/set_hdcc and every <target>_oncc<N> / _cc<N> / _curvecc<N> (including ampeg_<eg>cc<N>).
+static bool story135_opcode(const std::string& key) {
+  std::size_t d = key.size();
+  while (d > 0 && std::isdigit(static_cast<unsigned char>(key[d - 1]))) --d;
+  if (d == key.size() || d == 0) return false;
+  const std::string p = key.substr(0, d);
+  for (const char* g : {"locc", "hicc", "lohdcc", "hihdcc", "set_cc", "set_hdcc"})
+    if (p == g) return true;
+  auto ends = [&](const char* suffix) { const std::string x = suffix; return p.size() > x.size() && p.compare(p.size() - x.size(), x.size(), x) == 0; };
+  return ends("_oncc") || ends("_curvecc") || ends("_cc") || (p.rfind("ampeg_", 0) == 0 && ends("cc"));
+}
+
+static std::string strip_story52(const std::string& sfz, int& stripped, int mode = 0) {
+  const bool story134 = mode == 1;
+  auto drop = [story134, mode](const std::string& w) {
     const std::string key = w.substr(0, w.find('='));
+    if (mode == 2) return w.find('=') != std::string::npos && story135_opcode(key);
     if (story134) {
       auto ends = [&](const char* suffix) { const std::string x = suffix; return key.size() > x.size() && key.compare(key.size() - x.size(), x.size(), x) == 0; };
       return w.find('=') != std::string::npos &&
@@ -193,8 +207,8 @@ int main(int argc, char** argv) {
   std::string negative;
   if (argc > 3) {
     if (argc != 5 || std::string(argv[3]) != "--negative" ||
-        (std::string(argv[4]) != "gain" && std::string(argv[4]) != "interp" && std::string(argv[4]) != "strip" && std::string(argv[4]) != "strip134")) {
-      std::fprintf(stderr, "usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip|strip134]\n");
+        (std::string(argv[4]) != "gain" && std::string(argv[4]) != "interp" && std::string(argv[4]) != "strip" && std::string(argv[4]) != "strip134" && std::string(argv[4]) != "strip135")) {
+      std::fprintf(stderr, "usage: sample_suite_test <case> <hermite|linear> [--negative gain|interp|strip|strip134|strip135]\n");
       return 2;
     }
     negative = argv[4];
@@ -206,12 +220,12 @@ int main(int argc, char** argv) {
   opt.base_dir = std::string(SUITE_DIR) + "/sfz";
   opt.root = work + "/root";
   mkdirs(opt.root);
-  if (negative == "strip" || negative == "strip134") {  // the same instrument without keyswitches, crossfades and filters / without the Story 13.4 opcodes (samples still resolve through base_dir)
+  if (negative == "strip" || negative == "strip134" || negative == "strip135") {  // the same instrument without keyswitches, crossfades and filters / without the Story 13.4 opcodes (samples still resolve through base_dir)
     std::ifstream in(opt.sfz_path);
     int stripped = 0;
-    std::string text = strip_story52(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), stripped, negative == "strip134");
+    std::string text = strip_story52(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), stripped, negative == "strip135" ? 2 : negative == "strip134" ? 1 : 0);
     if (stripped == 0) {  // a negative that strips nothing would fail (or pass) for the wrong reason
-      std::printf("FAIL: --negative strip removed no %s opcode from %s\n", negative == "strip134" ? "Story 13.4" : "Story 5.2", opt.sfz_path.c_str());
+      std::printf("FAIL: --negative strip removed no %s opcode from %s\n", negative == "strip135" ? "Story 13.5" : negative == "strip134" ? "Story 13.4" : "Story 5.2", opt.sfz_path.c_str());
       return 2;
     }
     mkdirs(work + "/stripped");

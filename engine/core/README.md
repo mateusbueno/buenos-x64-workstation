@@ -45,8 +45,8 @@ Behaviour (SFZ subset of Story 1.13; sfizz 1.2.3 is the reference, the null test
   `10^(keytrack * (note - amp_keycenter) / 20)`. `ampeg_vel2attack/decay/release` (seconds) and `ampeg_vel2sustain` (percent) are added at
   `vel7/127` to the region's attack, decay, release and sustain when the voice starts (`init_env`; sustain clamped to 0..1, a time at or
   below 0 gives sfizz's instant rate); the decay rate, sustain level and free-running flag are per-voice copies in `Env`, equal to the
-  region's own when no `vel2` is set. A part's `part_attack` and `part_release` overrides replace the region's attack and release, vel2attack/vel2release included (tested). The keytrack total is bounded to +-144 dB and `vol_gain` to about +144 dB so the gain is always finite. Nothing here is modulated by CC yet
-  (Story 13.5). The `amp_velcurve_N` table lives in `SampleBank::vel_tables`; nothing allocates after `prepare()`.
+  region's own when no `vel2` is set. A part's `part_attack` and `part_release` overrides replace the region's attack and release, vel2attack/vel2release included (tested). The keytrack total is bounded to +-144 dB and `vol_gain` to about +144 dB so the gain is always finite. CC modulation of these (Story 13.5) is its own
+  section below. The `amp_velcurve_N` table lives in `SampleBank::vel_tables`; nothing allocates after `prepare()`.
 - **Amplitude envelope** (`ampeg_*`), a sample-by-sample port of sfizz's `ADSREnvelope`, single precision, state per voice:
   `delay` frames at `start` (percent), linear `attack` (`v += 1/(rate*t)`, the first attack frame is `start + step`), `hold` frames at
   1, exponential `decay` (`v *= exp(-9/(t*rate))` down to `sustain`, so `t` is the time of nine time constants), `sustain` held
@@ -593,6 +593,43 @@ The sample engine plays the Story 5.1 extension of the instrument model (`format
 **Voice cost.** `cost_units_per_voice()` is per engine and fixed at bind (the arbiter refuses a change), so the declaration is per engine: `SampleEngine::Config::extended_voices` (default false) declares the worst-case voice with a filter and a CC crossfade, `sample_voice_cost_units(q, extended)` = 5 (Hermite) or 3 (linear) + `kSampleFilterCostUnits` (2) + `kSampleCrossfadeCostUnits` (1). The default engine keeps 5 / 3, so no existing floor or budget changes (`kSampleFloorVoices` x cost: 256 x 5 for the default engine, 256 x 8 for an extended Hermite engine; the macOS engine host declares extended voices, its budget is 2^20 units). A voice that starts with a filter or crossfade on an engine that did not declare it is counted in `undeclared_extended_voices()`. The figures come from `sample_bench` (`tests/sample_bench.cpp`, -O3 host figures, stereo Hermite voice = 5 units = 0.44 us per 64-frame block on the dev Mac): filter +1.2 (mono) / +1.5 (stereo) units, crossfade +0.5 .. 0.6, both together 6.6 units over a zero base (declared 8); to be calibrated on the board in Stories 1.18/1.19. The bench prints and asserts nothing about time.
 
 **Tests.** `sample_features_tests` (keyswitch semantics table: sw_last with default, unsorted and overlapping ranges, no default, a mapped switch key, a default that is nobody's switch; sw_down/sw_up/sw_previous including the pedal case; combined opcodes; round-robin counters behind a gate; release triggers behind sw_down; per-part isolation incl. two parts on one bank; rebind, unbind, `reset_play_state`; crossfade curves at anchors for both curves, hi = 127, narrow ranges, monotonicity; the controller path, sounding voices following a jump without a step larger than the ramp, a sweep without zipper steps, mid-ramp retarget, new notes at the current gain, two controllers, per-part controller state; render segmentation; filter anchors, textbook magnitudes, the real voice against the analytic response, stability, unplayable extensions, stereo filtering, bit-exact bypass; the cost declaration; the CC path and fan-out through the block loop incl. a registry-mapped CC; seamless Live Set switch reset and controller replay; sustain pedal vs key release), `sample_features_traffic_test` / `rtsan_sample_features_test` (10,000 blocks, plain and Live Set, with keyswitch presses, CC sweeps, pedal, parameter events, filtered / crossfaded / gated regions, bank rebinding every 5 blocks and a seamless switch every 95; two runs hash equal; the latter under RealtimeSanitizer, Docker/Linux clang only), `sample_bench`, the null tests `sample_null_keyswitch_last`, `_keyswitch_down_up`, `_keyswitch_previous`, `_xfade_power`, `_xfade_gain`, `_filters` and the matching `sample_null_neg_strip_*` negatives (`tools/offline-render`, see its README).
+
+## CC at voice start and sfizz pseudo-CCs (Story 13.5)
+
+The port (`SampleRegionDesc`) carries, per region, up to 8 CC gates (`cc_gates`: controller, `lo`, `hi` in CC units) and up to 16 CC modulation entries
+(`cc_mods`: target, controller, curve index, depth); `InstrumentView` carries the instrument's `cc_defaults` (`set_cc`) and `curves` (`<curve>` tables). All of it
+is read **once, when a voice starts**; a region without any of it is unchanged bit for bit (the new `SampleBankRegion` flags are false, the bank's tables empty,
+no random number is drawn).
+
+- **Gates** (`cc_gate_open`, `locc`/`hicc`/`lohdcc`/`hihdcc`): the region starts a voice only while every gate holds, `lo <= CC <= hi`, at the part's `CcState` at the note on
+  (and at the note off for `trigger=release`, at the key up for `trigger=release_key`). The importer already widened `hicc` by sfizz's fill-gap, so the comparison is a plain
+  `<=`. The part's controllers are the ones `set_part_cc` fills (7-bit values snap to whole CC steps as for the crossfades). A voice that sounds keeps playing when the
+  controller leaves the range. Round-robin counters advance whatever the gates say, as sfizz's sequence counter.
+- **Defaults** (`set_cc`/`set_hdcc`): `SampleBank::cc_defaults` are written into a part's `CcState` when it binds the bank (`set_part_sample_bank`, a different bank) and for
+  every part by `set_instrument`; a real controller message wins over a seed: a controller touched since the previous bind is not overwritten, and a controller the previous bank seeded that the new one does not name goes back to the engine's own value. Binding the same bank again does not reseed. The engine's own starting values stay sfizz's (CC7 100, CC10 63.5, CC11 127).
+- **Modulation entries** (`start_region`, `init_env`): `value = curve(controller)`, `curve` a 128-entry table per curve index built in `prepare()` (sfizz `Curve`: the
+  `<curve>` points with ends (0, 0) and (127, 1), gaps filled linearly, linear interpolation at `controller x 127`; indices 0..6 are sfizz's predefined curves unless the instrument
+  defines them; any other index is the linear default). Amplitude multiplies the gain by `depth/100 x value` for each entry (a depth of 0 silences, as sfizz's multiplicative
+  connection); volume adds `depth x value` dB; pan adds `depth x value` percent and recomputes the pan gains of that voice; tune adds `depth x value` cents to the pitch ratio;
+  offset adds `int64(depth x controller)` frames to the start position (no curve), clamped to the resident part of the sample. The envelope entries add `curve(controller) x depth`
+  to the region's delay, attack, hold, decay, release (seconds) and start, sustain (percent) as sfizz's `EGDescription::get*` do, on top of `ampeg_vel2*`, once; the voice's `Env` carries
+  its own start level. Every result is bounded (gain, dB, cents, seconds, offset) so it is finite.
+- **Pseudo-CCs** are resolved from the note event, never from `set_part_cc` (which refuses controller numbers above 127): 131 is `vel7/127` of the note on, 135 and 136 are two draws
+  of the engine's seeded RNG at that event (uniform [0, 1) and [-1, 1); drawn only when the bank has an entry on 135/136, so any other bank keeps its random sequence), 137 alternates
+  0, 1, 0, ... per note on of the part (every note on counts, with or without a region), 140 is the note minus the part's previous note on (0 for the first) and 141 its absolute
+  value; 140/141 are raw semitones, not curved, on amplitude, volume, pan and tune (sfizz's `ControllerSource`) and curved on the envelope (sfizz's `getCCValueAt`, where any
+  non-zero positive value is the top of the curve). A `trigger=release` or `release_key` voice reads 0 for 131 on the matrix targets (sfizz: a note off has no velocity) and the released note's own velocity on the envelope, a fresh
+  random pair (drawn only once a release region passes its gates, so a note off without one consumes none), and the last note on's alternate and key delta. The state is per part (UMP channel), where sfizz keeps one for the whole synth.
+- **Known limit (continuous modulation).** sfizz re-evaluates amplitude, volume, pan and tune entries every block, so a controller that moves while a voice sounds (a mod wheel
+  during a held note, or during its release tail) moves that voice; the engine reads the controller once and does not follow it. `ampeg_*` entries are the same in sfizz unless
+  `ampeg_dynamic=1`, which the importer rejects together with them. The null fixtures therefore move every controller only while no voice that reads it sounds
+  (`tools/offline-render/tests/sample_suite/README.md`), and the corpus keeps a library with such a mapping out of its automatic null picks through `null_exclude`
+  (`tools/corpus/README.md`). A CC64 mapped to a continuous target is the case to watch (a sustain pedal moves while notes are held). Not done: `*_stepcc`, `*_smoothcc`,
+  per-block follow-up, gates on pseudo-controllers (sfizz never refreshes them after load), pitch bend / aftertouch / note number / gate as sources.
+- **Tests.** `sample_engine_tests` (`test_cc_gates_and_seed`, `test_cc_modulation_at_voice_start`, `test_pseudo_ccs`: gate boundaries including fractional hdcc ends, a CC change between
+  notes, per-part controllers, a held note keeping its sound, the seed and its bind rule, bit-identity of a region with an always-open gate and of a bank whose entries do not draw, each
+  target against the same region written with the summed constant, every predefined curve and a custom one, the pseudo-CCs and their determinism, ill-formed entries counted as unplayable),
+  `sample_bundle_loader_test` (the fields reach the port) and the sfizz null fixtures `cc_gates`, `cc_modulation`, `cc_envelope`, `cc_pseudo`.
 
 ## Content integrity (Story 6.5)
 

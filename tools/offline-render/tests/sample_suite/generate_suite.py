@@ -7,6 +7,7 @@ which is why the outputs are committed and the goldens are rendered from the com
 
     python3 generate_suite.py            # (re)writes samples/, sfz/, midi/ next to this script
     python3 generate_suite.py story134   # only the Story 13.4 cases (no existing file is touched)
+    python3 generate_suite.py story135   # only the Story 13.5 cases (no existing file is touched)
 
 MIDI timing: the files use 32000 PPQ at 500000 us per quarter, i.e. 0.75 audio frames per tick at
 48 kHz. A frame is mapped to a tick that puts the event at a quarter-frame fraction (never on an
@@ -481,6 +482,115 @@ def build_story134_cases():
 """, sweep_notes([48, 54, 60, 66, 71, 72, 84, 96, 24, 36, 47, 98, 99, 100], [100], step=0.08, length=0.05))
 
 
+def build_story135_cases():
+    """Story 13.5: one fixture instrument per CC family. Every controller is moved BEFORE the note it is meant for (sfizz modulates continuously, the
+    engine reads the controller when the note starts, so no controller moves while a note sounds: that divergence is a documented limit, not tested).
+    The pseudo-CC fixtures use 131 (velocity), 137 (alternate), 140 and 141 (key delta); 135 and 136 are random draws that no two renderers share, so
+    they are covered by the engine unit tests only."""
+    loop = "loop_mode=loop_continuous loop_start=2400 loop_end=7199"
+    def staged(steps, gap=0.15, length=0.10):
+        """steps: (cc or None, value or None, key, vel): the controller is set 40 ms before its note. A controller that a sounding voice reads must not move while
+        that voice sounds (release tail included): sfizz would follow it, the engine reads it once; `gap` is chosen so that the previous voice has died."""
+        ev, ccs = [], []
+        for i, (cc, val, key, vel) in enumerate(steps):
+            t = 0.05 + i * gap
+            if cc is not None:
+                ccs.append((secs(t - 0.04), cc, val))
+            ev.append((secs(t), 1, key, vel))
+            ev.append((secs(t + length), 0, key, vel))
+        ev.sort(key=lambda e: (e[0], e[1]))
+        return ev, sorted(ccs)
+
+    # locc / hicc gates. Key 60: two layers split at CC20 63|64; key 62: CC20 30..100 and the high-resolution gate lohdcc22=0.25 hihdcc22=0.75 (CC units 31.75 and
+    # 95.25: 31 fails, 32 passes, 95 passes, 96 fails); key 64: set_cc21=80 seeds the initial value, locc21=70; key 65: hicc23=10 (the controller starts at 0).
+    steps = []
+    for v in (0, 63, 64, 100, 101, 127, 30, 29, 10):
+        steps += [(20, v, 60, 100), (None, None, 62, 100)]
+    steps += [(20, 50, 62, 100)]
+    for v in (31, 32, 95, 96, 127, 0):
+        steps += [(22, v, 62, 100)]
+    steps += [(None, None, 64, 100), (21, 69, 64, 100), (21, 70, 64, 100), (21, 127, 64, 100), (21, 0, 64, 100)]
+    steps += [(None, None, 65, 100), (23, 10, 65, 100), (23, 11, 65, 100), (23, 127, 65, 100), (23, 0, 65, 100)]
+    ev, ccs = staged(steps, 0.10, 0.06)
+    case("cc_gates", "<control>\ndefault_path=samples/\nset_cc21=80\n" + """<global> ampeg_release=0.05
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 locc20=0 hicc20=63
+<region> sample=b.wav lokey=60 hikey=60 pitch_keycenter=60 locc20=64 hicc20=127
+<region> sample=c.wav lokey=62 hikey=62 pitch_keycenter=62 locc20=30 hicc20=100 lohdcc22=0.25 hihdcc22=0.75
+<region> sample=d.wav lokey=64 hikey=64 pitch_keycenter=64 locc21=70
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65 hicc23=10
+""", ev, ccs)
+
+    # *_oncc on amplitude, volume, pan, tune and offset, through the default curve, a <curve> block and a predefined curve; the SFZ 1 `_cc` spelling and `gain`.
+    table = [(60, 20), (62, 20), (64, 21), (65, 22), (67, 22), (69, 23), (71, 24), (72, 25), (74, 26), (76, 27)]
+    steps = []
+    for key, cc in table:
+        for v in (0, 40, 64, 127):
+            steps.append((cc, v, key, 100))
+    ev, ccs = staged(steps, 0.20, 0.06)   # the release (0.02 s + the 50 ms fade) is over before the next controller move, 40 ms before its note
+    case("cc_modulation", HEADER + """<global> ampeg_release=0.02
+<curve> curve_index=7 v000=0 v064=0.9 v127=1
+<curve> curve_index=8 v000=1 v127=0
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 amplitude_oncc20=100
+<region> sample=b.wav lokey=62 hikey=62 pitch_keycenter=62 amplitude_oncc20=80 amplitude_curvecc20=7
+<region> sample=c.wav lokey=64 hikey=64 pitch_keycenter=64 volume_oncc21=-12
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65 pan=-20 pan_oncc22=100
+<region> sample=st.wav lokey=67 hikey=67 pitch_keycenter=67 pan_oncc22=-60 pan_curvecc22=8
+<region> sample=b.wav lokey=69 hikey=69 pitch_keycenter=69 tune_oncc23=700
+<region> sample=c.wav lokey=71 hikey=71 pitch_keycenter=71 tune=10 tune_cc24=-300 tune_curvecc24=4
+<region> sample=d.wav lokey=72 hikey=72 pitch_keycenter=72 amplitude_cc25=100 amplitude_curvecc25=5
+<region> sample=a.wav lokey=74 hikey=74 pitch_keycenter=74 offset_oncc26=5000
+<region> sample=b.wav lokey=76 hikey=76 pitch_keycenter=76 gain_cc27=-20 gain_curvecc27=6
+""", ev, ccs)
+
+    # The amplitude envelope: each entry on its own looped region (so the level is audible for the whole note), three controller positions. Release is read when the
+    # voice starts and applied at the key up. The SFZ 1 spelling `ampeg_attackcc` is one of them.
+    table = [(60, 30), (62, 31), (64, 32), (65, 34), (67, 35), (69, 36), (71, 37)]
+    steps = []
+    for key, cc in table:
+        for v in (0, 64, 127):
+            steps.append((cc, v, key, 110))
+    ev, ccs = staged(steps)
+    # longer notes: the sustain/decay/release shapes need room
+    ev2, k = [], 0
+    for i, (cc, val, key, vel) in enumerate(steps):
+        t = 0.05 + i * 0.32
+        ev2.append((secs(t), 1, key, vel))
+        ev2.append((secs(t + 0.18), 0, key, vel))
+        if cc is not None:
+            ccs[k] = (secs(t - 0.04), cc, val)
+            k += 1
+    ev2.sort(key=lambda e: (e[0], e[1]))
+    case("cc_envelope", HEADER + f"""<global> sample=loop.wav {loop} pitch_keycenter=60 ampeg_release=0.03
+<curve> curve_index=7 v000=0 v127=1 v064=0.2
+<region> key=60 ampeg_release_oncc30=0.3
+<region> key=62 ampeg_attackcc31=0.1
+<region> key=64 ampeg_decay=0.02 ampeg_sustain=90 ampeg_decay_oncc32=0.05 ampeg_sustain_oncc33=-60
+<region> key=65 ampeg_attack=0.005 ampeg_delay_oncc34=0.04 ampeg_hold_oncc34=0.03
+<region> key=67 ampeg_start=10 ampeg_attack=0.06 ampeg_start_oncc35=70
+<region> key=69 ampeg_attack=0.002 ampeg_release_oncc36=0.25 ampeg_release_curvecc36=7
+<region> key=71 ampeg_decay=0.03 ampeg_sustain=80 ampeg_sustain_oncc37=-70 ampeg_sustain_curvecc37=7
+""", ev2, sorted(ccs))
+
+    # sfizz pseudo-CCs: 131 (note-on velocity), 137 (alternate), 140 and 141 (key delta), on the matrix targets and on the envelope. One note stream; the
+    # alternate and the key delta follow every note on of the part, whichever region it hits.
+    keys = [60, 62, 64, 65, 67, 69, 71, 74]
+    vels = [30, 127, 80, 50, 100, 20, 127, 64, 90, 40, 110, 60, 127, 10, 75, 99]
+    seq = [keys[i % len(keys)] for i in range(16)]
+    seq2 = [60, 71, 62, 69, 64, 67, 65, 74]       # big key jumps, down as well as up
+    steps = [(None, None, k, vels[i % len(vels)]) for i, k in enumerate(seq + seq2 + seq)]
+    ev, ccs = staged(steps)
+    case("cc_pseudo", HEADER + f"""<global> ampeg_release=0.05
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 amp_veltrack=0 amplitude_oncc131=100
+<region> sample=b.wav lokey=62 hikey=62 pitch_keycenter=62 pan_oncc137=100
+<region> sample=c.wav lokey=64 hikey=64 pitch_keycenter=64 volume_oncc140=0.5
+<region> sample=d.wav lokey=65 hikey=65 pitch_keycenter=65 tune_oncc141=20
+<region> sample=loop.wav lokey=67 hikey=67 pitch_keycenter=67 {loop} ampeg_attack_oncc131=0.06
+<region> sample=loop.wav lokey=69 hikey=69 pitch_keycenter=69 {loop} ampeg_attack=0.002 ampeg_release_oncc141=0.2
+<region> sample=a.wav lokey=71 hikey=71 pitch_keycenter=71 amp_veltrack=0 amplitude_oncc137=100 amplitude_curvecc137=8
+<region> sample=b.wav lokey=74 hikey=74 pitch_keycenter=74 volume_oncc140=-1 volume_oncc131=-12
+""", ev, ccs)
+
+
 def make_demo_probe():
     """midi/demo_probe.mid: a short phrase over the keyboard range for the env-gated real-library null test."""
     keys = [28, 40, 52, 64, 76, 88, 100]
@@ -513,10 +623,10 @@ def make_demo_features():
 
 
 def main():
-    if sys.argv[1:] not in ([], ["story134"]):
-        sys.exit("usage: generate_suite.py [story134]")
-    if sys.argv[1:] == ["story134"]:  # only the Story 13.4 cases (leaves every older file untouched)
-        build_story134_cases()
+    if sys.argv[1:] not in ([], ["story134"], ["story135"]):
+        sys.exit("usage: generate_suite.py [story134|story135]")
+    if sys.argv[1:] in (["story134"], ["story135"]):  # only that story's cases (leaves every older file untouched)
+        (build_story134_cases if sys.argv[1] == "story134" else build_story135_cases)()
         for name, (sfz, events, ccs, setup) in CASES.items():
             with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
                 f.write(sfz)
@@ -529,6 +639,7 @@ def main():
     build_cases()
     build_story52_cases()
     build_story134_cases()
+    build_story135_cases()
     for name, (sfz, events, ccs, setup) in CASES.items():
         with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
             f.write(sfz)

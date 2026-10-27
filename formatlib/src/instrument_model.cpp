@@ -14,6 +14,71 @@ bool has_trigger_extension(const Region& r) {
 
 bool has_amp_extension(const Region& r) { return r.amp != AmpMap{}; }
 
+bool has_cc_extension(const Region& r) { return r.cc != CcMap{}; }
+
+namespace {
+// -0.0 == 0.0 as a number but not as bytes: one encoding per value.
+bool neg_zero(float v) { return v == 0.f && std::signbit(v); }
+
+Error validate_cc(const CcMap& m) {
+  if (m.gate_count > kMaxCcGates || m.mod_count > kMaxCcMods) return Error::kInvalidArgument;
+  for (unsigned i = 0; i < kMaxCcGates; ++i) {
+    const CcGate& g = m.gates[i];
+    if (i >= m.gate_count) {
+      if (g != CcGate{}) return Error::kInvalidArgument;  // unused entries are the default (cc 0, 0..127)
+      continue;
+    }
+    if (g.cc > 127 || !std::isfinite(g.lo) || !std::isfinite(g.hi) || g.lo < 0.f || g.hi > 127.f || g.hi < 0.f || g.lo > 127.f || g.lo > g.hi) return Error::kInvalidArgument;
+    if (neg_zero(g.lo) || neg_zero(g.hi)) return Error::kInvalidArgument;
+    if (i > 0 && g.cc <= m.gates[i - 1].cc) return Error::kInvalidArgument;  // strictly ascending, so unique
+  }
+  for (unsigned i = 0; i < kMaxCcMods; ++i) {
+    const CcMod& e = m.mods[i];
+    if (i >= m.mod_count) {
+      if (e != CcMod{}) return Error::kInvalidArgument;  // unused entries are zero
+      continue;
+    }
+    if (static_cast<std::uint8_t>(e.target) > kMaxCcTarget || !is_cc_mod_source(e.cc) || !std::isfinite(e.depth) || neg_zero(e.depth)) return Error::kInvalidArgument;
+    float lo = -100.f, hi = 100.f;
+    switch (e.target) {
+      case CcTarget::kAmplitude: lo = 0.f; hi = 10000.f; break;
+      case CcTarget::kVolume: lo = -144.f; hi = 48.f; break;
+      case CcTarget::kPan: lo = -200.f; hi = 200.f; break;
+      case CcTarget::kTune: lo = -12000.f; hi = 12000.f; break;
+      case CcTarget::kOffset: lo = 0.f; hi = 2147483647.f; break;
+      default: break;  // envelope: +-100 s or +-100 percent
+    }
+    if (e.depth < lo || e.depth > hi) return Error::kInvalidArgument;
+    if (i > 0) {
+      const CcMod& p = m.mods[i - 1];
+      if (static_cast<std::uint8_t>(e.target) < static_cast<std::uint8_t>(p.target) ||
+          (e.target == p.target && e.cc <= p.cc))
+        return Error::kInvalidArgument;  // ascending by (target, cc), so unique
+    }
+  }
+  return Error::kNone;
+}
+}  // namespace
+
+Error validate_cc_setup(const InstrumentCcSetup& s) {
+  for (std::size_t i = 0; i < s.defaults.size(); ++i) {
+    const CcDefault& d = s.defaults[i];
+    if (d.cc > 127 || !std::isfinite(d.value) || d.value < 0.f || d.value > 127.f || neg_zero(d.value)) return Error::kInvalidArgument;
+    if (i > 0 && d.cc <= s.defaults[i - 1].cc) return Error::kInvalidArgument;
+  }
+  for (std::size_t i = 0; i < s.curves.size(); ++i) {
+    const CurveDef& c = s.curves[i];
+    if (c.points.size() > kMaxCurvePoints) return Error::kInvalidArgument;
+    if (i > 0 && c.index <= s.curves[i - 1].index) return Error::kInvalidArgument;
+    for (std::size_t k = 0; k < c.points.size(); ++k) {
+      const CurvePoint& p = c.points[k];
+      if (p.x > 127 || !std::isfinite(p.y) || neg_zero(p.y)) return Error::kInvalidArgument;
+      if (k > 0 && p.x <= c.points[k - 1].x) return Error::kInvalidArgument;
+    }
+  }
+  return Error::kNone;
+}
+
 namespace {
 Error validate_amp(const AmpMap& a) {
   auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
@@ -99,6 +164,7 @@ Error validate_region(const Region& r, std::uint64_t frames) {
   if (r.end > (std::uint64_t(1) << 40)) return Error::kInvalidArgument;
   if (validate_extension(r) != Error::kNone) return Error::kInvalidArgument;
   if (validate_amp(r.amp) != Error::kNone) return Error::kInvalidArgument;
+  if (validate_cc(r.cc) != Error::kNone) return Error::kInvalidArgument;
   if (r.offset >= frames) return Error::kInvalidArgument;
   if (r.has_loop_points) {
     if (r.loop_start > r.loop_end || r.loop_end >= frames) return Error::kInvalidArgument;

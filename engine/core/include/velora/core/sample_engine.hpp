@@ -212,6 +212,7 @@ class SampleEngine final : public Engine {
     float transition_delta = 0.0f;
     float release_rate = 0.0f;
     float attack_step = 1.0f;  // per-voice copy of the attack rate (the region's, or the part's part_attack override)
+    float start = 0.0f;        // Story 13.5: per-voice copy of the start level (the region's, or its ampeg_start_oncc value at voice start)
     // Story 13.4: per-voice copies of the decay rate and the sustain level (the region's, or its ampeg_vel2decay / vel2sustain value at the note-on velocity).
     float decay_rate = 0.0f, sustain = 1.0f;
     bool free_running = false;
@@ -262,6 +263,8 @@ class SampleEngine final : public Engine {
   struct KeyState {
     std::int16_t last = -1;                // last keyswitch key pressed, -1 none
     std::int16_t prev = -1;                // the note on before the current one, -1 none
+    // Story 13.5 (pseudo-CCs, the part's "MidiState" of sfizz): the value of the last note on's alternate / key delta / velocity, and the alternate that the next note on takes.
+    float alt = 0.0f, alt_next = 0.0f, keydelta = 0.0f;
     std::array<std::uint64_t, 2> held{};   // keys currently down (bit n of held[n >> 6])
     // Story 13.3 (trigger=first / legato): is any key other than `k` down? Fixed-size bit test, no allocation.
     bool others_held(int k) const noexcept {
@@ -288,7 +291,7 @@ class SampleEngine final : public Engine {
     release_stream(v);
     v.active = false;
   }
-  void init_env(Env& e, const RegionRt& r, std::uint32_t channel, std::uint8_t vel7) const noexcept;
+  void init_env(Env& e, const SampleBank& bank, const RegionRt& r, std::uint32_t channel, std::uint8_t vel7) const noexcept;
   float env_next(Env& e, const RegionRt& r) const noexcept;
   // false: the voice must be dropped (released before its envelope delay elapsed).
   bool env_release(Env& e, const RegionRt& r) const noexcept;
@@ -302,6 +305,18 @@ class SampleEngine final : public Engine {
   bool playing_attack_voice(const RegionRt& r, std::uint32_t channel, bool match_velocity = true) const noexcept;
   // Story 5.2 helpers.
   void reset_part_keys(std::uint32_t channel) noexcept;
+  // Story 13.5. seed_part_cc: the bank's set_cc defaults into the part's CcState (at set_instrument and when a part binds another bank). cc_gate_open: every gate of the
+  // region holds at the part's current controller values. pseudo_: the note-derived controllers (131, 135, 136, 137, 140, 141) of the event that is starting voices;
+  // never filled from set_part_cc. cc_source / cc_curve: the value (normalized, raw semitones for 140 / 141) and the curve of a modulation entry.
+  struct PseudoCc {
+    float vel = 0.0f, vel_eg = 0.0f, uni = 0.0f, bi = 0.0f, alt = 0.0f, keydelta = 0.0f;
+  };
+  void seed_part_cc(std::uint32_t channel) noexcept;
+  bool cc_gate_open(const RegionRt& r, std::uint32_t channel) const noexcept;
+  float cc_norm(unsigned cc, std::uint32_t channel, bool eg) const noexcept;
+  float cc_curve(const SampleBank& bank, std::uint8_t curve, float norm) const noexcept;
+  float cc_mod_value(const SampleBank& bank, const velora::ports::SampleCcMod& m, std::uint32_t channel, bool eg) const noexcept;
+  void note_pseudo(const SampleBank* bank, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7, bool note_on) noexcept;
   bool region_switched(const RegionRt& r, const KeyState& ks) const noexcept;
   float crossfade_target(const RegionRt& r, std::uint32_t channel) const noexcept;
   float next_random() noexcept;
@@ -341,6 +356,8 @@ class SampleEngine final : public Engine {
   std::atomic<std::uint64_t> stream_open_failures_{0};
   std::atomic<std::uint64_t> underrun_events_{0};  // Story 1.16: voices that reached the head end of a sample with a tail
   std::array<KeyState, 16> ks_{};                       // per part (channel) keyswitch state
+  std::array<std::array<std::uint64_t, 2>, 16> cc_seeded_{}, cc_touched_{};  // Story 13.5: controllers a bank seeded / a real message set since the last bind
+  PseudoCc pseudo_{};                                   // Story 13.5: audio thread only, set before each start_region batch
   std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units
   // Story 1.18 (parallel voice render).
   WorkerPool* pool_ = nullptr;

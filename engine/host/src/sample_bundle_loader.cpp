@@ -156,6 +156,13 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   }
   d.filter_cutoff_hz = r.filter.cutoff_hz;
   d.filter_resonance_db = r.filter.resonance_db;
+  // Story 13.5: CC gates and modulation entries travel unchanged (formatlib bounds them at the port's 8 and 16; a count beyond the port is passed on and makes the
+  // region unplayable in the engine, never a different region).
+  d.cc_gate_count = r.cc.gate_count;
+  d.cc_mod_count = r.cc.mod_count;
+  for (unsigned i = 0; i < std::min<unsigned>(r.cc.gate_count, ports::kSampleMaxCcGates); ++i) d.cc_gates[i] = {r.cc.gates[i].cc, r.cc.gates[i].lo, r.cc.gates[i].hi};
+  for (unsigned i = 0; i < std::min<unsigned>(r.cc.mod_count, ports::kSampleMaxCcMods); ++i)
+    d.cc_mods[i] = {static_cast<ports::SampleCcTarget>(static_cast<std::uint8_t>(r.cc.mods[i].target)), r.cc.mods[i].cc, r.cc.mods[i].curve, r.cc.mods[i].depth};
   return d;
 }
 
@@ -319,6 +326,13 @@ struct BundleInstrumentLoader {
     }
     out->regions_.reserve(info.regions.size());
     for (const fmt::Region& r : info.regions) out->regions_.push_back(to_port_region(r));
+    for (const fmt::CcDefault& cd : info.cc_setup.defaults) out->cc_defaults_.push_back({cd.cc, cd.value});
+    out->curve_points_.resize(info.cc_setup.curves.size());
+    out->curves_.reserve(info.cc_setup.curves.size());
+    for (std::size_t k = 0; k < info.cc_setup.curves.size(); ++k) {
+      for (const fmt::CurvePoint& pt : info.cc_setup.curves[k].points) out->curve_points_[k].push_back({pt.x, pt.y});
+      out->curves_.push_back({info.cc_setup.curves[k].index, std::span<const ports::SampleCurvePoint>(out->curve_points_[k])});
+    }
     out->pcm_.resize(info.sample_count);
     out->data_.resize(info.sample_count);
     if (stream_mode) {

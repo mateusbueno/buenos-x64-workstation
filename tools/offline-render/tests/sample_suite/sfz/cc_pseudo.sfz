@@ -1,0 +1,11 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.05
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 amp_veltrack=0 amplitude_oncc131=100
+<region> sample=b.wav lokey=62 hikey=62 pitch_keycenter=62 pan_oncc137=100
+<region> sample=c.wav lokey=64 hikey=64 pitch_keycenter=64 volume_oncc140=0.5
+<region> sample=d.wav lokey=65 hikey=65 pitch_keycenter=65 tune_oncc141=20
+<region> sample=loop.wav lokey=67 hikey=67 pitch_keycenter=67 loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_attack_oncc131=0.06
+<region> sample=loop.wav lokey=69 hikey=69 pitch_keycenter=69 loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_attack=0.002 ampeg_release_oncc141=0.2
+<region> sample=a.wav lokey=71 hikey=71 pitch_keycenter=71 amp_veltrack=0 amplitude_oncc137=100 amplitude_curvecc137=8
+<region> sample=b.wav lokey=74 hikey=74 pitch_keycenter=74 volume_oncc140=-1 volume_oncc131=-12

@@ -49,6 +49,19 @@ inline constexpr std::size_t kTrigRecordSize = 4 + 1 + 1 + 2 + 8;
 //   curve_count x { u8 vel (strictly ascending), u8 0, u16 0, f32 gain }
 inline constexpr std::size_t kAmpRecordFixedSize = 4 + 4 + 4 + 4 + 1 + 1 + 2 + 4 + 4 + 4 + 4;
 inline constexpr std::size_t kAmpPointSize = 1 + 1 + 2 + 4;
+// Format 2.4 (Story 13.5) cc table, per instrument, after the minor 3 table:
+//   u32 n_cc_regions, then per region (ascending by region index; a record exists only for a region with a gate or a modulation entry):
+//     u32 region_index, u8 gate_count (<= 8), u8 mod_count (<= 16), u16 0,
+//     gate_count x { u8 cc, u8 0, u16 0, f32 lo, f32 hi }   (ascending cc)
+//     mod_count  x { u8 target (0..11), u8 cc, u8 curve, u8 0, f32 depth }   (ascending target, cc)
+//   u32 n_defaults, n_defaults x { u8 cc, u8 0, u16 0, f32 value }   (ascending cc)
+//   u32 n_curves, per curve (ascending index): u8 index, u8 0, u16 n_points (<= 128), n_points x { u8 x, u8 0, u16 0, f32 y }   (ascending x)
+inline constexpr std::size_t kCcRecordFixedSize = 4 + 1 + 1 + 2;
+inline constexpr std::size_t kCcGateSize = 4 + 4 + 4;
+inline constexpr std::size_t kCcModSize = 4 + 4;
+inline constexpr std::size_t kCcDefaultSize = 4 + 4;
+inline constexpr std::size_t kCcCurveFixedSize = 4;
+inline constexpr std::size_t kCcPointSize = 4 + 4;
 inline constexpr unsigned kMinorShift = 16;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }

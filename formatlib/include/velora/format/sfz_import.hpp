@@ -14,6 +14,9 @@
 //             xfin_locc<N> xfin_hicc<N> xfout_locc<N> xfout_hicc<N> (N = 0..127, at most 4 per
 //             direction and region) xf_cccurve (gain|power), fil_type (lpf_1p lpf_2p hpf_1p
 //             hpf_2p bpf_2p) cutoff resonance
+//   Story 13.5: locc/hicc/lohdcc/hihdcc, set_cc/set_hdcc (<control>), <target>_oncc/_cc/_curvecc for amplitude, volume (gain), pan, tune (pitch), offset and
+//             ampeg_<delay|start|attack|hold|decay|sustain|release>, controllers 0..127 and the pseudo-CCs 131, 135, 136, 137, 140, 141, read once when a voice
+//             starts; <curve> tables they name travel in SfzParseResult::cc_setup. ampeg_dynamic is rejected together with ampeg_*_oncc.
 //   Allow-listed non-sounding opcodes (label_*, image, hint_*, ...) are accepted, not stored,
 //   and reported in SfzParseResult::allowlisted. The authoritative list is sfz_opcode_table().
 // Sample paths must stay inside the SFZ's directory ("..", absolute paths elsewhere and an
@@ -119,13 +122,22 @@ struct SfzIgnoredValue {
   std::string message;
 };
 
-// Story 13.2: a <curve> block, parsed and stored inert (nothing in the subset consumes a named curve; an opcode that
-// would, like amp_veltrack_curvecc<N>, is unsupported and skips the file by itself; amp_velcurve_N points do not use a <curve> block).
+// Story 13.2: a <curve> block as parsed. Since Story 13.5 the curves that a `*_curvecc<N>` names are resolved (sfizz's index rules) into
+// SfzParseResult::cc_setup; an opcode that would use one through a still-unsupported target, like amp_veltrack_curvecc<N>, is unsupported and
+// skips the file by itself; amp_velcurve_N points do not use a <curve> block.
 struct SfzCurve {
   int index = -1;                                 // curve_index, -1 when not given
   std::vector<std::pair<int, double>> points;     // (vNNN point number 0..255, value), source order
   std::string file;
   std::size_t line = 0;                           // <curve> header
+};
+
+// Story 13.5: a `set_ccN` / `set_hdccN` of <control> (CC units), as parsed.
+struct SfzCcDefault {
+  int cc = 0;
+  float value = 0;
+  std::string file;
+  std::size_t line = 0;
 };
 
 struct SfzParseResult {
@@ -138,6 +150,8 @@ struct SfzParseResult {
   std::vector<SfzAllowListed> allowlisted; // accepted non-sounding opcodes, in source order
   std::vector<SfzIgnoredValue> ignored_values;  // Story 13.2: values replaced by the opcode default, in source order
   std::vector<SfzCurve> curves;            // Story 13.2: <curve> blocks, stored inert
+  std::vector<SfzCcDefault> cc_defaults;   // Story 13.5: every set_cc/set_hdcc, ascending by controller
+  InstrumentCcSetup cc_setup;              // Story 13.5: what the bundle stores: the defaults and curves some region uses (see build_cc_setup)
   std::vector<bool> never_note_triggered;  // Story 13.2: parallel to regions; hikey=-1 (no note ever triggers it)
   std::vector<std::string> included_files; // every file the parser read (main file included)
   std::size_t source_region_count = 0;     // number of <region> headers seen

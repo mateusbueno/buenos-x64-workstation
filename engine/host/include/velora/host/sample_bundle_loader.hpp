@@ -105,7 +105,7 @@ class BundleInstrument final : public velora::ports::SampleSource {
   // Stream mode: true (once, on the calling thread) when the destructor that just ran had to leak its block source because StreamFence::fence() timed out (an I/O thread stuck in a
   // read). The deleter that owns the opened bundle (RamHeadProvider's lease) then leaks the lease too instead of closing the file under the stuck thread.
   static bool take_fence_failed() noexcept;
-  velora::ports::InstrumentView instrument() const noexcept override { return {regions_, pcm_}; }
+  velora::ports::InstrumentView instrument() const noexcept override { return {regions_, pcm_, cc_defaults_, curves_}; }
 
   std::size_t sample_count() const { return pcm_.size(); }
   std::size_t region_count() const { return regions_.size(); }
@@ -147,6 +147,9 @@ class BundleInstrument final : public velora::ports::SampleSource {
   std::shared_ptr<const void> context_;
   velora::format::Error first_error_ = velora::format::Error::kNone;
   std::vector<velora::ports::SampleRegionDesc> regions_;
+  std::vector<velora::ports::SampleCcDefault> cc_defaults_;                  // Story 13.5: set_cc seeds and the <curve> tables the regions use
+  std::vector<std::vector<velora::ports::SampleCurvePoint>> curve_points_;  // storage behind curves_[k].points
+  std::vector<velora::ports::SampleCurve> curves_;
   std::vector<velora::ports::SamplePcm> pcm_;
   std::vector<std::vector<float>> data_;  // one buffer per sample: left then (stereo) right
   std::size_t failed_samples_ = 0;

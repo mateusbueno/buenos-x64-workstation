@@ -237,6 +237,18 @@ class Runner:
                     res["failures"].append("null_files lists %r, which did not import" % rel)
             return out
         n = int(self.m.get("max_null_instruments", 3))
+        # Story 13.5: instruments the manifest keeps out of the automatic picks, with the reason (reported, never silent).
+        listed = {x["path"]: x["reason"] for x in entry.get("null_exclude", [])}
+        if listed:
+            for rel in listed:
+                if rel not in by_rel:
+                    res["failures"].append("null_exclude lists %r, which did not import" % rel)
+            kept = [kv for kv in ok if kv[0] not in listed]
+            res["null_excluded_listed"] = [{"path": rel, "reason": why} for rel, why in listed.items() if rel in by_rel]
+            if kept:
+                ok = kept
+            else:  # nothing else to test: the listed ones stay in (the failure, if any, stays honest)
+                res.pop("null_excluded_listed", None)
         # An instrument that picks its layer with lorand/hirand cannot be null-tested: sfizz draws from a fixed-seed LCG that it also
         # advances on every note-off and controller (and the engine from its own xorshift RNG), so the two play different layers. Such
         # instruments are still imported; they are only left out of the null picks while a deterministic instrument exists (listed in the report).
@@ -360,6 +372,8 @@ def render_markdown(rep):
             L.append("- FAILURE: %s" % f)
         if len(r["failures"]) > 40:
             L.append("- ... and %d more failures (report.json)" % (len(r["failures"]) - 40))
+        for x in r.get("null_excluded_listed", []):
+            L.append("- imported but not null-tested (listed in the manifest): `%s`: %s" % (x["path"], x["reason"]))
         if r.get("null_excluded_random_layers"):
             L.append("- imported but not null-tested (layers chosen with lorand/hirand: sfizz and the engine draw different random numbers, see the README): %s" % ", ".join("`%s`" % f for f in r["null_excluded_random_layers"]))
         if r.get("unsupported_histogram"):

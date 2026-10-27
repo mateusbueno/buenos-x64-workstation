@@ -41,7 +41,16 @@ struct TestInstrument final : ports::SampleSource {
   std::vector<ports::SamplePcm> pcm;
   std::vector<std::vector<float>> data;
 
-  ports::InstrumentView instrument() const noexcept override { return {regions, pcm}; }
+  std::vector<ports::SampleCcDefault> cc_defaults;  // Story 13.5
+  std::vector<std::pair<std::uint8_t, std::vector<ports::SampleCurvePoint>>> curve_src;
+  std::vector<ports::SampleCurve> curves;
+  void add_curve(std::uint8_t index, std::vector<ports::SampleCurvePoint> pts) {
+    curve_src.emplace_back(index, std::move(pts));
+    curves.clear();
+    for (const auto& c : curve_src) curves.push_back({c.first, c.second});
+  }
+
+  ports::InstrumentView instrument() const noexcept override { return {regions, pcm, cc_defaults, curves}; }
 
   // Returns the sample index. Stereo samples are stored left then right.
   std::uint32_t add_sample(std::vector<float> left, std::vector<float> right = {}, std::uint32_t rate = 48000) {
@@ -951,6 +960,531 @@ struct LR {
   double l, r;
 };
 
+// --- Story 13.5: CC gates, pseudo-CCs and CC modulation at voice start ---------------------------------------------------------
+
+static std::uint32_t cc32(double units) { return static_cast<std::uint32_t>(std::llround(units * 4294967295.0 / 127.0)); }
+
+// Level of a DC voice (amplitude, volume mods) after `setup`, with the given controller values set before the note. Mono centred, vel7 127 and amp_veltrack 0 by default.
+template <typename F>
+static double cc_level(F setup, std::initializer_list<std::pair<int, double>> ccs, std::uint32_t vel7 = 127, int key = 60) {
+  TestInstrument ins;
+  auto& r = ins.region(ins.dc(1.0f, 5000), 48, 84, 60);
+  r.amp_veltrack = 0.0f;
+  setup(r, ins);
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  for (const auto& [cc, v] : ccs) e.set_part_cc(0, static_cast<std::uint32_t>(cc), cc32(v));
+  e.start_voice(0, static_cast<std::uint32_t>(key), v16(vel7));
+  return static_cast<double>(render(e, 4).l[3]);
+}
+using Cc = ports::SampleCcTarget;
+static void add_mod(ports::SampleRegionDesc& r, Cc target, int cc, float depth, int curve = 0) {
+  r.cc_mods[r.cc_mod_count++] = {target, static_cast<std::uint8_t>(cc), static_cast<std::uint8_t>(curve), depth};
+}
+static void add_gate(ports::SampleRegionDesc& r, int cc, float lo, float hi) { r.cc_gates[r.cc_gate_count++] = {static_cast<std::uint8_t>(cc), lo, hi}; }
+
+static void test_cc_gates_and_seed() {
+  const double G = mono_center_gain();
+  // Boundaries: locc64=64 hicc64=100 is [64, nextafter(101, 0)] in CC units: 64 and 100 play, 63 and 101 do not (the importer's fill-gap form).
+  auto gate = [](ports::SampleRegionDesc& r, TestInstrument&) { add_gate(r, 64, 64.0f, std::nextafter(101.0f, 0.0f)); };
+  for (const auto& [v, plays] : std::initializer_list<std::pair<double, bool>>{{0, false}, {63, false}, {63.5, false}, {64, true}, {64.5, true}, {100, true}, {100.75, true}, {101, false}, {127, false}}) {
+    const double l = cc_level(gate, {{64, v}});
+    CHECK(plays ? std::fabs(l - G) < 1e-5 : l == 0.0);
+  }
+  // hdcc: a fractional end is inclusive as written.
+  auto hd = [](ports::SampleRegionDesc& r, TestInstrument&) { add_gate(r, 1, 63.5f, 95.25f); };
+  CHECK(cc_level(hd, {{1, 63.5}}) > 0.0 && cc_level(hd, {{1, 95.25}}) > 0.0 && cc_level(hd, {{1, 63.0}}) == 0.0 && cc_level(hd, {{1, 96.0}}) == 0.0);
+  // Every gate of a region must hold; each controller is its own condition.
+  auto two = [](ports::SampleRegionDesc& r, TestInstrument&) { add_gate(r, 2, 10.0f, 20.0f); add_gate(r, 3, 0.0f, 5.0f); };
+  CHECK(cc_level(two, {{2, 15}, {3, 5}}) > 0.0 && cc_level(two, {{2, 15}, {3, 6}}) == 0.0 && cc_level(two, {{2, 9}, {3, 0}}) == 0.0);
+  // A CC change between notes: the gate follows the controller value at each note on, not a past one. Two layers split by a pedal-like controller.
+  {
+    TestInstrument ins;
+    const std::uint32_t smp = ins.dc(1.0f, 20000), smp2 = ins.dc(0.5f, 20000);
+    add_gate(ins.region(smp, 60, 60), 64, 0.0f, std::nextafter(64.0f, 0.0f));   // up
+    add_gate(ins.region(smp2, 60, 60), 64, 64.0f, 127.0f);                       // down
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    auto level = [&]() { e.start_voice(0, 60, v16(127)); const double l = render(e, 8).l[7]; e.stop_voice(0, 60); drain(e); return l; };
+    CHECK_NEAR(level(), G, 1e-5);                       // CC64 = 0 (default)
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK_NEAR(level(), 0.5 * G, 1e-5);
+    e.set_part_cc(0, 64, cc32(63));
+    CHECK_NEAR(level(), G, 1e-5);
+    // Per part: another part's controller does not gate this one.
+    e.set_part_cc(1, 64, cc32(127));
+    CHECK_NEAR(level(), G, 1e-5);
+    // A held note keeps playing when the controller leaves the range (voice-start semantics).
+    e.start_voice(0, 60, v16(127));
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK_NEAR(render(e, 8).l[7], G, 1e-5);
+    drain(e);
+  }
+  // set_cc seeds: the instrument's defaults are the part's initial controller values; a later controller message wins.
+  {
+    TestInstrument ins;
+    add_gate(ins.region(ins.dc(1.0f, 20000), 60, 60), 64, 64.0f, 127.0f);
+    ins.cc_defaults = {{64, 90.0f}, {100, 12.5f}};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.part_cc(0, 64) == 90.0f && e.part_cc(15, 64) == 90.0f && e.part_cc(3, 100) == 12.5f && e.part_cc(0, 7) == 100.0f);  // CC7 keeps sfizz's default
+    e.start_voice(0, 60, v16(127));
+    CHECK_NEAR(render(e, 8).l[7], G, 1e-5);
+    drain(e);
+    e.set_part_cc(0, 64, cc32(10));
+    e.start_voice(0, 60, v16(127));
+    CHECK(render(e, 8).l[7] == 0.0f);
+    // A part that binds the bank later is seeded at the bind; binding the same bank again does not reseed.
+    auto bank = e.prepare(ins);
+    e.set_part_sample_bank(5, bank.get());
+    CHECK(e.part_cc(5, 64) == 90.0f);
+    e.set_part_cc(5, 64, cc32(1));
+    e.set_part_sample_bank(5, bank.get());
+    CHECK(e.part_cc(5, 64) == 1.0f);
+    // Defaults outside 0..127 or non-finite are not trusted.
+    ins.cc_defaults = {{64, 200.0f}, {65, std::numeric_limits<float>::quiet_NaN()}};
+    SampleEngine e2(cfg());
+    e2.set_instrument(ins);
+    CHECK(e2.part_cc(0, 64) == 0.0f && e2.part_cc(0, 65) == 0.0f);
+  }
+  // A gate that always holds changes neither the audio nor the random sequence (bit-identical to the region without it).
+  {
+    auto build = [](bool gated) {
+      auto ins = std::make_unique<TestInstrument>();
+      for (int i = 0; i < 4; ++i) {
+        auto& r = ins->region(ins->dc(0.1f * (i + 1), 20000), 60, 60);
+        r.lorand = 0.25f * i;
+        r.hirand = 0.25f * (i + 1);
+        if (gated) add_gate(r, 64, 0.0f, 127.0f);
+      }
+      return ins;
+    };
+    auto a = build(false), b = build(true);
+    SampleEngine ea(cfg()), eb(cfg());
+    ea.set_instrument(*a);
+    eb.set_instrument(*b);
+    for (int n = 0; n < 24; ++n) {
+      ea.start_voice(0, 60, v16(100));
+      eb.start_voice(0, 60, v16(100));
+      const Out oa = render(ea, 16), ob = render(eb, 16);
+      CHECK(oa.l == ob.l && oa.r == ob.r);
+      ea.stop_voice(0, 60);
+      eb.stop_voice(0, 60);
+      render(ea, 64);
+      render(eb, 64);
+    }
+  }
+  // Release-trigger regions are gated too (at the controller values of the note off).
+  {
+    TestInstrument ins;
+    ins.region(ins.dc(0.0f, 20000), 60, 60);
+    auto& rel = ins.region(ins.dc(1.0f, 20000), 60, 60);
+    rel.trigger = ports::SampleTrigger::kRelease;
+    add_gate(rel, 20, 50.0f, 127.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    for (const auto& [v, fires] : std::initializer_list<std::pair<double, bool>>{{0, false}, {80, true}}) {
+      e.set_part_cc(0, 20, cc32(v));
+      e.start_voice(0, 60, v16(127));
+      render(e, 8);
+      e.stop_voice(0, 60);
+      const Out o = render(e, 64);
+      CHECK(fires ? o.l[63] > 0.1f : o.l[63] == 0.0f);
+      drain(e);
+    }
+  }
+}
+
+static void test_cc_modulation_at_voice_start() {
+  const double G = mono_center_gain();
+  // amplitude: gain x (depth / 100 x curve(CC)); the default curve is linear 0..1 over the CC range.
+  auto amp = [](ports::SampleRegionDesc& r, TestInstrument&) { add_mod(r, Cc::kAmplitude, 74, 100.0f); };
+  CHECK_NEAR(cc_level(amp, {{74, 0}}), 0.0, 1e-7);
+  CHECK_NEAR(cc_level(amp, {{74, 64}}), G * 64.0 / 127.0, 1e-5);
+  CHECK_NEAR(cc_level(amp, {{74, 127}}), G, 1e-5);
+  CHECK_NEAR(cc_level([](ports::SampleRegionDesc& r, TestInstrument&) { add_mod(r, Cc::kAmplitude, 74, 50.0f); }, {{74, 127}}), 0.5 * G, 1e-5);
+  // Two sources multiply. A depth of 0 on amplitude still silences (a multiplicative connection, as sfizz).
+  CHECK_NEAR(cc_level([](ports::SampleRegionDesc& r, TestInstrument&) { add_mod(r, Cc::kAmplitude, 74, 100.0f); add_mod(r, Cc::kAmplitude, 75, 100.0f); }, {{74, 127}, {75, 127.0 / 2}}), G * 0.5, 1e-5);
+  CHECK(cc_level([](ports::SampleRegionDesc& r, TestInstrument&) { add_mod(r, Cc::kAmplitude, 74, 0.0f); }, {{74, 127}}) == 0.0);
+  // volume: dB added.
+  auto vol = [](ports::SampleRegionDesc& r, TestInstrument&) { add_mod(r, Cc::kVolume, 11, -6.0206f); };
+  CHECK_NEAR(cc_level(vol, {{11, 127}}), 0.5 * G, 1e-4);
+  CHECK_NEAR(cc_level(vol, {{11, 0}}), G, 1e-5);
+  // The CC is sampled once at voice start: a later change does not move a sounding voice.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.dc(1.0f, 20000), 60, 60);
+    r.amp_veltrack = 0.0f;
+    add_mod(r, Cc::kAmplitude, 74, 100.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 74, cc32(127));
+    e.start_voice(0, 60, v16(127));
+    render(e, 16);
+    e.set_part_cc(0, 74, cc32(0));
+    CHECK_NEAR(render(e, 16).l[15], G, 1e-5);
+    e.start_voice(0, 60, v16(127));  // a new note at CC 0 is silent, the first still sounds
+    CHECK_NEAR(render(e, 16).l[15], G, 1e-5);
+  }
+  // Curves: a custom curve by index, the predefined ones, the linear default for an unknown index.
+  auto with_curve = [&](int curve, double cc) {
+    return cc_level([curve](ports::SampleRegionDesc& r, TestInstrument& ins) {
+      add_mod(r, Cc::kAmplitude, 74, 100.0f, curve);
+      ins.add_curve(7, {{0, 0.0f}, {64, 0.9f}, {127, 1.0f}});
+      ins.add_curve(8, {{0, 1.0f}, {127, 0.0f}});
+    }, {{74, cc}});
+  };
+  CHECK_NEAR(with_curve(7, 64), G * 0.9, 1e-4);
+  CHECK_NEAR(with_curve(7, 32), G * 0.45, 1e-4);        // linear between (0, 0) and (64, 0.9)
+  CHECK_NEAR(with_curve(8, 127), 0.0, 1e-6);
+  CHECK_NEAR(with_curve(8, 0), G, 1e-5);
+  CHECK_NEAR(with_curve(4, 64), G * std::pow(64.0 / 127.0, 2.0), 1e-4);                    // predefined 4: x squared
+  CHECK_NEAR(with_curve(5, 64), G * std::sqrt(64.0 / 127.0), 1e-4);                        // predefined 5: square root
+  CHECK_NEAR(with_curve(6, 64), G * std::sqrt(1.0 - 64.0 / 127.0), 1e-4);                  // predefined 6: inverse square root
+  CHECK_NEAR(with_curve(2, 127), 0.0, 1e-6);                                               // predefined 2: 1 -> 0
+  CHECK_NEAR(with_curve(200, 64), G * 64.0 / 127.0, 1e-5);                                 // unknown index: linear default
+  CHECK_NEAR(with_curve(3, 127), -0.0, 1e-6);                                              // predefined 3 goes -1 at the top: gain is clamped at 0
+  // pan and tune and offset: the same render as the region written with the summed constant.
+  auto same = [&](auto mod_setup, auto const_setup, std::initializer_list<std::pair<int, double>> ccs, int key = 60, bool ramp = false) {
+    auto run = [&](auto setup) {
+      TestInstrument ins;
+      auto& r = ins.region(ramp ? ins.ramp(40000, 0.0001f) : ins.dc(0.8f, 40000), 48, 84, 60);
+      r.amp_veltrack = 0.0f;
+      setup(r);
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      for (const auto& [cc, v] : ccs) e.set_part_cc(0, static_cast<std::uint32_t>(cc), cc32(v));
+      e.start_voice(0, static_cast<std::uint32_t>(key), v16(127));
+      return render(e, 600);
+    };
+    const Out a = run(mod_setup), b = run(const_setup);
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.l.size(); ++i) worst = std::max({worst, (double)std::fabs(a.l[i] - b.l[i]), (double)std::fabs(a.r[i] - b.r[i])});
+    return worst;
+  };
+  CHECK(same([](ports::SampleRegionDesc& r) { add_mod(r, Cc::kPan, 10, 100.0f); }, [](ports::SampleRegionDesc& r) { r.pan = 100.0f; }, {{10, 127}}) < 1e-6);
+  CHECK(same([](ports::SampleRegionDesc& r) { r.pan = -20.0f; add_mod(r, Cc::kPan, 10, 50.0f); }, [](ports::SampleRegionDesc& r) { r.pan = -20.0f + 50.0f * 64.0f / 127.0f; }, {{10, 64}}) < 1e-6);
+  CHECK(same([](ports::SampleRegionDesc& r) { add_mod(r, Cc::kPan, 10, 100.0f); }, [](ports::SampleRegionDesc&) {}, {{10, 0}}) < 1e-7);  // CC 0 adds nothing
+  CHECK(same([](ports::SampleRegionDesc& r) { add_mod(r, Cc::kTune, 94, 1200.0f); }, [](ports::SampleRegionDesc& r) { r.tune_cents = 1200.0f; }, {{94, 127}}, 60, true) < 1e-6);
+  CHECK(same([](ports::SampleRegionDesc& r) { r.tune_cents = 7.0f; add_mod(r, Cc::kTune, 94, -100.0f); }, [](ports::SampleRegionDesc& r) { r.tune_cents = -93.0f; }, {{94, 127}}, 60, true) < 1e-6);
+  CHECK(same([](ports::SampleRegionDesc& r) { add_mod(r, Cc::kOffset, 73, 1000.0f); }, [](ports::SampleRegionDesc& r) { r.offset = 1000; }, {{73, 127}}, 60, true) < 1e-7);
+  CHECK(same([](ports::SampleRegionDesc& r) { r.offset = 100; add_mod(r, Cc::kOffset, 73, 1000.0f); }, [](ports::SampleRegionDesc& r) { r.offset = 600; }, {{73, 127.0 / 2}}, 60, true) < 1e-7);  // int64(1000 * 0.5)
+  // An offset beyond the sample is clamped to its last resident frame, never past it.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.ramp(1000, 0.001f), 60, 60);
+    r.amp_veltrack = 0.0f;
+    add_mod(r, Cc::kOffset, 73, 2.0e9f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 73, cc32(127));
+    e.start_voice(0, 60, v16(127));
+    const Out o = render(e, 64);
+    CHECK(std::isfinite(o.l[0]) && std::fabs(o.l[0]) <= 1.2 * G);
+  }
+  // Envelope entries: seconds (percent for start and sustain) added to the region's value, same render as the constant.
+  auto eg = [&](Cc target, float depth, double cc, auto const_setup, float base_attack = 0.0f) {
+    return same([=](ports::SampleRegionDesc& r) { r.ampeg_attack = base_attack; r.ampeg_decay = 0.02f; r.ampeg_sustain = 60.0f; r.ampeg_release = 0.01f; add_mod(r, target, 100, depth); },
+                [=](ports::SampleRegionDesc& r) { r.ampeg_attack = base_attack; r.ampeg_decay = 0.02f; r.ampeg_sustain = 60.0f; r.ampeg_release = 0.01f; const_setup(r); }, {{100, cc}});
+  };
+  CHECK(eg(Cc::kEgAttack, 0.01f, 127, [](ports::SampleRegionDesc& r) { r.ampeg_attack = 0.01f; }) < 1e-6);
+  CHECK(eg(Cc::kEgAttack, 0.02f, 127, [](ports::SampleRegionDesc& r) { r.ampeg_attack = 0.025f; }, 0.005f) < 1e-6);
+  CHECK(eg(Cc::kEgDelay, 0.004f, 127, [](ports::SampleRegionDesc& r) { r.ampeg_delay = 0.004f; }) < 1e-6);
+  CHECK(eg(Cc::kEgHold, 0.003f, 127, [](ports::SampleRegionDesc& r) { r.ampeg_hold = 0.003f; }) < 1e-6);
+  CHECK(eg(Cc::kEgDecay, 0.03f, 127, [](ports::SampleRegionDesc& r) { r.ampeg_decay = 0.05f; }) < 1e-6);
+  CHECK(eg(Cc::kEgSustain, -40.0f, 127, [](ports::SampleRegionDesc& r) { r.ampeg_sustain = 20.0f; }) < 1e-6);
+  CHECK(eg(Cc::kEgStart, 30.0f, 127, [](ports::SampleRegionDesc& r) { r.ampeg_start = 30.0f; r.ampeg_delay = 0.0f; }) < 1e-6);
+  CHECK(eg(Cc::kEgAttack, 0.01f, 0, [](ports::SampleRegionDesc&) {}) < 1e-7);  // CC 0 adds nothing
+  CHECK(eg(Cc::kEgSustain, -40.0f, 127.0 / 2, [](ports::SampleRegionDesc& r) { r.ampeg_sustain = 40.0f; }) < 1e-5);  // CC 63.5 is half the range: 60 - 40 x 0.5
+  {  // release: read when the voice starts, applied when it is released
+    auto rel = [&](float depth, double cc, float base, bool const_form) {
+      TestInstrument ins;
+      auto& r = ins.region(ins.dc(0.8f, 80000), 60, 60);
+      r.amp_veltrack = 0.0f;
+      r.ampeg_release = base;
+      if (const_form) r.ampeg_release = base + depth;
+      else add_mod(r, Cc::kEgRelease, 100, depth);
+      SampleEngine e(cfg());
+      e.set_instrument(ins);
+      e.set_part_cc(0, 100, cc32(cc));
+      e.start_voice(0, 60, v16(127));
+      render(e, 100);
+      e.set_part_cc(0, 100, cc32(0));  // moving the CC after the note on changes nothing
+      e.stop_voice(0, 60);
+      return render(e, 20000);
+    };
+    const Out m = rel(0.2f, 127, 0.05f, false), c = rel(0.2f, 127, 0.05f, true);
+    double worst = 0.0;
+    for (std::size_t i = 0; i < m.l.size(); ++i) worst = std::max(worst, (double)std::fabs(m.l[i] - c.l[i]));
+    CHECK(worst < 1e-6);
+    CHECK(m.l[1000] > 0.2f);  // the long release is really there (0.25 s: e^-0.75 of the level after 1000 frames)
+  }
+  // A region without entries is untouched, and so is its random sequence: a bank that only reads real controllers draws nothing extra.
+  {
+    auto build = [](bool mod) {
+      auto ins = std::make_unique<TestInstrument>();
+      for (int i = 0; i < 3; ++i) {
+        auto& r = ins->region(ins->dc(0.2f * (i + 1), 20000), 60, 60);
+        r.lorand = i / 3.0f;
+        r.hirand = (i + 1) / 3.0f;
+        if (mod) add_mod(r, Cc::kVolume, 11, 0.0f);  // depth 0 dB at any value: no audible change
+      }
+      return ins;
+    };
+    auto a = build(false), b = build(true);
+    SampleEngine ea(cfg()), eb(cfg());
+    ea.set_instrument(*a);
+    eb.set_instrument(*b);
+    for (int n = 0; n < 30; ++n) {
+      ea.start_voice(0, 60, v16(90));
+      eb.start_voice(0, 60, v16(90));
+      const Out oa = render(ea, 8), ob = render(eb, 8);
+      CHECK(oa.l == ob.l);
+      ea.stop_voice(0, 60);
+      eb.stop_voice(0, 60);
+      render(ea, 64);
+      render(eb, 64);
+    }
+  }
+  // Ill-formed entries make the region unplayable (counted), never a different sound.
+  {
+    TestInstrument ins;
+    ins.region(ins.dc(1.0f), 60, 60).cc_gate_count = 9;
+    ins.region(ins.dc(1.0f), 61, 61).cc_mod_count = 17;
+    add_gate(ins.region(ins.dc(1.0f), 62, 62), 64, -1.0f, 10.0f);
+    { auto& r = ins.region(ins.dc(1.0f), 63, 63); r.cc_mods[0] = {static_cast<Cc>(99), 1, 0, 1.0f}; r.cc_mod_count = 1; }
+    { auto& r = ins.region(ins.dc(1.0f), 64, 64); r.cc_mods[0] = {Cc::kPan, 133, 0, 1.0f}; r.cc_mod_count = 1; }
+    { auto& r = ins.region(ins.dc(1.0f), 65, 65); r.cc_mods[0] = {Cc::kPan, 1, 0, 1000.0f}; r.cc_mod_count = 1; }
+    { auto& r = ins.region(ins.dc(1.0f), 66, 66); r.cc_mods[0] = {Cc::kVolume, 1, 0, std::numeric_limits<float>::infinity()}; r.cc_mod_count = 1; }
+    { auto& r = ins.region(ins.dc(1.0f), 67, 67); add_gate(r, 200, 0.0f, 10.0f); }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 8);
+  }
+}
+
+// Review fixes of Story 13.5.
+static void test_cc_review_fixes() {
+  const double G = mono_center_gain();
+  // A note off with no release region consumes no random, even in a bank that draws the pseudo-CC randoms: the layer selection of a bank with a 135 entry on
+  // another key follows the one of a plain bank whose note offs are padded to the same number of draws (note on: 1 + 2 draws in the 135 bank, note off: 1).
+  {
+    auto build = [](bool random_bank) {
+      auto ins = std::make_unique<TestInstrument>();
+      for (int i = 0; i < 3; ++i) {
+        auto& r = ins->region(ins->dc(0.2f * (i + 1), 20000), 60, 60);
+        r.lorand = i / 3.0f;
+        r.hirand = (i + 1) / 3.0f;
+      }
+      if (random_bank) add_mod(ins->region(ins->dc(1.0f, 20000), 70, 70), Cc::kAmplitude, 135, 100.0f);
+      return ins;
+    };
+    auto plain = build(false), rnd = build(true);
+    SampleEngine ep(cfg()), er(cfg());
+    ep.set_instrument(*plain);
+    er.set_instrument(*rnd);
+    for (int n = 0; n < 24; ++n) {
+      ep.start_voice(0, 60, v16(90));  // 1 draw
+      er.start_voice(0, 60, v16(90));  // 1 + 2 draws
+      const Out a = render(ep, 8), b = render(er, 8);
+      CHECK(a.l == b.l);
+      ep.stop_voice(0, 60);            // 1 draw
+      er.stop_voice(0, 60);            // 1 draw (nothing extra: no release region)
+      ep.stop_voice(0, 61);            // two more, to match the two extra draws of the 135 bank's note on
+      ep.stop_voice(0, 61);
+      render(ep, 64);
+      render(er, 64);
+    }
+  }
+  // set_cc rebind: A (set_cc7=50) -> B (set_cc7=100) -> C (names nothing: the controller goes back to the engine's own value); a real message wins over a seed.
+  {
+    TestInstrument a, b, c;
+    a.region(a.dc(1.0f, 100), 60, 60); a.cc_defaults = {{7, 50.0f}, {20, 9.0f}};
+    b.region(b.dc(1.0f, 100), 60, 60); b.cc_defaults = {{7, 100.0f}};
+    c.region(c.dc(1.0f, 100), 60, 60);
+    SampleEngine e(cfg());
+    e.set_instrument(c);
+    auto ba = e.prepare(a), bb = e.prepare(b), bc = e.prepare(c);
+    e.set_part_sample_bank(2, ba.get());
+    CHECK(e.part_cc(2, 7) == 50.0f && e.part_cc(2, 20) == 9.0f);
+    e.set_part_sample_bank(2, bb.get());
+    CHECK(e.part_cc(2, 7) == 100.0f && e.part_cc(2, 20) == 0.0f);  // 20 was A's seed only: restored
+    e.set_part_sample_bank(2, ba.get());
+    e.set_part_cc(2, 7, cc32(30));                                  // a real message after the bind ...
+    e.set_part_cc(2, 20, cc32(77));
+    e.set_part_sample_bank(2, bc.get());                            // ... is kept when another bank is bound (A's seeds do not overwrite or reset it)
+    CHECK(e.part_cc(2, 7) == 30.0f && e.part_cc(2, 20) == 77.0f);
+  }
+  // 131 on the envelope of a release voice is the released note's own velocity, not the part's latest note on.
+  {
+    TestInstrument ins;
+    ins.region(ins.dc(0.0f, 20000), 60, 61);
+    auto& rel = ins.region(ins.dc(1.0f, 20000), 60, 60);
+    rel.trigger = ports::SampleTrigger::kRelease;
+    rel.amp_veltrack = 0.0f;
+    rel.ampeg_attack = 0.0f;
+    add_mod(rel, Cc::kEgAttack, 131, 0.01f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    e.start_voice(0, 61, v16(20));   // the part's latest velocity is now 20
+    render(e, 8);
+    e.stop_voice(0, 60);
+    const Out o = render(e, 128);
+    CHECK_NEAR(o.l[99] / G, 100.0 / 480.0, 2e-3);  // attack 0.01 s x 127/127, not x 20/127
+  }
+  // NaN curve points (and a NaN controller value) are never played.
+  {
+    TestInstrument ins;
+    add_mod(ins.region(ins.dc(1.0f), 60, 60), Cc::kAmplitude, 74, 100.0f, 7);
+    add_mod(ins.region(ins.dc(1.0f), 61, 61), Cc::kAmplitude, 74, 100.0f, 8);
+    ins.add_curve(7, {{0, 0.0f}, {64, std::numeric_limits<float>::quiet_NaN()}});
+    ins.add_curve(8, {{0, 0.0f}, {64, 2.0e6f}});
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 2);
+  }
+  {  // an inverted gate is not a playable region
+    TestInstrument ins;
+    add_gate(ins.region(ins.dc(1.0f), 60, 60), 64, 80.0f, 10.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 1);
+  }
+  // trigger=release_key with a gate and an entry: fires with the controller inside the gate at the key up, silent outside (twin of the trigger=release block).
+  {
+    TestInstrument ins;
+    ins.region(ins.dc(0.0f, 20000), 60, 60);
+    auto& rel = ins.region(ins.dc(1.0f, 20000), 60, 60);
+    rel.trigger = ports::SampleTrigger::kReleaseKey;
+    rel.amp_veltrack = 0.0f;
+    add_gate(rel, 20, 50.0f, 127.0f);
+    add_mod(rel, Cc::kAmplitude, 21, 100.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 21, cc32(127));
+    for (const auto& [v, fires] : std::initializer_list<std::pair<double, bool>>{{0, false}, {80, true}}) {
+      e.set_part_cc(0, 20, cc32(v));
+      e.start_voice(0, 60, v16(127));
+      render(e, 8);
+      e.key_released(0, 60);
+      const Out o = render(e, 64);
+      CHECK(fires ? std::fabs(o.l[63] - G) < 1e-3 : o.l[63] == 0.0f);
+      drain(e);
+    }
+  }
+}
+
+static void test_pseudo_ccs() {
+  const double G = mono_center_gain();
+  // The pseudo-controllers cannot be written through the controller path: set_part_cc refuses them, and a real controller number never reaches them.
+  {
+    SampleEngine e(cfg());
+    for (const std::uint32_t cc : {128u, 129u, 130u, 131u, 135u, 136u, 137u, 140u, 141u, 511u}) CHECK(!e.set_part_cc(0, cc, 0xFFFFFFFFu));
+    TestInstrument ins;
+    auto& r = ins.region(ins.dc(1.0f, 20000), 60, 60);
+    r.amp_veltrack = 0.0f;
+    add_mod(r, Cc::kAmplitude, 131, 100.0f);
+    e.set_instrument(ins);
+    for (std::uint32_t cc = 0; cc < 128; ++cc) e.set_part_cc(0, cc, 0xFFFFFFFFu);  // every real controller at the top
+    e.start_voice(0, 60, v16(32));
+    CHECK_NEAR(render(e, 8).l[7], G * 32.0 / 127.0, 1e-5);  // still the note-on velocity
+  }
+  // 131: the note-on velocity, sampled through the curve.
+  for (const std::uint32_t vel : {1u, 32u, 64u, 127u})
+    CHECK_NEAR(cc_level([](ports::SampleRegionDesc& r, TestInstrument&) { add_mod(r, Cc::kAmplitude, 131, 100.0f); }, {}, vel), G * vel / 127.0, 1e-5);
+  CHECK_NEAR(cc_level([](ports::SampleRegionDesc& r, TestInstrument&) { add_mod(r, Cc::kAmplitude, 131, 100.0f, 4); }, {}, 64), G * std::pow(64.0 / 127.0, 2.0), 1e-4);
+  // 137 alternate: 0, 1, 0, 1 per note on of the part, a note without any region counts too; the second part has its own sequence.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.dc(1.0f, 20000), 60, 60);
+    r.amp_veltrack = 0.0f;
+    add_mod(r, Cc::kAmplitude, 137, 100.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    auto note = [&](std::uint32_t part = 0) { e.start_voice(part, 60, v16(127)); const double l = render(e, 8).l[7]; e.stop_voice(part, 60); drain(e); return l; };
+    CHECK_NEAR(note(), 0.0, 1e-7);
+    CHECK_NEAR(note(), G, 1e-5);
+    CHECK_NEAR(note(), 0.0, 1e-7);
+    e.start_voice(0, 100, v16(100));  // no region: the alternate still flips
+    drain(e);
+    CHECK_NEAR(note(), 0.0, 1e-7);   // 4th flip -> value of the 5th note = 0
+    CHECK_NEAR(note(1), 0.0, 1e-7);  // part 1: its own first note
+    CHECK_NEAR(note(1), G, 1e-5);
+  }
+  // 140 / 141: raw semitone distance to the previous note on (0 for the first). Through the matrix targets the value is not curved (volume dB per semitone).
+  {
+    TestInstrument ins;
+    auto& hi = ins.region(ins.dc(1.0f, 20000), 40, 80, 60);
+    hi.amp_veltrack = 0.0f;
+    add_mod(hi, Cc::kVolume, 140, 1.0f);
+    auto& lo = ins.region(ins.dc(1.0f, 20000), 40, 80, 60);
+    lo.amp_veltrack = 0.0f;
+    add_mod(lo, Cc::kVolume, 141, 2.0f);
+    lo.trigger = ports::SampleTrigger::kAttack;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    auto play = [&](std::uint32_t key) {
+      e.start_voice(0, key, v16(127));
+      const Out o = render(e, 8);
+      e.stop_voice(0, key);
+      drain(e);
+      return static_cast<double>(o.l[7]);
+    };
+    const double none = play(60);  // first note: key delta 0 on both regions -> 2 x G
+    CHECK_NEAR(none, 2.0 * G, 1e-4);
+    const double up = play(65);    // +5: first region +5 dB, second |5| * 2 = +10 dB
+    CHECK_NEAR(up, G * (std::pow(10.0, 5.0 / 20.0) + std::pow(10.0, 10.0 / 20.0)), 1e-3);
+    const double down = play(63);  // -2: first -2 dB, second +4 dB
+    CHECK_NEAR(down, G * (std::pow(10.0, -2.0 / 20.0) + std::pow(10.0, 4.0 / 20.0)), 1e-3);
+  }
+  // 135 / 136: deterministic for a seed, in range, different for another seed; 136 is bipolar in [-1, 1) but sfizz's curve clamps its negative half to the curve's first
+  // entry (0 for the default curve), so volume_oncc136 only ever adds.
+  {
+    auto run = [&](std::uint64_t seed, int cc) {
+      TestInstrument ins;
+      auto& r = ins.region(ins.dc(1.0f, 20000), 60, 60);
+      r.amp_veltrack = 0.0f;
+      if (cc == 135) add_mod(r, Cc::kAmplitude, 135, 100.0f);
+      else add_mod(r, Cc::kVolume, 136, 6.0206f);
+      SampleEngine::Config c = cfg();
+      c.seed = seed;
+      SampleEngine e(c);
+      e.set_instrument(ins);
+      std::vector<double> v;
+      for (int n = 0; n < 16; ++n) {
+        e.start_voice(0, 60, v16(127));
+        v.push_back(render(e, 8).l[7]);
+        e.stop_voice(0, 60);
+        drain(e);
+      }
+      return v;
+    };
+    const auto a = run(7, 135), b = run(7, 135), c = run(8, 135);
+    CHECK(a == b && a != c);
+    for (double x : a) CHECK(x >= 0.0 && x <= G + 1e-6);
+    double lo = 1e9, hi = -1e9;
+    for (double x : run(11, 136)) { lo = std::min(lo, x); hi = std::max(hi, x); CHECK(x >= G - 1e-5 && x <= 2.0 * G + 1e-5); }
+    CHECK(lo < G * 1.0001 && hi > G * 1.1);  // the negative half gives 0 dB, the positive half up to +6 dB
+  }
+  // A release-trigger voice reads 0 for the velocity controller on the matrix targets (sfizz: a note off has no velocity), a fresh random, the last alternate.
+  {
+    TestInstrument ins;
+    ins.region(ins.dc(0.0f, 20000), 60, 60);
+    auto& rel = ins.region(ins.dc(1.0f, 20000), 60, 60);
+    rel.trigger = ports::SampleTrigger::kRelease;
+    rel.amp_veltrack = 0.0f;
+    add_mod(rel, Cc::kAmplitude, 131, 100.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    render(e, 8);
+    e.stop_voice(0, 60);
+    const Out o = render(e, 64);
+    CHECK(o.l[63] == 0.0f);
+  }
+}
+
 static void test_gain_and_pan() {
   const double G = mono_center_gain();
   auto level = [&](float vol, float pan, bool stereo, std::uint32_t vel7 = 127) {
@@ -1372,6 +1906,10 @@ int main() {
   test_release_key_vs_release_with_pedal();
   test_gain_and_pan();
   test_velocity_and_amplitude_model();
+  test_cc_gates_and_seed();
+  test_cc_modulation_at_voice_start();
+  test_pseudo_ccs();
+  test_cc_review_fixes();
   test_pool_missing_cost_and_info();
   test_interpolation_quality();
   test_oracle_block_stall();

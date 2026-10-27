@@ -67,6 +67,48 @@ struct SampleVelPoint {
 };
 inline constexpr unsigned kSampleMaxVelPoints = 32;
 
+// Story 13.5: CC gates and CC modulation read once when a voice starts. Controller numbers 0..127 are the part's real controllers; 131 (note-on velocity), 135 / 136
+// (unipolar / bipolar random), 137 (alternate), 140 / 141 (key delta, absolute key delta) are sfizz pseudo-CCs the engine resolves from the note, never from a controller.
+inline constexpr unsigned kSampleMaxCcGates = 8;
+inline constexpr unsigned kSampleMaxCcMods = 16;
+// The region plays only while the part's controller value (CC units, 0..127, fractional) is inside [lo, hi].
+struct SampleCcGate {
+  std::uint8_t cc = 0;
+  float lo = 0.0f, hi = 127.0f;
+};
+enum class SampleCcTarget : std::uint8_t {
+  kAmplitude = 0,  // gain x (depth / 100 x curve), percent
+  kVolume = 1,     // dB added
+  kPan = 2,        // percent added
+  kTune = 3,       // cents added
+  kOffset = 4,     // frames added: depth x controller (normalized), no curve
+  kEgDelay = 5,    // seconds added
+  kEgStart = 6,    // percent added
+  kEgAttack = 7,   // seconds added
+  kEgHold = 8,     // seconds added
+  kEgDecay = 9,    // seconds added
+  kEgSustain = 10, // percent added
+  kEgRelease = 11, // seconds added
+};
+struct SampleCcMod {
+  SampleCcTarget target = SampleCcTarget::kAmplitude;
+  std::uint8_t cc = 0, curve = 0;  // curve: an SFZ curve index (SampleCurve::index, a predefined curve 0..6, otherwise the linear default)
+  float depth = 0.0f;
+};
+// One `<curve>` table of the instrument: sparse points (x = 0..127 ascending); ends default to (0, 0) and (127, 1), gaps are filled linearly (sfizz).
+struct SampleCurvePoint {
+  std::uint8_t x = 0;
+  float y = 0.0f;
+};
+struct SampleCurve {
+  std::uint8_t index = 0;
+  std::span<const SampleCurvePoint> points;
+};
+struct SampleCcDefault {
+  std::uint8_t cc = 0;
+  float value = 0.0f;  // CC units
+};
+
 struct SampleRegionDesc {
   std::uint32_t sample_index = 0;  // into InstrumentView::samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -104,6 +146,10 @@ struct SampleRegionDesc {
   std::uint8_t vel_point_count = 0;
   SampleVelPoint vel_points[kSampleMaxVelPoints]{};
   float vel2attack = 0.0f, vel2decay = 0.0f, vel2sustain = 0.0f, vel2release = 0.0f;
+  // Story 13.5: CC gates and CC modulation entries (ascending by cc / by target and cc); the defaults mean the region has none.
+  std::uint8_t cc_gate_count = 0, cc_mod_count = 0;
+  SampleCcGate cc_gates[kSampleMaxCcGates]{};
+  SampleCcMod cc_mods[kSampleMaxCcMods]{};
 };
 
 // Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.
@@ -152,6 +198,9 @@ struct SamplePcm {
 struct InstrumentView {
   std::span<const SampleRegionDesc> regions;
   std::span<const SamplePcm> samples;  // indexed by SampleRegionDesc::sample_index
+  // Story 13.5: the controller values a part starts with (set_cc) and the curves the regions' modulation entries name. Empty = none.
+  std::span<const SampleCcDefault> cc_defaults{};
+  std::span<const SampleCurve> curves{};
 };
 
 class SampleSource {

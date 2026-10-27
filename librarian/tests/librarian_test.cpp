@@ -239,6 +239,43 @@ void test_end_and_trigger_modes() {
   CHECK(reg[4].trigger == fmt::TriggerMode::kReleaseKey && reg[5].trigger == fmt::TriggerMode::kAttack);
 }
 
+// Story 13.5: CC gates, set_cc, *_oncc and <curve> import into the bundle (format 2.4), read back unchanged, and a library without them stays out of minor 4.
+void test_cc_setup() {
+  Env e("ccsetup");
+  make_demo_library(e);
+  write_file(e.src / "Piano.sfz",
+             "<control>\nset_cc64=90 set_cc7=100 set_cc99=5\n"
+             "<curve>\ncurve_index=9 v000=0 v064=0.9 v127=1\n<curve>\ncurve_index=11 v000=1 v127=0\n"
+             "<region> sample=samples/a.wav key=60 locc64=64 hicc64=100\n"
+             "<region> sample=samples/a.wav key=61 amplitude_oncc93=100 amplitude_curvecc93=9 ampeg_release_oncc100=2\n"
+             "<region> sample=samples/a.wav key=62 pan_oncc131=50 tune_cc94=-100 offset_oncc73=3\n");
+  const auto r = import_sfz(e.opts());
+  CHECK(r.ok());
+  if (!r.ok()) return;
+  auto b = fmt::BundleReader::open_file(r.bundle_dir + "/bundle.vlb");
+  CHECK(b.ok());
+  if (!b.ok()) return;
+  CHECK(b.value().format_minor() == 4);
+  const auto& ins = b.value().instruments()[0];
+  CHECK(ins.regions.size() == 3);
+  if (ins.regions.size() != 3) return;
+  CHECK(ins.regions[0].cc.gate_count == 1 && ins.regions[0].cc.gates[0].cc == 64 && ins.regions[0].cc.gates[0].lo == 64.f);
+  CHECK(ins.regions[1].cc.mod_count == 2 && ins.regions[1].cc.mods[0].curve == 9 && ins.regions[1].cc.mods[1].target == fmt::CcTarget::kEgRelease);
+  CHECK(ins.regions[2].cc.mod_count == 3);
+  // cc7 equals the engine default and cc99 is read by nothing: only cc64 is stored; only curve 9 is named by a region.
+  CHECK(ins.cc_setup.defaults.size() == 1 && ins.cc_setup.defaults[0].cc == 64 && ins.cc_setup.defaults[0].value == 90.f);
+  CHECK(ins.cc_setup.curves.size() == 1 && ins.cc_setup.curves[0].index == 9 && ins.cc_setup.curves[0].points.size() == 3);
+  // The same library without any of it is a minor 0 bundle, exactly as before.
+  Env plain("ccplain");
+  make_demo_library(plain);
+  write_file(plain.src / "Piano.sfz", "<control>\nset_cc99=5\n<curve>\ncurve_index=9 v000=0 v127=1\n<region> sample=samples/a.wav key=60\n");
+  const auto p = import_sfz(plain.opts());
+  CHECK(p.ok());
+  if (!p.ok()) return;
+  auto pb = fmt::BundleReader::open_file(p.bundle_dir + "/bundle.vlb");
+  CHECK(pb.ok() && pb.value().format_minor() == 0 && !pb.value().instruments()[0].cc_setup.any());
+}
+
 void test_category() {
   Env e("category");
   make_demo_library(e);
@@ -691,6 +728,7 @@ int main() {
   test_category();
   test_unsupported_opcode();
   test_end_and_trigger_modes();
+  test_cc_setup();
   test_missing_sample_and_includes();
   test_unsupported_audio();
   test_reimport_and_change();

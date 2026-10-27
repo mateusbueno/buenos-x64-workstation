@@ -8,6 +8,7 @@
 // the bundle's additive extension table (format 2.1, see formatlib/README.md); a region that uses
 // none of them keeps its Epic 1 serialization byte for byte. Playing them is Story 5.2.
 #include <cstdint>
+#include <vector>
 
 #include "velora/format/error.hpp"
 
@@ -111,6 +112,80 @@ struct AmpMap {
   friend bool operator==(const AmpMap&, const AmpMap&) = default;
 };
 
+// Story 13.5 (bundle format 2.4): CC gates and CC modulation read once when a voice starts (sfizz: the controller value at note-on).
+// Controller numbers: 0..127 are the part's real controllers; 131 (note-on velocity), 135 (unipolar random), 136 (bipolar random), 137 (alternate), 140
+// (key delta) and 141 (absolute key delta) are sfizz pseudo-CCs resolved from the note, never from a real controller.
+inline constexpr unsigned kMaxCcGates = 8;
+inline constexpr unsigned kMaxCcMods = 16;
+inline bool is_cc_mod_source(unsigned cc) { return cc <= 127 || cc == 131 || cc == 135 || cc == 136 || cc == 137 || cc == 140 || cc == 141; }
+
+// locc/hicc (and lohdcc/hihdcc): the region plays only while the part's controller value is inside [lo, hi], both in CC units (0..127, fractional for
+// MIDI 2.0 / hdcc). A hicc below 127 is stored as nextafter(hicc + 1, 0): every value from hicc up to, not including, hicc + 1 passes (sfizz).
+struct CcGate {
+  std::uint8_t cc = 0;
+  float lo = 0, hi = 127;
+  friend bool operator==(const CcGate&, const CcGate&) = default;
+};
+
+enum class CcTarget : std::uint8_t {
+  kAmplitude = 0,  // amplitude_oncc: gain x (depth / 100 x curve), percent
+  kVolume = 1,     // volume_oncc / gain_oncc: dB added
+  kPan = 2,        // pan_oncc: percent added
+  kTune = 3,       // tune_oncc / pitch_oncc: cents added
+  kOffset = 4,     // offset_oncc: frames added (depth x CC, no curve, as sfizz)
+  kEgDelay = 5,    // ampeg_delay_oncc: seconds
+  kEgStart = 6,    // ampeg_start_oncc: percent
+  kEgAttack = 7,   // ampeg_attack_oncc: seconds
+  kEgHold = 8,     // ampeg_hold_oncc: seconds
+  kEgDecay = 9,    // ampeg_decay_oncc: seconds
+  kEgSustain = 10, // ampeg_sustain_oncc: percent
+  kEgRelease = 11, // ampeg_release_oncc: seconds
+};
+inline constexpr std::uint8_t kMaxCcTarget = 11;
+
+// One `<target>_oncc<N>` (with its `<target>_curvecc<N>`): depth in the target's unit, curve = a `<curve>` index (0 = sfizz's linear default).
+struct CcMod {
+  CcTarget target = CcTarget::kAmplitude;
+  std::uint8_t cc = 0, curve = 0;
+  float depth = 0;
+  friend bool operator==(const CcMod&, const CcMod&) = default;
+};
+
+// Per region. Gates are ascending by cc (unique), modulation entries ascending by (target, cc) (unique); unused entries are zero.
+struct CcMap {
+  std::uint8_t gate_count = 0, mod_count = 0;
+  CcGate gates[kMaxCcGates]{};
+  CcMod mods[kMaxCcMods]{};
+  friend bool operator==(const CcMap&, const CcMap&) = default;
+};
+
+// Instrument level (one per instrument): the CC values a part starts with (`set_ccN`, `set_hdccN`, CC units) and the `<curve>` tables the regions refer to.
+// A curve is its sparse points (x = 0..127 ascending, y any finite number); ends default to (0, 0) and (127, 1) and the gaps are filled linearly (sfizz).
+struct CcDefault {
+  std::uint8_t cc = 0;
+  float value = 0;
+  friend bool operator==(const CcDefault&, const CcDefault&) = default;
+};
+struct CurvePoint {
+  std::uint8_t x = 0;
+  float y = 0;
+  friend bool operator==(const CurvePoint&, const CurvePoint&) = default;
+};
+inline constexpr unsigned kMaxCurvePoints = 128;
+struct CurveDef {
+  std::uint8_t index = 0;
+  std::vector<CurvePoint> points;
+  friend bool operator==(const CurveDef&, const CurveDef&) = default;
+};
+struct InstrumentCcSetup {
+  std::vector<CcDefault> defaults;  // ascending by cc, unique
+  std::vector<CurveDef> curves;     // ascending by index, unique
+  bool any() const { return !defaults.empty() || !curves.empty(); }
+  friend bool operator==(const InstrumentCcSetup&, const InstrumentCcSetup&) = default;
+};
+// Checks the invariants of a setup (ranges, ordering, finite values). kNone or kInvalidArgument.
+Error validate_cc_setup(const InstrumentCcSetup& s);
+
 struct Region {
   std::uint32_t sample = 0;  // index into the owning instrument's samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -137,6 +212,8 @@ struct Region {
   Filter filter;
   // Story 13.4 extension (bundle format 2.3).
   AmpMap amp;
+  // Story 13.5 extension (bundle format 2.4).
+  CcMap cc;
 
   friend bool operator==(const Region&, const Region&) = default;
 };
@@ -150,6 +227,9 @@ bool has_trigger_extension(const Region& r);
 
 // True when the region needs a record in the format 2.3 amp table: any AmpMap field other than its default.
 bool has_amp_extension(const Region& r);
+
+// True when the region needs a record in the format 2.4 cc table: any gate or CC modulation entry.
+bool has_cc_extension(const Region& r);
 
 // Checks every range invariant of a region against its sample length (`sample_frames`). Returns
 // kNone or kInvalidArgument. Used by the writer, the reader (as kCorruptManifest) and the importer.

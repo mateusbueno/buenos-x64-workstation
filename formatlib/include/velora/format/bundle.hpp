@@ -42,7 +42,11 @@ inline constexpr std::uint32_t kFormatVersion = 2;
 // per-region AmpMap (amp_veltrack, amp_velcurve_N, amplitude, amp_keytrack/keycenter, ampeg_vel2*). The writer stamps minor 3 only for a bundle with such a
 // region; every other bundle keeps the bytes it had (minor 0, 1 or 2). Minor 3 requires at least one amp record (kCorruptManifest otherwise). The reader
 // accepts minor 0..3 (N, N-1 and the Epic 1 layout) and rejects a newer one with kUnsupportedVersion.
-inline constexpr std::uint32_t kFormatMinor = 3;
+// Minor 4 (Story 13.5) appends, after the minor 3 table of each instrument (present, possibly empty, in a minor 4 bundle), the cc table: the per-region CC gates
+// and CC modulation entries, then the instrument's CC defaults (set_ccN) and `<curve>` tables. The writer stamps minor 4 only when a region has a gate or a
+// modulation entry or an instrument has a default or a curve; every other bundle keeps the bytes it had (minor 0..3). Minor 4 requires at least one cc record,
+// default or curve in the bundle (kCorruptManifest otherwise). The reader accepts minor 0..4 and rejects a newer one with kUnsupportedVersion.
+inline constexpr std::uint32_t kFormatMinor = 4;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -84,8 +88,8 @@ struct WriterOptions {
   // kFormatVersion + 1 produces one the reader must reject; anything else fails finalize().
   std::uint32_t format_version = kFormatVersion;
   // Test hook for the minor policy: 0 makes the writer refuse regions that need the extension
-  // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 refuses regions that need the minor 3 amp table; 3 (default)
-  // stamps minor 1, 2 or 3 only when one is needed.
+  // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 refuses regions that need the minor 3 amp table; 3 refuses
+  // the minor 4 cc table; 4 (default) stamps minor 1, 2, 3 or 4 only when one is needed.
   std::uint32_t format_minor = kFormatMinor;
 };
 
@@ -115,6 +119,10 @@ class BundleWriter {
   // already have been added to this instrument (regions are validated against its length with
   // validate_region). kInvalidArgument otherwise.
   Error add_region(std::size_t instrument, const Region& region);
+
+  // Story 13.5: the instrument's CC defaults and `<curve>` tables (format minor 4). Replaces any earlier setup of that instrument. kInvalidArgument for an
+  // unknown instrument or a setup that fails validate_cc_setup (the writer is then unchanged).
+  Error set_instrument_cc_setup(std::size_t instrument, const InstrumentCcSetup& setup);
 
   // Encodes immediately; `input.data` is not retained. Verifies the encoding by decoding.
   Error add_sample(std::size_t instrument, const SampleInput& input);
@@ -169,6 +177,7 @@ class BundleWriter {
     std::string name, key;
     std::vector<SampleRec> samples;
     std::vector<Region> regions;
+    InstrumentCcSetup cc_setup;  // Story 13.5
   };
   WriterOptions opt_;
   bool has_library_id_ = false;
@@ -196,6 +205,7 @@ struct InstrumentInfo {
   std::size_t first_sample = 0;  // index into the bundle's flat sample list
   std::size_t sample_count = 0;
   std::vector<Region> regions;   // empty for format v1 bundles
+  InstrumentCcSetup cc_setup;    // Story 13.5 (minor 4); empty for every older bundle
 };
 
 namespace detail {

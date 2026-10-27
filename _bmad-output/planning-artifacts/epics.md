@@ -7180,6 +7180,8 @@ So that libraries that react to pedals, wheels and velocity-as-CC play as design
 **Then** the divergence from sfizz's continuous per-block modulation is documented as a known limit and the corpus keeps such probes out of the null picks with a manifest reason
 **And** kamoepiano301, Scarypiano, Osiris and Steel Drum import
 
+> **Status note (Story 13.5 run): this last AC is NOT met by 13.5 alone.** None of the four imports yet. Blocked by Story 13.6 (`group`, `note_polyphony`: Osiris), 13.7 (`bend_up`/`bend_down`: Scarypiano), 13.8 (`cutoff_oncc131`, `cutoff_curvecc131`: kamoepiano301) and by opcodes no Epic 13 story names: velocity crossfades `xfin_lovel`/`xfout_lovel` (Steel Drum), `ampeg_release_shape` and `sustain_cc` (kamoepiano301, Osiris), `width_oncc`/`width_curvecc` (Steel Drum), plus `..` sample paths in Osiris' included map files. The CC-at-voice-start opcodes themselves no longer block any of them.
+
 ### Story 13.6: Choke groups and polyphony limits
 
 As a keyboardist,

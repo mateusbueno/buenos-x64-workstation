@@ -598,6 +598,28 @@ class GuardAndSuiteTests(unittest.TestCase):
             self.assertEqual([p[0] for p in runner.pick_null({}, [ok[0]], res, d)], ["a.sfz"])
             self.assertNotIn("null_excluded_random_layers", res)
 
+    def test_null_exclude_needs_a_reason_and_keeps_the_instrument_out_of_the_picks(self):
+        base = {"id": "x", "name": "X", "kind": "required", "source_url": "https://codeload.github.com/a/b/tar.gz/c", "version": "1", "commit": "c",
+                "license": "CC0", "license_url": "https://example.org/l"}
+        why = "CC64 moves while a note sounds and drives amplitude_oncc64: sfizz follows it, the engine reads it once"
+        cl.validate_entry(dict(base, null_exclude=[{"path": "a/b.sfz", "reason": why}]))
+        for bad in ([{"path": "a/b.sfz"}], [{"path": "a/b.sfz", "reason": "too short"}], [{"path": "../b.sfz", "reason": why}], {"path": "a"}):
+            with self.assertRaises(cl.CorpusError):
+                cl.validate_entry(dict(base, null_exclude=bad))
+        with self.assertRaises(cl.CorpusError):
+            cl.validate_entry(dict(base, null_files=["a/b.sfz"], null_exclude=[{"path": "a/b.sfz", "reason": why}]))
+        runner = corpus.Runner.__new__(corpus.Runner)
+        runner.m = {"max_null_instruments": 5}
+        ok = [("a.sfz", {"regions": 1}), ("b.sfz", {"regions": 2}), ("c.sfz", {"regions": 3})]
+        with tempfile.TemporaryDirectory() as d:
+            res = {"failures": []}
+            picked = runner.pick_null({"null_exclude": [{"path": "b.sfz", "reason": why}]}, ok, res, d)
+            self.assertEqual([p[0] for p in picked], ["a.sfz", "c.sfz"])
+            self.assertEqual(res["null_excluded_listed"], [{"path": "b.sfz", "reason": why}])
+            res = {"failures": []}  # a stale entry fails the job
+            runner.pick_null({"null_exclude": [{"path": "gone.sfz", "reason": why}]}, ok, res, d)
+            self.assertTrue(any("gone.sfz" in f for f in res["failures"]))
+
     def test_tolerance_overrides_need_a_reason_and_a_real_path(self):
         base = {"id": "x", "name": "X", "kind": "required", "source_url": "https://codeload.github.com/a/b/tar.gz/c", "version": "1", "commit": "c",
                 "license": "CC0", "license_url": "https://example.org/l"}

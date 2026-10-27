@@ -121,7 +121,7 @@ int main() {
     }
     {
       auto r = parse("<group>\nampeg_dynamic=1\n<region> sample=a.wav key=60\n");
-      CHECK(r.ok() && r.allowlisted.size() == 1 && r.regions.size() == 1);
+      CHECK(r.ok() && r.allowlisted.empty() && r.regions.size() == 1);  // Story 13.5: supported (not inert-by-allow-list) and without effect alone
     }
   }
   {  // #define and $variables, defaults of every field
@@ -134,11 +134,11 @@ int main() {
     }
   }
   {  // unsupported things are all reported, none silently dropped
-    auto r = parse("<region> sample=a.wav key=60 lfo01_freq=1 ampeg_release_oncc4=2 amp_veltrack_oncc7=50\n"
+    auto r = parse("<region> sample=a.wav key=60 lfo01_freq=1 ampeg_release_smoothcc4=2 amp_veltrack_oncc7=50\n"
                    "<effect>\n<region> sample=*sine key=1\n<region> sample=a.wav key=2 trigger=bogus\n"
                    "<region> sample=a.wav key=3 loop_mode=loop_bidir\n");
     CHECK(!r.ok());
-    CHECK(has(r, SfzIssueKind::kUnsupportedOpcode, "'lfo01_freq'") && has(r, SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_oncc4'") &&
+    CHECK(has(r, SfzIssueKind::kUnsupportedOpcode, "'lfo01_freq'") && has(r, SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_smoothcc4'") &&
           has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_veltrack_oncc7'"));
     CHECK(has(r, SfzIssueKind::kUnsupportedHeader, "<effect>"));
     CHECK(has(r, SfzIssueKind::kUnsupportedValue, "'bogus'") && has(r, SfzIssueKind::kUnsupportedValue, "'loop_bidir'"));
@@ -269,14 +269,193 @@ int main() {
     // An allow-listed opcode outside any header is still a structural error.
     CHECK(has(parse("label_cc1=x\n<region> sample=a.wav\n"), SfzIssueKind::kParse, "outside any header"));
   }
-  {  // Story 5.4: ampeg_dynamic (every VSCO2 file) is accepted and never stored; the opcodes that would make it matter still reject the file
+  {  // Story 5.4 / 13.5: ampeg_dynamic (every VSCO2 file) is accepted and never stored; with ampeg_*_oncc it is rejected (the envelope would have to follow the CC)
     auto r = parse("<group>\nampeg_dynamic=1 ampeg_release=0.8\n<region> sample=a.wav key=60\n");
-    CHECK(r.ok() && r.regions.size() == 1 && r.regions[0].ampeg.release == 0.8f);
-    CHECK(r.allowlisted.size() == 1 && r.allowlisted[0].opcode == "ampeg_dynamic" && r.allowlisted[0].line == 2);
-    CHECK(classify_opcode("ampeg_dynamic") == OpcodeClass::kAllowListed);
-    CHECK(has(parse("<group>\nampeg_dynamic=1 ampeg_release_oncc72=2\n<region> sample=a.wav key=60\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_oncc72'"));
+    CHECK(r.ok() && r.regions.size() == 1 && r.regions[0].ampeg.release == 0.8f && r.allowlisted.empty());
+    CHECK(classify_opcode("ampeg_dynamic") == OpcodeClass::kSupported);
     CHECK(parse("<region> sample=a.wav key=60 ampeg_vel2release=1\n").ok());  // Story 13.4: supported, and it does not make ampeg_dynamic matter
     CHECK(has(parse("<region> sample=a.wav key=60 ampeg_vel2hold=1\n"), SfzIssueKind::kUnsupportedOpcode, "'ampeg_vel2hold'"));
+    // Story 13.5: no longer inert once an envelope _oncc exists, at any level and in any order
+    for (const char* text : {"<group>\nampeg_dynamic=1 ampeg_release_oncc72=2\n<region> sample=a.wav key=60\n",
+                             "<region> sample=a.wav key=60 ampeg_release_oncc72=2 ampeg_dynamic=1\n",
+                             "<region> sample=a.wav key=60 ampeg_dynamic=1 ampeg_attackcc4=0.5\n",
+                             "<global>ampeg_dynamic=1\n<group>ampeg_decay_oncc3=1\n<region> sample=a.wav key=60\n"}) {
+      auto d = parse(text);
+      CHECK(!d.ok() && has(d, SfzIssueKind::kUnsupportedValue, "ampeg_dynamic=1 with ampeg_*_oncc"));
+      bool named = false;
+      for (const auto& i : d.issues) named = named || (i.opcode == "ampeg_dynamic" && is_unsupported_feature(i.kind));
+      CHECK(named);
+    }
+    CHECK(parse("<region> sample=a.wav key=60 ampeg_dynamic=0 ampeg_release_oncc72=2\n").ok());
+    for (const char* on : {"true", "on", "1", "2"})
+      CHECK(!parse(std::string("<region> sample=a.wav key=60 ampeg_dynamic=") + on + " ampeg_release_oncc72=2\n").ok());
+    {
+      auto bad = parse("<region> sample=a.wav key=60 ampeg_dynamic=maybe ampeg_release_oncc72=2\n");
+      CHECK(bad.ok() && bad.ignored_values.size() == 1);  // unparseable: logged, flag off
+    }
+    CHECK(parse("<region> sample=a.wav key=60 ampeg_dynamic=1 amplitude_oncc72=2 pan_oncc1=3\n").ok());  // a non-envelope entry does not need the continuous form
+    CHECK(parse("<group>ampeg_dynamic=1\n<region> sample=a.wav key=60 ampeg_dynamic=0 ampeg_release_oncc72=2\n").ok());
+  }
+  {  // Story 13.5: CC gates (locc/hicc), CC defaults (set_cc) and CC modulation (*_oncc, *_curvecc) read at voice start
+    const std::string R = "<region> sample=a.wav key=60 ";
+    {  // gates: CC units, hicc below 127 covers up to hicc + 1 (exclusive), a missing end is the sfizz default, a gate covering everything is no gate
+      auto r = parse(R + "locc64=64 hicc64=100 locc70=10 hicc70=10 lohdcc1=0.5 hihdcc1=0.75 locc2=0 hicc2=127 locc80=5 hicc80=127\n");
+      CHECK(r.ok() && r.regions.size() == 1);
+      if (r.regions.size() == 1) {
+        const CcMap& m = r.regions[0].cc;
+        CHECK(m.gate_count == 4 && m.mod_count == 0);
+        CHECK(m.gates[0].cc == 1 && m.gates[0].lo == 63.5f && m.gates[0].hi == 95.25f);
+        CHECK(m.gates[1].cc == 64 && m.gates[1].lo == 64.f && m.gates[1].hi == std::nextafter(101.f, 0.f));
+        CHECK(m.gates[2].cc == 70 && m.gates[2].lo == 10.f && m.gates[2].hi == std::nextafter(11.f, 0.f));
+        CHECK(m.gates[3].cc == 80 && m.gates[3].lo == 5.f && m.gates[3].hi == 127.f);
+        CHECK(has_cc_extension(r.regions[0]) && validate_region(r.regions[0], 1000) == Error::kNone);
+      }
+      auto lo_only = parse(R + "locc7=20\n");
+      CHECK(lo_only.ok() && lo_only.regions[0].cc.gate_count == 1 && lo_only.regions[0].cc.gates[0].lo == 20.f && lo_only.regions[0].cc.gates[0].hi == 127.f);
+      auto hi_only = parse(R + "hicc7=20\n");
+      CHECK(hi_only.ok() && hi_only.regions[0].cc.gates[0].lo == 0.f && hi_only.regions[0].cc.gates[0].hi == std::nextafter(21.f, 0.f));
+      CHECK(parse(R + "lorealcc9=0.25 hirealcc9=0.5\n").regions[0].cc.gates[0] == (CcGate{9, 31.75f, 63.5f}));  // SFZ 1 aliases
+      CHECK(!has_cc_extension(parse(R + "key=61\n").regions[0]) && parse(R + "key=61\n").regions[0] == parse(R + "key=61 locc5=0\n").regions[0]);
+      // inheritance: a group's gate holds for its regions, the region's own value wins
+      auto g = parse("<group> locc64=64\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61 locc64=10\n");
+      CHECK(g.ok() && g.regions[0].cc.gates[0].lo == 64.f && g.regions[1].cc.gates[0].lo == 10.f);
+      // values: out of range clamped and logged, a note name or text is invalid
+      auto c = parse(R + "locc7=200\n");
+      CHECK(c.ok() && c.regions[0].cc.gates[0].lo == 127.f && c.ignored_values.size() == 1);
+      CHECK(has(parse(R + "locc7=abc\n"), SfzIssueKind::kInvalidValue, "'abc'"));
+      // controllers above 127 are not gates (sfizz never refreshes them after load); leading zeros are one controller spelled two ways
+      for (const char* op : {"locc131=1", "hicc140=1", "lohdcc200=0.5"}) {
+        auto b = parse(R + op + "\n");
+        bool named = false;
+        for (const auto& i : b.issues) named = named || (i.kind == SfzIssueKind::kUnsupportedValue && i.opcode == std::string(op).substr(0, std::string(op).find('=')));
+        CHECK(!b.ok() && named);
+      }
+      CHECK(has(parse(R + "locc064=1\n"), SfzIssueKind::kInvalidValue, "non-canonical controller number"));
+      CHECK(has(parse(R + "locc70=50 hicc70=40\n"), SfzIssueKind::kInvalidValue, "inverted CC gate"));  // an inverted gate never plays: an error, not a silent region
+      CHECK(parse(R + "locc70=40 hicc70=40\n").ok());
+      std::string many = R;
+      for (int i = 0; i <= int(kMaxCcGates); ++i) many += " locc" + std::to_string(i + 1) + "=5";
+      CHECK(has(parse(many + "\n"), SfzIssueKind::kUnsupportedValue, "CC gates"));
+      many = R;
+      for (int i = 0; i < int(kMaxCcGates); ++i) many += " locc" + std::to_string(i + 1) + "=5";
+      CHECK(parse(many + "\n").ok());
+    }
+    {  // modulation entries: forms, aliases, ordering, depth ranges, depth 0
+      auto r = parse(R + "tune_oncc94=-100 amplitude_cc93=50 amplitude_curvecc93=7 pan_oncc1=10 volume_oncc2=-3 gain_cc2=-4 pitch_oncc95=5 offset_oncc73=4000 "
+                         "ampeg_release_oncc100=2 ampeg_attackcc64=0.1 ampeg_start_cc3=10 ampeg_sustain_oncc4=-20 ampeg_delay_oncc5=0.5 ampeg_hold_oncc6=0.25 ampeg_decay_curvecc7=2 "
+                         "ampeg_decay_oncc7=1\n");
+      CHECK(r.ok() && r.regions.size() == 1);
+      if (r.regions.size() == 1) {
+        const CcMap& m = r.regions[0].cc;
+        CHECK(m.gate_count == 0 && m.mod_count == 13);
+        // ascending by (target, cc): amplitude 93; volume 2 (gain_cc2 wins over volume_oncc2: same target and controller, last wins); pan 1; tune 94, 95; offset 73; EG
+        auto at = [&](unsigned i) { return m.mods[i]; };
+        CHECK(at(0) == (CcMod{CcTarget::kAmplitude, 93, 7, 50.f}));
+        CHECK(at(1) == (CcMod{CcTarget::kVolume, 2, 0, -4.f}));
+        CHECK(at(2) == (CcMod{CcTarget::kPan, 1, 0, 10.f}));
+        CHECK(at(3) == (CcMod{CcTarget::kTune, 94, 0, -100.f}) && at(4) == (CcMod{CcTarget::kTune, 95, 0, 5.f}));
+        CHECK(at(5) == (CcMod{CcTarget::kOffset, 73, 0, 4000.f}));
+        CHECK(at(6) == (CcMod{CcTarget::kEgDelay, 5, 0, 0.5f}) && at(7) == (CcMod{CcTarget::kEgStart, 3, 0, 10.f}) && at(8) == (CcMod{CcTarget::kEgAttack, 64, 0, 0.1f}));
+        CHECK(at(9) == (CcMod{CcTarget::kEgHold, 6, 0, 0.25f}) && at(10) == (CcMod{CcTarget::kEgDecay, 7, 2, 1.f}) && at(11) == (CcMod{CcTarget::kEgSustain, 4, 0, -20.f}));
+        CHECK(at(12) == (CcMod{CcTarget::kEgRelease, 100, 0, 2.f}));
+        CHECK(has_cc_extension(r.regions[0]) && validate_region(r.regions[0], 1000) == Error::kNone);
+      }
+      // pseudo-controllers
+      auto p = parse(R + "pan_oncc131=100 pan_oncc135=10 pan_oncc136=5 pan_oncc137=2 pan_oncc140=1 pan_oncc141=1 amplitude_oncc127=1\n");
+      CHECK(p.ok() && p.regions[0].cc.mod_count == 7);
+      // a curve index alone has no effect on an additive target (sfizz: depth 0); amplitude keeps the entry (a multiplicative connection of depth 0 silences)
+      CHECK(!has_cc_extension(parse(R + "pan_curvecc1=3\n").regions[0]) && !has_cc_extension(parse(R + "volume_oncc1=0\n").regions[0]));
+      CHECK(!has_cc_extension(parse(R + "amplitude_curvecc1=3\n").regions[0]));  // a curve alone is no connection
+      auto z = parse(R + "amplitude_oncc1=0\n");
+      CHECK(z.ok() && z.regions[0].cc.mod_count == 1 && z.regions[0].cc.mods[0].depth == 0.f);
+      // the same entry from a higher level, overridden in the region
+      auto g = parse("<group> pan_oncc1=10 volume_oncc2=1\n<region> sample=a.wav key=60 pan_oncc1=20\n");
+      CHECK(g.ok() && g.regions[0].cc.mod_count == 2 && g.regions[0].cc.mods[0].depth == 1.f && g.regions[0].cc.mods[1].depth == 20.f);
+      // ranges: clamped and logged
+      auto o = parse(R + "amplitude_oncc1=99999 pan_oncc2=500 tune_oncc3=-99999 ampeg_attack_oncc4=500 offset_oncc5=-5 volume_oncc6=100 pan_curvecc2=300\n");
+      CHECK(o.ok() && o.ignored_values.size() == 7);
+      if (o.ok()) {
+        const CcMap& m = o.regions[0].cc;
+        CHECK(m.mods[0].depth == 10000.f && m.mods[3].depth == -12000.f && m.mods[1].depth == 48.f);
+        CHECK(m.mods[2].depth == 200.f && m.mods[2].curve == 0);  // curve 300 falls back to 0
+      }
+      // offset has no curve in sfizz: accepted, ignored, never silent
+      auto oc = parse(R + "offset_oncc1=100 offset_curvecc1=3\n");
+      CHECK(oc.ok() && oc.regions[0].cc.mods[0].curve == 0 && oc.warnings.size() == 1 && oc.warnings[0].opcode == "offset_curvecc1");
+      // not implemented: still named
+      for (const char* op : {"pan_stepcc1=1", "tune_smoothcc1=1", "cutoff_oncc131=1", "width_oncc1=1", "amp_veltrack_oncc7=5", "delay_oncc1=1", "end_oncc1=1"}) {
+        auto b = parse(R + op + "\n");
+        bool named = false;
+        for (const auto& i : b.issues) named = named || (i.kind == SfzIssueKind::kUnsupportedOpcode && i.opcode == std::string(op).substr(0, std::string(op).find('=')));
+        CHECK(!b.ok() && named);
+      }
+      // controllers that are not sources
+      for (const char* op : {"pan_oncc128=1", "pan_oncc129=1", "pan_oncc130=1", "pan_oncc132=1", "pan_oncc133=1", "pan_oncc134=1", "pan_oncc138=1", "pan_oncc142=1", "pan_oncc511=1"}) {
+        auto b = parse(R + op + "\n");
+        bool named = false;
+        for (const auto& i : b.issues) named = named || (i.kind == SfzIssueKind::kUnsupportedValue && i.opcode == std::string(op).substr(0, std::string(op).find('=')));
+        CHECK(!b.ok() && named);
+      }
+      CHECK(has(parse(R + "pan_oncc01=1\n"), SfzIssueKind::kInvalidValue, "non-canonical controller number"));
+      CHECK(has(parse(R + "pan_oncc1=abc\n"), SfzIssueKind::kInvalidValue, "'abc'"));
+      std::string many = R;
+      for (int i = 0; i <= int(kMaxCcMods); ++i) many += " pan_oncc" + std::to_string(i) + "=1";
+      CHECK(has(parse(many + "\n"), SfzIssueKind::kUnsupportedValue, "CC modulation entries"));
+      many = R;
+      for (int i = 0; i < int(kMaxCcMods); ++i) many += " pan_oncc" + std::to_string(i) + "=1";
+      CHECK(parse(many + "\n").ok());
+    }
+    {  // set_cc / set_hdcc: seeds for controllers a region reads; the rest is dropped and logged
+      auto r = parse("<control>\nset_cc64=90 set_hdcc1=0.5 set_cc7=100 set_cc10=20 set_cc99=5 set_realcc2=1\n"
+                     "<region> sample=a.wav key=60 locc64=64 pan_oncc1=3 xfin_locc10=0 xfin_hicc10=64 locc2=1\n");
+      CHECK(r.ok() && r.regions.size() == 1);
+      CHECK(r.cc_defaults.size() == 6);
+      CHECK(r.cc_setup.defaults.size() == 4 && r.cc_setup.defaults[0] == (CcDefault{1, 63.5f}) && r.cc_setup.defaults[1] == (CcDefault{2, 127.f}) &&
+            r.cc_setup.defaults[2] == (CcDefault{10, 20.f}) && r.cc_setup.defaults[3] == (CcDefault{64, 90.f}));  // 7 and 99 are read by no region
+      bool dropped = false;
+      for (const auto& v : r.ignored_values) dropped = dropped || (v.opcode == "set_cc99" && v.message.find("no region reads") != std::string::npos);
+      CHECK(dropped);
+      CHECK(r.cc_setup.curves.empty());
+      auto same = parse("<control>\nset_cc7=100\n<region> sample=a.wav key=60 locc7=10\n");  // equal to the engine's value: kept, so binding the bank restores it
+      CHECK(same.ok() && same.cc_setup.defaults.size() == 1 && same.cc_setup.defaults[0] == (CcDefault{7, 100.f}));
+      CHECK(has(parse("<control>\nset_cc200=1\n<region> sample=a.wav\n"), SfzIssueKind::kUnsupportedValue, "controller"));
+      CHECK(has(parse("<control>\nset_cc064=1\n<region> sample=a.wav\n"), SfzIssueKind::kInvalidValue, "non-canonical"));
+      CHECK(has(parse("<region> sample=a.wav set_cc1=1\n"), SfzIssueKind::kUnsupportedOpcode, "only valid in <control>"));
+      auto clamped = parse("<control>\nset_cc64=500\n<region> sample=a.wav key=1 locc64=1\n");
+      CHECK(clamped.ok() && clamped.cc_setup.defaults.size() == 1 && clamped.cc_setup.defaults[0].value == 127.f);
+    }
+    {  // <curve> blocks: sfizz's index rules, only the curves a region names are kept
+      auto r = parse("<curve>\nv000=0 v064=0.9 v127=1\n<curve>\nv000=1 v127=0\n<region> sample=a.wav key=60 amplitude_oncc1=100 amplitude_curvecc1=7 pan_oncc2=5 pan_curvecc2=8\n");
+      CHECK(r.ok() && r.curves.size() == 2);
+      CHECK(r.cc_setup.curves.size() == 2 && r.cc_setup.curves[0].index == 7 && r.cc_setup.curves[0].points.size() == 3 && r.cc_setup.curves[0].points[1] == (CurvePoint{64, 0.9f}));
+      CHECK(r.cc_setup.curves[1].index == 8 && r.cc_setup.curves[1].points.size() == 2);
+      // an explicit index closes implicit indexing; later explicit blocks win; the predefined slots can be replaced
+      auto e = parse("<curve>\nv000=0 v127=1\n<curve>\ncurve_index=9 v000=0 v127=0.5\n<curve>\nv000=0 v127=0.25\n<curve>\ncurve_index=9 v000=0 v127=0.75\n<curve>\ncurve_index=0 v127=0.1 v128=3\n"
+                     "<region> sample=a.wav key=60 pan_oncc1=5 pan_curvecc1=7 pan_oncc2=5 pan_curvecc2=9 pan_oncc3=5 pan_curvecc3=0 pan_oncc4=5 pan_curvecc4=10 pan_oncc5=5 pan_curvecc5=3\n");
+      CHECK(e.ok() && e.cc_setup.curves.size() == 3);
+      if (e.cc_setup.curves.size() == 3) {
+        CHECK(e.cc_setup.curves[0].index == 0 && e.cc_setup.curves[0].points.size() == 1 && e.cc_setup.curves[0].points[0] == (CurvePoint{127, 0.1f}));  // v128 does not exist
+        CHECK(e.cc_setup.curves[1].index == 7 && e.cc_setup.curves[1].points[1].y == 1.f);   // the implicit one before any explicit index got slot 7
+        CHECK(e.cc_setup.curves[2].index == 9 && e.cc_setup.curves[2].points[1].y == 0.75f);
+      }
+      // a curve nothing uses is not stored; a library with <curve> blocks and no CC opcode keeps its bundle
+      auto u = parse("<curve>\ncurve_index=3 v000=0 v127=1\n<region> sample=a.wav key=60 pan_oncc1=5\n");
+      CHECK(u.ok() && u.cc_setup.curves.empty() && !u.cc_setup.any());
+      CHECK(!parse("<curve>\ncurve_index=3 v000=0 v127=1\n<region> sample=a.wav key=60\n").cc_setup.any());
+      // an unusable curve_index spells index 0 (sfizz reads it with a default of 0)
+      auto bad = parse("<curve>\ncurve_index=999 v000=0 v127=0.5\n<region> sample=a.wav key=60 pan_oncc1=5 pan_curvecc1=0\n");
+      CHECK(bad.ok() && bad.cc_setup.curves.size() == 1 && bad.cc_setup.curves[0].index == 0 && bad.ignored_values.size() == 1);
+    }
+    {  // regions removed by drop_never_note_triggered no longer keep a default or a curve alive
+      auto r = parse("<control>\nset_cc64=90\n<curve>\ncurve_index=3 v000=0 v127=1\n<region> sample=a.wav hikey=-1 locc64=1 pan_oncc1=3 pan_curvecc1=3\n<region> sample=a.wav key=62\n");
+      CHECK(r.ok() && r.cc_setup.defaults.size() == 1 && r.cc_setup.curves.size() == 1);
+      CHECK(drop_never_note_triggered(r) == 1 && !r.cc_setup.any() && r.regions.size() == 1);
+    }
+    {  // a region without any of the opcodes is exactly what it was
+      auto r = parse(R + "pan=10\n");
+      Region want; want.key_lo = want.key_hi = want.key_center = 60; want.pan = 10.f;
+      CHECK(r.ok() && r.regions[0] == want && r.regions[0].cc == CcMap{} && !r.cc_setup.any());
+    }
   }
   {  // Story 13.3: end and the trigger modes
     auto r = parse("<region> sample=a.wav key=60 end=100\n<region> sample=a.wav key=61 end=0\n<region> sample=a.wav key=62 end=-1\n"
@@ -366,9 +545,9 @@ int main() {
     CHECK(parse("<region> sample=a.wav key=60 amp_velcurve_30=0.3 amp_velcurve_90=0.8\n").regions == parse("<region> sample=a.wav key=60 amp_velcurve_90=0.8 amp_velcurve_30=0.3\n").regions);
   }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
-    const char* bad[] = {"script", "set_cc1", "set_hdcc1", "lfo01_freq", "eg01_time1", "amplitude_oncc1",
+    const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_oncc1", "width_oncc1", "volume_stepcc1", "pan_smoothcc2",
                          "effect1", "output", "group", "off_by", "polyphony", "note_offset", "octave_offset",
-                         "amp_veltrack_oncc7", "sample_quality", "delay", "rt_decay", "amp_random", "ampeg_vel2delay", "amplitude_curvecc3", "xfin_lovel", "cutoff2", "fil2_type", "pitch_keytrack"};
+                         "amp_veltrack_oncc7", "sample_quality", "delay", "rt_decay", "amp_random", "ampeg_vel2delay", "amp_veltrack_curvecc3", "xfin_lovel", "cutoff2", "fil2_type", "pitch_keytrack"};
     for (const char* op : bad) {
       auto r = parse(std::string("<region> sample=a.wav key=60 ") + op + "=1\n");
       bool found = false;

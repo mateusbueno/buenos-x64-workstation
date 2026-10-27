@@ -25,7 +25,7 @@ renders are deleted after each null test, the logs stay in `work/`).
 
 One entry per library. Included entries have `source_url` (https, allow-listed hosts only: `codeload.github.com`, `github.com`,
 `raw.githubusercontent.com`, `objects.githubusercontent.com`), `version`, `commit`, `sha256` (of the archive), `license`, `license_url`, optional
-`tolerance_db` (default `default_tolerance_db`, -60), `skip_files` (`path` + `reason`), `null_files`, `limits`. An excluded entry has `excluded.reason`
+`tolerance_db` (default `default_tolerance_db`, -60), `skip_files` (`path` + `reason`), `null_files`, `null_exclude` (`path` + a `reason` of at least 40 characters), `limits`. An excluded entry has `excluded.reason`
 (at least 10 characters) and is never fetched; the report lists every exclusion with its reason. "No corpus file is skipped except entries explicitly listed
 with a reason" is enforced three ways: an `.sfz` that fails or skips on import fails the job unless it is in `skip_files`; a stale `skip_files` entry fails; an
 entry that is neither complete nor excluded is a manifest error.
@@ -114,7 +114,13 @@ handled in the harness, not by loosening the tolerance:
   At block size 1 the block-relative note delay is always 0, which also removes sfizz's `ampeg_dynamic` defect (below). The 64-frame Story 1.15 / 5.2 suite is unchanged.
 - **`ampeg_dynamic=1` in sfizz** (`ADSREnvelope::getBlock` in dynamic mode calls `updateValues(0)` on its first chunk, which overwrites the start delay of a note that does not begin
   on a block boundary with 0): the amplitude attack of such a note is cut short (VSCO `ampeg_attack` 1 ms, note at frame 4832: residual -34 dB, the same SFZ without the flag -61 dB).
-  By the SFZ definition the flag only makes the envelope re-read `ampeg_*_oncc` / `vel2` values while a voice sounds; the importer rejects those opcodes, so the flag is inert and the engine's specified attack is right.
+  By the SFZ definition the flag only makes the envelope re-read `ampeg_*_oncc` / `vel2` values while a voice sounds. Since Story 13.5 the importer reads `ampeg_*_oncc` once at voice start and rejects a region that combines them with `ampeg_dynamic=1`; without an `_oncc` the flag changes nothing (`vel2` reads the constant trigger velocity), so the engine's specified attack is right.
+- **Controllers that move while a note sounds (Story 13.5).** sfizz re-evaluates `amplitude_oncc`, `volume_oncc`, `pan_oncc` and `tune_oncc` (and the `_cc` / `_curvecc` forms) every block; the
+  engine reads the controller once when the note starts (`engine/core/README.md`, "CC at voice start"). The corpus probes move CC64 (a sustain pedal that goes down while the keys are held and
+  lifts later) and nothing else, so only an instrument that maps CC64 to one of those targets diverges, as soon as the pedal moves under a sounding voice; gates (`locc64`/`hicc64`) and
+  `ampeg_*_oncc64` are read at the note on in both and agree. Such an instrument is imported and counted, and is kept out of the automatic null picks with a manifest entry
+  `"null_exclude": [{"path": "...", "reason": "..."}]` (the reason must name the controller, the target and the probe; the report prints it; a stale entry fails the job; an
+  instrument cannot be in `null_files` and `null_exclude` at once). `null_files` still forces a pick when the divergence itself is what is being measured.
 - **The engine tail follows the oracle.** `sfizz_render` renders until silence (VSCO `ampeg_release` is up to 15 s); the runner measures the oracle file and gives the engine the same tail, otherwise the comparison covers a truncated tail.
 - **Random layers cannot be null-tested.** Instruments that choose a layer with `lorand`/`hirand` (19 of the 75 VSCO files) play different layers in the two renderers: sfizz draws from a fixed-seed
   LCG (`Random::randomGenerator`, one draw per note-on, note-off and controller, and its own seed cannot be set) and the engine from a seeded xorshift (one draw per note-on and note-off). Removing the second

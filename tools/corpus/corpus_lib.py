@@ -124,6 +124,17 @@ def validate_entry(e):
                 if not isinstance(item, str):
                     raise CorpusError(where + ": null_files items must be strings")
                 check_rel(item, where + ".null_files")
+    # Story 13.5: instruments that are imported but kept out of the AUTOMATIC null picks, each with a written reason (typically: a controller that moves
+    # while a note sounds drives a continuously modulated target, which sfizz follows and the engine reads once at voice start, see engine/core/README.md).
+    excl = e.get("null_exclude", [])
+    if not isinstance(excl, list):
+        raise CorpusError(where + ": null_exclude must be a list")
+    for item in excl:
+        if not (isinstance(item, dict) and isinstance(item.get("path"), str) and isinstance(item.get("reason"), str) and len(item["reason"].strip()) >= 40):
+            raise CorpusError(where + ": every null_exclude item needs a path and a reason of at least 40 characters")
+        check_rel(item["path"], where + ".null_exclude")
+        if item["path"] in e.get("null_files", []):
+            raise CorpusError(where + ": %r is in both null_files and null_exclude" % item["path"])
     overrides = e.get("tolerance_overrides", [])
     if not isinstance(overrides, list):
         raise CorpusError(where + ": tolerance_overrides must be a list")

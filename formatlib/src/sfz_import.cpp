@@ -105,14 +105,69 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"sw_label", C::kAllowListed, "keyswitch name"},
       {"image", C::kAllowListed, "instrument picture"},
       {"hint_*", C::kAllowListed, "editor hints"},
-      // Story 5.4 (real VSCO2: 75 of 75 files used it and nothing else outside the subset): a flag that only makes sfizz re-read the
-      // ampeg_* values while a voice sounds. The values it could change come from ampeg_*_oncc<N> / ampeg_vel2*, which are unsupported
-      // opcodes and reject the file by themselves, so without them the flag cannot change the sound; with them the file is rejected anyway.
-      // INERT ONLY WHILE no ampeg_*_oncc<N> opcode is supported: the moment one is, this entry must leave the allow-list (Story 13.5
-      // revisits it). Story 13.4 added ampeg_vel2*, which does NOT change that: sfizz's dynamic flag re-evaluates the envelope values
-      // every chunk, but vel2* reads the trigger velocity, which is constant for the life of the voice, so the values never differ
-      // (checked against sfizz in the ampeg_vel2 null-test fixture, which sets ampeg_dynamic=1).
-      {"ampeg_dynamic", C::kAllowListed, "flag, no effect without ampeg_*_oncc<N> (Story 5.4)"},
+      // Story 13.5: CC gates, CC defaults and CC modulation read once when a voice starts (see the importer comment in sfz_import.hpp).
+      {"locc<N>", C::kSupported, "N = controller 0..127, CC units; the region plays while the part's CC value is in [locc, hicc] (Story 13.5)"},
+      {"hicc<N>", C::kSupported, "hicc below 127 covers values up to hicc + 1, exclusive (sfizz fill-gap) (Story 13.5)"},
+      {"lohdcc<N>", C::kSupported, "normalized 0..1 (Story 13.5)"},
+      {"hihdcc<N>", C::kSupported, "normalized 0..1 (Story 13.5)"},
+      {"lorealcc<N>", C::kSupported, "alias of lohdcc<N> (Story 13.5)"},
+      {"hirealcc<N>", C::kSupported, "alias of hihdcc<N> (Story 13.5)"},
+      {"set_cc<N>", C::kSupported, "<control> only: the part's initial value of controller N (0..127) (Story 13.5)"},
+      {"set_hdcc<N>", C::kSupported, "<control> only, normalized 0..1 (Story 13.5)"},
+      {"set_realcc<N>", C::kSupported, "alias of set_hdcc<N> (Story 13.5)"},
+      {"amplitude_oncc<N>", C::kSupported, "percent 0..10000, gain x (depth/100 x curve); N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.5)"},
+      {"amplitude_cc<N>", C::kSupported, "alias of amplitude_oncc<N> (Story 13.5)"},
+      {"amplitude_curvecc<N>", C::kSupported, "curve index: a <curve> block or a predefined curve 0..6 (Story 13.5)"},
+      {"volume_oncc<N>", C::kSupported, "dB; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.5)"},
+      {"volume_cc<N>", C::kSupported, "alias of volume_oncc<N> (Story 13.5)"},
+      {"volume_curvecc<N>", C::kSupported, "curve index: a <curve> block or a predefined curve 0..6 (Story 13.5)"},
+      {"gain_oncc<N>", C::kSupported, "dB, alias of volume; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.5)"},
+      {"gain_cc<N>", C::kSupported, "alias of gain_oncc<N> (Story 13.5)"},
+      {"gain_curvecc<N>", C::kSupported, "curve index: a <curve> block or a predefined curve 0..6 (Story 13.5)"},
+      {"pan_oncc<N>", C::kSupported, "percent; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.5)"},
+      {"pan_cc<N>", C::kSupported, "alias of pan_oncc<N> (Story 13.5)"},
+      {"pan_curvecc<N>", C::kSupported, "curve index: a <curve> block or a predefined curve 0..6 (Story 13.5)"},
+      {"tune_oncc<N>", C::kSupported, "cents; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.5)"},
+      {"tune_cc<N>", C::kSupported, "alias of tune_oncc<N> (Story 13.5)"},
+      {"tune_curvecc<N>", C::kSupported, "curve index: a <curve> block or a predefined curve 0..6 (Story 13.5)"},
+      {"pitch_oncc<N>", C::kSupported, "cents, alias of tune; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.5)"},
+      {"pitch_cc<N>", C::kSupported, "alias of pitch_oncc<N> (Story 13.5)"},
+      {"pitch_curvecc<N>", C::kSupported, "curve index: a <curve> block or a predefined curve 0..6 (Story 13.5)"},
+      {"offset_oncc<N>", C::kSupported, "frames: depth x CC value, no curve; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.5)"},
+      {"offset_cc<N>", C::kSupported, "alias of offset_oncc<N> (Story 13.5)"},
+      {"offset_curvecc<N>", C::kSupported, "accepted and ignored, as sfizz: offset is not curve-modulated (ignored_opcode warning) (Story 13.5)"},
+      {"ampeg_delay_oncc<N>", C::kSupported, "s, added at voice start; N as above (Story 13.5)"},
+      {"ampeg_delay_cc<N>", C::kSupported, "alias of ampeg_delay_oncc<N> (Story 13.5)"},
+      {"ampeg_delaycc<N>", C::kSupported, "SFZ 1 alias of ampeg_delay_oncc<N> (Story 13.5)"},
+      {"ampeg_delay_curvecc<N>", C::kSupported, "curve index (Story 13.5)"},
+      {"ampeg_start_oncc<N>", C::kSupported, "%, added at voice start; N as above (Story 13.5)"},
+      {"ampeg_start_cc<N>", C::kSupported, "alias of ampeg_start_oncc<N> (Story 13.5)"},
+      {"ampeg_startcc<N>", C::kSupported, "SFZ 1 alias of ampeg_start_oncc<N> (Story 13.5)"},
+      {"ampeg_start_curvecc<N>", C::kSupported, "curve index (Story 13.5)"},
+      {"ampeg_attack_oncc<N>", C::kSupported, "s, added at voice start; N as above (Story 13.5)"},
+      {"ampeg_attack_cc<N>", C::kSupported, "alias of ampeg_attack_oncc<N> (Story 13.5)"},
+      {"ampeg_attackcc<N>", C::kSupported, "SFZ 1 alias of ampeg_attack_oncc<N> (Story 13.5)"},
+      {"ampeg_attack_curvecc<N>", C::kSupported, "curve index (Story 13.5)"},
+      {"ampeg_hold_oncc<N>", C::kSupported, "s, added at voice start; N as above (Story 13.5)"},
+      {"ampeg_hold_cc<N>", C::kSupported, "alias of ampeg_hold_oncc<N> (Story 13.5)"},
+      {"ampeg_holdcc<N>", C::kSupported, "SFZ 1 alias of ampeg_hold_oncc<N> (Story 13.5)"},
+      {"ampeg_hold_curvecc<N>", C::kSupported, "curve index (Story 13.5)"},
+      {"ampeg_decay_oncc<N>", C::kSupported, "s, added at voice start; N as above (Story 13.5)"},
+      {"ampeg_decay_cc<N>", C::kSupported, "alias of ampeg_decay_oncc<N> (Story 13.5)"},
+      {"ampeg_decaycc<N>", C::kSupported, "SFZ 1 alias of ampeg_decay_oncc<N> (Story 13.5)"},
+      {"ampeg_decay_curvecc<N>", C::kSupported, "curve index (Story 13.5)"},
+      {"ampeg_sustain_oncc<N>", C::kSupported, "%, added at voice start; N as above (Story 13.5)"},
+      {"ampeg_sustain_cc<N>", C::kSupported, "alias of ampeg_sustain_oncc<N> (Story 13.5)"},
+      {"ampeg_sustaincc<N>", C::kSupported, "SFZ 1 alias of ampeg_sustain_oncc<N> (Story 13.5)"},
+      {"ampeg_sustain_curvecc<N>", C::kSupported, "curve index (Story 13.5)"},
+      {"ampeg_release_oncc<N>", C::kSupported, "s, added at voice start; N as above (Story 13.5)"},
+      {"ampeg_release_cc<N>", C::kSupported, "alias of ampeg_release_oncc<N> (Story 13.5)"},
+      {"ampeg_releasecc<N>", C::kSupported, "SFZ 1 alias of ampeg_release_oncc<N> (Story 13.5)"},
+      {"ampeg_release_curvecc<N>", C::kSupported, "curve index (Story 13.5)"},
+      // Story 13.5: ampeg_dynamic makes sfizz re-read ampeg_* (including its _oncc values) every chunk. This importer reads the CC once at voice start, so the
+      // flag is no longer inert: a region with ampeg_dynamic=1 and any ampeg_*_oncc<N> is rejected (unsupported_value). Without an _oncc it changes nothing
+      // (ampeg_vel2* reads the trigger velocity, constant for the life of the voice, Story 13.4), so VSCO2's ampeg_dynamic=1 imports as before.
+      {"ampeg_dynamic", C::kSupported, "flag; rejected together with ampeg_*_oncc<N> (continuous envelope modulation is not implemented), otherwise no effect (Story 13.5)"},
   };
   return t;
 }
@@ -172,7 +227,66 @@ struct Acc {
   double vol_extra[3] = {0, 0, 0};  // group_volume, master_volume, global_volume
   bool amp_set = false;
   double amp_mult[3] = {100, 100, 100};  // group_amplitude, master_amplitude, global_amplitude (percent)
+  // Story 13.5. CC gates (by controller; a missing end is the sfizz default 0 / 127), CC modulation entries (by target and controller), ampeg_dynamic.
+  struct GateAcc {
+    bool lo_set = false, hi_set = false;
+    float lo = 0, hi = 127;
+  };
+  struct ModAcc {
+    bool depth_set = false;  // a *_curvecc alone is no connection (sfizz's would have depth 0 and, on amplitude, silence the region: not reproduced)
+    float depth = 0;
+    int curve = 0;
+  };
+  std::map<int, GateAcc> gates;
+  std::map<std::pair<int, int>, ModAcc> mods;
+  bool dynamic = false;
 };
+
+// Story 13.5: a recognised CC opcode split into its parts. gate: locc/hicc/lohdcc/hihdcc (lo = true for the low end, hd = normalized value); def: set_cc/set_hdcc;
+// mod: <target>_oncc (curve = false) or <target>_curvecc (curve = true).
+struct CcOp {
+  enum class Kind { kNone, kGate, kDefault, kMod } kind = Kind::kNone;
+  bool lo = false, hd = false, curve = false, canonical = true;
+  int target = 0, cc = 0;
+};
+
+CcOp split_cc_opcode(const std::string& k) {
+  CcOp o;
+  std::size_t d = k.size();
+  while (d > 0 && k[d - 1] >= '0' && k[d - 1] <= '9') --d;
+  if (d == k.size() || d == 0 || k.size() - d > 3) return o;
+  o.cc = std::atoi(k.c_str() + d);
+  o.canonical = !(k.size() - d > 1 && k[d] == '0');
+  const std::string p = k.substr(0, d);
+  struct Gate { const char* name; bool lo, hd; };
+  static const Gate gates[] = {{"locc", true, false}, {"hicc", false, false}, {"lohdcc", true, true},
+                               {"hihdcc", false, true}, {"lorealcc", true, true}, {"hirealcc", false, true}};
+  for (const Gate& g : gates)
+    if (p == g.name) { o.kind = CcOp::Kind::kGate; o.lo = g.lo; o.hd = g.hd; return o; }
+  if (p == "set_cc" || p == "set_hdcc" || p == "set_realcc") { o.kind = CcOp::Kind::kDefault; o.hd = p != "set_cc"; return o; }
+  auto ends = [&](const char* suf) {
+    const std::size_t n = std::strlen(suf);
+    return p.size() > n && p.compare(p.size() - n, n, suf) == 0;
+  };
+  std::string stem;
+  if (ends("_curvecc")) { o.curve = true; stem = p.substr(0, p.size() - 8); }
+  else if (ends("_oncc")) stem = p.substr(0, p.size() - 5);
+  else if (ends("_cc")) stem = p.substr(0, p.size() - 3);
+  else if (p.compare(0, 6, "ampeg_") == 0 && ends("cc")) stem = p.substr(0, p.size() - 2);  // ampeg_releasecc64
+  else return o;
+  struct Target { const char* name; int id; };
+  static const Target targets[] = {
+      {"amplitude", int(CcTarget::kAmplitude)}, {"volume", int(CcTarget::kVolume)}, {"gain", int(CcTarget::kVolume)},
+      {"pan", int(CcTarget::kPan)}, {"tune", int(CcTarget::kTune)}, {"pitch", int(CcTarget::kTune)}, {"offset", int(CcTarget::kOffset)},
+      {"ampeg_delay", int(CcTarget::kEgDelay)}, {"ampeg_start", int(CcTarget::kEgStart)}, {"ampeg_attack", int(CcTarget::kEgAttack)},
+      {"ampeg_hold", int(CcTarget::kEgHold)}, {"ampeg_decay", int(CcTarget::kEgDecay)}, {"ampeg_sustain", int(CcTarget::kEgSustain)},
+      {"ampeg_release", int(CcTarget::kEgRelease)}};
+  for (const Target& t : targets)
+    if (stem == t.name) { o.kind = CcOp::Kind::kMod; o.target = t.id; return o; }
+  return o;
+}
+
+bool is_eg_target(int t) { return t >= int(CcTarget::kEgDelay) && t <= int(CcTarget::kEgRelease); }
 
 // "xfin_locc64" -> in, lo, cc 64. Names are already classified as xf opcodes.
 bool xf_opcode(const std::string& name, bool& in, bool& lo, int& cc) {
@@ -245,7 +359,10 @@ class Importer final : public sfz::ParserListener {
   SfzParseResult result;
 
   void onParseBegin() override {}
-  void onParseEnd() override { flush_region(); }
+  void onParseEnd() override {
+    flush_region();
+    for (const auto& [cc, d] : cc_defaults_) result.cc_defaults.push_back(d);
+  }
 
   void onParseHeader(const sfz::SourceRange& range, const std::string& header) override {
     flush_region();
@@ -305,6 +422,8 @@ class Importer final : public sfz::ParserListener {
         if (name == "default_path") {
           const std::string dp = norm_slashes(value);
           if (check_path(dp, op)) default_path_ = dp;
+        } else if (const CcOp co = split_cc_opcode(name); co.kind == CcOp::Kind::kDefault) {
+          control_default(op, co);
         } else {
           issue(SfzIssueKind::kUnsupportedOpcode, loc, "unsupported opcode '" + name + "' in <control>", name);
         }
@@ -390,7 +509,10 @@ class Importer final : public sfz::ParserListener {
     double d = 0;
     if (k == "curve_index") {
       if (parse_int(op.value, n) && n >= 0 && n <= 255) c.index = int(n);
-      else ignore(op, "expected curve index 0..255");
+      else {
+        c.index = 0;  // sfizz reads curve_index with a default of 0, so an unusable value spells index 0 (not "implicit")
+        ignore(op, "expected curve index 0..255; index 0 is used");
+      }
     } else if (k.size() >= 2 && k.size() <= 4 && k[0] == 'v' &&
                k.find_first_not_of("0123456789", 1) == std::string::npos) {
       const int pt = std::atoi(k.c_str() + 1);
@@ -465,6 +587,96 @@ class Importer final : public sfz::ParserListener {
     return true;
   }
 
+  void unsupported_cc(const Op& op, const std::string& why) {
+    if (!report_) return;
+    add(SfzIssueKind::kUnsupportedValue, op.file, op.line, "unsupported controller for opcode '" + op.name + "' (" + why + ")", op.name);
+  }
+
+  // Story 13.5: locc/hicc/lohdcc/hihdcc and the `_oncc` / `_curvecc` modulation forms. The values are validated here (once, when read) and folded into the
+  // region at flush_region.
+  bool apply_cc(Acc& acc, const Op& op, const CcOp& o) {
+    if (!o.canonical) {
+      if (report_)
+        add(SfzIssueKind::kInvalidValue, op.file, op.line,
+            "opcode '" + op.name + "' has a non-canonical controller number (leading zeros would spell one controller two ways)");
+      return false;
+    }
+    double d = 0;
+    if (o.kind == CcOp::Kind::kDefault) {  // reaches apply only from a region level
+      if (report_) add(SfzIssueKind::kUnsupportedOpcode, op.file, op.line, "opcode '" + op.name + "' is only valid in <control>", op.name);
+      return false;
+    }
+    if (o.kind == CcOp::Kind::kGate) {
+      if (o.cc > 127) {
+        unsupported_cc(op, "only controllers 0..127 can gate a region; sfizz never refreshes a gate on a pseudo-controller after load");
+        return false;
+      }
+      if (o.hd ? !as_clamped(op, 0, 1, d) : !as_clamped(op, 0, 127, d)) return false;
+      if (o.hd) d *= 127.0;
+      Acc::GateAcc& g = acc.gates[o.cc];
+      if (o.lo) {
+        g.lo_set = true;
+        g.lo = float(d);
+      } else {
+        g.hi_set = true;
+        // sfizz hicc (not hdcc) fills the gap up to the next whole CC step: hicc=N accepts every value below N + 1.
+        g.hi = (!o.hd && d <= 126.0) ? std::nextafter(float(d) + 1.0f, 0.0f) : float(d);
+      }
+      return true;
+    }
+    if (!is_cc_mod_source(unsigned(o.cc))) {
+      unsupported_cc(op, "controllers 0..127 and the pseudo-controllers 131 (velocity), 135, 136 (random), 137 (alternate), 140, 141 (key delta) are supported");
+      return false;
+    }
+    if (o.curve) {
+      if (o.target == int(CcTarget::kOffset)) {  // sfizz has no offset_curvecc: the opcode is ignored
+        if (report_)
+          result.warnings.push_back({op.name, op.file, op.line, "opcode '" + op.name + "' has no effect: sfizz does not apply a curve to offset_oncc<N>"});
+        return true;
+      }
+      std::int64_t n = 0;
+      if (!parse_int(op.value, n) || n < 0 || n > 255) {
+        ignore(op, "expected a curve index 0..255; curve 0 is used");
+        n = 0;
+      }
+      acc.mods[{o.target, o.cc}].curve = int(n);
+      return true;
+    }
+    double lo = -100, hi = 100;
+    switch (CcTarget(o.target)) {
+      case CcTarget::kAmplitude: lo = 0; hi = 10000; break;
+      case CcTarget::kVolume: lo = -144; hi = 48; break;
+      case CcTarget::kPan: lo = -200; hi = 200; break;
+      case CcTarget::kTune: lo = -12000; hi = 12000; break;
+      case CcTarget::kOffset: lo = 0; hi = 2147483647.0; break;
+      default: break;
+    }
+    if (!as_clamped(op, lo, hi, d)) return false;
+    if (o.target == int(CcTarget::kOffset)) d = std::trunc(d);  // sfizz reads the offset depth as an integer
+    if (d == 0) d = 0;
+    acc.mods[{o.target, o.cc}].depth = float(d);
+    acc.mods[{o.target, o.cc}].depth_set = true;
+    return true;
+  }
+
+  // <control> set_ccN / set_hdccN / set_realccN: the part's initial controller value.
+  void control_default(const Op& op, const CcOp& o) {
+    report_ = true;
+    if (!o.canonical) {
+      add(SfzIssueKind::kInvalidValue, op.file, op.line, "opcode '" + op.name + "' has a non-canonical controller number");
+      return;
+    }
+    if (o.cc > 127) {
+      unsupported_cc(op, "only controllers 0..127 have a value to seed");
+      return;
+    }
+    double d = 0;
+    if (o.hd ? !as_clamped(op, 0, 1, d) : !as_clamped(op, 0, 127, d)) return;
+    if (o.hd) d *= 127.0;
+    if (d == 0) d = 0;
+    cc_defaults_[o.cc] = {o.cc, float(d), op.file, op.line};
+  }
+
   // Applies one opcode to `r`. Returns false for an invalid value (reported when `report`).
   bool apply(Region& r, Acc& acc, const Op& op, bool report) {
     SfzLoopSpec& ls = acc.ls;
@@ -474,6 +686,17 @@ class Importer final : public sfz::ParserListener {
     const std::string& k = op.name;
     const std::int64_t kMaxFrames = std::int64_t(1) << 40;
     if (k == "sample") return true;
+    if (const CcOp co = split_cc_opcode(k); co.kind != CcOp::Kind::kNone) return apply_cc(acc, op, co);
+    if (k == "ampeg_dynamic") {  // sfizz BoolSpec: 0 or 1; anything that is not a non-zero integer is off
+      const std::string v = trim(op.value);
+      if (v == "true" || v == "on") acc.dynamic = true;
+      else if (parse_int(v, n)) acc.dynamic = n != 0;
+      else {
+        acc.dynamic = false;
+        ignore(op, "expected 0, 1, true or on; the flag is off");
+      }
+      return true;
+    }
     if (k == "lokey") {
       r.key_lo = as_note_or_ignore(op, n) ? std::uint8_t(n) : Region{}.key_lo;
     } else if (k == "hikey") {
@@ -641,6 +864,41 @@ class Importer final : public sfz::ParserListener {
       r.amp.curve[r.amp.curve_count].gain = gain;
       ++r.amp.curve_count;
     }
+    {  // Story 13.5: CC gates and CC modulation entries
+      CcMap m;
+      bool eg_cc = false;
+      for (const auto& [cc, g] : acc.gates) {
+        const float lo = g.lo_set ? g.lo : 0.0f, hi = g.hi_set ? g.hi : 127.0f;
+        if (lo <= 0.0f && hi >= 127.0f) continue;  // covers every value: no gate
+        if (m.gate_count >= kMaxCcGates) {
+          issue(SfzIssueKind::kUnsupportedValue, region_loc_, "more than " + std::to_string(kMaxCcGates) + " CC gates (locc/hicc) in one region", "locc<N>");
+          return;
+        }
+        if (lo > hi) {
+          issue(SfzIssueKind::kInvalidValue, region_loc_, "inverted CC gate (locc" + std::to_string(cc) + " > hicc" + std::to_string(cc) + ")");
+          return;
+        }
+        m.gates[m.gate_count++] = {std::uint8_t(cc), lo, hi};
+      }
+      for (const auto& [key, e] : acc.mods) {
+        if (!e.depth_set) continue;
+        // sfizz: a connection with depth 0 is neutral for an additive target, but multiplies the gain by 0 for amplitude, so amplitude keeps it.
+        if (e.depth == 0.0f && key.first != int(CcTarget::kAmplitude)) continue;
+        if (m.mod_count >= kMaxCcMods) {
+          issue(SfzIssueKind::kUnsupportedValue, region_loc_, "more than " + std::to_string(kMaxCcMods) + " CC modulation entries (*_oncc) in one region", "<opcode>_oncc<N>");
+          return;
+        }
+        m.mods[m.mod_count++] = {CcTarget(key.first), std::uint8_t(key.second), std::uint8_t(e.curve), e.depth};
+        eg_cc = eg_cc || is_eg_target(key.first);
+      }
+      if (acc.dynamic && eg_cc) {
+        issue(SfzIssueKind::kUnsupportedValue, region_loc_,
+              "ampeg_dynamic=1 with ampeg_*_oncc<N>: the envelope would follow the controller during the note; the importer samples it once when the note starts",
+              "ampeg_dynamic");
+        return;
+      }
+      r.cc = m;
+    }
     r.has_loop_points = ls.start_set || ls.end_set;
     // Story 5.1: filter, keyswitch and crossfade state.
     if (acc.cutoff_set) r.filter.type = acc.type_set ? acc.type : FilterType::kLpf2p;
@@ -735,9 +993,71 @@ class Importer final : public sfz::ParserListener {
   std::string default_path_;
   std::map<std::string, std::size_t> samples_;
   std::set<std::string> seen_, warned_;
+  std::map<int, SfzCcDefault> cc_defaults_;  // Story 13.5, last value of each controller wins
   bool report_ = false;
   int cc_ = 0;
 };
+
+// sfizz CurveSet (Curve.cpp): seven predefined slots; a <curve> without curve_index is appended (and is dropped once any curve had an explicit index);
+// an explicit curve_index replaces or extends. The result is the explicit definitions, by final index (0..255); later blocks win.
+std::vector<CurveDef> resolve_curves(const std::vector<SfzCurve>& curves) {
+  std::map<int, CurveDef> out;
+  bool explicit_mode = false;
+  std::size_t size = 7;
+  for (const SfzCurve& c : curves) {
+    int idx = 0;
+    if (c.index < 0) {
+      if (explicit_mode) continue;
+      idx = static_cast<int>(size++);
+    } else {
+      idx = c.index;
+      explicit_mode = true;
+      if (static_cast<std::size_t>(idx) >= size) size = static_cast<std::size_t>(idx) + 1;
+    }
+    if (idx > 255) continue;
+    std::map<int, float> pts;  // vNNN: only 0..127 exist, the last of a number wins
+    for (const auto& [pt, v] : c.points) {
+      if (pt < 0 || pt > 127) continue;
+      float f = static_cast<float>(v);
+      if (f == 0.0f) f = 0.0f;  // "-0" is stored as +0: one encoding per value
+      pts[pt] = f;
+    }
+    CurveDef def;
+    def.index = static_cast<std::uint8_t>(idx);
+    for (const auto& [x, y] : pts) def.points.push_back({static_cast<std::uint8_t>(x), y});
+    out[idx] = std::move(def);
+  }
+  std::vector<CurveDef> v;
+  for (auto& [i, d] : out) v.push_back(std::move(d));
+  return v;
+}
+
+// Story 13.5: the instrument-level setup the bundle stores: the set_cc values for controllers some region (gate, modulation or crossfade) reads, and the
+// <curve> tables the regions' modulation entries name. Everything else is dropped so a library with <curve> blocks or set_cc nothing uses keeps its bundle.
+void build_cc_setup(SfzParseResult& r, bool report) {
+  std::set<int> used_cc, used_curve;
+  for (const Region& g : r.regions) {
+    for (unsigned i = 0; i < g.cc.gate_count; ++i) used_cc.insert(g.cc.gates[i].cc);
+    for (unsigned i = 0; i < g.cc.mod_count; ++i) {
+      if (g.cc.mods[i].cc <= 127) used_cc.insert(g.cc.mods[i].cc);
+      used_curve.insert(g.cc.mods[i].curve);
+    }
+    for (unsigned i = 0; i < g.xf.in_count; ++i) used_cc.insert(g.xf.in[i].cc);
+    for (unsigned i = 0; i < g.xf.out_count; ++i) used_cc.insert(g.xf.out[i].cc);
+  }
+  InstrumentCcSetup out;
+  for (const SfzCcDefault& d : r.cc_defaults) {
+    if (used_cc.count(d.cc)) {
+      out.defaults.push_back({static_cast<std::uint8_t>(d.cc), d.value});  // kept even when equal to the engine's value: binding this bank then restores it
+    } else if (report) {
+      r.ignored_values.push_back({"set_cc" + std::to_string(d.cc), std::to_string(d.value), d.file, d.line,
+                                  "set_cc" + std::to_string(d.cc) + " seeds a controller no region reads (no gate, modulation or crossfade); it is not stored"});
+    }
+  }
+  for (CurveDef& c : resolve_curves(r.curves))
+    if (used_curve.count(c.index)) out.curves.push_back(std::move(c));
+  r.cc_setup = std::move(out);
+}
 
 }  // namespace
 
@@ -756,6 +1076,7 @@ std::size_t drop_never_note_triggered(SfzParseResult& r) {
   r.loops.resize(out);
   r.region_sources.resize(out);
   r.never_note_triggered.assign(out, false);
+  if (dropped) build_cc_setup(r, false);
   return dropped;
 }
 
@@ -803,6 +1124,7 @@ SfzParseResult parse_sfz_file(const std::string& sfz_path) {
     if (i.kind == SfzIssueKind::kParse && i.message.find("Exceeded maximum include depth") != std::string::npos)
       i.message += " (recursive #include?)";
   std::sort(imp.result.included_files.begin(), imp.result.included_files.end());
+  build_cc_setup(imp.result, true);
   return std::move(imp.result);
 }
 

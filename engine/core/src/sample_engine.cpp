@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <span>
 
 namespace velora::core {
 
@@ -58,9 +59,45 @@ bool amp_sane(const velora::ports::SampleRegionDesc& d) noexcept {
   return true;
 }
 
+// Story 13.5 fields: gates and modulation entries must be well formed and inside the documented ranges (a region that is not is unplayable).
+bool cc_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  using velora::ports::SampleCcTarget;
+  if (d.cc_gate_count > velora::ports::kSampleMaxCcGates || d.cc_mod_count > velora::ports::kSampleMaxCcMods) return false;
+  for (unsigned i = 0; i < d.cc_gate_count; ++i) {
+    const auto& g = d.cc_gates[i];
+    if (g.cc > 127 || !std::isfinite(g.lo) || !std::isfinite(g.hi) || g.lo < 0.0f || g.hi > 127.0f || g.lo > g.hi) return false;
+  }
+  for (unsigned i = 0; i < d.cc_mod_count; ++i) {
+    const auto& m = d.cc_mods[i];
+    const bool source = m.cc <= 127 || m.cc == 131 || m.cc == 135 || m.cc == 136 || m.cc == 137 || m.cc == 140 || m.cc == 141;
+    if (!source || static_cast<unsigned>(m.target) > static_cast<unsigned>(SampleCcTarget::kEgRelease) || !std::isfinite(m.depth)) return false;
+    float lo = -100.0f, hi = 100.0f;
+    switch (m.target) {
+      case SampleCcTarget::kAmplitude: lo = 0.0f; hi = 10000.0f; break;
+      case SampleCcTarget::kVolume: lo = -144.0f; hi = 48.0f; break;
+      case SampleCcTarget::kPan: lo = -200.0f; hi = 200.0f; break;
+      case SampleCcTarget::kTune: lo = -12000.0f; hi = 12000.0f; break;
+      case SampleCcTarget::kOffset: lo = 0.0f; hi = 2147483647.0f; break;
+      default: break;
+    }
+    if (m.depth < lo || m.depth > hi) return false;
+  }
+  return true;
+}
+
+// The curves a region's entries name must have finite, bounded points (bad_curve[i]: the instrument's definition of curve i is not).
+bool cc_curves_ok(const velora::ports::SampleRegionDesc& d, const std::array<bool, 256>& bad_curve) noexcept {
+  for (unsigned i = 0; i < d.cc_mod_count && i < velora::ports::kSampleMaxCcMods; ++i)
+    if (bad_curve[d.cc_mods[i].curve]) return false;
+  return true;
+}
+
+// The engine's own starting value of a controller (sfizz: CC7 100, CC10 centre, CC11 127, the rest 0).
+float engine_cc_default(unsigned cc) noexcept { return cc == 7 ? 100.0f : cc == 10 ? 63.5f : cc == 11 ? 127.0f : 0.0f; }
+
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return extension_sane(d) && amp_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && amp_sane(d) && cc_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -84,6 +121,77 @@ float seconds_to_exp_rate(float t, float sr) noexcept {
 float pan_lookup(const std::array<float, 4096>& table, float p) noexcept {
   const long idx = static_cast<long>(std::lround(p * static_cast<float>(kPanSize - 1)));
   return table[static_cast<std::size_t>(std::clamp(idx, 0L, static_cast<long>(kPanSize)))];
+}
+
+// Story 13.5: sfizz Curve::lerpFill on a 128-entry table whose set[] entries are given (the ends always are).
+void curve_lerp_fill(std::array<float, 128>& t, const std::array<bool, 128>& set) noexcept {
+  int left = 0, right = 1;
+  while (right < 128) {
+    for (; right < 128 && !set[static_cast<std::size_t>(right)]; ++right) {}
+    const int length = right - left;
+    if (length > 1) {
+      const float mu = (t[static_cast<std::size_t>(right)] - t[static_cast<std::size_t>(left)]) / static_cast<float>(length);
+      const float start = t[static_cast<std::size_t>(left)];
+      for (int i = 0; i < length; ++i) t[static_cast<std::size_t>(left + i)] = start + mu * static_cast<float>(i);
+    }
+    left = right++;
+  }
+}
+
+// The curve table for SFZ curve index `index`: the instrument's own <curve> definition, else sfizz's predefined curves 0..6, else the linear default.
+std::array<float, 128> build_cc_curve(std::uint8_t index, std::span<const velora::ports::SampleCurve> defs) noexcept {
+  std::array<float, 128> t{};
+  std::array<bool, 128> set{};
+  auto bipolar = [&](float v1, float v2) {
+    t[0] = v1;
+    t[127] = v2;
+    set[0] = set[127] = true;
+    curve_lerp_fill(t, set);
+  };
+  for (const auto& c : defs) {
+    if (c.index != index) continue;
+    t[0] = 0.0f; set[0] = true;  // the ends default to (0, 0) and (127, 1)
+    t[127] = 1.0f; set[127] = true;
+    for (const auto& pt : c.points) {
+      if (pt.x > 127) continue;
+      t[pt.x] = pt.y;
+      set[pt.x] = true;
+    }
+    curve_lerp_fill(t, set);
+    return t;
+  }
+  switch (index) {
+    case 1: bipolar(-1.0f, 1.0f); break;
+    case 2: bipolar(1.0f, 0.0f); break;
+    case 3: bipolar(1.0f, -1.0f); break;
+    case 4:
+      for (int i = 0; i < 128; ++i) { const double x = i / 127.0; t[static_cast<std::size_t>(i)] = static_cast<float>(x * x); }
+      break;
+    case 5:
+      t[0] = 0.0f; t[127] = 1.0f;
+      for (int i = 1; i < 127; ++i) t[static_cast<std::size_t>(i)] = static_cast<float>(std::sqrt(i / 127.0));
+      break;
+    case 6:
+      t[0] = 1.0f; t[127] = 0.0f;
+      for (int i = 1; i < 127; ++i) t[static_cast<std::size_t>(i)] = static_cast<float>(std::sqrt(1.0 - i / 127.0));
+      break;
+    default: bipolar(0.0f, 1.0f); break;  // 0 and every unknown index: the linear default
+  }
+  return t;
+}
+
+// sfizz pan stage gains (Voice::panStageMono / panStageStereo) for a pan in percent.
+void pan_gains(const std::array<float, 4096>& table, float pan, bool stereo, float& chan_l, float& chan_r) noexcept {
+  const float p = std::clamp((pan / 100.0f + 1.0f) * 0.5f, 0.0f, 1.0f);
+  const float pl = pan_lookup(table, p), pr = pan_lookup(table, 1.0f - p);
+  if (stereo) {
+    const float pos = pan_lookup(table, 0.5f);
+    chan_l = pl * pos * kStereoPanCompensation;
+    chan_r = pr * pos * kStereoPanCompensation;
+  } else {
+    chan_l = pl * kMonoPanCompensation;
+    chan_r = pr * kMonoPanCompensation;
+  }
 }
 
 inline void hermite_weights(float c, float w[4]) noexcept {
@@ -152,6 +260,12 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
   const velora::ports::InstrumentView view = src.instrument();
   const float sr = static_cast<float>(cfg_.sample_rate);
   regions.reserve(view.regions.size());
+  std::array<bool, 256> bad_curve{};
+  for (const auto& c : view.curves)
+    for (const auto& pt : c.points)
+      if (!std::isfinite(pt.y) || std::fabs(pt.y) > 1.0e6f || pt.x > 127) bad_curve[c.index] = true;
+  for (const auto& cd : view.cc_defaults)  // Story 13.5: the controller values a part starts with when it binds this bank
+    if (cd.cc <= 127 && std::isfinite(cd.value) && cd.value >= 0.0f && cd.value <= 127.0f) bank->cc_defaults.push_back(cd);
   for (const auto& d : view.regions) {
     RegionRt r;
     r.d = d;
@@ -185,7 +299,7 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
       r.playable = (pcm.channels == 1 || pcm.channels == 2) && pcm.frames > 0 && pcm.left != nullptr &&
                    (pcm.channels == 1 || pcm.right != nullptr) && pcm.sample_rate != 0 &&
                    d.offset < pcm.frames && (r.end_cut < 0 || static_cast<std::int64_t>(d.offset) < r.end_cut) && d.key_lo <= d.key_hi && d.vel_lo <= d.vel_hi &&
-                   region_params_sane(d);
+                   region_params_sane(d) && cc_curves_ok(d, bad_curve);
       if (r.playable) {
         // Pitch ratio at the extreme keys of the range must be finite and sane.
         const float spd = r.speed;
@@ -274,16 +388,21 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
         bank->vel_tables.push_back(t);
       }
     }
-    const float p = std::clamp((d.pan / 100.0f + 1.0f) * 0.5f, 0.0f, 1.0f);
-    const float pl = pan_lookup(pan_table_, p), pr = pan_lookup(pan_table_, 1.0f - p);
-    if (r.stereo) {
-      const float pos = pan_lookup(pan_table_, 0.5f);  // position stage at 0
-      r.chan_l = pl * pos * kStereoPanCompensation;
-      r.chan_r = pr * pos * kStereoPanCompensation;
-    } else {
-      r.chan_l = pl * kMonoPanCompensation;
-      r.chan_r = pr * kMonoPanCompensation;
+    // Story 13.5: CC gates and modulation entries. A region without them keeps every flag false (and the bank its empty tables).
+    if (cc_sane(d)) {
+      r.cc_gate = d.cc_gate_count != 0;
+      r.cc_mod = d.cc_mod_count != 0;
+      for (unsigned i = 0; i < d.cc_mod_count; ++i) {
+        const auto& m = d.cc_mods[i];
+        if (m.target >= velora::ports::SampleCcTarget::kEgDelay) r.eg_cc = true;
+        if (m.cc == 135 || m.cc == 136) bank->uses_cc_random = true;
+        if (bank->cc_curve_slot[m.curve] < 0) {
+          bank->cc_curve_slot[m.curve] = static_cast<std::int16_t>(bank->cc_curves.size());
+          bank->cc_curves.push_back(build_cc_curve(m.curve, view.curves));
+        }
+      }
     }
+    pan_gains(pan_table_, d.pan, r.stereo, r.chan_l, r.chan_r);
 
     r.env_delay = seconds_to_samples(d.ampeg_delay, sr);
     r.env_hold = seconds_to_samples(d.ampeg_hold, sr);
@@ -342,7 +461,10 @@ bool SampleEngine::set_instrument(const velora::ports::SampleSource& src) {
   clear_instrument();
   default_bank_ = prepare(src);
   unplayable_regions_ = default_bank_->unplayable_regions;
-  for (std::uint32_t ch = 0; ch < 16; ++ch) reset_part_keys(ch);
+  for (std::uint32_t ch = 0; ch < 16; ++ch) {
+    reset_part_keys(ch);
+    seed_part_cc(ch);
+  }
   return true;
 }
 
@@ -378,6 +500,29 @@ void SampleEngine::set_part_sample_bank(std::uint32_t part, SampleBank* bank) no
   part_bank_id_[part] = id;
   part_bound_[part] = true;
   reset_part_keys(part);
+  seed_part_cc(part);
+}
+
+// Story 13.5: set_cc / set_hdcc. Seeds win at a bind, except over a controller that received a real message since the previous bind (cc_touched_): a held pedal or a
+// wheel is not overwritten. A controller the previous bank seeded and this one does not name goes back to the engine's own value (cc_seeded_).
+void SampleEngine::seed_part_cc(std::uint32_t channel) noexcept {
+  channel &= 15u;
+  const SampleBank* bank = bank_for(channel);
+  auto& seeded = cc_seeded_[channel];
+  auto& touched = cc_touched_[channel];
+  auto bit = [](const std::array<std::uint64_t, 2>& m, unsigned cc) { return ((m[cc >> 6] >> (cc & 63u)) & 1u) != 0; };
+  std::array<std::uint64_t, 2> now{};
+  if (bank)
+    for (const auto& cd : bank->cc_defaults) {
+      const unsigned cc = cd.cc & 127u;
+      if (bit(touched, cc)) continue;
+      cc_[channel][cc] = cd.value;
+      now[cc >> 6] |= std::uint64_t{1} << (cc & 63u);
+    }
+  for (unsigned cc = 0; cc < 128; ++cc)
+    if (bit(seeded, cc) && !bit(now, cc) && !bit(touched, cc)) cc_[channel][cc] = engine_cc_default(cc);
+  seeded = now;
+  touched = {};
 }
 
 void SampleEngine::clear_part_banks() noexcept {
@@ -420,6 +565,7 @@ bool SampleEngine::set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32
   const double nearest = std::floor(x + 0.5);
   if (std::fabs(x - nearest) < 1e-6) x = nearest;
   cc_[part & 15u][cc] = static_cast<float>(x);
+  cc_touched_[part & 15u][cc >> 6] |= std::uint64_t{1} << (cc & 63u);
   return true;
 }
 
@@ -445,11 +591,13 @@ bool SampleEngine::key_released(std::uint32_t channel, std::uint32_t note) noexc
     const RegionRt& r = bank->regions[ri];
     if (r.d.trigger != velora::ports::SampleTrigger::kReleaseKey) continue;
     if (r.has_keyswitch && !region_switched(r, ks)) continue;
+    if (r.cc_gate && !cc_gate_open(r, channel)) continue;
     if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!drawn) {
       rnd = next_random();
       drawn = true;
+      note_pseudo(bank, channel, note, vel7, false);  // Story 13.5: once per key up
     }
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
     if (!playing_attack_voice(r, channel, true)) continue;
@@ -480,6 +628,71 @@ float SampleEngine::crossfade_target(const RegionRt& r, std::uint32_t channel) c
   return g;
 }
 
+// --- Story 13.5: CC gates, pseudo-CCs and CC modulation, all read once when a voice starts ---------------------------------------
+
+// sfizz Layer::ccSwitched_: every locc/hicc condition holds at the part's controller values (both ends inclusive; the importer already widened hicc by the
+// fill-gap, so a plain comparison is exact).
+bool SampleEngine::cc_gate_open(const RegionRt& r, std::uint32_t channel) const noexcept {
+  const auto& cc = cc_[channel & 15u];
+  for (unsigned i = 0; i < r.d.cc_gate_count; ++i) {
+    const auto& g = r.d.cc_gates[i];
+    const float x = cc[g.cc & 127u];
+    if (!(x >= g.lo && x <= g.hi)) return false;
+  }
+  return true;
+}
+
+// The pseudo-CCs of the event that is starting voices. Called before the region loop of a note on, a note off (trigger=release) and a key up (release_key).
+// A note on advances the part's alternate and key delta, as sfizz's MidiState::noteOnEvent does for every note on (with or without a bank). The two random
+// numbers (135, 136) are drawn only when the bank has a region that reads them, so a bank without such an entry leaves the random sequence untouched.
+void SampleEngine::note_pseudo(const SampleBank* bank, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7, bool note_on) noexcept {
+  const KeyState& ks = ks_[channel & 15u];
+  pseudo_.vel = note_on ? static_cast<float>(vel7) / 127.0f : 0.0f;  // sfizz: the velocity controller is the trigger's only for a note on (0 for a release voice)
+  pseudo_.vel_eg = note_on ? static_cast<float>(vel7) / 127.0f : static_cast<float>(last_vel7_[(channel & 15u) * 128u + (note & 127u)]) / 127.0f;  // a release voice: the released note's own velocity
+  pseudo_.alt = ks.alt;
+  pseudo_.keydelta = ks.keydelta;
+  pseudo_.uni = 0.0f;
+  pseudo_.bi = 0.0f;
+  if (bank != nullptr && bank->uses_cc_random) {
+    pseudo_.uni = next_random();
+    pseudo_.bi = next_random() * 2.0f - 1.0f;
+  }
+}
+
+// The controller value of a modulation entry: normalized (CC / 127) for a real controller and 131, 135, 136, 137; the raw semitone difference for 140 / 141.
+float SampleEngine::cc_norm(unsigned cc, std::uint32_t channel, bool eg) const noexcept {
+  if (cc <= 127) return cc_[channel & 15u][cc] / 127.0f;
+  switch (cc) {
+    case 131: return eg ? pseudo_.vel_eg : pseudo_.vel;
+    case 135: return pseudo_.uni;
+    case 136: return pseudo_.bi;
+    case 137: return pseudo_.alt;
+    case 140: return pseudo_.keydelta;
+    case 141: return std::fabs(pseudo_.keydelta);
+    default: return 0.0f;
+  }
+}
+
+// sfizz Curve::evalNormalized: linear between the table's entries, the input clamped to 0..127 CC units.
+float SampleEngine::cc_curve(const SampleBank& bank, std::uint8_t curve, float norm) const noexcept {
+  const std::int16_t slot = bank.cc_curve_slot[curve];
+  if (slot < 0) return norm;  // unreachable for a prepared bank (every used curve has a table); the linear value is the safe answer
+  const std::array<float, 128>& t = bank.cc_curves[static_cast<std::size_t>(slot)];
+  const float x = std::isfinite(norm) ? std::clamp(norm * 127.0f, 0.0f, 127.0f) : 0.0f;
+  const int i1 = static_cast<int>(x);
+  const int i2 = std::min(127, i1 + 1);
+  const float mu = x - static_cast<float>(i1);
+  return t[static_cast<std::size_t>(i1)] + mu * (t[static_cast<std::size_t>(i2)] - t[static_cast<std::size_t>(i1)]);
+}
+
+// One entry's source value for the modulation matrix targets (amplitude, volume, pan, tune): sfizz's ControllerSource transforms the controller by the curve, except
+// the key deltas, which pass through raw. For the envelope (eg = true) sfizz's EGDescription curves every value, the key deltas included.
+float SampleEngine::cc_mod_value(const SampleBank& bank, const velora::ports::SampleCcMod& m, std::uint32_t channel, bool eg) const noexcept {
+  const float x = cc_norm(m.cc, channel, eg);
+  if (!eg && (m.cc == 140 || m.cc == 141)) return x;
+  return cc_curve(bank, m.curve, x);
+}
+
 std::uint32_t SampleEngine::active_voices() const noexcept {
   std::uint32_t n = 0;
   for (const auto& v : voices_) n += v.active ? 1 : 0;
@@ -488,8 +701,9 @@ std::uint32_t SampleEngine::active_voices() const noexcept {
 
 // --- amplitude envelope: a sample-by-sample port of sfizz's ADSREnvelope --------------------------
 
-void SampleEngine::init_env(Env& e, const RegionRt& r, std::uint32_t channel, std::uint8_t vel7) const noexcept {
+void SampleEngine::init_env(Env& e, const SampleBank& bank, const RegionRt& r, std::uint32_t channel, std::uint8_t vel7) const noexcept {
   e.s = EnvState::kDelay;
+  e.start = r.env_start;
   e.v = r.env_start;
   e.delay_left = r.env_delay;
   e.hold_left = r.env_hold;
@@ -509,15 +723,41 @@ void SampleEngine::init_env(Env& e, const RegionRt& r, std::uint32_t channel, st
     e.sustain = std::clamp(d.ampeg_sustain / 100.0f + vf * (d.vel2sustain / 100.0f), 0.0f, 1.0f);
     e.free_running = e.sustain <= kFreeRunningSustain;
   }
+  if (r.eg_cc) {  // Story 13.5: sfizz EGDescription::get*: (value + velocity * vel2*) + sum of curve(CC) * modifier, evaluated once at note-on (no ampeg_dynamic)
+    const float sr = static_cast<float>(cfg_.sample_rate);
+    const float vf = static_cast<float>(vel7) / 127.0f;
+    const velora::ports::SampleRegionDesc& d = r.d;
+    using T = velora::ports::SampleCcTarget;
+    auto add = [&](T target, float base, float scale) {
+      for (unsigned i = 0; i < d.cc_mod_count; ++i)
+        if (d.cc_mods[i].target == target) base += cc_mod_value(bank, d.cc_mods[i], channel, true) * (d.cc_mods[i].depth * scale);
+      return base;
+    };
+    auto secs = [](float t) { return std::clamp(t, 0.0f, kMaxSeconds); };
+    const float delay = secs(add(T::kEgDelay, d.ampeg_delay, 1.0f));
+    const float attack = secs(add(T::kEgAttack, d.ampeg_attack + vf * d.vel2attack, 1.0f));
+    const float hold = secs(add(T::kEgHold, d.ampeg_hold, 1.0f));
+    const float decay = secs(add(T::kEgDecay, d.ampeg_decay + vf * d.vel2decay, 1.0f));
+    const float release = secs(add(T::kEgRelease, (d.ampeg_release > 0.0f ? d.ampeg_release : kDefaultRelease) + vf * d.vel2release, 1.0f));
+    e.start = std::clamp(add(T::kEgStart, d.ampeg_start / 100.0f, 0.01f), 0.0f, 1.0f);
+    e.v = e.start;
+    e.sustain = std::clamp(add(T::kEgSustain, d.ampeg_sustain / 100.0f + vf * (d.vel2sustain / 100.0f), 0.01f), 0.0f, 1.0f);
+    e.delay_left = seconds_to_samples(delay, sr);
+    e.hold_left = seconds_to_samples(hold, sr);
+    if (!part_engaged_[channel & 15u].test(0)) e.attack_step = seconds_to_lin_rate(attack, sr);
+    e.decay_rate = seconds_to_exp_rate(decay, sr);
+    e.release_rate = seconds_to_exp_rate(release, sr);
+    e.free_running = e.sustain <= kFreeRunningSustain;
+  }
 }
 
-float SampleEngine::env_next(Env& e, const RegionRt& r) const noexcept {
+float SampleEngine::env_next(Env& e, const RegionRt&) const noexcept {
   const float sr = static_cast<float>(cfg_.sample_rate);
   for (;;) {
     switch (e.s) {
       case EnvState::kDelay:
         if (e.delay_left-- > 0) {
-          e.v = r.env_start;
+          e.v = e.start;
           return e.v;
         }
         e.s = EnvState::kAttack;
@@ -632,6 +872,43 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
     base *= std::pow(10.0f, db * 0.05f);
   }
 
+  // Story 13.5: CC modulation of amplitude, volume, pan, tune and offset, read once here (the envelope entries are read in init_env). A region without entries
+  // skips all of it, so its numbers are exactly the ones above.
+  float chan_l = r.chan_l, chan_r = r.chan_r;
+  double start_pos = static_cast<double>(r.d.offset);
+  float cc_ratio = ratio;
+  if (r.cc_mod) {
+    using T = velora::ports::SampleCcTarget;
+    const velora::ports::SampleRegionDesc& d = r.d;
+    float amp = 1.0f, db = 0.0f, pan_add = 0.0f, cents_add = 0.0f;
+    bool has_amp = false, has_db = false, has_pan = false, has_tune = false;
+    std::int64_t off_add = 0;
+    bool has_off = false;
+    for (unsigned i = 0; i < d.cc_mod_count; ++i) {
+      const velora::ports::SampleCcMod& m = d.cc_mods[i];
+      switch (m.target) {
+        case T::kAmplitude: amp *= (m.depth / 100.0f) * cc_mod_value(bank, m, channel, false); has_amp = true; break;  // multiplicative: a depth of 0 silences, as sfizz
+        case T::kVolume: db += m.depth * cc_mod_value(bank, m, channel, false); has_db = true; break;
+        case T::kPan: pan_add += m.depth * cc_mod_value(bank, m, channel, false); has_pan = true; break;
+        case T::kTune: cents_add += m.depth * cc_mod_value(bank, m, channel, false); has_tune = true; break;
+        case T::kOffset:  // sfizz sampleOffset(): += int64(depth * controller), no curve
+          off_add += static_cast<std::int64_t>(m.depth * cc_norm(m.cc, channel, false));
+          has_off = true;
+          break;
+        default: break;
+      }
+    }
+    if (has_amp) base *= std::clamp(amp, 0.0f, kMaxAmpGain);
+    if (has_db) base *= std::pow(10.0f, std::clamp(db, -kMaxAmpDb, kMaxAmpDb) * 0.05f);
+    if (base > kMaxAmpGain) base = kMaxAmpGain;
+    if (has_pan) pan_gains(pan_table_, std::clamp(d.pan + pan_add, -1.0e4f, 1.0e4f), r.stereo, chan_l, chan_r);
+    if (has_tune) cc_ratio = std::clamp(std::pow(2.0f, (cents + std::clamp(cents_add, -12000.0f, 12000.0f)) / 1200.0f) * r.speed, kMinRatio, kMaxRatio);
+    if (has_off) {  // clamped to the resident part of the sample (a streamed tail is never a start position)
+      const std::int64_t last = static_cast<std::int64_t>(r.end_cut >= 0 ? std::min<std::uint64_t>(r.frames, static_cast<std::uint64_t>(r.end_cut)) : r.frames) - 1;
+      start_pos = static_cast<double>(std::clamp<std::int64_t>(static_cast<std::int64_t>(d.offset) + off_add, 0, std::max<std::int64_t>(last, 0)));
+    }
+  }
+
   release_stream(*v);  // a free slot holds no ring (every end gives it back); defence in depth, so a ring can never leak through a reused slot
   *v = Voice{};
   v->active = true;
@@ -642,12 +919,12 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   v->bank = &bank;
   v->vel7 = vel7;
   v->start_time = clock_;
-  v->pos = static_cast<double>(r.d.offset);
-  v->ratio = ratio;
-  v->gain_l = base * r.chan_l;
-  v->gain_r = base * r.chan_r;
+  v->pos = start_pos;
+  v->ratio = cc_ratio;
+  v->gain_l = base * chan_l;
+  v->gain_r = base * chan_r;
   v->base_gain = base;
-  init_env(v->env, r, channel, vel7);
+  init_env(v->env, bank, r, channel, vel7);
   if (r.has_xfade) {  // sfizz resetCrossfades(): the smoother starts at the current gain, so a new note does not ramp
     v->xf_tgt = crossfade_target(r, channel);
     v->xf_cur = v->xf_tgt;
@@ -692,17 +969,22 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
   KeyState& ks = ks_[channel];
   const bool others_held = ks.others_held(static_cast<int>(note));  // Story 13.3: before this key goes down (first / legato)
   ks.set_held(static_cast<int>(note), true);  // the key state follows the keyboard even when the part has no (or an empty) instrument
-  if (!bank || bank->regions.empty()) {
-    ks.prev = static_cast<std::int16_t>(note);
-    return EngineStatus::kOk;
-  }
   const std::uint32_t v16 = std::min<std::uint32_t>(velocity16, 65535u);
   // 7-bit velocity, as MIDI 1.0 and SFZ define it (the UMP value is rounded to the nearest step).
   std::uint8_t vel7 = static_cast<std::uint8_t>((v16 * 127u + 32767u) / 65535u);
   if (vel7 == 0) vel7 = 1;  // a note on is never velocity 0
+  // Story 13.5, sfizz MidiState::noteOnEvent (every note on, bank or not): the key delta against the previous note on, the alternate (0, 1, 0, ...), the velocity.
+  ks.keydelta = ks.prev >= 0 ? static_cast<float>(static_cast<int>(note) - static_cast<int>(ks.prev)) : 0.0f;
+  ks.alt = ks.alt_next;
+  ks.alt_next = ks.alt_next == 0.0f ? 1.0f : 0.0f;
+  if (!bank || bank->regions.empty()) {
+    ks.prev = static_cast<std::int16_t>(note);
+    return EngineStatus::kOk;
+  }
   last_vel7_[(channel & 15u) * 128u + note] = vel7;
   last_bank_[(channel & 15u) * 128u + note] = bank->id;
   const float rnd = next_random();
+  note_pseudo(bank, channel, note, vel7, true);  // after rnd: a bank without a 135 / 136 entry draws nothing here
 
   // Keyswitch state first (sfizz order): the key goes down, and a keyswitch key becomes the part's last switch, before any region
   // is looked at, so a region mapped to the keyswitch key itself already follows it.
@@ -717,6 +999,7 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
     using Trig = velora::ports::SampleTrigger;
     if (r.d.trigger == Trig::kFirst ? others_held : r.d.trigger == Trig::kLegato ? !others_held : r.d.trigger != Trig::kAttack) continue;
     if (r.has_keyswitch && !region_switched(r, ks)) continue;
+    if (r.cc_gate && !cc_gate_open(r, channel)) continue;  // Story 13.5: locc / hicc at the controller values of this note on
     if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
@@ -774,15 +1057,21 @@ EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t 
   SampleBank* bank = bank_for(channel);
   const std::uint64_t started_on = last_bank_[(channel & 15u) * 128u + note];
   if (started_on && (!bank || started_on != bank->id)) bank = nullptr;  // rebound while held: no release-trigger lookup on a bank the note never used
+  bool pseudo_done = false;  // Story 13.5: the pseudo-CC randoms are drawn lazily, once a release region passes its gates, so a note off without one consumes none
   for (std::uint32_t i = 0; bank && i < bank->note_begin[note + 1] - bank->note_begin[note]; ++i) {
     const std::uint32_t ri = bank->note_list[bank->note_begin[note] + i];
     const RegionRt& r = bank->regions[ri];
     if (r.d.trigger != velora::ports::SampleTrigger::kRelease) continue;
     if (r.has_keyswitch && !region_switched(r, ks_[channel])) continue;
+    if (r.cc_gate && !cc_gate_open(r, channel)) continue;
     if (!bank->seq_switched[ri]) continue;
     if (vel7 < r.d.vel_lo || vel7 > r.d.vel_hi) continue;
     if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
-    if (!playing_attack_voice(r, channel, !by_release_velocity)) continue;  // by release velocity: the layer is chosen by it, the attack voice only has to be alive
+    if (!playing_attack_voice(r, channel, !by_release_velocity)) continue;
+    if (!pseudo_done) {
+      note_pseudo(bank, channel, note, vel7, false);
+      pseudo_done = true;
+    }  // by release velocity: the layer is chosen by it, the attack voice only has to be alive
     if (!r.playable) {
       ++skipped_unplayable_;
       continue;

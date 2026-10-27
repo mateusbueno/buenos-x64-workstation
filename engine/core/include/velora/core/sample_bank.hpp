@@ -37,6 +37,9 @@ struct SampleBankRegion {
   std::int32_t vel_table = -1;
   float amp_veltrack = 1.0f, key_gain_db = 0.0f;
   std::uint8_t key_center = 60;
+  // Story 13.5: the region has CC gates (cc_gate), CC modulation entries (cc_mod) and, among them, entries on the amplitude envelope (eg_cc) or the pseudo-CCs
+  // 135 / 136 (a bank with one draws two extra random numbers per note on, see SampleBank::uses_cc_random).
+  bool cc_gate = false, cc_mod = false, eg_cc = false;
   bool uses_sequence = false;
   bool loops = false;  // loop_continuous / loop_sustain with a valid loop range
   std::int64_t loop_start = 0, loop_end = 0, loop_size = 0;
@@ -77,6 +80,12 @@ struct SampleBank {
   // bank, this cannot. Parts compare it to tell "the same instrument again" from "another instrument".
   std::uint64_t id = 0;
   std::vector<SampleBankRegion> regions;
+  // Story 13.5: the curve tables of the CC modulation entries (128 entries, sfizz Curve), built at prepare; cc_curve_slot[c] indexes it for SFZ curve index c
+  // (-1 = not used by any region). cc_defaults: the controller values a part starts with when it binds this bank (set_cc / set_hdcc).
+  std::vector<std::array<float, 128>> cc_curves;
+  std::array<std::int16_t, 256> cc_curve_slot = [] { std::array<std::int16_t, 256> a{}; a.fill(-1); return a; }();
+  std::vector<velora::ports::SampleCcDefault> cc_defaults;
+  bool uses_cc_random = false;
   std::vector<std::array<float, 128>> vel_tables;  // Story 13.4: the amp_velcurve_N curves, one table of 128 entries per region that has points
   std::vector<std::uint32_t> note_list;         // region indices, grouped by note
   std::array<std::uint32_t, 129> note_begin{};  // note n uses note_list[note_begin[n], note_begin[n+1])

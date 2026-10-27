@@ -1,0 +1,15 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.02
+<curve> curve_index=7 v000=0 v064=0.9 v127=1
+<curve> curve_index=8 v000=1 v127=0
+<region> sample=a.wav lokey=60 hikey=60 pitch_keycenter=60 amplitude_oncc20=100
+<region> sample=b.wav lokey=62 hikey=62 pitch_keycenter=62 amplitude_oncc20=80 amplitude_curvecc20=7
+<region> sample=c.wav lokey=64 hikey=64 pitch_keycenter=64 volume_oncc21=-12
+<region> sample=a.wav lokey=65 hikey=65 pitch_keycenter=65 pan=-20 pan_oncc22=100
+<region> sample=st.wav lokey=67 hikey=67 pitch_keycenter=67 pan_oncc22=-60 pan_curvecc22=8
+<region> sample=b.wav lokey=69 hikey=69 pitch_keycenter=69 tune_oncc23=700
+<region> sample=c.wav lokey=71 hikey=71 pitch_keycenter=71 tune=10 tune_cc24=-300 tune_curvecc24=4
+<region> sample=d.wav lokey=72 hikey=72 pitch_keycenter=72 amplitude_cc25=100 amplitude_curvecc25=5
+<region> sample=a.wav lokey=74 hikey=74 pitch_keycenter=74 offset_oncc26=5000
+<region> sample=b.wav lokey=76 hikey=76 pitch_keycenter=76 gain_cc27=-20 gain_curvecc27=6

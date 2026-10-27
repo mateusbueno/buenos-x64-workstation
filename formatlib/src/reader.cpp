@@ -279,7 +279,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
-  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0;
+  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -436,6 +436,73 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
             return Error::kCorruptManifest;
         }
       }
+      if (minor >= 4) {  // the cc table (Story 13.5) follows the minor 3 table
+        const std::uint32_t n_cc = c.u32();
+        if (!c.ok() || n_cc > n_regions || n_cc > c.remaining() / kCcRecordFixedSize) return Error::kCorruptManifest;
+        total_cc += n_cc;
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_cc; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          CcMap& m = rg.cc;
+          m.gate_count = c.u8(); m.mod_count = c.u8();
+          const std::uint8_t pad0 = c.u8(), pad1 = c.u8();
+          if (!c.ok() || pad0 || pad1 || m.gate_count > kMaxCcGates || m.mod_count > kMaxCcMods ||
+              m.gate_count > c.remaining() / kCcGateSize ||
+              std::size_t(m.gate_count) * kCcGateSize + std::size_t(m.mod_count) * kCcModSize > c.remaining())
+            return Error::kCorruptManifest;
+          for (unsigned e = 0; e < m.gate_count; ++e) {
+            m.gates[e].cc = c.u8();
+            const std::uint8_t q0 = c.u8(), q1 = c.u8(), q2 = c.u8();
+            m.gates[e].lo = c.f32(); m.gates[e].hi = c.f32();
+            if (!c.ok() || q0 || q1 || q2) return Error::kCorruptManifest;
+          }
+          for (unsigned e = 0; e < m.mod_count; ++e) {
+            const std::uint8_t tg = c.u8();
+            m.mods[e].cc = c.u8(); m.mods[e].curve = c.u8();
+            const std::uint8_t q0 = c.u8();
+            m.mods[e].depth = c.f32();
+            if (!c.ok() || q0 || tg > kMaxCcTarget) return Error::kCorruptManifest;
+            m.mods[e].target = static_cast<CcTarget>(tg);
+          }
+          // Canonical: a record exists only for a region that really needs it.
+          if (!has_cc_extension(rg) ||
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+        const std::uint32_t n_def = c.u32();
+        if (!c.ok() || n_def > 128 || n_def > c.remaining() / kCcDefaultSize) return Error::kCorruptManifest;
+        for (std::uint32_t k = 0; k < n_def; ++k) {
+          CcDefault d;
+          d.cc = c.u8();
+          const std::uint8_t q0 = c.u8(), q1 = c.u8(), q2 = c.u8();
+          d.value = c.f32();
+          if (!c.ok() || q0 || q1 || q2) return Error::kCorruptManifest;
+          ins.cc_setup.defaults.push_back(d);
+        }
+        const std::uint32_t n_cur = c.u32();
+        if (!c.ok() || n_cur > 256 || n_cur > c.remaining() / kCcCurveFixedSize) return Error::kCorruptManifest;
+        for (std::uint32_t k = 0; k < n_cur; ++k) {
+          CurveDef cd;
+          cd.index = c.u8();
+          const std::uint8_t q0 = c.u8();
+          const std::uint32_t np_lo = c.u8(), np_hi = c.u8(), np = np_lo | (np_hi << 8);
+          if (!c.ok() || q0 || np > kMaxCurvePoints || np > c.remaining() / kCcPointSize) return Error::kCorruptManifest;
+          for (std::uint32_t e = 0; e < np; ++e) {
+            CurvePoint pt;
+            pt.x = c.u8();
+            const std::uint8_t q1 = c.u8(), q2 = c.u8(), q3 = c.u8();
+            pt.y = c.f32();
+            if (!c.ok() || q1 || q2 || q3) return Error::kCorruptManifest;
+            cd.points.push_back(pt);
+          }
+          ins.cc_setup.curves.push_back(std::move(cd));
+        }
+        if (validate_cc_setup(ins.cc_setup) != Error::kNone) return Error::kCorruptManifest;
+        if (ins.cc_setup.any()) ++total_cc_setup;
+      }
     }
     r.instruments.push_back(std::move(ins));
   }
@@ -445,7 +512,8 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   // content must not have two encodings, hence two bundle ids).
   if (minor == 1 && total_ext == 0) return Error::kCorruptManifest;
   if (minor == 2 && total_trig == 0) return Error::kCorruptManifest;
-  if (minor >= 3 && total_amp == 0) return Error::kCorruptManifest;
+  if (minor == 3 && total_amp == 0) return Error::kCorruptManifest;
+  if (minor >= 4 && total_cc == 0 && total_cc_setup == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index.resize(n_blocks);

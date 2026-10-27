@@ -72,6 +72,37 @@ void put_amp(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r)
     put_f32(v, a.curve[i].gain);
   }
 }
+
+void put_cc(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  const CcMap& m = r.cc;
+  put_u32(v, index);
+  put_u8(v, m.gate_count); put_u8(v, m.mod_count); put_u8(v, 0); put_u8(v, 0);
+  for (unsigned i = 0; i < m.gate_count; ++i) {
+    put_u8(v, m.gates[i].cc); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+    put_f32(v, m.gates[i].lo); put_f32(v, m.gates[i].hi);
+  }
+  for (unsigned i = 0; i < m.mod_count; ++i) {
+    put_u8(v, static_cast<std::uint8_t>(m.mods[i].target)); put_u8(v, m.mods[i].cc); put_u8(v, m.mods[i].curve); put_u8(v, 0);
+    put_f32(v, m.mods[i].depth);
+  }
+}
+
+void put_cc_setup(std::vector<std::uint8_t>& v, const InstrumentCcSetup& s) {
+  put_u32(v, static_cast<std::uint32_t>(s.defaults.size()));
+  for (const auto& d : s.defaults) {
+    put_u8(v, d.cc); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+    put_f32(v, d.value);
+  }
+  put_u32(v, static_cast<std::uint32_t>(s.curves.size()));
+  for (const auto& c : s.curves) {
+    put_u8(v, c.index); put_u8(v, 0);
+    put_u8(v, static_cast<std::uint8_t>(c.points.size() & 0xFF)); put_u8(v, static_cast<std::uint8_t>(c.points.size() >> 8));
+    for (const auto& p : c.points) {
+      put_u8(v, p.x); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+      put_f32(v, p.y);
+    }
+  }
+}
 }  // namespace
 
 BundleWriter::BundleWriter(WriterOptions opt) : opt_(opt) {}
@@ -85,6 +116,13 @@ Error BundleWriter::set_source_id(std::string_view source_id) {
   if (source_id.empty()) return Error::kInvalidArgument;
   source_id_ = std::string(source_id);
   has_source_id_ = true;
+  return Error::kNone;
+}
+
+Error BundleWriter::set_instrument_cc_setup(std::size_t instrument, const InstrumentCcSetup& setup) {
+  if (instrument >= instruments_.size()) return Error::kInvalidArgument;
+  if (validate_cc_setup(setup) != Error::kNone) return Error::kInvalidArgument;
+  instruments_[instrument].cc_setup = setup;
   return Error::kNone;
 }
 
@@ -230,12 +268,18 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   bool needs_amp = false;
   for (const auto& ins : instruments_)
     for (const auto& r : ins.regions) needs_amp = needs_amp || has_amp_extension(r);
+  bool needs_cc = false;
+  for (const auto& ins : instruments_) {
+    needs_cc = needs_cc || ins.cc_setup.any();
+    for (const auto& r : ins.regions) needs_cc = needs_cc || has_cc_extension(r);
+  }
+  if (needs_cc && opt_.format_minor < 4) return Error::kInvalidArgument;
   if (needs_amp && opt_.format_minor < 3) return Error::kInvalidArgument;
   if (needs_trig && opt_.format_minor < 2) return Error::kInvalidArgument;
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
   // a minor N bundle carries the tables of every lower minor too (possibly empty)
-  const std::uint32_t minor = needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
+  const std::uint32_t minor = needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
   const std::uint32_t version_word =
       (protect ? kProtectedFormatVersion : opt_.format_version) | (minor << kMinorShift);
   Uuid library_id = library_id_;
@@ -355,6 +399,14 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
         put_u32(manifest, n_amp);
         for (std::size_t k = 0; k < ins.regions.size(); ++k)
           if (has_amp_extension(ins.regions[k])) put_amp(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+      }
+      if (minor >= 4) {
+        std::uint32_t n_cc = 0;
+        for (const auto& r : ins.regions) n_cc += has_cc_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_cc);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_cc_extension(ins.regions[k])) put_cc(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+        put_cc_setup(manifest, ins.cc_setup);
       }
     }
   }

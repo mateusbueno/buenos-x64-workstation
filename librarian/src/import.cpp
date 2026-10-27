@@ -746,6 +746,9 @@ ImportResult import_sfz(const ImportOptions& opt) {
     res.reasons = std::move(region_problems);
     return res;
   }
+  // Story 13.5: the CC defaults and <curve> tables the regions use (empty for every library that has none: the bundle keeps its bytes).
+  if (writer.set_instrument_cc_setup(inst.value(), parsed.cc_setup) != fmt::Error::kNone)
+    return fail(Status::kInvalidArgument, opt.sfz_path + ": the CC setup (set_cc / <curve>) is not valid");
   res.sample_count = parsed.samples.size();
   res.region_count = regions.size();
   if (timbre_hook(opt, "timbre-done", 0)) return fail(Status::kAborted, "stopped at timbre-done");
@@ -756,6 +759,7 @@ ImportResult import_sfz(const ImportOptions& opt) {
       return "staged bundle has the wrong instrument/sample count";
     if (rd.instruments()[0].regions != regions)
       return "staged region table differs from the parsed region table";
+    if (rd.instruments()[0].cc_setup != parsed.cc_setup) return "staged CC setup differs from the parsed one";
     for (std::size_t i = 0; i < parsed.samples.size(); ++i) {
       auto w = fmt::load_wav_file(parsed.samples[i].path, kStrictWav);  // fresh decode of the source
       if (!w || !sample_matches(rd, i, w.value()))

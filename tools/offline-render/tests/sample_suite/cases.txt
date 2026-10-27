@@ -27,3 +27,8 @@ amp_velcurve      hermite  2  -60
 amp_gain          hermite  2  -60
 ampeg_vel2        hermite  2  -60
 amp_keytrack      hermite  2  -60
+# Story 13.5: CC gates (locc/hicc, set_cc), CC modulation at voice start (*_oncc, *_curvecc) and the sfizz pseudo-CCs 131, 137, 140, 141.
+cc_gates          hermite  2  -60
+cc_modulation     hermite  2  -60
+cc_envelope       hermite  2  -60
+cc_pseudo         hermite  2  -60

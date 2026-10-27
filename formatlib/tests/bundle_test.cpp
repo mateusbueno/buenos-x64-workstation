@@ -789,7 +789,7 @@ void test_extensions() {
     CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
     const Bytes good = w.finalize().take();
     CHECK(BundleReader::open_memory(good).ok());
-    { Bytes b = good; wr32(b, 4, 2u | (4u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 2u | (5u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 3u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 1u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 2u); CHECK(!BundleReader::open_memory(b).ok()); }  // word differs from the manifest's
@@ -1168,6 +1168,224 @@ void test_extensions() {
   }
 }
 
+// Story 13.5: format 2.4, the cc table (CC gates, CC modulation entries) and the instrument CC setup (set_cc defaults, <curve> tables).
+void test_cc_table() {
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
+  auto version_word = [](const Bytes& b) { return layout::get_u32(b.data() + 4); };
+  Region plain;
+  Region gated = plain;
+  gated.cc.gate_count = 2;
+  gated.cc.gates[0] = {64, 64.f, 100.f};
+  gated.cc.gates[1] = {70, 0.f, std::nextafter(11.f, 0.f)};
+  Region modded = sample_region(0);
+  modded.cc.mod_count = 4;
+  modded.cc.mods[0] = {CcTarget::kAmplitude, 93, 7, 100.f};
+  modded.cc.mods[1] = {CcTarget::kTune, 94, 0, -1200.f};
+  modded.cc.mods[2] = {CcTarget::kOffset, 131, 0, 5000.f};
+  modded.cc.mods[3] = {CcTarget::kEgRelease, 137, 9, 2.5f};
+  Region all = ext_region(0);  // minors 1, 2, 3 and 4 content in one region
+  all.trigger = TriggerMode::kLegato; all.has_end = true; all.end = 900; all.amp.veltrack = 40.f;
+  all.cc = modded.cc; all.cc.gate_count = 1; all.cc.gates[0] = {1, 10.f, 20.f};
+  const std::vector<Region> regs = {plain, gated, modded, all};
+  InstrumentCcSetup setup;
+  setup.defaults = {{64, 90.f}, {102, 127.f}};
+  setup.curves = {{7, {{0, 0.f}, {64, 0.9f}, {127, 1.f}}}, {9, {{10, -0.5f}}}, {200, {}}};
+  {  // round trip: two instruments, only the first has a setup; the second still carries the empty tables
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    for (const auto& r : regs) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, plain), Error::kNone);
+    CHECK_ERR(w.set_instrument_cc_setup(i0, setup), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (4u << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == 4);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == regs);
+      CHECK(r.value().instruments()[0].cc_setup == setup);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && !r.value().instruments()[1].cc_setup.any());
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    CHECK(w.finalize().take() == b);  // deterministic
+    // The N-1 writer (minor ceiling 3) refuses cc regions and a setup.
+    BundleWriter w3(WriterOptions{kFormatVersion, 3});
+    const std::size_t j0 = w3.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w3.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w3.add_region(j0, gated), Error::kNone);
+    CHECK_ERR(w3.finalize().error(), Error::kInvalidArgument);
+    BundleWriter w3b(WriterOptions{kFormatVersion, 3});
+    const std::size_t j1 = w3b.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w3b.add_sample(j1, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w3b.add_region(j1, plain), Error::kNone);
+    CHECK_ERR(w3b.set_instrument_cc_setup(j1, setup), Error::kNone);
+    CHECK_ERR(w3b.finalize().error(), Error::kInvalidArgument);
+  }
+  {  // a setup alone (no cc region) stamps minor 4; an empty setup stamps nothing
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_region(i0, plain), Error::kNone);
+    const Bytes none = w.finalize().take();
+    CHECK(version_word(none) == 2u);
+    CHECK_ERR(w.set_instrument_cc_setup(i0, InstrumentCcSetup{}), Error::kNone);
+    CHECK(w.finalize().take() == none);
+    InstrumentCcSetup only;
+    only.defaults = {{1, 5.5f}};
+    CHECK_ERR(w.set_instrument_cc_setup(i0, only), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (4u << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().instruments()[0].cc_setup == only);
+  }
+  {  // bundles without the new fields keep their exact bytes whatever the writer's ceiling
+    Region trig = plain; trig.trigger = TriggerMode::kReleaseKey;
+    Region amp = plain; amp.amp.veltrack = 10.f;
+    for (const Region& rg : {plain, sample_region(0), ext_region(0), trig, amp}) {
+      Bytes by[5];
+      for (std::uint32_t m = 0; m < 5; ++m) {
+        if ((m == 0 && has_extension(rg)) || (m < 2 && has_trigger_extension(rg)) || (m < 3 && has_amp_extension(rg))) continue;
+        BundleWriter x(WriterOptions{kFormatVersion, m});
+        const std::size_t k = x.add_instrument("A", "a.sfz").value();
+        CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+        CHECK_ERR(x.add_region(k, rg), Error::kNone);
+        by[m] = x.finalize().take();
+      }
+      for (std::uint32_t m = 0; m < 4; ++m) CHECK(by[4] == by[m] || by[m].empty());
+      const std::uint32_t want = has_amp_extension(rg) ? 3u : has_trigger_extension(rg) ? 2u : has_extension(rg) ? 1u : 0u;
+      CHECK(version_word(by[4]) == (2u | (want << 16)));
+    }
+  }
+  // Writer-side validation.
+  {
+    BundleWriter v;
+    const std::size_t vi = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(vi, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad = [&](auto mutate) { Region x = gated; x.cc.mod_count = 1; x.cc.mods[0] = {CcTarget::kPan, 7, 0, 10.f}; mutate(x); return v.add_region(vi, x); };
+    CHECK_ERR(bad([](Region&) {}), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[0].cc = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[1].cc = 64; }), Error::kInvalidArgument);          // not ascending
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[0].hi = 128.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[0].lo = -1.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[0].lo = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[0].lo = 101.f; }), Error::kInvalidArgument);        // lo > hi: an inverted gate
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[0].lo = -0.f; }), Error::kInvalidArgument);        // -0.0 would be a second encoding
+    CHECK_ERR(bad([](Region& x) { x.cc.gates[3] = {9, 1.f, 2.f}; }), Error::kInvalidArgument);  // unused entry not default
+    CHECK_ERR(bad([](Region& x) { x.cc.gate_count = kMaxCcGates + 1; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].cc = 128; }), Error::kInvalidArgument);          // pitch bend is not a modulation source
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].cc = 133; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].cc = 141; }), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].target = static_cast<CcTarget>(12); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].depth = 201.f; }), Error::kInvalidArgument);     // pan range
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].target = CcTarget::kAmplitude; x.cc.mods[0].depth = -1.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].target = CcTarget::kEgAttack; x.cc.mods[0].depth = 101.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.mods[0].depth = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.cc.mod_count = 2; x.cc.mods[1] = x.cc.mods[0]; }), Error::kInvalidArgument);  // duplicate (target, cc)
+    CHECK_ERR(bad([](Region& x) { x.cc.mod_count = 2; x.cc.mods[1] = {CcTarget::kAmplitude, 1, 0, 1.f}; }), Error::kInvalidArgument);  // not ascending by target
+    CHECK_ERR(bad([](Region& x) { x.cc.mod_count = kMaxCcMods + 1; }), Error::kInvalidArgument);
+    // setups
+    auto set_bad = [&](auto mutate) { InstrumentCcSetup s = setup; mutate(s); return v.set_instrument_cc_setup(vi, s); };
+    CHECK_ERR(set_bad([](InstrumentCcSetup&) {}), Error::kNone);
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.defaults[0].cc = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.defaults[1].cc = 64; }), Error::kInvalidArgument);
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.defaults[0].value = 128.f; }), Error::kInvalidArgument);
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.curves[1].index = 7; }), Error::kInvalidArgument);  // not ascending
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.curves[0].points[1].x = 0; }), Error::kInvalidArgument);
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.curves[0].points[2].x = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.curves[0].points[0].y = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(set_bad([](InstrumentCcSetup& s) { s.curves[0].points.assign(129, CurvePoint{}); }), Error::kInvalidArgument);
+    CHECK_ERR(v.set_instrument_cc_setup(99, setup), Error::kInvalidArgument);
+  }
+  // Corruption of the cc table (the tail of the manifest: the last region record, then the defaults and the curves).
+  BundleWriter u;
+  const std::size_t ui = u.add_instrument("A", "a.sfz").value();
+  CHECK_ERR(u.add_sample(ui, {"s", f, 1000, pcm}), Error::kNone);
+  Region g1 = plain;
+  g1.cc.gate_count = 1; g1.cc.gates[0] = {64, 64.f, 100.f};
+  g1.cc.mod_count = 1; g1.cc.mods[0] = {CcTarget::kPan, 7, 3, 25.f};
+  InstrumentCcSetup su;
+  su.defaults = {{64, 90.f}};
+  su.curves = {{3, {{0, 0.f}, {127, 1.f}}}};
+  CHECK_ERR(u.add_region(ui, plain), Error::kNone);
+  CHECK_ERR(u.add_region(ui, g1), Error::kNone);
+  CHECK_ERR(u.set_instrument_cc_setup(ui, su), Error::kNone);
+  const Bytes good = u.finalize().take();
+  const std::size_t end = rd64(good, 8) + rd64(good, 16);
+  const std::size_t setup_size = 4 + layout::kCcDefaultSize + 4 + layout::kCcCurveFixedSize + 2 * layout::kCcPointSize;
+  const std::size_t rec = end - setup_size - (layout::kCcRecordFixedSize + layout::kCcGateSize + layout::kCcModSize);
+  CHECK(layout::kCcRecordFixedSize == 8 && layout::kCcGateSize == 12 && layout::kCcModSize == 8 && layout::kCcDefaultSize == 8);
+  CHECK(layout::get_u32(good.data() + rec - 4) == 1u && layout::get_u32(good.data() + rec) == 1u);  // n_cc, region index 1
+  CHECK(good[rec + 4] == 1 && good[rec + 5] == 1 && good[rec + 6] == 0 && good[rec + 7] == 0);
+  auto put_f32 = [](Bytes& by, std::size_t at, float v) { std::uint32_t u32; std::memcpy(&u32, &v, 4); wr32(by, at, u32); };
+  auto expect_bad = [&](Bytes bad_bytes, const char* what) {
+    rehash(bad_bytes);
+    auto rb = BundleReader::open_memory(bad_bytes);
+    if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL cc table corruption not rejected: %s\n", what); ++g_fail; }
+  };
+  const std::size_t gate0 = rec + 8, mod0 = gate0 + 12, def0 = end - setup_size + 4, cur0 = def0 + 8 + 4;
+  { Bytes b = good; b[gate0] = 200; expect_bad(b, "gate controller above 127"); }
+  { Bytes b = good; put_f32(b, gate0 + 4, 200.f); expect_bad(b, "gate lo above 127"); }
+  { Bytes b = good; put_f32(b, gate0 + 8, std::nanf("")); expect_bad(b, "NaN gate hi"); }
+  { Bytes b = good; b[gate0 + 1] = 1; expect_bad(b, "gate padding"); }
+  { Bytes b = good; b[rec + 4] = 9; expect_bad(b, "gate count above the bound"); }
+  { Bytes b = good; b[rec + 5] = 17; expect_bad(b, "mod count above the bound"); }
+  { Bytes b = good; b[rec + 6] = 1; expect_bad(b, "record padding"); }
+  { Bytes b = good; b[mod0] = 12; expect_bad(b, "target above 11"); }
+  { Bytes b = good; b[mod0 + 1] = 133; expect_bad(b, "unsupported modulation source"); }
+  { Bytes b = good; b[mod0 + 3] = 1; expect_bad(b, "modulation padding"); }
+  { Bytes b = good; put_f32(b, mod0 + 4, 500.f); expect_bad(b, "depth beyond the target's range"); }
+  { Bytes b = good; wr32(b, rec, 5); expect_bad(b, "region index out of range"); }
+  { Bytes b = good; wr32(b, rec - 4, 3); expect_bad(b, "n_cc larger than regions"); }
+  { Bytes b = good; b[def0] = 200; expect_bad(b, "default controller above 127"); }
+  { Bytes b = good; put_f32(b, def0 + 4, 300.f); expect_bad(b, "default value above 127"); }
+  { Bytes b = good; wr32(b, def0 - 4, 200); expect_bad(b, "n_defaults beyond the bound"); }
+  { Bytes b = good; b[cur0 + 1] = 1; expect_bad(b, "curve padding"); }
+  { Bytes b = good; b[cur0 + 2] = 9; expect_bad(b, "curve point count beyond the record"); }
+  { Bytes b = good; b[cur0 + 4 + 8] = 0; expect_bad(b, "curve points not ascending"); }
+  { Bytes b = good; put_f32(b, cur0 + 4 + 4, std::nanf("")); expect_bad(b, "NaN curve value"); }
+  {  // a record for a region with no gate or entry is non-canonical
+    Bytes b = good;
+    b[rec + 4] = 0; b[rec + 5] = 0;
+    b.erase(b.begin() + rec + 8, b.begin() + rec + 8 + layout::kCcGateSize + layout::kCcModSize);
+    const std::size_t cut = layout::kCcGateSize + layout::kCcModSize;
+    const std::size_t io = rd64(b, 24), is = rd64(b, 32);
+    wr64(b, 16, rd64(b, 16) - cut); wr64(b, 24, io - cut); wr64(b, 40, rd64(b, 40) - cut); wr64(b, 56, rd64(b, 56) - cut);
+    for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io - cut + e * 48, rd64(b, io - cut + e * 48) - cut);
+    expect_bad(b, "empty cc record");
+  }
+  for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+    CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+  for (std::size_t off = rec - 4; off < end; ++off)
+    for (int bit = 0; bit < 8; ++bit) {
+      Bytes bad_bytes = good;
+      bad_bytes[off] ^= std::uint8_t(1 << bit);
+      rehash(bad_bytes);
+      auto r3 = BundleReader::open_memory(bad_bytes);
+      if (!r3.ok() && r3.error() != Error::kCorruptManifest) { std::printf("FAIL cc flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error())); ++g_fail; }
+    }
+  // A minor 4 stamp on a bundle with no cc record, default or curve is non-canonical; so is a newer minor.
+  {
+    BundleWriter x;
+    const std::size_t k = x.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(x.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+    Region a = plain; a.amp.veltrack = 10.f;
+    CHECK_ERR(x.add_region(k, a), Error::kNone);
+    Bytes b = x.finalize().take();  // minor 3
+    const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+    b.insert(b.begin() + mo + ms, 12, std::uint8_t(0));  // n_cc = 0, n_defaults = 0, n_curves = 0
+    wr64(b, 16, ms + 12); wr64(b, 24, io + 12); wr64(b, 40, rd64(b, 40) + 12); wr64(b, 56, rd64(b, 56) + 12);
+    for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 12 + e * 48, rd64(b, io + 12 + e * 48) + 12);
+    wr32(b, 4, 2u | (4u << 16));
+    wr32(b, mo, 2u | (4u << 16));
+    rehash(b);
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    wr32(b, 4, 2u | (5u << 16));
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
+  }
+}
+
 void test_regions() {
   const PcmFormat f{2, 16, false, 48000};
   const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
@@ -1429,6 +1647,7 @@ int main() {
   test_version();
   test_regions();
   test_extensions();
+  test_cc_table();
   test_float_goldens();
   test_identity();
   test_file_io();

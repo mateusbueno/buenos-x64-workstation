@@ -1,4 +1,5 @@
 // Bundle loader for the sample engine (Story 1.15): bundle -> float PCM + region table -> SampleEngine.
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -319,7 +320,65 @@ static void test_amp_map_reaches_the_port() {
   CHECK(g.vel2decay == 0.22f && g.vel2release == 0.44f && g.vel_point_count == 3 && g.vel_points[1].vel == 70 && g.amp_keycenter == 49);
 }
 
+static void test_cc_map_reaches_the_port() {
+  using namespace velora::format;
+  Region r;
+  r.cc.gate_count = 2;
+  r.cc.gates[0] = {64, 64.f, 100.f};
+  r.cc.gates[1] = {70, 0.f, std::nextafter(11.f, 0.f)};
+  r.cc.mod_count = 3;
+  r.cc.mods[0] = {CcTarget::kAmplitude, 93, 7, 100.f};
+  r.cc.mods[1] = {CcTarget::kTune, 131, 0, -50.f};
+  r.cc.mods[2] = {CcTarget::kEgRelease, 141, 9, 1.5f};
+  const ports::SampleRegionDesc d = host::to_port_region(r);
+  CHECK(d.cc_gate_count == 2 && d.cc_gates[0].cc == 64 && d.cc_gates[0].lo == 64.f && d.cc_gates[0].hi == 100.f && d.cc_gates[1].cc == 70);
+  CHECK(d.cc_mod_count == 3 && d.cc_mods[0].target == ports::SampleCcTarget::kAmplitude && d.cc_mods[0].cc == 93 && d.cc_mods[0].curve == 7 && d.cc_mods[0].depth == 100.f);
+  CHECK(d.cc_mods[1].target == ports::SampleCcTarget::kTune && d.cc_mods[1].cc == 131 && d.cc_mods[2].target == ports::SampleCcTarget::kEgRelease && d.cc_mods[2].curve == 9);
+  const ports::SampleRegionDesc plain = host::to_port_region(Region{});
+  CHECK(plain.cc_gate_count == 0 && plain.cc_mod_count == 0);
+  // Through a real bundle (format 2.4), with the instrument's CC defaults and curves.
+  BundleWriter w;
+  const auto inst = w.add_instrument("Cc", "Cc.sfz");
+  std::vector<std::int32_t> pcm(2000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 2000, pcm});
+  CHECK(w.add_region(inst.value(), r) == Error::kNone);
+  InstrumentCcSetup setup;
+  setup.defaults = {{64, 90.f}};
+  setup.curves = {{7, {{0, 0.f}, {64, 0.9f}, {127, 1.f}}}, {9, {{0, 1.f}, {127, 0.f}}}};
+  CHECK(w.set_instrument_cc_setup(inst.value(), setup) == Error::kNone);
+  const auto bundle_bytes = w.finalize().take();  // the reader borrows it
+  auto rd = BundleReader::open_memory(bundle_bytes);
+  CHECK(rd.ok() && rd.value().format_minor() == 4);
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  const ports::InstrumentView v = loaded.instrument->instrument();
+  CHECK(v.regions[0].cc_gate_count == 2 && v.regions[0].cc_mod_count == 3 && v.regions[0].cc_mods[2].curve == 9);
+  CHECK(v.cc_defaults.size() == 1 && v.cc_defaults[0].cc == 64 && v.cc_defaults[0].value == 90.f);
+  CHECK(v.curves.size() == 2 && v.curves[0].index == 7 && v.curves[0].points.size() == 3 && v.curves[0].points[1].x == 64 && v.curves[0].points[1].y == 0.9f &&
+        v.curves[1].index == 9 && v.curves[1].points.size() == 2);
+  // The engine plays it: CC64 is seeded to 90, inside the 64..100 gate, so a note sounds; with the controller at 0 the same note is silent.
+  auto note_peak = [&](double cc64) {
+    velora::core::SampleEngine::Config cfg;
+    cfg.max_voices = 4;
+    velora::core::SampleEngine eng(cfg);
+    eng.set_instrument(*loaded.instrument);
+    if (cc64 >= 0) eng.set_part_cc(0, 64, static_cast<std::uint32_t>(cc64 / 127.0 * 4294967295.0));
+    eng.set_part_cc(0, 93, 0xFFFFFFFFu);  // amplitude entry at full
+    eng.start_voice(0, 50, 0xFFFF);
+    std::vector<float> l(256), r(256);
+    eng.render(l.data(), r.data(), 256);
+    float pk = 0.0f;
+    for (float x : l) pk = std::max(pk, std::fabs(x));
+    return pk;
+  };
+  CHECK(note_peak(-1) > 0.0f);   // no controller message: the seed (90) is inside the gate
+  CHECK(note_peak(0) == 0.0f);
+}
+
 int main() {
+  test_cc_map_reaches_the_port();
   test_amp_map_reaches_the_port();
   test_trigger_and_end_reach_the_port();
   test_extension_reaches_the_port();
