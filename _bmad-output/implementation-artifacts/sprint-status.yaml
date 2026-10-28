@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-18-2026 19:03
-last_updated: 10-22-2026 15:30
+last_updated: 10-28-2026 12:00
 project: Ladiani Velora 73
 project_key: NOKEY
 tracking_system: file-system
@@ -298,16 +298,92 @@ development_status:
   12-14-fm-and-va-firmware-update-reaches-shipped-v1-units: backlog
   epic-12-retrospective: optional
 
-  epic-13: backlog
-  13-1-decision-sfz-scope-for-the-reference-corpus: backlog
-  13-2-importer-value-rules-and-inert-opcodes: backlog
-  13-3-sample-end-first-legato-triggers-and-release-key: backlog
-  13-4-velocity-and-amplitude-model: backlog
-  13-5-cc-at-voice-start-and-sfizz-pseudo-ccs: backlog
-  13-6-choke-groups-and-polyphony-limits: backlog
-  13-7-pitch-bend-and-cc-triggered-voices: backlog
-  13-8-per-voice-filter: backlog
-  13-9-region-eq-and-lfo-eg-modulation-conditional: backlog
-  13-10-random-layer-parity-with-the-null-oracle: backlog
-  13-11-sf2-libraries-in-the-reference-corpus: backlog
-  epic-13-retrospective: optional
+  epic-13: in-progress
+  13-1-decision-sfz-scope-for-the-reference-corpus: done
+  13-2-importer-value-rules-and-inert-opcodes: done
+  13-3-sample-end-first-legato-triggers-and-release-key: done
+  13-4-velocity-and-amplitude-model: done
+  13-5-cc-at-voice-start-and-sfizz-pseudo-ccs: done
+  13-6-choke-groups-and-polyphony-limits: done
+  13-7-pitch-bend-and-cc-triggered-voices: done
+  13-8-per-voice-filter: done
+  13-9-region-eq-and-lfo-eg-modulation-conditional: done
+  13-10-random-layer-parity-with-the-null-oracle: done
+  13-11-sf2-libraries-in-the-reference-corpus: done
+  epic-13-retrospective: done
+action_items:
+  - id: "epic-13-retro-item-1-story-allow-or-rewrite-sample-paths-that"
+    epic: 13
+    action: "Story: allow or rewrite sample paths that escape the SFZ directory (..\\
+      Samples) for Sonatina, Meatbass, Bear Sax, Weresax, Scarypiano, Osiris"
+    owner: "founder then dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-2-story-flac-sample-support-in-the-importe"
+    epic: 13
+    action: "Story: FLAC sample support in the importer (Salamander, Headroom)"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-3-story-remaining-corpus-opcodes-delay-off"
+    epic: 13
+    action: "Story: remaining corpus opcodes (delay, offset_random, sustain_cc, ampeg_release_shape,
+      xfin/xfout_lovel, width_oncc, rt_decay, amp_veltrack_oncc, lfoNN/egNN)"
+    owner: "founder ranks, dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-4-corpus-job-reports-non-opcode-blockers-p"
+    epic: 13
+    action: "Corpus job reports non-opcode blockers (path escapes, sample format,
+      unsupported_value rules)"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-5-fix-docker-check-sh-lvgl-drift-and-run-l"
+    epic: 13
+    action: "Fix docker-check.sh (LVGL drift) and run Linux gcc, RTSan and TSan for
+      Stories 13.2-13.11"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-6-split-sample_engine-cpp-and-sfz_import-c"
+    epic: 13
+    action: "Split sample_engine.cpp and sfz_import.cpp by concern and unify duplicated
+      helpers"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-7-calibrate-voice-cost-declarations-on-the"
+    epic: 13
+    action: "Calibrate voice-cost declarations on the board (filter, second filter,
+      modulation)"
+    owner: "dev with hardware"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-8-ratify-the-13-1-scope-decision-and-decid"
+    epic: 13
+    action: "Ratify the 13.1 scope decision and decide default bend and second-filter
+      declaration"
+    owner: "founder"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-9-add-an-sf2-corpus-entry-with-a-pinnable"
+    epic: 13
+    action: "Add an SF2 corpus entry with a pinnable licensed pack; add FluidSynth
+      to the nightly workflow"
+    owner: "founder then dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-10-run-an-epic-level-bmad-review-over-62b97"
+    epic: 13
+    action: "Run an epic-level bmad-review over 62b97ef..HEAD and the corpus job after
+      the review fixes"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-13-retro-item-11-story-loop-finalize-step-marks-the-story"
+    epic: 13
+    action: "Story loop finalize step marks the story key done in sprint-status.yaml"
+    owner: "process owner"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
