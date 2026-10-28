@@ -1,0 +1,10 @@
+<control>
+default_path=samples/
+<curve>
+curve_index=7
+v000=0 v064=0.9 v127=1
+<global> sample=bright.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 eq1_freq=300 eq1_gain=9 eq1_freq_oncc80=3000
+<region> lokey=62 hikey=62 pitch_keycenter=62 eq1_freq=1000 eq1_gain=-12 eq1_gain_oncc81=18 eq1_gain_curvecc81=7
+<region> lokey=64 hikey=64 pitch_keycenter=64 eq1_freq=1200 eq1_gain=10 eq1_bw=0.1 eq1_bw_oncc82=2.0
+<region> lokey=65 hikey=65 pitch_keycenter=65 eq1_freq=500 eq1_gain=4 eq1_freq_oncc83=1000 eq1_gain_oncc84=6 eq1_bw_oncc85=1

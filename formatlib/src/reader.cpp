@@ -280,7 +280,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
-  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0, total_vg = 0, total_bt = 0, total_fl = 0;
+  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0, total_vg = 0, total_bt = 0, total_fl = 0, total_md = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -620,6 +620,66 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
             return Error::kCorruptManifest;
         }
       }
+      if (minor >= 8) {  // the modulation table (Story 13.9) follows the minor 7 table
+        const std::uint32_t n_md = c.u32();
+        if (!c.ok() || n_md > n_regions || n_md > c.remaining() / kMdRecordFixedSize) return Error::kCorruptManifest;
+        total_md += n_md;
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_md; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          const std::uint8_t flags = c.u8(), eqn = c.u8(), p0 = c.u8(), p1 = c.u8();
+          if (!c.ok() || (flags & ~31u) || eqn > kMaxEqBands || p0 || p1) return Error::kCorruptManifest;
+          ModMap& m = rg.mod;
+          m.eq_count = eqn;
+          LfoSpec* lfos[3] = {&m.amp, &m.pitch, &m.fil};
+          for (int i = 0; i < 3; ++i) {
+            if (!(flags & (1u << i))) continue;
+            const std::uint8_t wave = c.u8(), q0 = c.u8(), q1 = c.u8(), q2 = c.u8();
+            LfoSpec& l = *lfos[i];
+            l.on = true;
+            l.depth = c.f32(); l.freq = c.f32(); l.delay = c.f32(); l.fade = c.f32();
+            if (!c.ok() || q0 || q1 || q2 || wave > kMaxLfoWave) return Error::kCorruptManifest;
+            l.wave = static_cast<LfoWave>(wave);
+          }
+          EgSpec* egs[2] = {&m.pitch_eg, &m.fil_eg};
+          for (int i = 0; i < 2; ++i) {
+            if (!(flags & (8u << i))) continue;
+            EgSpec& e = *egs[i];
+            e.on = true;
+            e.delay = c.f32(); e.attack = c.f32(); e.hold = c.f32(); e.decay = c.f32(); e.release = c.f32();
+            e.start = c.f32(); e.sustain = c.f32(); e.depth = c.f32(); e.vel2depth = c.f32();
+            if (!c.ok()) return Error::kCorruptManifest;
+          }
+          for (unsigned b = 0; b < eqn; ++b) {
+            EqBand& q = m.eq[b];
+            const std::uint8_t ty = c.u8(), nf = c.u8(), nb = c.u8(), ng = c.u8();
+            q.freq = c.f32(); q.bw = c.f32(); q.gain = c.f32(); q.vel2freq = c.f32(); q.vel2gain = c.f32();
+            if (!c.ok() || ty < 1 || ty > 3 || nf > kMaxFilterMods || nb > kMaxFilterMods || ng > kMaxFilterMods ||
+                (std::size_t(nf) + nb + ng) * kMdModSize > c.remaining())
+              return Error::kCorruptManifest;
+            q.type = static_cast<EqType>(ty);
+            q.freq_count = nf; q.bw_count = nb; q.gain_count = ng;
+            for (int w = 0; w < 3; ++w) {
+              FilterMod* e = w == 0 ? q.freq_mods : w == 1 ? q.bw_mods : q.gain_mods;
+              const unsigned n = w == 0 ? nf : w == 1 ? nb : ng;
+              for (unsigned i = 0; i < n; ++i) {
+                e[i].cc = c.u8();
+                e[i].curve = c.u8();
+                const std::uint8_t z0 = c.u8(), z1 = c.u8();
+                e[i].depth = c.f32();
+                if (!c.ok() || z0 || z1) return Error::kCorruptManifest;
+              }
+            }
+          }
+          // Canonical: a record exists only for a region that really needs it.
+          if (!has_mod_extension(rg) ||
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+      }
     }
     r.instruments.push_back(std::move(ins));
   }
@@ -633,7 +693,8 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   if (minor == 4 && total_cc == 0 && total_cc_setup == 0) return Error::kCorruptManifest;
   if (minor == 5 && total_vg == 0) return Error::kCorruptManifest;
   if (minor == 6 && total_bt == 0) return Error::kCorruptManifest;
-  if (minor >= 7 && total_fl == 0) return Error::kCorruptManifest;
+  if (minor == 7 && total_fl == 0) return Error::kCorruptManifest;
+  if (minor >= 8 && total_md == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index.resize(n_blocks);

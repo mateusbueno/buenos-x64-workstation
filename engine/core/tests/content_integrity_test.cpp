@@ -202,6 +202,42 @@ void test_fade_pitched() {
   CHECK(se.content_integrity_events() == 1);
 }
 
+// 3b. Story 13.9: a voice whose pitch an EG (+2400 cents, so four times as fast at once) and a fast LFO (+-1200 cents) push: the look-ahead uses the largest factor the
+//     modulation can produce, so the fade has finished (gain 0) before the playhead reaches the damaged block, and nothing of the block is heard.
+void test_fade_with_pitch_modulation() {
+  Instrument ins;
+  const auto s = ins.add(40000, false, 0.25f, true);
+  auto& r = ins.region(s);
+  r.mod.pitch_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, 2400.0f, 0.0f};
+  r.mod.pitch = {true, 1, 1200.0f, 80.0f, 0.0f, 0.0f};
+  SampleEngine se{SampleEngine::Config{}};
+  se.set_instrument(ins);
+  CHECK(se.unplayable_regions() == 0);
+  ins.damage(0, 2);  // frames 8192..12287
+  CHECK(se.start_voice(0, 60, 65535) == EngineStatus::kOk);
+  std::vector<double> gain, pos;
+  float l = 0.0f, rr = 0.0f;
+  double base = 0;
+  for (int n = 0; n < 6000; ++n) {
+    l = rr = 0.0f;
+    se.render(&l, &rr, 1);
+    if (n == 300) base = l;
+    gain.push_back(base != 0 ? l / base : 0.0);
+    pos.push_back(se.voice_position(0));
+  }
+  CHECK(base != 0);
+  std::size_t first_down = gain.size(), reach = gain.size();
+  for (std::size_t n = 300; n < gain.size(); ++n) {
+    if (gain[n] < 1.0 - 1e-6 && first_down == gain.size()) first_down = n;
+    if (pos[n] >= 8192.0 && reach == gain.size()) reach = n;
+    if (pos[n] >= 8192.0 && pos[n] < 12288.0) CHECK(std::fabs(gain[n]) < 1e-9);  // the damaged block is never heard
+  }
+  CHECK(first_down < gain.size() && reach < gain.size());
+  CHECK(first_down + kIntegrityFadeFrames <= reach);  // the fade starts at least kIntegrityFadeFrames before the block
+  CHECK(se.content_integrity_events() == 1);
+  CHECK(se.stream_underrun_events() == 0);
+}
+
 // 4. A voice that starts inside a damaged block starts silent (no click, no damaged audio), and still counts once.
 void test_start_inside_damage() {
   Instrument ins;
@@ -397,6 +433,7 @@ int main() {
   test_bit_exact_when_undamaged();
   test_fade_shape();
   test_fade_pitched();
+  test_fade_with_pitch_modulation();
   test_start_inside_damage();
   test_loop_wrap_lookahead();
   test_published_counter();

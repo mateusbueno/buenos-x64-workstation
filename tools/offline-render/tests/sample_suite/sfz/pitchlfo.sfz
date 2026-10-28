@@ -1,0 +1,7 @@
+<control>
+default_path=samples/
+<global> sample=loop.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 pitchlfo_depth=50 pitchlfo_freq=5
+<region> lokey=62 hikey=62 pitch_keycenter=62 pitchlfo_depth=-100 pitchlfo_freq=3.5 pitchlfo_wave=0
+<region> lokey=64 hikey=64 pitch_keycenter=64 pitchlfo_depth=200 pitchlfo_freq=6 pitchlfo_wave=7 pitchlfo_delay=0.2 pitchlfo_fade=0.3
+<region> lokey=65 hikey=65 pitch_keycenter=65 pitchlfo_depth=1200 pitchlfo_freq=1.5

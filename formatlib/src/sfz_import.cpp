@@ -225,6 +225,102 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"on_hicc<N>", C::kSupported, "on_hicc below 127 covers values up to on_hicc + 1, exclusive (sfizz fill-gap) (Story 13.7)"},
       {"start_locc<N>", C::kSupported, "alias of on_locc<N> (Story 13.7)"},
       {"start_hicc<N>", C::kSupported, "alias of on_hicc<N> (Story 13.7)"},
+      // Story 13.9: region EQ and the dedicated LFOs / EGs (see _bmad-output/planning-artifacts/sfz-modulation-design.md).
+      {"eq1_freq", C::kSupported, "EQ band 1, Hz (Story 13.9)"},
+      {"eq1_bw", C::kSupported, "EQ band 1, octaves 0.001..4 (Story 13.9)"},
+      {"eq1_gain", C::kSupported, "EQ band 1, dB -96..96 (Story 13.9)"},
+      {"eq1_type", C::kSupported, "peak, lshelf, hshelf (Story 13.9)"},
+      {"eq1_vel2freq", C::kSupported, "Hz added at velocity 127 (Story 13.9)"},
+      {"eq1_veltofreq", C::kSupported, "alias of eq1_vel2freq (Story 13.9)"},
+      {"eq1_vel2gain", C::kSupported, "dB added at velocity 127 (Story 13.9)"},
+      {"eq1_veltogain", C::kSupported, "alias of eq1_vel2gain (Story 13.9)"},
+      {"eq1_freq_oncc<N>", C::kSupported, "Hz added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq1_freq_cc<N>", C::kSupported, "alias of eq1_freq_oncc<N> (Story 13.9)"},
+      {"eq1_freqcc<N>", C::kSupported, "SFZ 1 alias of eq1_freq_oncc<N> (Story 13.9)"},
+      {"eq1_freq_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq1_bw_oncc<N>", C::kSupported, "octaves added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq1_bw_cc<N>", C::kSupported, "alias of eq1_bw_oncc<N> (Story 13.9)"},
+      {"eq1_bwcc<N>", C::kSupported, "SFZ 1 alias of eq1_bw_oncc<N> (Story 13.9)"},
+      {"eq1_bw_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq1_gain_oncc<N>", C::kSupported, "dB added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq1_gain_cc<N>", C::kSupported, "alias of eq1_gain_oncc<N> (Story 13.9)"},
+      {"eq1_gaincc<N>", C::kSupported, "SFZ 1 alias of eq1_gain_oncc<N> (Story 13.9)"},
+      {"eq1_gain_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq2_freq", C::kSupported, "EQ band 2, Hz (Story 13.9)"},
+      {"eq2_bw", C::kSupported, "EQ band 2, octaves 0.001..4 (Story 13.9)"},
+      {"eq2_gain", C::kSupported, "EQ band 2, dB -96..96 (Story 13.9)"},
+      {"eq2_type", C::kSupported, "peak, lshelf, hshelf (Story 13.9)"},
+      {"eq2_vel2freq", C::kSupported, "Hz added at velocity 127 (Story 13.9)"},
+      {"eq2_veltofreq", C::kSupported, "alias of eq2_vel2freq (Story 13.9)"},
+      {"eq2_vel2gain", C::kSupported, "dB added at velocity 127 (Story 13.9)"},
+      {"eq2_veltogain", C::kSupported, "alias of eq2_vel2gain (Story 13.9)"},
+      {"eq2_freq_oncc<N>", C::kSupported, "Hz added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq2_freq_cc<N>", C::kSupported, "alias of eq2_freq_oncc<N> (Story 13.9)"},
+      {"eq2_freqcc<N>", C::kSupported, "SFZ 1 alias of eq2_freq_oncc<N> (Story 13.9)"},
+      {"eq2_freq_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq2_bw_oncc<N>", C::kSupported, "octaves added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq2_bw_cc<N>", C::kSupported, "alias of eq2_bw_oncc<N> (Story 13.9)"},
+      {"eq2_bwcc<N>", C::kSupported, "SFZ 1 alias of eq2_bw_oncc<N> (Story 13.9)"},
+      {"eq2_bw_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq2_gain_oncc<N>", C::kSupported, "dB added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq2_gain_cc<N>", C::kSupported, "alias of eq2_gain_oncc<N> (Story 13.9)"},
+      {"eq2_gaincc<N>", C::kSupported, "SFZ 1 alias of eq2_gain_oncc<N> (Story 13.9)"},
+      {"eq2_gain_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq3_freq", C::kSupported, "EQ band 3, Hz (Story 13.9)"},
+      {"eq3_bw", C::kSupported, "EQ band 3, octaves 0.001..4 (Story 13.9)"},
+      {"eq3_gain", C::kSupported, "EQ band 3, dB -96..96 (Story 13.9)"},
+      {"eq3_type", C::kSupported, "peak, lshelf, hshelf (Story 13.9)"},
+      {"eq3_vel2freq", C::kSupported, "Hz added at velocity 127 (Story 13.9)"},
+      {"eq3_veltofreq", C::kSupported, "alias of eq3_vel2freq (Story 13.9)"},
+      {"eq3_vel2gain", C::kSupported, "dB added at velocity 127 (Story 13.9)"},
+      {"eq3_veltogain", C::kSupported, "alias of eq3_vel2gain (Story 13.9)"},
+      {"eq3_freq_oncc<N>", C::kSupported, "Hz added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq3_freq_cc<N>", C::kSupported, "alias of eq3_freq_oncc<N> (Story 13.9)"},
+      {"eq3_freqcc<N>", C::kSupported, "SFZ 1 alias of eq3_freq_oncc<N> (Story 13.9)"},
+      {"eq3_freq_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq3_bw_oncc<N>", C::kSupported, "octaves added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq3_bw_cc<N>", C::kSupported, "alias of eq3_bw_oncc<N> (Story 13.9)"},
+      {"eq3_bwcc<N>", C::kSupported, "SFZ 1 alias of eq3_bw_oncc<N> (Story 13.9)"},
+      {"eq3_bw_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"eq3_gain_oncc<N>", C::kSupported, "dB added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9)"},
+      {"eq3_gain_cc<N>", C::kSupported, "alias of eq3_gain_oncc<N> (Story 13.9)"},
+      {"eq3_gaincc<N>", C::kSupported, "SFZ 1 alias of eq3_gain_oncc<N> (Story 13.9)"},
+      {"eq3_gain_curvecc<N>", C::kSupported, "curve index (Story 13.9)"},
+      {"amplfo_depth", C::kSupported, "amplitude LFO, dB; the LFO exists only with a depth (Story 13.9)"},
+      {"amplfo_freq", C::kSupported, "Hz 0..100 (Story 13.9)"},
+      {"amplfo_delay", C::kSupported, "s 0..30 (Story 13.9)"},
+      {"amplfo_fade", C::kSupported, "s 0..30 (Story 13.9)"},
+      {"amplfo_wave", C::kSupported, "0 triangle, 1 sine (default), 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw (Story 13.9)"},
+      {"pitchlfo_depth", C::kSupported, "pitch LFO, cents; the LFO exists only with a depth (Story 13.9)"},
+      {"pitchlfo_freq", C::kSupported, "Hz 0..100 (Story 13.9)"},
+      {"pitchlfo_delay", C::kSupported, "s 0..30 (Story 13.9)"},
+      {"pitchlfo_fade", C::kSupported, "s 0..30 (Story 13.9)"},
+      {"pitchlfo_wave", C::kSupported, "0 triangle, 1 sine (default), 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw (Story 13.9)"},
+      {"fillfo_depth", C::kSupported, "filter LFO, cents on the first filter's cutoff; the LFO exists only with a depth (Story 13.9)"},
+      {"fillfo_freq", C::kSupported, "Hz 0..100 (Story 13.9)"},
+      {"fillfo_delay", C::kSupported, "s 0..30 (Story 13.9)"},
+      {"fillfo_fade", C::kSupported, "s 0..30 (Story 13.9)"},
+      {"fillfo_wave", C::kSupported, "0 triangle, 1 sine (default), 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw (Story 13.9)"},
+      {"pitcheg_delay", C::kSupported, "s (Story 13.9)"},
+      {"pitcheg_start", C::kSupported, "% (Story 13.9)"},
+      {"pitcheg_attack", C::kSupported, "s (Story 13.9)"},
+      {"pitcheg_hold", C::kSupported, "s (Story 13.9)"},
+      {"pitcheg_decay", C::kSupported, "s (Story 13.9)"},
+      {"pitcheg_sustain", C::kSupported, "% (Story 13.9)"},
+      {"pitcheg_release", C::kSupported, "s (Story 13.9)"},
+      {"pitcheg_depth", C::kSupported, "pitch EG, cents; the EG exists only with a depth or vel2depth (Story 13.9)"},
+      {"pitcheg_vel2depth", C::kSupported, "cents added at velocity 127 (Story 13.9)"},
+      {"pitcheg_veltodepth", C::kSupported, "alias of pitcheg_vel2depth (Story 13.9)"},
+      {"fileg_delay", C::kSupported, "s (Story 13.9)"},
+      {"fileg_start", C::kSupported, "% (Story 13.9)"},
+      {"fileg_attack", C::kSupported, "s (Story 13.9)"},
+      {"fileg_hold", C::kSupported, "s (Story 13.9)"},
+      {"fileg_decay", C::kSupported, "s (Story 13.9)"},
+      {"fileg_sustain", C::kSupported, "% (Story 13.9)"},
+      {"fileg_release", C::kSupported, "s (Story 13.9)"},
+      {"fileg_depth", C::kSupported, "filter EG, cents on the first filter's cutoff; the EG exists only with a depth or vel2depth (Story 13.9)"},
+      {"fileg_vel2depth", C::kSupported, "cents added at velocity 127 (Story 13.9)"},
+      {"fileg_veltodepth", C::kSupported, "alias of fileg_vel2depth (Story 13.9)"},
   };
   return t;
 }
@@ -318,6 +414,26 @@ struct Acc {
     const Op* cutoff_op = nullptr;
   };
   FilterAcc fil[2];
+  // Story 13.9. EQ bands (1..3), the amplitude / pitch / filter LFOs and the pitch / filter EGs as given; folded into Region::mod at flush_region.
+  struct EqAcc {
+    bool used = false;
+    EqType type = EqType::kPeak;
+    float freq = 0, bw = 1, gain = 0, vel2freq = 0, vel2gain = 0;
+    std::map<int, ModAcc> mods[3];  // freq, bw, gain; by controller
+  };
+  EqAcc eq[kMaxEqBands];
+  struct LfoAcc {
+    bool used = false, depth_given = false;  // depth_given: an explicit depth (even 0) is a deliberate disable, not a forgotten depth
+    LfoSpec s;
+    const Op* op = nullptr;
+  };
+  LfoAcc lfo[3];  // amplfo, pitchlfo, fillfo
+  struct EgAcc {
+    bool used = false, depth_given = false;
+    EgSpec s;
+    const Op* op = nullptr;
+  };
+  EgAcc eg[2];  // pitcheg, fileg
 };
 
 // Story 13.5: a recognised CC opcode split into its parts. gate: locc/hicc/lohdcc/hihdcc (lo = true for the low end, hd = normalized value); def: set_cc/set_hdcc;
@@ -330,6 +446,64 @@ struct CcOp {
 
 // Story 13.8: target ids of the filter CC entries, above the CcTarget range.
 constexpr int kFilCutoff0 = 100, kFilCutoff1 = 101, kFilRes0 = 102, kFilRes1 = 103;
+// Story 13.9: EQ entry targets, kEqBase + band * 3 + (0 freq, 1 bw, 2 gain).
+constexpr int kEqBase = 110;
+
+// Story 13.9: "eq2_vel2gain" -> band 1, kind 'T' type, 'F' freq, 'B' bw, 'G' gain, 'f' vel2freq, 'g' vel2gain.
+bool eq_opcode(const std::string& k, int& band, char& kind) {
+  if (k.size() < 6 || k.compare(0, 2, "eq") != 0 || k[2] < '1' || k[2] > '3' || k[3] != '_') return false;
+  band = k[2] - '1';
+  const std::string rest = k.substr(4);
+  if (rest == "freq") kind = 'F';
+  else if (rest == "bw") kind = 'B';
+  else if (rest == "gain") kind = 'G';
+  else if (rest == "type") kind = 'T';
+  else if (rest == "vel2freq" || rest == "veltofreq") kind = 'f';
+  else if (rest == "vel2gain" || rest == "veltogain") kind = 'g';
+  else return false;
+  return true;
+}
+
+// Story 13.9: "amplfo_depth" -> lfo 0 (amplfo, pitchlfo, fillfo), field 'D' depth, 'F' freq, 'L' delay, 'E' fade, 'W' wave. "pitcheg_vel2depth" -> eg 0 (pitcheg, fileg),
+// field 'd' delay, 's' start, 'a' attack, 'h' hold, 'c' decay, 'u' sustain, 'r' release, 'D' depth, 'V' vel2depth.
+bool lfo_opcode(const std::string& k, int& idx, char& field) {
+  static const char* const names[] = {"amplfo_", "pitchlfo_", "fillfo_"};
+  for (int i = 0; i < 3; ++i) {
+    const std::string p = names[i];
+    if (k.compare(0, p.size(), p) != 0) continue;
+    const std::string rest = k.substr(p.size());
+    idx = i;
+    if (rest == "depth") field = 'D';
+    else if (rest == "freq") field = 'F';
+    else if (rest == "delay") field = 'L';
+    else if (rest == "fade") field = 'E';
+    else if (rest == "wave") field = 'W';
+    else return false;
+    return true;
+  }
+  return false;
+}
+bool eg_opcode(const std::string& k, int& idx, char& field) {
+  static const char* const names[] = {"pitcheg_", "fileg_"};
+  for (int i = 0; i < 2; ++i) {
+    const std::string p = names[i];
+    if (k.compare(0, p.size(), p) != 0) continue;
+    const std::string rest = k.substr(p.size());
+    idx = i;
+    if (rest == "delay") field = 'd';
+    else if (rest == "start") field = 's';
+    else if (rest == "attack") field = 'a';
+    else if (rest == "hold") field = 'h';
+    else if (rest == "decay") field = 'c';
+    else if (rest == "sustain") field = 'u';
+    else if (rest == "release") field = 'r';
+    else if (rest == "depth") field = 'D';
+    else if (rest == "vel2depth" || rest == "veltodepth") field = 'V';
+    else return false;
+    return true;
+  }
+  return false;
+}
 
 struct FilterOp {
   int idx = 0;
@@ -382,7 +556,7 @@ CcOp split_cc_opcode(const std::string& k) {
   if (ends("_curvecc")) { o.curve = true; stem = p.substr(0, p.size() - 8); }
   else if (ends("_oncc")) stem = p.substr(0, p.size() - 5);
   else if (ends("_cc")) stem = p.substr(0, p.size() - 3);
-  else if (p.compare(0, 6, "ampeg_") == 0 && ends("cc")) stem = p.substr(0, p.size() - 2);  // ampeg_releasecc64
+  else if ((p.compare(0, 6, "ampeg_") == 0 || p.compare(0, 2, "eq") == 0) && ends("cc")) stem = p.substr(0, p.size() - 2);  // ampeg_releasecc64, eq1_freqcc80
   else return o;
   struct Target { const char* name; int id; };
   static const Target targets[] = {
@@ -396,6 +570,15 @@ CcOp split_cc_opcode(const std::string& k) {
       {"resonance", kFilRes0}, {"resonance1", kFilRes0}, {"resonance2", kFilRes1}};
   for (const Target& t : targets)
     if (stem == t.name) { o.kind = CcOp::Kind::kMod; o.target = t.id; return o; }
+  {  // Story 13.9: eqN_freq / eqN_bw / eqN_gain entries
+    int band = 0;
+    char kind = 0;
+    if (eq_opcode(stem, band, kind) && (kind == 'F' || kind == 'B' || kind == 'G')) {
+      o.kind = CcOp::Kind::kMod;
+      o.target = kEqBase + band * 3 + (kind == 'F' ? 0 : kind == 'B' ? 1 : 2);
+      return o;
+    }
+  }
   return o;
 }
 
@@ -766,6 +949,27 @@ class Importer final : public sfz::ParserListener {
       unsupported_cc(op, "controllers 0..127 and the pseudo-controllers 131 (velocity), 135, 136 (random), 137 (alternate), 140, 141 (key delta) are supported");
       return false;
     }
+    if (o.target >= kEqBase) {  // Story 13.9: freq / bw / gain entries of an EQ band
+      const int band = (o.target - kEqBase) / 3, kind = (o.target - kEqBase) % 3;
+      Acc::EqAcc& ea = acc.eq[band];
+      ea.used = true;
+      Acc::ModAcc& e = ea.mods[kind][o.cc];
+      if (o.curve) {
+        std::int64_t n = 0;
+        if (!parse_int(op.value, n) || n < 0 || n > 255) {
+          ignore(op, "expected a curve index 0..255; curve 0 is used");
+          n = 0;
+        }
+        e.curve = int(n);
+        return true;
+      }
+      const double lim = kind == 0 ? 20000.0 : kind == 1 ? 4.0 : 96.0;
+      if (!as_clamped(op, -lim, lim, d)) return false;
+      if (d == 0) d = 0;
+      e.depth = float(d);
+      e.depth_set = true;
+      return true;
+    }
     if (o.target >= kFilCutoff0) {  // Story 13.8: cutoff / resonance entries of the first or second filter
       Acc::FilterAcc& fa = acc.fil[(o.target == kFilCutoff1 || o.target == kFilRes1) ? 1 : 0];
       const bool is_cut = o.target == kFilCutoff0 || o.target == kFilCutoff1;
@@ -835,6 +1039,63 @@ class Importer final : public sfz::ParserListener {
     cc_defaults_[o.cc] = {o.cc, float(d), op.file, op.line};
   }
 
+  // Story 13.9: region EQ bands, dedicated LFOs and EGs (the opcode is one of eq_opcode / lfo_opcode / eg_opcode).
+  bool apply_mod(Acc& acc, const Op& op) {
+    const std::string& k = op.name;
+    std::int64_t n = 0;
+    double d = 0;
+    int eqb = 0, idx = 0;
+    char ek = 0, fld = 0;
+    if (eq_opcode(k, eqb, ek)) {  // Story 13.9
+      Acc::EqAcc& ea = acc.eq[eqb];
+      ea.used = true;
+      if (ek == 'T') {
+        const std::string v = trim(op.value);
+        if (v == "peak") ea.type = EqType::kPeak;
+        else if (v == "lshelf") ea.type = EqType::kLowShelf;
+        else if (v == "hshelf") ea.type = EqType::kHighShelf;
+        else { unsupported_value(op); return false; }
+      } else {
+        const double lo = ek == 'B' ? 0.01 : ek == 'f' ? -30000 : ek == 'F' ? 0 : -96, hi = ek == 'B' ? 4 : ek == 'f' ? 30000 : ek == 'F' ? 20000 : ek == 'G' ? 60 : 96;  // bw and gain: what the DSP honours
+        if (!as_clamped(op, lo, hi, d)) return false;
+        if (d == 0) d = 0;
+        (ek == 'F' ? ea.freq : ek == 'B' ? ea.bw : ek == 'G' ? ea.gain : ek == 'f' ? ea.vel2freq : ea.vel2gain) = float(d);
+      }
+      return true;
+    }
+    if (lfo_opcode(k, idx, fld)) {  // Story 13.9
+      Acc::LfoAcc& la = acc.lfo[idx];
+      la.used = true;
+      la.op = &op;
+      if (fld == 'D') la.depth_given = true;
+      if (fld == 'W') {
+        if (!parse_int(trim(op.value), n) || n < 0 || n > int(kMaxLfoWave)) { unsupported_value(op); return false; }  // 12 (random S&H) has no deterministic oracle
+        la.s.wave = static_cast<LfoWave>(n);
+      } else {
+        const double dmax = idx == 0 ? 10.0 : 1200.0;
+        const double lo = fld == 'D' ? -dmax : 0.0, hi = fld == 'D' ? dmax : fld == 'F' ? 100.0 : 30.0;
+        if (!as_clamped(op, lo, hi, d)) return false;
+        if (d == 0) d = 0;
+        (fld == 'D' ? la.s.depth : fld == 'F' ? la.s.freq : fld == 'L' ? la.s.delay : la.s.fade) = float(d);
+      }
+      return true;
+    }
+    if (eg_opcode(k, idx, fld)) {  // Story 13.9
+      Acc::EgAcc& ga = acc.eg[idx];
+      ga.used = true;
+      ga.op = &op;
+      if (fld == 'D' || fld == 'V') ga.depth_given = true;
+      const bool depthy = fld == 'D' || fld == 'V';
+      if (!as_clamped(op, depthy ? -12000 : 0, depthy ? 12000 : 100, d)) return false;
+      if (d == 0) d = 0;
+      float& f = fld == 'd' ? ga.s.delay : fld == 's' ? ga.s.start : fld == 'a' ? ga.s.attack : fld == 'h' ? ga.s.hold : fld == 'c' ? ga.s.decay
+                 : fld == 'u' ? ga.s.sustain : fld == 'r' ? ga.s.release : fld == 'D' ? ga.s.depth : ga.s.vel2depth;
+      f = float(d);
+      return true;
+    }
+    return true;
+  }
+
   // Applies one opcode to `r`. Returns false for an invalid value (reported when `report`).
   bool apply(Region& r, Acc& acc, const Op& op, bool report) {
     SfzLoopSpec& ls = acc.ls;
@@ -845,6 +1106,11 @@ class Importer final : public sfz::ParserListener {
     const std::int64_t kMaxFrames = std::int64_t(1) << 40;
     if (k == "sample") return true;
     if (const CcOp co = split_cc_opcode(k); co.kind != CcOp::Kind::kNone) return apply_cc(acc, op, co);
+    {  // Story 13.9
+      int mi = 0;
+      char mc = 0;
+      if (eq_opcode(k, mi, mc) || lfo_opcode(k, mi, mc) || eg_opcode(k, mi, mc)) return apply_mod(acc, op);
+    }
     if (k == "ampeg_dynamic") {  // sfizz BoolSpec: 0 or 1; anything that is not a non-zero integer is off
       const std::string v = trim(op.value);
       if (v == "true" || v == "on") acc.dynamic = true;
@@ -1074,6 +1340,13 @@ class Importer final : public sfz::ParserListener {
     return true;
   }
 
+  // True when a band has a gain entry that is a connection (a depth other than 0): only then can a band at gain 0 change the sound.
+  static bool has_gain_entry(const Acc::EqAcc& ea) {
+    for (const auto& kv : ea.mods[2])
+      if (kv.second.depth_set && kv.second.depth != 0.0f) return true;
+    return false;
+  }
+
   void flush_region() {
     if (cur_ != Cur::kRegion) return;
     cur_ = Cur::kNone;  // a region is flushed exactly once
@@ -1267,6 +1540,72 @@ class Importer final : public sfz::ParserListener {
       }
       r.fmap = fm;
     }
+    {  // Story 13.9: the dedicated LFOs and EGs, and the EQ bands
+      ModMap mm;
+      auto warn_mod = [&](const Op* o, const std::string& why) {
+        if (o && warned_.insert(o->file + ":" + std::to_string(o->line) + ":" + o->name + ":mod").second)
+          result.warnings.push_back({o->name, o->file, o->line, "opcode '" + o->name + "' has no effect " + why});
+      };
+      LfoSpec* lfo_out[3] = {&mm.amp, &mm.pitch, &mm.fil};
+      for (int i = 0; i < 3; ++i) {
+        const Acc::LfoAcc& la = acc.lfo[i];
+        if (!la.used) continue;
+        if (la.s.depth == 0.0f) { if (!la.depth_given) warn_mod(la.op, "without a depth (sfizz connects the LFO with depth 0); the region gets no such LFO"); continue; }
+        if (i == 2 && !acc.cutoff_set) { warn_mod(la.op, "without 'cutoff'; the region gets no filter LFO"); continue; }
+        *lfo_out[i] = la.s;
+        lfo_out[i]->on = true;
+      }
+      EgSpec* eg_out[2] = {&mm.pitch_eg, &mm.fil_eg};
+      for (int i = 0; i < 2; ++i) {
+        const Acc::EgAcc& ga = acc.eg[i];
+        if (!ga.used) continue;
+        if (ga.s.depth == 0.0f && ga.s.vel2depth == 0.0f) { if (!ga.depth_given) warn_mod(ga.op, "without a depth (sfizz connects the EG with depth 0); the region gets no such EG"); continue; }
+        if (i == 1 && !acc.cutoff_set) { warn_mod(ga.op, "without 'cutoff'; the region gets no filter EG"); continue; }
+        *eg_out[i] = ga.s;
+        eg_out[i]->on = true;
+      }
+      unsigned bands = 0;
+      for (unsigned b = 0; b < kMaxEqBands; ++b)
+        if (acc.eq[b].used) bands = b + 1;
+      float freq[kMaxEqBands] = {};
+      for (unsigned b = 0; b < bands; ++b) freq[b] = acc.eq[b].freq;
+      // sfizz Synth.cpp: the 50 / 500 / 5000 Hz defaults apply one after the other, each only if the bands before it are at the default as well.
+      if (bands > 0 && freq[0] == 0.0f) {
+        freq[0] = 50.0f;
+        if (bands > 1 && freq[1] == 0.0f) {
+          freq[1] = 500.0f;
+          if (bands > 2 && freq[2] == 0.0f) freq[2] = 5000.0f;
+        }
+      }
+      mm.eq_count = std::uint8_t(bands);
+      for (unsigned b = 0; b < bands; ++b) {
+        if (acc.eq[b].gain == 0.0f && acc.eq[b].vel2gain == 0.0f && !has_gain_entry(acc.eq[b])) continue;  // transparent: stays the default band
+        const Acc::EqAcc& ea = acc.eq[b];
+        EqBand& q = mm.eq[b];
+        q.type = ea.type;
+        q.freq = freq[b];
+        q.bw = ea.bw;
+        q.gain = ea.gain;
+        q.vel2freq = ea.vel2freq;
+        q.vel2gain = ea.vel2gain;
+        for (int w = 0; w < 3; ++w) {
+          FilterMod* out = w == 0 ? q.freq_mods : w == 1 ? q.bw_mods : q.gain_mods;
+          std::uint8_t& cnt = w == 0 ? q.freq_count : w == 1 ? q.bw_count : q.gain_count;
+          for (const auto& [cc, e] : ea.mods[w]) {
+            if (!e.depth_set || e.depth == 0.0f) continue;
+            if (cnt >= kMaxFilterMods) {
+              issue(SfzIssueKind::kUnsupportedValue, region_loc_,
+                    std::string("more than ") + std::to_string(kMaxFilterMods) + " eqN_" + (w == 0 ? "freq" : w == 1 ? "bw" : "gain") + "_oncc<N> entries on one band",
+                    std::string("eqN_") + (w == 0 ? "freq" : w == 1 ? "bw" : "gain") + "_oncc<N>");
+              return;
+            }
+            out[cnt++] = {std::uint8_t(cc), std::uint8_t(e.curve), e.depth};
+          }
+        }
+      }
+      while (mm.eq_count > 0 && mm.eq[mm.eq_count - 1] == EqBand{}) --mm.eq_count;  // no trailing transparent band: it cannot change the sound
+      r.mod = mm;
+    }
     if (r.sw.lokey >= 0 && r.sw.hikey >= 0 && r.sw.lokey > r.sw.hikey) {
       issue(SfzIssueKind::kInvalidValue, region_loc_, "sw_lokey > sw_hikey");
       return;
@@ -1409,6 +1748,16 @@ void build_cc_setup(SfzParseResult& r, bool report) {
           used_curve.insert(e[i].curve);
         }
       }
+    for (unsigned b = 0; b < g.mod.eq_count; ++b) {  // Story 13.9
+      const EqBand& q = g.mod.eq[b];
+      for (int w = 0; w < 3; ++w) {
+        const FilterMod* e = w == 0 ? q.freq_mods : w == 1 ? q.bw_mods : q.gain_mods;
+        for (unsigned i = 0; i < (w == 0 ? q.freq_count : w == 1 ? q.bw_count : q.gain_count); ++i) {
+          if (e[i].cc <= 127) used_cc.insert(e[i].cc);
+          used_curve.insert(e[i].curve);
+        }
+      }
+    }
     for (unsigned i = 0; i < g.xf.in_count; ++i) used_cc.insert(g.xf.in[i].cc);
     for (unsigned i = 0; i < g.xf.out_count; ++i) used_cc.insert(g.xf.out[i].cc);
   }

@@ -24,7 +24,10 @@ struct Ins final : ports::SampleSource {
   ports::InstrumentView instrument() const noexcept override { return {regions, pcm}; }
 };
 
-std::unique_ptr<Ins> make(bool stereo, bool filter, bool xfade, bool second = false, bool tuned = false) {
+// Story 13.9: bits of the modulation mask: the amplitude LFO, the pitch LFO, the filter LFO, the pitch EG, the filter EG, one EQ band, three EQ bands.
+enum : unsigned { kModAmp = 1, kModPitch = 2, kModFil = 4, kModPitchEg = 8, kModFilEg = 16, kModEq1 = 32, kModEq3 = 64, kModAll = 127 };
+
+std::unique_ptr<Ins> make(bool stereo, bool filter, bool xfade, bool second = false, bool tuned = false, unsigned mod = 0) {
   auto t = std::make_unique<Ins>();
   const std::size_t n = 48000;
   t->data.resize(n * (stereo ? 2 : 1));
@@ -62,16 +65,30 @@ std::unique_ptr<Ins> make(bool stereo, bool filter, bool xfade, bool second = fa
     d.xfin_count = 1;
     d.xfin[0] = {1, 0, 127};
   }
+  if (mod & kModAmp) d.mod.amp = {true, 1, 3.0f, 6.0f, 0.0f, 0.0f};
+  if (mod & kModPitch) d.mod.pitch = {true, 1, 30.0f, 5.0f, 0.0f, 0.0f};
+  if (filter && (mod & kModFil)) d.mod.fil = {true, 1, 1200.0f, 3.0f, 0.0f, 0.0f};
+  if (mod & kModPitchEg) d.mod.pitch_eg = {true, 0.0f, 0.1f, 0.0f, 0.2f, 0.2f, 0.0f, 60.0f, 300.0f, 0.0f};
+  if (filter && (mod & kModFilEg)) d.mod.fil_eg = {true, 0.0f, 0.1f, 0.0f, 0.2f, 0.2f, 0.0f, 60.0f, 1200.0f, 0.0f};
+  if (mod & (kModEq1 | kModEq3)) {
+    d.mod.eq_count = (mod & kModEq3) ? 3 : 1;
+    for (unsigned b = 0; b < d.mod.eq_count; ++b) {
+      d.mod.eq[b].type = static_cast<std::uint8_t>(1 + b);
+      d.mod.eq[b].freq = 200.0f + 1500.0f * static_cast<float>(b);
+      d.mod.eq[b].gain = b == 1 ? -4.0f : 5.0f;
+    }
+  }
   t->regions.push_back(d);
   return t;
 }
 
-double us_per_block_per_voice(bool stereo, bool filter, bool xfade, int voices, bool second = false, bool tuned = false) {
-  auto ins = make(stereo, filter, xfade, second, tuned);
+double us_per_block_per_voice(bool stereo, bool filter, bool xfade, int voices, bool second = false, bool tuned = false, unsigned mod = 0) {
+  auto ins = make(stereo, filter, xfade, second, tuned, mod);
   SampleEngine::Config c;
   c.max_voices = static_cast<std::uint32_t>(voices);
   c.extended_voices = true;
   c.second_filter_voices = second;
+  c.modulated_voices = mod != 0;
   SampleEngine e(c);
   e.set_instrument(*ins);
   e.set_part_cc(0, 1, 0xC0000000u);
@@ -95,8 +112,8 @@ double us_per_block_per_voice(bool stereo, bool filter, bool xfade, int voices, 
 }
 
 // Story 13.8: the cost of starting a voice (note on, coefficients included), in microseconds per start, best of 5 repeats of 2000 starts.
-double us_per_start(bool filter, bool tuned, bool second) {
-  auto ins = make(true, filter, false, second, tuned);
+double us_per_start(bool filter, bool tuned, bool second, unsigned mod = 0) {
+  auto ins = make(true, filter, false, second, tuned, mod);
   SampleEngine::Config c;
   c.max_voices = 64;
   c.extended_voices = true;
@@ -163,11 +180,33 @@ int main() {
   const double st_plain = us_per_start(false, false, false), st_filter = us_per_start(true, false, false), st_tuned = us_per_start(true, true, false), st_two = us_per_start(true, true, true);
   std::printf("  voice start: plain %.3f us, filter %.3f us, tuned filter %.3f us, tuned + 2nd filter %.3f us (coefficients: sin, cos, pow per filter, once per note)\n", st_plain, st_filter,
               st_tuned, st_two);
+  // Story 13.9: region EQ and LFO / EG modulation, measured on top of the plain voice, then the worst case on top of the extended worst case.
+  auto extra = [&](double us) { return (us - plain_s) / unit; };
+  const double m_amp = us_per_block_per_voice(true, false, false, kVoices, false, false, kModAmp), m_pitch = us_per_block_per_voice(true, false, false, kVoices, false, false, kModPitch);
+  const double m_peg = us_per_block_per_voice(true, false, false, kVoices, false, false, kModPitchEg), m_eq1 = us_per_block_per_voice(true, false, false, kVoices, false, false, kModEq1);
+  const double m_eq3 = us_per_block_per_voice(true, false, false, kVoices, false, false, kModEq3);
+  const double m_fil = us_per_block_per_voice(true, true, false, kVoices, false, false, kModFil), m_feg = us_per_block_per_voice(true, true, false, kVoices, false, false, kModFilEg);
+  const double m_all = us_per_block_per_voice(true, true, true, kVoices, true, true, kModAll);
+  std::printf("  + amp LFO %7.3f (%.2f units)  pitch LFO %7.3f (%.2f)  pitch EG %7.3f (%.2f)  1 EQ band %7.3f (%.2f)  3 EQ bands %7.3f (%.2f) us/block/voice\n", m_amp, extra(m_amp), m_pitch, extra(m_pitch), m_peg,
+              extra(m_peg), m_eq1, extra(m_eq1), m_eq3, extra(m_eq3));
+  std::printf("  + filter LFO over a filter %7.3f (%.2f units over the filter %.2f)  filter EG %7.3f (%.2f over the filter)\n", m_fil, (m_fil - fil_s) / unit, (fil_s - plain_s) / unit, m_feg, (m_feg - fil_s) / unit);
+  std::printf("  everything (3 LFOs, 2 EGs, cutoff modulation, 3 EQ bands, 2 filters, crossfade) stereo %7.3f us/block/voice -> %.2f units over a zero base; declared: %u units (extended %u + 2nd filter + modulation %u)\n", m_all,
+              extra(m_all) + sample_voice_cost_units(SampleInterpolation::kHermite3), sample_voice_cost_units(SampleInterpolation::kHermite3, true, true, true),
+              sample_voice_cost_units(SampleInterpolation::kHermite3, true), kSampleModCostUnits);
+  const double st_mod = us_per_start(true, true, true, kModAll), st_eq = us_per_start(false, false, false, kModEq3);
+  std::printf("  voice start with everything %.3f us, with three EQ bands %.3f us (coefficients: pow, sin, cos, sinh per band, once per note)\n", st_mod, st_eq);
+  // Story 13.9: kSampleModCostUnits is a literal taken from these figures. The one timing check of this program: the worst-case voice must not exceed the declared voice by more
+  // than 10 % (run-to-run noise is about 3 %), so a change that makes the modulation clearly dearer fails here instead of silently under-budgeting.
+  const double worst_units = extra(m_all) + sample_voice_cost_units(SampleInterpolation::kHermite3);
+  const double declared_units = sample_voice_cost_units(SampleInterpolation::kHermite3, true, true, true);
+  const bool within = worst_units <= 1.10 * declared_units;
+  std::printf("  worst-case voice %.2f units against %.0f declared (limit 110 %%): %s\n", worst_units, declared_units, within ? "ok" : "EXCEEDED");
   // Deterministic checks only (no timing assertion): the extended declaration costs more than the plain one, for both interpolations.
-  bool ok = true;
+  bool ok = within;
   for (auto q : {SampleInterpolation::kHermite3, SampleInterpolation::kLinear})
     ok = ok && sample_voice_cost_units(q, true) == sample_voice_cost_units(q) + kSampleFilterCostUnits + kSampleCrossfadeCostUnits &&
-         sample_voice_cost_units(q, true, true) == sample_voice_cost_units(q, true) + kSampleFilter2CostUnits;
+         sample_voice_cost_units(q, true, true) == sample_voice_cost_units(q, true) + kSampleFilter2CostUnits &&
+         sample_voice_cost_units(q, true, true, true) == sample_voice_cost_units(q, true, true) + kSampleModCostUnits && sample_voice_cost_units(q, false, false, true) == sample_voice_cost_units(q);
   if (!ok) std::printf("sample_bench: FAILED declared cost\n");
   return ok ? 0 : 1;
 }

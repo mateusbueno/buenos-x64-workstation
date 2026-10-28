@@ -511,7 +511,89 @@ static void test_filter_map_reaches_the_port() {
   CHECK(eng.active_voices() == 1 && eng.undeclared_second_filter_voices() == 0);
 }
 
+static void test_mod_map_reaches_the_port() {
+  using namespace velora::format;
+  Region r;
+  r.filter = {FilterType::kLpf2p, 500.f, 2.f};
+  r.mod.amp = {true, LfoWave::kTriangle, -3.f, 5.5f, 0.1f, 0.2f};
+  r.mod.pitch = {true, LfoWave::kSaw, 40.f, 6.f, 0.f, 0.f};
+  r.mod.fil = {true, LfoWave::kSquare, 600.f, 2.f, 0.f, 0.5f};
+  r.mod.pitch_eg = {true, 0.01f, 0.1f, 0.02f, 0.3f, 0.4f, 5.f, 20.f, 1200.f, -300.f};
+  r.mod.fil_eg = {true, 0.f, 0.2f, 0.f, 0.f, 0.f, 0.f, 100.f, 0.f, 2400.f};
+  r.mod.eq_count = 2;
+  r.mod.eq[0].type = EqType::kLowShelf; r.mod.eq[0].freq = 100.f; r.mod.eq[0].bw = 0.5f; r.mod.eq[0].gain = 3.f; r.mod.eq[0].vel2freq = 200.f; r.mod.eq[0].vel2gain = -6.f;
+  r.mod.eq[0].freq_count = 2; r.mod.eq[0].freq_mods[0] = {80, 0, 500.f}; r.mod.eq[0].freq_mods[1] = {131, 7, -100.f};
+  r.mod.eq[0].bw_count = 1; r.mod.eq[0].bw_mods[0] = {92, 0, 0.25f};
+  r.mod.eq[0].gain_count = 1; r.mod.eq[0].gain_mods[0] = {86, 3, 2.f};
+  r.mod.eq[1].type = EqType::kHighShelf; r.mod.eq[1].freq = 5000.f; r.mod.eq[1].gain = 1.f;
+  const ports::SampleRegionDesc d = host::to_port_region(r);
+  const ports::SampleModDesc& m = d.mod;
+  CHECK(m.amp.on && m.amp.wave == 0 && m.amp.depth == -3.f && m.amp.freq == 5.5f && m.amp.delay == 0.1f && m.amp.fade == 0.2f);
+  CHECK(m.pitch.on && m.pitch.wave == 7 && m.fil.on && m.fil.wave == 3 && m.fil.fade == 0.5f);
+  CHECK(m.pitch_eg.on && m.pitch_eg.delay == 0.01f && m.pitch_eg.release == 0.4f && m.pitch_eg.sustain == 20.f && m.pitch_eg.depth == 1200.f && m.pitch_eg.vel2depth == -300.f);
+  CHECK(m.fil_eg.on && m.fil_eg.attack == 0.2f && m.fil_eg.sustain == 100.f && m.fil_eg.vel2depth == 2400.f);
+  CHECK(m.eq_count == 2 && m.eq[0].type == 2 && m.eq[0].freq == 100.f && m.eq[0].bw == 0.5f && m.eq[0].gain == 3.f && m.eq[0].vel2freq == 200.f && m.eq[0].vel2gain == -6.f);
+  CHECK(m.eq[0].freq_count == 2 && m.eq[0].freq_mods[1].cc == 131 && m.eq[0].freq_mods[1].curve == 7 && m.eq[0].freq_mods[1].depth == -100.f && m.eq[0].bw_count == 1 &&
+        m.eq[0].bw_mods[0].cc == 92 && m.eq[0].gain_count == 1 && m.eq[0].gain_mods[0].curve == 3 && m.eq[1].type == 3 && m.eq[1].freq == 5000.f);
+  const ports::SampleRegionDesc plain = host::to_port_region(Region{});
+  CHECK(!plain.mod.amp.on && !plain.mod.pitch_eg.on && plain.mod.eq_count == 0 && plain.mod.amp.wave == 1 && plain.mod.fil_eg.sustain == 100.f);
+  // Through a real bundle (format 2.8): the loader hands the engine a playable region whose modulation runs.
+  BundleWriter w;
+  const auto inst = w.add_instrument("Md", "Md.sfz");
+  std::vector<std::int32_t> pcm(60000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 60000, pcm});
+  Region keyed = r;
+  keyed.key_lo = keyed.key_hi = keyed.key_center = 62;
+  CHECK(w.add_region(inst.value(), keyed) == Error::kNone);
+  const auto bundle_bytes = w.finalize().take();
+  auto rd = BundleReader::open_memory(bundle_bytes);
+  CHECK(rd.ok() && rd.value().format_minor() == 8);
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  velora::core::SampleEngine::Config cfg;
+  cfg.max_voices = 4;
+  cfg.extended_voices = true;
+  cfg.modulated_voices = true;
+  velora::core::SampleEngine eng(cfg);
+  eng.set_instrument(*loaded.instrument);
+  CHECK(eng.unplayable_regions() == 0);
+  eng.start_voice(0, 62, 0xFFFF);
+  CHECK(eng.active_voices() == 1 && eng.undeclared_modulated_voices() == 0);
+  std::vector<float> l(2048, 0.f), rr(2048, 0.f);
+  eng.render(l.data(), rr.data(), 2048);
+  // the same region without its modulation, through the same bundle path, renders something else (and the plain one is the unmodulated sound)
+  BundleWriter w2;
+  const auto inst2 = w2.add_instrument("Pl", "Pl.sfz");
+  (void)w2.add_sample(inst2.value(), {"a", {1, 16, false, 48000}, 60000, pcm});
+  Region keyed2 = keyed;
+  keyed2.mod = ModMap{};
+  CHECK(w2.add_region(inst2.value(), keyed2) == Error::kNone);
+  const auto bytes2 = w2.finalize().take();
+  auto rd2 = BundleReader::open_memory(bytes2);
+  CHECK(rd2.ok() && rd2.value().format_minor() < 8);
+  if (!rd2.ok()) return;
+  const auto loaded2 = host::load_instrument_by_index(rd2.value(), 0);
+  CHECK(loaded2.ok());
+  if (!loaded2.ok()) return;
+  velora::core::SampleEngine plain_eng(cfg);
+  plain_eng.set_instrument(*loaded2.instrument);
+  plain_eng.start_voice(0, 62, 0xFFFF);
+  std::vector<float> pl(2048, 0.f), pr(2048, 0.f);
+  plain_eng.render(pl.data(), pr.data(), 2048);
+  double e = 0, diff = 0;
+  for (std::size_t i = 0; i < l.size(); ++i) {
+    CHECK(std::isfinite(l[i]));
+    e += static_cast<double>(l[i]) * l[i];
+    diff = std::max(diff, static_cast<double>(std::fabs(l[i] - pl[i])));
+  }
+  CHECK(e > 0.0);
+  CHECK(diff > 1e-4);  // the LFOs, EGs and EQ bands changed the sound
+}
+
 int main() {
+  test_mod_map_reaches_the_port();
   test_filter_map_reaches_the_port();
   test_bend_and_triggers_reach_the_port();
   test_voice_groups_reach_the_port();

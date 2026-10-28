@@ -139,6 +139,49 @@ bool bend_trigger_sane(const velora::ports::SampleRegionDesc& d) noexcept {
   return !(d.no_note && d.cc_trigger_count == 0);  // a region nothing can start
 }
 
+// Story 13.9 fields: region EQ and the dedicated LFOs / EGs must be inside the documented ranges (a region that is not is unplayable).
+bool mod_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+  const velora::ports::SampleModDesc& m = d.mod;
+  const velora::ports::SampleLfoDesc* lfos[3] = {&m.amp, &m.pitch, &m.fil};
+  for (int i = 0; i < 3; ++i) {
+    const velora::ports::SampleLfoDesc& l = *lfos[i];
+    if (!l.on) continue;
+    const float dmax = i == 0 ? 10.0f : 1200.0f;
+    if (l.wave > 7 || !in(l.depth, -dmax, dmax) || l.depth == 0.0f || !in(l.freq, 0.0f, 100.0f) || !in(l.delay, 0.0f, 30.0f) || !in(l.fade, 0.0f, 30.0f)) return false;
+  }
+  for (const velora::ports::SampleEgDesc* e : {&m.pitch_eg, &m.fil_eg}) {
+    if (!e->on) continue;
+    for (float t : {e->delay, e->attack, e->hold, e->decay, e->release})
+      if (!in(t, 0.0f, 100.0f)) return false;
+    if (!in(e->start, 0.0f, 100.0f) || !in(e->sustain, 0.0f, 100.0f) || !in(e->depth, -12000.0f, 12000.0f) || !in(e->vel2depth, -12000.0f, 12000.0f) || (e->depth == 0.0f && e->vel2depth == 0.0f)) return false;
+  }
+  if (m.eq_count > velora::ports::kSampleMaxEqBands) return false;
+  for (unsigned b = 0; b < m.eq_count; ++b) {
+    const velora::ports::SampleEqBand& q = m.eq[b];
+    if (q.type < 1 || q.type > 3 || !in(q.freq, 0.0f, 20000.0f) || !in(q.bw, 0.01f, 4.0f) || !in(q.gain, -96.0f, 60.0f) || !in(q.vel2freq, -30000.0f, 30000.0f) || !in(q.vel2gain, -96.0f, 96.0f))
+      return false;
+    for (int w = 0; w < 3; ++w) {
+      const velora::ports::SampleFilterMod* e = w == 0 ? q.freq_mods : w == 1 ? q.bw_mods : q.gain_mods;
+      const unsigned n = w == 0 ? q.freq_count : w == 1 ? q.bw_count : q.gain_count;
+      const float lim = w == 0 ? 20000.0f : w == 1 ? 4.0f : 96.0f;
+      if (n > velora::ports::kSampleMaxFilterMods) return false;
+      for (unsigned i = 0; i < n; ++i) {
+        const bool source = e[i].cc <= 127 || e[i].cc == 131 || e[i].cc == 135 || e[i].cc == 136 || e[i].cc == 137 || e[i].cc == 140 || e[i].cc == 141;
+        if (!source || !in(e[i].depth, -lim, lim)) return false;
+      }
+    }
+  }
+  return true;
+}
+// The pitch factor bound of the pitch LFO and EG (cents at the extreme: |depth| of the LFO, |depth| + |vel2depth| of the EG).
+float mod_pitch_cents_max(const velora::ports::SampleRegionDesc& d) noexcept {
+  float c = 0.0f;
+  if (d.mod.pitch.on) c += std::fabs(d.mod.pitch.depth);
+  if (d.mod.pitch_eg.on) c += std::fabs(d.mod.pitch_eg.depth) + std::fabs(d.mod.pitch_eg.vel2depth);
+  return c;
+}
+
 // The curves a region's entries name must have finite, bounded points (bad_curve[i]: the instrument's definition of curve i is not).
 bool cc_curves_ok(const velora::ports::SampleRegionDesc& d, const std::array<bool, 256>& bad_curve) noexcept {
   for (unsigned i = 0; i < d.cc_mod_count && i < velora::ports::kSampleMaxCcMods; ++i)
@@ -149,6 +192,12 @@ bool cc_curves_ok(const velora::ports::SampleRegionDesc& d, const std::array<boo
     for (unsigned i = 0; i < t->res_count && i < velora::ports::kSampleMaxFilterMods; ++i)
       if (bad_curve[t->res[i].curve]) return false;
   }
+  for (unsigned b = 0; b < d.mod.eq_count && b < velora::ports::kSampleMaxEqBands; ++b) {  // Story 13.9
+    const velora::ports::SampleEqBand& q = d.mod.eq[b];
+    for (unsigned i = 0; i < q.freq_count && i < velora::ports::kSampleMaxFilterMods; ++i) if (bad_curve[q.freq_mods[i].curve]) return false;
+    for (unsigned i = 0; i < q.bw_count && i < velora::ports::kSampleMaxFilterMods; ++i) if (bad_curve[q.bw_mods[i].curve]) return false;
+    for (unsigned i = 0; i < q.gain_count && i < velora::ports::kSampleMaxFilterMods; ++i) if (bad_curve[q.gain_mods[i].curve]) return false;
+  }
   return true;
 }
 
@@ -157,7 +206,7 @@ float engine_cc_default(unsigned cc) noexcept { return cc == 7 ? 100.0f : cc == 
 
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return extension_sane(d) && amp_sane(d) && cc_sane(d) && filter_map_sane(d) && voice_group_sane(d) && bend_trigger_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && amp_sane(d) && cc_sane(d) && filter_map_sane(d) && mod_sane(d) && voice_group_sane(d) && bend_trigger_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -279,6 +328,8 @@ SampleEngine::SampleEngine(const Config& cfg) : cfg_(cfg) {
     pan_table_[static_cast<std::size_t>(i)] = static_cast<float>(std::cos(i * (kHalfPi / (kPanSize - 1))));
   for (std::size_t i = kPanSize; i < pan_table_.size(); ++i) pan_table_[i] = pan_table_[kPanSize - 1];
   tr_release_rate_off_ = seconds_to_exp_rate(kFastReleaseTime, static_cast<float>(cfg_.sample_rate));
+  inv_sr_ = 1.0f / static_cast<float>(cfg_.sample_rate);
+  filt_smooth_step_ = 1.0 - std::exp(-1000.0 / static_cast<double>(cfg_.sample_rate));
   set_seed(cfg_.seed);
   // CcState defaults are sfizz's (MidiState / Synth::resetDefaultCCValues): CC7 volume 100, CC10 pan centre, CC11 expression 127.
   for (auto& part : cc_) {
@@ -371,7 +422,10 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
         // Story 13.7: the wheel can add up to bend_up / bend_down cents on top.
         const float bmax = d.bend_enabled && bend_trigger_sane(d) ? std::pow(2.0f, std::max({0.0f, d.bend_up, d.bend_down}) / 1200.0f) : 1.0f;
         const float bmin = d.bend_enabled && bend_trigger_sane(d) ? std::pow(2.0f, std::min({0.0f, d.bend_up, d.bend_down}) / 1200.0f) : 1.0f;
-        r.playable = std::isfinite(rmax) && std::isfinite(rmin) && rmax * bmax <= kMaxRatio && rmin * bmin >= kMinRatio;
+        // Story 13.9: the pitch LFO and EG can add up to mod_pitch_cents_max in either direction.
+        const float mc = mod_sane(d) ? mod_pitch_cents_max(d) : 0.0f;
+        const float mmax = std::pow(2.0f, mc / 1200.0f), mmin = std::pow(2.0f, -mc / 1200.0f);
+        r.playable = std::isfinite(rmax) && std::isfinite(rmin) && rmax * bmax * mmax <= kMaxRatio && rmin * bmin * mmin >= kMinRatio;
       }
     }
     r.disabled = d.has_end && d.end == 0;  // sfizz: end=0 switches the region off
@@ -523,6 +577,32 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
           r.filter2_dyn = !filter_tune_default(d.filter2_tune);
           r.filter2 = make_sample_filter(d.filter2_type, d.filter2_cutoff_hz, d.filter2_resonance_db, static_cast<double>(cfg_.sample_rate));
           r.filter2_on = r.filter2.kind != SampleFilterCoeffs::Kind::kNone;
+        }
+      }
+    }
+    // Story 13.9: region EQ and the dedicated LFOs / EGs. A region with none keeps every flag false (and takes the old render paths, bit for bit).
+    if (mod_sane(d)) {
+      const velora::ports::SampleModDesc& m = d.mod;
+      r.lfo_a = m.amp.on;
+      r.lfo_p = m.pitch.on;
+      r.lfo_f = m.fil.on && r.filtered;
+      r.eg_p = m.pitch_eg.on;
+      r.eg_f = m.fil_eg.on && r.filtered;
+      r.modded = r.lfo_a || r.lfo_p || r.lfo_f || r.eg_p || r.eg_f;
+      r.cutmod = r.lfo_f || r.eg_f;
+      r.mod_fac_max = std::pow(2.0f, mod_pitch_cents_max(d) / 1200.0f);
+      for (unsigned b = 0; b < m.eq_count; ++b) {
+        const velora::ports::SampleEqBand& q = m.eq[b];
+        if (q.gain != 0.0f || q.vel2gain != 0.0f || q.gain_count != 0) r.eq_on = true;
+        for (int w = 0; w < 3; ++w) {
+          const velora::ports::SampleFilterMod* e = w == 0 ? q.freq_mods : w == 1 ? q.bw_mods : q.gain_mods;
+          for (unsigned i = 0; i < (w == 0 ? q.freq_count : w == 1 ? q.bw_count : q.gain_count); ++i) {
+            if (e[i].cc == 135 || e[i].cc == 136) bank->uses_cc_random = true;
+            if (bank->cc_curve_slot[e[i].curve] < 0) {
+              bank->cc_curve_slot[e[i].curve] = static_cast<std::int16_t>(bank->cc_curves.size());
+              bank->cc_curves.push_back(build_cc_curve(e[i].curve, view.curves));
+            }
+          }
         }
       }
     }
@@ -898,31 +978,151 @@ float SampleEngine::cc_mod_value(const SampleBank& bank, const velora::ports::Sa
 // Story 13.8: sfizz FilterHolder::setup plus the constant CC modulation of that instant. The base cutoff is scaled by the key track and the velocity track in cents and
 // clamped to 0..20000 Hz, then scaled by the CC entries (sum of depth x curve(controller), cents) and clamped again; the resonance adds the CC entries (dB). All in float,
 // as sfizz. Called when a voice starts, on the render thread: plain arithmetic and std::pow / std::sin / std::cos (in make_sample_filter), no allocation or lock.
-SampleFilterCoeffs SampleEngine::voice_filter(const SampleBank& bank, velora::ports::SampleFilterType type, float cutoff_hz, float resonance_db,
-                                              const velora::ports::SampleFilterTune& tune, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept {
+// Story 13.9 split the arithmetic in two (filter_parts, then the scaling by the entries) so a cutoff that an LFO or an EG moves can recompute it per control interval.
+float SampleEngine::mod_entries(const SampleBank& bank, const velora::ports::SampleFilterMod* e, unsigned n, std::uint32_t channel) const noexcept {
+  float sum = 0.0f;
+  for (unsigned i = 0; i < n; ++i) {
+    const float x = cc_norm(e[i].cc, channel, false);
+    sum += e[i].depth * ((e[i].cc == 140 || e[i].cc == 141) ? x : cc_curve(bank, e[i].curve, x));
+  }
+  return sum;
+}
+
+SampleEngine::FilterParts SampleEngine::filter_parts(const SampleBank& bank, float cutoff_hz, float resonance_db, const velora::ports::SampleFilterTune& tune,
+                                                     std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept {
   auto factor = [](float cents) { return std::pow(2.0f, cents / 1200.0f); };
   constexpr float kMaxCut = static_cast<float>(kSampleFilterMaxCutoffHz);
+  FilterParts p;
   float base = cutoff_hz;
   base *= factor(tune.keytrack * static_cast<float>(static_cast<int>(note) - static_cast<int>(tune.keycenter)));
   base *= factor(tune.veltrack * (static_cast<float>(vel7) / 127.0f));
-  base = std::isfinite(base) ? std::clamp(base, 0.0f, kMaxCut) : kMaxCut;
-  float cut = base;
-  if (tune.cutoff_count != 0) {
-    float cents = 0.0f;
-    for (unsigned i = 0; i < tune.cutoff_count; ++i) {
-      const velora::ports::SampleFilterMod& m = tune.cutoff[i];
-      const float x = cc_norm(m.cc, channel, false);
-      cents += m.depth * ((m.cc == 140 || m.cc == 141) ? x : cc_curve(bank, m.curve, x));
-    }
-    cut = std::clamp(base * factor(std::clamp(cents, -48000.0f, 48000.0f)), 0.0f, kMaxCut);
-  }
+  p.base = std::isfinite(base) ? std::clamp(base, 0.0f, kMaxCut) : kMaxCut;
+  p.has_cc = tune.cutoff_count != 0;
+  if (p.has_cc) p.cc_cents = mod_entries(bank, tune.cutoff, tune.cutoff_count, channel);
   float res = resonance_db;
   for (unsigned i = 0; i < tune.res_count; ++i) {
     const velora::ports::SampleFilterMod& m = tune.res[i];
     const float x = cc_norm(m.cc, channel, false);
     res += m.depth * ((m.cc == 140 || m.cc == 141) ? x : cc_curve(bank, m.curve, x));
   }
-  return make_sample_filter(type, static_cast<double>(cut), static_cast<double>(res), static_cast<double>(cfg_.sample_rate));
+  p.res = res;
+  return p;
+}
+
+SampleFilterCoeffs SampleEngine::voice_filter(const SampleBank& bank, velora::ports::SampleFilterType type, float cutoff_hz, float resonance_db,
+                                              const velora::ports::SampleFilterTune& tune, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept {
+  constexpr float kMaxCut = static_cast<float>(kSampleFilterMaxCutoffHz);
+  const FilterParts p = filter_parts(bank, cutoff_hz, resonance_db, tune, channel, note, vel7);
+  float cut = p.base;
+  if (p.has_cc) cut = std::clamp(p.base * std::pow(2.0f, std::clamp(p.cc_cents, -48000.0f, 48000.0f) / 1200.0f), 0.0f, kMaxCut);
+  return make_sample_filter(type, static_cast<double>(cut), static_cast<double>(p.res), static_cast<double>(cfg_.sample_rate));
+}
+
+// Story 13.9: one frame of a dedicated LFO, sfizz LFO.cpp in its SFZ v1 form. Delay frames output 0 and do not advance the phase; the output is the wave at the phase before
+// the increment (phase 0 at the start); the fade-in gain runs from 0 to 1 over `fade` seconds from the first frame after the delay.
+float SampleEngine::lfo_next(LfoState& s, const velora::ports::SampleLfoDesc& d) const noexcept {
+  if (s.delay_left > 0) {
+    --s.delay_left;
+    return 0.0f;
+  }
+  const float p = s.phase;
+  float y;
+  switch (d.wave) {
+    case 0: y = -4.0f * p + 2.0f; y = (p < 0.25f) ? (4.0f * p) : y; y = (p > 0.75f) ? (4.0f * p - 4.0f) : y; break;  // triangle
+    case 2: y = (p < 0.75f) ? 1.0f : 0.0f; break;
+    case 3: y = (p < 0.5f) ? 1.0f : 0.0f; break;
+    case 4: y = (p < 0.25f) ? 1.0f : 0.0f; break;
+    case 5: y = (p < 0.125f) ? 1.0f : 0.0f; break;
+    case 6: y = 2.0f * p - 1.0f; break;
+    case 7: y = 1.0f - 2.0f * p; break;
+    default: {  // sine (sfizz's parabolic approximation)
+      const float x = p + p - 1.0f;
+      y = -4.0f * x * (1.0f - std::fabs(x));
+      break;
+    }
+  }
+  float np = p + inv_sr_ * d.freq;  // ratio (1) x samplePeriod x frequency
+  np = np - static_cast<float>(static_cast<int>(np));
+  np += np < 0.0f ? 1.0f : 0.0f;
+  s.phase = np;
+  if (s.fade_pos < 1.0f) {
+    y *= s.fade_pos;
+    s.fade_pos = std::min(1.0f, s.fade_pos + s.fade_step);
+  }
+  return y;
+}
+
+// Story 13.9: the pitch / filter EGs follow the amplitude EG into release (key up, pedal, choke, steal release, sample end), as sfizz releases all three together. An EG that is
+// still in its delay when that happens never sounded: it goes idle (done, level 0), like an amplitude EG released before its delay (env_release).
+void SampleEngine::release_mod_egs(Voice& v, const RegionRt& r) const noexcept {
+  ModVoice& md = v.md;
+  if (md.released || v.env.s < EnvState::kRelease) return;
+  md.released = true;
+  for (int i = 0; i < 2; ++i) {
+    if (!(i == 0 ? r.eg_p : r.eg_f)) continue;
+    Env& e = md.eg[i];
+    if (e.s == EnvState::kDelay && e.delay_left > 0) {
+      e.s = EnvState::kDone;
+      e.v = 0.0f;
+    } else if (e.s < EnvState::kRelease) {
+      e.s = EnvState::kRelease;
+    }
+  }
+}
+
+// Story 13.9: sets up the modulation state of a voice that is starting (called from start_region on the render thread; no allocation or lock): the three LFOs (delay in
+// frames, fade step), the two EGs (the amplitude EG's ADSR with the descriptor's times, sfizz EGDescription defaults) and their depth at this velocity, the base of a
+// modulated cutoff, and the EQ bands (frequency, bandwidth and gain at this velocity and controller state, sfizz EQHolder::setup + the constant CC entries).
+void SampleEngine::init_mod(Voice& v, const SampleBank& bank, const RegionRt& r, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept {
+  namespace P = velora::ports;
+  const P::SampleModDesc& m = r.d.mod;
+  const float sr = static_cast<float>(cfg_.sample_rate);
+  const float vf = static_cast<float>(vel7) / 127.0f;
+  ModVoice& md = v.md;
+  const bool lfo_on[3] = {r.lfo_a, r.lfo_p, r.lfo_f};
+  const P::SampleLfoDesc* ld[3] = {&m.amp, &m.pitch, &m.fil};
+  for (int i = 0; i < 3; ++i) {
+    if (!lfo_on[i]) continue;
+    LfoState& s = md.lfo[i];
+    s.phase = 0.0f;
+    s.delay_left = ld[i]->delay > 0.0f ? static_cast<std::int32_t>(std::ceil(sr * ld[i]->delay)) : 0;
+    s.fade_pos = ld[i]->fade > 0.0f ? 0.0f : 1.0f;
+    s.fade_step = ld[i]->fade > 0.0f ? (1.0f / sr) / ld[i]->fade : 0.0f;
+  }
+  const bool eg_on[2] = {r.eg_p, r.eg_f};
+  const P::SampleEgDesc* gd[2] = {&m.pitch_eg, &m.fil_eg};
+  for (int i = 0; i < 2; ++i) {
+    if (!eg_on[i]) continue;
+    const P::SampleEgDesc& d = *gd[i];
+    Env& e = md.eg[i];
+    e = Env{};
+    e.s = EnvState::kDelay;
+    e.start = std::clamp(d.start / 100.0f, 0.0f, 1.0f);
+    e.v = e.start;
+    e.delay_left = seconds_to_samples(d.delay, sr);
+    e.hold_left = seconds_to_samples(d.hold, sr);
+    e.attack_step = seconds_to_lin_rate(d.attack, sr);
+    e.decay_rate = seconds_to_exp_rate(d.decay, sr);
+    e.sustain = std::clamp(d.sustain / 100.0f, 0.0f, 1.0f);
+    e.release_rate = seconds_to_exp_rate(d.release, sr);
+    e.free_running = e.sustain <= kFreeRunningSustain;
+    md.eg_depth[i] = std::clamp(d.depth + vf * d.vel2depth, -24000.0f, 24000.0f);
+  }
+  if (r.cutmod) {
+    const FilterParts p = filter_parts(bank, r.d.filter_cutoff_hz, r.d.filter_resonance_db, r.d.filter_tune, channel, note, vel7);
+    md.cut_base = p.base;
+    md.cut_cc_cents = p.has_cc ? std::clamp(p.cc_cents, -48000.0f, 48000.0f) : 0.0f;
+    md.cut_res = p.res;
+  }
+  for (unsigned b = 0; b < m.eq_count; ++b) {
+    const P::SampleEqBand& q = m.eq[b];
+    const float freq = q.freq + vf * q.vel2freq + mod_entries(bank, q.freq_mods, q.freq_count, channel);
+    const float bw = q.bw + mod_entries(bank, q.bw_mods, q.bw_count, channel);
+    const float gain = q.gain + vf * q.vel2gain + mod_entries(bank, q.gain_mods, q.gain_count, channel);
+    if (!(gain != 0.0f)) continue;  // a band at 0 dB (or a NaN) is transparent
+    md.eq[b].k = make_sample_eq(q.type, static_cast<double>(freq), static_cast<double>(bw), static_cast<double>(gain), static_cast<double>(cfg_.sample_rate));
+    md.eq[b].on = md.eq[b].k.kind != SampleFilterCoeffs::Kind::kNone;
+  }
 }
 
 std::uint32_t SampleEngine::active_voices() const noexcept {
@@ -983,7 +1183,7 @@ void SampleEngine::init_env(Env& e, const SampleBank& bank, const RegionRt& r, s
   }
 }
 
-float SampleEngine::env_next(Env& e, const RegionRt&) const noexcept {
+float SampleEngine::env_next(Env& e, const RegionRt&, bool mod, bool block_end) const noexcept {
   const float sr = static_cast<float>(cfg_.sample_rate);
   for (;;) {
     switch (e.s) {
@@ -1006,6 +1206,19 @@ float SampleEngine::env_next(Env& e, const RegionRt&) const noexcept {
         continue;
       case EnvState::kDecay: {
         e.v *= e.decay_rate;
+        if (mod) {  // sfizz ADSREnvelope: decay until the level is at or below the sustain, then exactly the sustain (no ramp); a block ending inside the threshold switches early
+          if (e.v > e.sustain) {
+            if (block_end && e.v <= e.sustain + kVirtuallyZero) {
+              e.s = EnvState::kSustain;
+              e.transition_delta = (e.sustain - e.v) / (sr * kTransitionTime);
+            }
+            return e.v;
+          }
+          e.v = e.sustain;
+          e.s = EnvState::kSustain;
+          e.transition_delta = 0.0f;
+          continue;
+        }
         if (e.v > e.sustain) {
           const float out = e.v;
           if (e.v <= e.sustain + kVirtuallyZero) {
@@ -1176,7 +1389,11 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
     if (r.filter2_on)
       v->fk2 = r.filter2_dyn ? voice_filter(bank, fd.filter2_type, fd.filter2_cutoff_hz, fd.filter2_resonance_db, fd.filter2_tune, channel, note, vel7) : r.filter2;
   }
-  if ((r.filtered || r.has_xfade) && !cfg_.extended_voices) ++undeclared_extended_;
+  if (r.modded || r.eq_on) {  // Story 13.9
+    init_mod(*v, bank, r, channel, note, vel7);
+    if (!(cfg_.extended_voices && cfg_.modulated_voices)) ++undeclared_mod_;
+  }
+  if ((r.filtered || r.has_xfade || r.modded || r.eq_on) && !cfg_.extended_voices) ++undeclared_extended_;  // the modulation declaration sits on top of the extended one
   if (r.filter2_on && !(cfg_.extended_voices && cfg_.second_filter_voices)) ++undeclared_second_;
   if (stream_ != nullptr && r.has_tail && r.tail_source != nullptr) {
     // Story 1.17: register the stream (non-blocking). The ring starts at the head end: frames below it are read from the head. No ring = the Story 1.16 placeholder.
@@ -1598,6 +1815,9 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
   const bool sustain_loop = r.d.loop_mode == velora::ports::SampleLoopMode::kLoopSustain;
   const float gl = v.gain_l * gain_, gr = v.gain_r * gain_;
   const bool has_xf = r.has_xfade, filtered = r.filtered, filter2 = r.filter2_on;
+  const bool modded = r.modded, has_eq = r.eq_on, cutmod = r.cutmod;  // Story 13.9
+  ModVoice& md = v.md;
+  const float sr_f = static_cast<float>(cfg_.sample_rate);
   if (has_xf) {  // the controllers as they are for this render segment: a new target restarts the linear ramp (sfizz LinearSmoother)
     const float want = crossfade_target(r, v.channel);
     if (want != v.xf_tgt) {
@@ -1635,7 +1855,8 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       if (v.bend_live) v.pos += static_cast<double>(v.ratio) * (static_cast<double>(v.bend_fac) - static_cast<double>(old_fac));  // only a voice that has stepped had a step to correct
     }
   }
-  const float ratio_hi = bends ? v.ratio * r.bend_fac_max : v.ratio;  // the fastest the voice can read (stream window, integrity look-ahead)
+  float ratio_hi = bends ? v.ratio * r.bend_fac_max : v.ratio;  // the fastest the voice can read (stream window, integrity look-ahead)
+  if (modded) ratio_hi *= r.mod_fac_max;                       // Story 13.9: and the pitch LFO / EG on top
 
   // Story 1.17: this block's view of the stream. The producer's progress is read ONCE (acquire) per block, and the lowest frame the voice can still read is published (release) so
   // the producer never overwrites it: positions only move forward within a segment, and the voice reads at most idx - 1 - ceil(ratio) (the oracle hold) below its start.
@@ -1684,13 +1905,41 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       fade = static_cast<float>(v.fade_left) / static_cast<float>(v.fade_total);
       --v.fade_left;
     }
+    bool stall_now = false;
     if (oracle_n != 0 && !v.stalled) {
       const std::uint64_t abs = clock_ + f;
       if (abs % oracle_n == 0 && abs / oracle_n > v.start_time / oracle_n) {
-        v.pos = std::max(0.0, v.pos - static_cast<double>(v.ratio) * (bends ? static_cast<double>(v.bend_fac) : 1.0));  // repeat the previous frame's position once (Story 13.7: a bent voice's last step)
+        stall_now = true;
+        v.pos = std::max(0.0, v.pos - static_cast<double>(v.ratio) * (bends ? static_cast<double>(v.bend_fac) : 1.0) * static_cast<double>(v.prev_pitch_mul));  // repeat the previous frame's position once (Story 13.7: a bent voice's last step)
         v.stalled = true;
       }
     }
+    // Story 13.9: this frame's LFO / EG values. The EGs are released when the amplitude EG is (key up, pedal, choke, sample end), as sfizz releases all three together.
+    float amp_mod = 1.0f, pitch_mul = 1.0f;
+    if (modded) {
+      const velora::ports::SampleModDesc& mdesc = r.d.mod;
+      release_mod_egs(v, r);
+      float cents = 0.0f, cut_cents = 0.0f;
+      if (r.lfo_a) amp_mod = std::pow(10.0f, (mdesc.amp.depth * lfo_next(md.lfo[0], mdesc.amp)) * 0.05f);
+      if (r.lfo_p) cents += mdesc.pitch.depth * lfo_next(md.lfo[1], mdesc.pitch);
+      const bool blk_end = oracle_n != 0 && (clock_ + f + 1) % oracle_n == 0;
+      if (r.eg_p) cents += md.eg_depth[0] * env_next(md.eg[0], r, true, blk_end);
+      if (r.lfo_f) cut_cents += mdesc.fil.depth * lfo_next(md.lfo[2], mdesc.fil);
+      if (r.eg_f) cut_cents += md.eg_depth[1] * env_next(md.eg[1], r, true, blk_end);
+      if (cents != 0.0f) pitch_mul = std::pow(2.0f, cents / 1200.0f);
+      if (md.age > 0 && !stall_now && pitch_mul != v.prev_pitch_mul)  // sfizz steps INTO frame f with frame f's pitch: the step added after frame f - 1 used its own factor, so correct it
+        v.pos += static_cast<double>(v.ratio) * (bends ? static_cast<double>(v.bend_fac) : 1.0) * (static_cast<double>(pitch_mul) - static_cast<double>(v.prev_pitch_mul));
+      if (cutmod) {  // sfizz FilterHolder::process + Filter::processModulated: the cutoff of the interval's first frame, coefficients smoothed per frame
+        if ((md.age & 15u) == 0) {
+          const float total = std::clamp(md.cut_cc_cents + cut_cents, -48000.0f, 48000.0f);
+          const float cut = std::clamp(md.cut_base * std::pow(2.0f, total / 1200.0f), 0.0f, static_cast<float>(kSampleFilterMaxCutoffHz));
+          md.ftgt = make_sample_filter(r.d.filter_type, static_cast<double>(cut), static_cast<double>(md.cut_res), static_cast<double>(sr_f));
+          if (md.age == 0) md.fcur = md.ftgt;
+        }
+        sample_filter_smooth(md.fcur, md.ftgt, filt_smooth_step_);
+      }
+    }
+
     // Loop wrap: continuous loops always, sustain loops until the envelope is released.
     const bool looping = r.loops && !v.release_trigger && !v.ended && (!sustain_loop || v.env.s < EnvState::kRelease);
     std::int64_t idx = static_cast<std::int64_t>(std::floor(v.pos));
@@ -1730,6 +1979,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
     }
 
     const float env = env_next(v.env, r);
+    if (modded) release_mod_egs(v, r);  // an amplitude release that began inside this frame (sample end, fast release) reaches the modulation EGs at once
     if (v.env.s == EnvState::kDone) {
       end_voice(v);
       return;
@@ -1908,7 +2158,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       sr_ *= v.integ_gain;
     }
 
-    if (!has_xf && !filtered) {  // the plain voice: exactly the Story 1.15 arithmetic (bit-exact bypass)
+    if (!has_xf && !filtered && !modded && !has_eq) {  // the plain voice: exactly the Story 1.15 arithmetic (bit-exact bypass)
       if (v.stolen) {
         left[f] += sl * env * gl * fade;
         right[f] += sr_ * env * gr * fade;
@@ -1925,18 +2175,39 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
         xf = v.xf_cur;
       }
       float ol, orr;
-      if (filtered) {  // amplitude stage -> filter -> pan (mono) / pan -> filter (stereo; the same linear result)
-        const float a = env * xf * v.base_gain;
-        float yl = static_cast<float>(sample_filter_tick(v.fk, v.fl, static_cast<double>(sl * a)));
-        float yr = r.stereo ? static_cast<float>(sample_filter_tick(v.fk, v.fr, static_cast<double>(sr_ * a))) : yl;
-        if (filter2) {  // Story 13.8: the second filter in series; a float between the stages, as sfizz's buffers
-          yl = static_cast<float>(sample_filter_tick(v.fk2, v.fl2, static_cast<double>(yl)));
-          yr = r.stereo ? static_cast<float>(sample_filter_tick(v.fk2, v.fr2, static_cast<double>(yr))) : yl;
+      if (filtered || has_eq) {  // amplitude stage -> filter -> EQ bands -> pan (mono) / pan -> filter -> EQ (stereo; the same linear result)
+        float a = env * xf * v.base_gain;
+        if (modded) a *= amp_mod;  // Story 13.9: the amplitude LFO (dB)
+        float yl, yr;
+        if (filtered) {
+          if (cutmod) {  // Story 13.9: a cutoff that an LFO / EG moves runs on the smoothed coefficients, with sfizz's per-term coefficient timing
+            yl = static_cast<float>(sample_filter_tick_smooth(md.fcur, md.sml, static_cast<double>(sl * a)));
+            yr = r.stereo ? static_cast<float>(sample_filter_tick_smooth(md.fcur, md.smr, static_cast<double>(sr_ * a))) : yl;
+          } else {
+            yl = static_cast<float>(sample_filter_tick(v.fk, v.fl, static_cast<double>(sl * a)));
+            yr = r.stereo ? static_cast<float>(sample_filter_tick(v.fk, v.fr, static_cast<double>(sr_ * a))) : yl;
+          }
+          if (filter2) {  // Story 13.8: the second filter in series; a float between the stages, as sfizz's buffers
+            yl = static_cast<float>(sample_filter_tick(v.fk2, v.fl2, static_cast<double>(yl)));
+            yr = r.stereo ? static_cast<float>(sample_filter_tick(v.fk2, v.fr2, static_cast<double>(yr))) : yl;
+          }
+        } else {
+          yl = sl * a;
+          yr = r.stereo ? sr_ * a : yl;
+        }
+        if (has_eq) {  // Story 13.9: the EQ bands follow the filters (sfizz filterStage), a float between the stages
+          for (unsigned b = 0; b < velora::ports::kSampleMaxEqBands; ++b) {
+            EqBandState& q = md.eq[b];
+            if (!q.on) continue;
+            yl = static_cast<float>(sample_filter_tick(q.k, q.l, static_cast<double>(yl)));
+            yr = r.stereo ? static_cast<float>(sample_filter_tick(q.k, q.r, static_cast<double>(yr))) : yl;
+          }
         }
         ol = yl * cl;
         orr = yr * cr;
       } else {
-        const float a = env * xf;
+        float a = env * xf;
+        if (modded) a *= amp_mod;
         ol = sl * a * gl;
         orr = sr_ * a * gr;
       }
@@ -1955,10 +2226,12 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
         v.bend_cur = nxt == v.bend_cur ? v.bend_tgt : nxt;  // a step too small to move the float would never arrive: snap
         v.bend_fac = std::pow(2.0f, v.bend_cur / 1200.0f);
       }
-      v.pos += static_cast<double>(v.ratio) * static_cast<double>(v.bend_fac);
+      v.pos += static_cast<double>(v.ratio) * static_cast<double>(v.bend_fac) * static_cast<double>(pitch_mul);
     } else {
-      v.pos += static_cast<double>(v.ratio);
+      v.pos += static_cast<double>(v.ratio) * static_cast<double>(pitch_mul);  // Story 13.9: pitch_mul is exactly 1 for a region without a pitch LFO / EG
     }
+    v.prev_pitch_mul = pitch_mul;
+    if (modded) ++md.age;
   }
 }
 

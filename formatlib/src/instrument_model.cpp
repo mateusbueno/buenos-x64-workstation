@@ -22,6 +22,8 @@ bool has_bend_trigger_extension(const Region& r) { return r.bend != PitchBend{} 
 
 bool has_filter_extension(const Region& r) { return r.fmap != FilterMap{}; }
 
+bool has_mod_extension(const Region& r) { return r.mod != ModMap{}; }
+
 
 namespace {
 // -0.0 == 0.0 as a number but not as bytes: one encoding per value.
@@ -89,6 +91,59 @@ Error validate_filter_map(const Region& r) {
   if (r.filter.type == FilterType::kNone) return Error::kInvalidArgument;  // the second filter follows the first
   if (!std::isfinite(f.cutoff_hz) || !std::isfinite(f.resonance_db) || neg_zero(f.cutoff_hz) || neg_zero(f.resonance_db)) return Error::kInvalidArgument;
   if (f.cutoff_hz < 0.f || f.cutoff_hz > 48000.f || f.resonance_db < 0.f || f.resonance_db > 40.f) return Error::kInvalidArgument;
+  return Error::kNone;
+}
+
+Error validate_mod(const ModMap& m) {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi && !neg_zero(v); };
+  const LfoSpec* lfos[3] = {&m.amp, &m.pitch, &m.fil};
+  for (int i = 0; i < 3; ++i) {
+    const LfoSpec& l = *lfos[i];
+    if (!l.on) {
+      if (l != LfoSpec{}) return Error::kInvalidArgument;
+      continue;
+    }
+    const float dmax = i == 0 ? 10.f : 1200.f;
+    if (static_cast<std::uint8_t>(l.wave) > kMaxLfoWave || !in(l.depth, -dmax, dmax) || l.depth == 0.f || !in(l.freq, 0.f, 100.f) || !in(l.delay, 0.f, 30.f) || !in(l.fade, 0.f, 30.f))
+      return Error::kInvalidArgument;
+  }
+  for (const EgSpec* e : {&m.pitch_eg, &m.fil_eg}) {
+    if (!e->on) {
+      if (*e != EgSpec{}) return Error::kInvalidArgument;
+      continue;
+    }
+    for (float t : {e->delay, e->attack, e->hold, e->decay, e->release})
+      if (!in(t, 0.f, 100.f)) return Error::kInvalidArgument;
+    for (float p : {e->start, e->sustain})
+      if (!in(p, 0.f, 100.f)) return Error::kInvalidArgument;
+    if (!in(e->depth, -12000.f, 12000.f) || !in(e->vel2depth, -12000.f, 12000.f) || (e->depth == 0.f && e->vel2depth == 0.f)) return Error::kInvalidArgument;
+  }
+  if (m.eq_count > kMaxEqBands) return Error::kInvalidArgument;
+  for (unsigned b = 0; b < kMaxEqBands; ++b) {
+    const EqBand& q = m.eq[b];
+    if (b >= m.eq_count) {
+      if (q != EqBand{}) return Error::kInvalidArgument;
+      continue;
+    }
+    if (b + 1 == m.eq_count && q == EqBand{}) return Error::kInvalidArgument;  // a trailing default band is no band (one encoding per sound)
+    const std::uint8_t ty = static_cast<std::uint8_t>(q.type);
+    if (ty < 1 || ty > 3 || !in(q.freq, 0.f, 20000.f) || !in(q.bw, 0.01f, 4.f) || !in(q.gain, -96.f, 60.f) || !in(q.vel2freq, -30000.f, 30000.f) || !in(q.vel2gain, -96.f, 96.f))
+      return Error::kInvalidArgument;
+    for (int w = 0; w < 3; ++w) {
+      const FilterMod* e = w == 0 ? q.freq_mods : w == 1 ? q.bw_mods : q.gain_mods;
+      const unsigned n = w == 0 ? q.freq_count : w == 1 ? q.bw_count : q.gain_count;
+      const float lim = w == 0 ? 20000.f : w == 1 ? 4.f : 96.f;
+      if (n > kMaxFilterMods) return Error::kInvalidArgument;
+      for (unsigned i = 0; i < kMaxFilterMods; ++i) {
+        if (i >= n) {
+          if (e[i] != FilterMod{}) return Error::kInvalidArgument;
+          continue;
+        }
+        if (!is_cc_mod_source(e[i].cc) || !in(e[i].depth, -lim, lim) || e[i].depth == 0.f) return Error::kInvalidArgument;
+        if (i > 0 && e[i].cc <= e[i - 1].cc) return Error::kInvalidArgument;
+      }
+    }
+  }
   return Error::kNone;
 }
 
@@ -240,6 +295,7 @@ Error validate_region(const Region& r, std::uint64_t frames) {
   if (validate_vg(r.vg) != Error::kNone) return Error::kInvalidArgument;
   if (validate_bend_trigger(r.bend, r.trig) != Error::kNone) return Error::kInvalidArgument;
   if (validate_filter_map(r) != Error::kNone) return Error::kInvalidArgument;
+  if (validate_mod(r.mod) != Error::kNone) return Error::kInvalidArgument;
   if (r.offset >= frames) return Error::kInvalidArgument;
   if (r.has_loop_points) {
     if (r.loop_start > r.loop_end || r.loop_end >= frames) return Error::kInvalidArgument;

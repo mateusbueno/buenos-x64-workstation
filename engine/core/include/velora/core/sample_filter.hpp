@@ -78,6 +78,64 @@ inline SampleFilterCoeffs make_sample_filter(velora::ports::SampleFilterType typ
   return k;
 }
 
+// --- region EQ (Story 13.9) --------------------------------------------------------------------------------------------------
+//
+// sfizz's sfzEqPeak / sfzEqLshelf / sfzEqHshelf (gen/filters, the RBJ Audio-EQ-Cookbook peaking and shelving biquads with a bandwidth in octaves), in double. type: 1 peak,
+// 2 low shelf, 3 high shelf. The clamps are the generated code's: frequency 1 Hz .. 20 kHz (and below 0.49 fs), bandwidth 0.01 .. 12 octaves, gain -120 .. +60 dB, the
+// Q-like term at least 0.001. The result is a kBiquad that sample_filter_tick runs (b1 is the coefficient the Faust code applies to the previous input).
+inline SampleFilterCoeffs make_sample_eq(unsigned type, double freq_hz, double bw_oct, double gain_db, double sample_rate) noexcept {
+  SampleFilterCoeffs k;
+  if (type < 1 || type > 3 || !(sample_rate > 0.0)) return k;
+  double fc = std::isfinite(freq_hz) ? freq_hz : 1.0;
+  fc = std::min(0.49 * sample_rate, std::max(1.0, std::min(kSampleFilterMaxCutoffHz, fc)));
+  const double bw = std::isfinite(bw_oct) ? std::min(12.0, std::max(0.01, bw_oct)) : 1.0;
+  const double g = std::isfinite(gain_db) ? std::min(60.0, std::max(-120.0, gain_db)) : 0.0;
+  const double two_pi = 6.2831853071795864769;
+  const double a_lin = std::pow(10.0, 0.025 * g);
+  const double w0 = two_pi * fc / sample_rate;
+  const double cs = std::cos(w0), sn = std::sin(w0);
+  const double q = std::max(0.001, 0.5 / std::sinh((2.1775860903036022 / sample_rate) * ((fc * bw) / sn)));
+  k.kind = SampleFilterCoeffs::Kind::kBiquad;
+  if (type == 1) {
+    const double al = 0.5 * (sn / (a_lin * q)), ala = 0.5 * ((a_lin * sn) / q);
+    const double d = al + 1.0;
+    k.a1 = (-2.0 * cs) / d;
+    k.b1 = k.a1;
+    k.b0 = (ala + 1.0) / d;
+    k.b2 = (1.0 - ala) / d;
+    k.a2 = (1.0 - al) / d;
+  } else if (type == 2) {
+    const double s5 = (a_lin + 1.0) * cs, s6 = (a_lin - 1.0) * cs, s7 = (std::sqrt(a_lin) * sn) / q;
+    const double s8 = s6 + s7, d = (a_lin + s8) + 1.0;
+    k.b1 = (2.0 * ((a_lin * (a_lin + (-1.0 - s5))) / d));
+    k.b0 = (a_lin * ((a_lin + s7) + (1.0 - s6))) / d;
+    k.b2 = (a_lin * (a_lin + (1.0 - s8))) / d;
+    k.a2 = ((a_lin + s6) + (1.0 - s7)) / d;
+    k.a1 = (0.0 - (2.0 * ((a_lin + s5) + -1.0))) / d;
+  } else {
+    const double s5 = (a_lin + 1.0) * cs, s6 = (std::sqrt(a_lin) * sn) / q, s7 = (a_lin - 1.0) * cs;
+    const double s8 = (a_lin + s6) + (1.0 - s7), s11 = s7 + s6;
+    k.b1 = ((0.0 - (2.0 * a_lin)) * ((a_lin + s5) + -1.0)) / s8;
+    k.b0 = (a_lin * ((a_lin + s11) + 1.0)) / s8;
+    k.b2 = (a_lin * ((a_lin + s7) + (1.0 - s6))) / s8;
+    k.a2 = (a_lin + (1.0 - s11)) / s8;
+    k.a1 = 2.0 * ((a_lin + (-1.0 - s5)) / s8);
+  }
+  return k;
+}
+
+// |H| of a biquad is shared with sample_filter_magnitude below; the generic per-frame move of a coefficient set towards a target (sfizz's one-pole coefficient smoothing,
+// pole exp(-1000 / fs): c += (1 - pole) * (target - c)), used by a filter whose cutoff a LFO or an EG moves (Story 13.9).
+inline void sample_filter_smooth(SampleFilterCoeffs& cur, const SampleFilterCoeffs& tgt, double step) noexcept {
+  cur.b0 += step * (tgt.b0 - cur.b0);
+  cur.b1 += step * (tgt.b1 - cur.b1);
+  cur.b2 += step * (tgt.b2 - cur.b2);
+  cur.a1 += step * (tgt.a1 - cur.a1);
+  cur.a2 += step * (tgt.a2 - cur.a2);
+  cur.p += step * (tgt.p - cur.p);
+  cur.g += step * (tgt.g - cur.g);
+}
+
 // Denormals in a decaying filter are slow on some CPUs: states under 1e-200 (far below any audible or float-representable signal) flush to 0.
 inline double sample_filter_flush(double v) noexcept { return std::fabs(v) < 1e-200 ? 0.0 : v; }
 
@@ -117,6 +175,47 @@ inline double sample_filter_tick(const SampleFilterCoeffs& k, SampleFilterState&
       s.x1 = sample_filter_flush(x);
       s.y2 = s.y1;
       s.y1 = y;
+      return y;
+    }
+    case SampleFilterCoeffs::Kind::kNone:
+    default:
+      return x;
+  }
+}
+
+// Story 13.9: the filter of a cutoff that moves. sfizz's Faust biquads (lpf_2p, hpf_2p, bpf_2p) read their smoothed coefficients at different frames for different terms:
+// y[n] = b0[n] x[n] + b1[n-1] x[n-1] + b2[n-2] x[n-2] - a2[n-1] y[n-2] - a1[n] y[n-1] (each product is formed when its coefficient is current and delayed after that). With a
+// constant coefficient set this is the direct form I of sample_filter_tick; while the coefficients move (a few percent per frame during a step of the cutoff) it is not,
+// and the difference is audible against sfizz for a millisecond or two. v0 = x[n-1] b1[n-1], v1 = x[n-1] b2[n-1], v2 = x[n-2] b2[n-2] - a2[n-1] y[n-2]; one-pole types as the
+// plain tick (their coefficient is read at the current frame in sfizz as well).
+struct SampleFilterSmoothState {
+  double v0 = 0, v1 = 0, v2 = 0, y1 = 0, w1 = 0;
+};
+
+inline double sample_filter_tick_smooth(const SampleFilterCoeffs& k, SampleFilterSmoothState& s, double x) noexcept {
+  switch (k.kind) {
+    case SampleFilterCoeffs::Kind::kBiquad: {
+      const double y = sample_filter_flush(k.b0 * x + s.v0 + s.v2 - k.a1 * s.y1);
+      if (!(std::fabs(y) < kSampleFilterSignalLimit)) {
+        s = SampleFilterSmoothState{};
+        return 0.0;
+      }
+      const double nv2 = s.v1 - k.a2 * s.y1;
+      s.v0 = sample_filter_flush(x * k.b1);
+      s.v1 = sample_filter_flush(x * k.b2);
+      s.v2 = sample_filter_flush(nv2);
+      s.y1 = y;
+      return y;
+    }
+    case SampleFilterCoeffs::Kind::kOnePoleLow:
+    case SampleFilterCoeffs::Kind::kOnePoleHigh: {
+      const double w = sample_filter_flush(x + k.p * s.w1);
+      if (!(std::fabs(w) < kSampleFilterSignalLimit)) {
+        s = SampleFilterSmoothState{};
+        return 0.0;
+      }
+      const double y = k.kind == SampleFilterCoeffs::Kind::kOnePoleLow ? w * (1.0 - k.p) : k.g * (w - s.w1);
+      s.w1 = w;
       return y;
     }
     case SampleFilterCoeffs::Kind::kNone:

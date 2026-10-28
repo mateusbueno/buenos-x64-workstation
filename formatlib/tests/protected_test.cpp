@@ -578,6 +578,29 @@ void test_roundtrip_and_seeks(const std::string& fixture_dir) {
       CHECK(!got.empty() && got.back() == a);
     }
   }
+  // Story 13.9: the modulation table (format minor 8) round-trips through the protected format.
+  {
+    constexpr std::uint32_t kMdMinor = 8;  // the minor that introduced the modulation table
+    Source s10;
+    BundleWriter wb = make_writer(s10, true);
+    Region a;
+    a.filter = {FilterType::kLpf2p, 500.f, 3.f};
+    a.mod.amp = {true, LfoWave::kSine, 3.f, 5.5f, 0.25f, 1.f};
+    a.mod.fil = {true, LfoWave::kRamp, -600.f, 2.f, 0.f, 0.f};
+    a.mod.pitch_eg = {true, 0.f, 0.1f, 0.f, 0.3f, 0.4f, 0.f, 20.f, 1200.f, -300.f};
+    a.mod.eq_count = 2;
+    a.mod.eq[0].freq = 120.f; a.mod.eq[0].gain = -3.f; a.mod.eq[0].freq_count = 1; a.mod.eq[0].freq_mods[0] = {80, 2, 400.f};
+    a.mod.eq[1].type = EqType::kHighShelf; a.mod.eq[1].freq = 8000.f; a.mod.eq[1].bw = 2.f; a.mod.eq[1].gain = 6.f; a.mod.eq[1].vel2gain = 3.f;
+    CHECK_ERR(wb.add_region(0, a), Error::kNone);
+    const Bytes bb = protect(wb, nonce1());
+    CHECK(L::get_u32(bb.data() + 4) == (kProtectedFormatVersion | (kMdMinor << 16)));
+    auto rb = ProtectedBundleReader::open_memory(bb, tk, test_key());
+    CHECK(rb.ok() && rb.value().info().format_minor == kMdMinor && rb.value().verify_all() == Error::kNone);
+    if (rb.ok()) {
+      const auto& got = rb.value().instruments()[0].regions;
+      CHECK(!got.empty() && got.back() == a);
+    }
+  }
   // An empty writer is a valid (zero block) protected bundle.
   {
     BundleWriter we;
@@ -783,7 +806,7 @@ void test_tamper() {
   {
     struct V { std::uint32_t word; Error want; };
     for (const V& v : {V{4u, Error::kUnsupportedVersion}, V{2u, Error::kNotProtected}, V{1u, Error::kNotProtected}, V{0u, Error::kUnsupportedVersion},
-                       V{3u | ((kFormatMinor + 1) << 16), Error::kUnsupportedVersion}, V{3u | (7u << 16), Error::kCorruptManifest}, V{3u | (6u << 16), Error::kCorruptManifest}, V{3u | (5u << 16), Error::kCorruptManifest}, V{3u | (4u << 16), Error::kCorruptManifest}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest},
+                       V{3u | ((kFormatMinor + 1) << 16), Error::kUnsupportedVersion}, V{3u | (8u << 16), Error::kCorruptManifest}, V{3u | (7u << 16), Error::kCorruptManifest}, V{3u | (6u << 16), Error::kCorruptManifest}, V{3u | (5u << 16), Error::kCorruptManifest}, V{3u | (4u << 16), Error::kCorruptManifest}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest},
                        V{3u | (3u << 16), Error::kCorruptManifest}}) {
       Bytes b = good;
       for (int i = 0; i < 4; ++i) {

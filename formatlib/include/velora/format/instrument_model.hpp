@@ -272,6 +272,48 @@ struct FilterMap {
   friend bool operator==(const FilterMap&, const FilterMap&) = default;
 };
 
+// Story 13.9 (bundle format 2.8): region EQ and the dedicated LFOs / EGs (sfizz EQHolder, LFO, ADSREnvelope; the design is _bmad-output/planning-artifacts/
+// sfz-modulation-design.md). The LFOs of `amplfo_*` (volume, dB), `pitchlfo_*` (cents) and `fillfo_*` (cents on the first filter's cutoff) and the EGs of `pitcheg_*`
+// (cents) and `fileg_*` (cents on the first filter's cutoff) run per frame in the voice; the EQ bands are computed once when a voice starts. A source is stored only when it
+// has a depth (sfizz connects it to its target with depth 0 otherwise, which does nothing).
+enum class LfoWave : std::uint8_t {
+  kTriangle = 0, kSine = 1, kPulse75 = 2, kSquare = 3, kPulse25 = 4, kPulse12_5 = 5, kRamp = 6, kSaw = 7,
+};
+inline constexpr std::uint8_t kMaxLfoWave = 7;
+struct LfoSpec {
+  bool on = false;
+  LfoWave wave = LfoWave::kSine;  // the default of amplfo / pitchlfo / fillfo (the SFZ v1 LFOs)
+  float depth = 0;                // dB (amplfo, +-10) or cents (pitchlfo, fillfo, +-1200)
+  float freq = 0;                 // Hz 0..100
+  float delay = 0, fade = 0;      // seconds 0..30
+  friend bool operator==(const LfoSpec&, const LfoSpec&) = default;
+};
+struct EgSpec {
+  bool on = false;
+  float delay = 0, attack = 0, hold = 0, decay = 0, release = 0;  // seconds 0..100
+  float start = 0, sustain = 100;                                  // percent 0..100
+  float depth = 0, vel2depth = 0;                                  // cents, +-12000 (vel2depth is added at velocity 127)
+  friend bool operator==(const EgSpec&, const EgSpec&) = default;
+};
+enum class EqType : std::uint8_t { kPeak = 1, kLowShelf = 2, kHighShelf = 3 };
+inline constexpr unsigned kMaxEqBands = 3;
+// One EQ band. freq / bw / gain / vel2freq / vel2gain as sfizz's EQDescription; the freq / bw / gain entries add `depth * curve(controller)` at voice start (Hz, octaves, dB).
+struct EqBand {
+  EqType type = EqType::kPeak;
+  float freq = 0, bw = 1, gain = 0;  // Hz (the importer has already applied sfizz's 50 / 500 / 5000 defaults), octaves, dB
+  float vel2freq = 0, vel2gain = 0;  // Hz / dB added at velocity 127
+  std::uint8_t freq_count = 0, bw_count = 0, gain_count = 0;  // entries, strictly ascending by cc; unused entries are zero
+  FilterMod freq_mods[kMaxFilterMods]{}, bw_mods[kMaxFilterMods]{}, gain_mods[kMaxFilterMods]{};
+  friend bool operator==(const EqBand&, const EqBand&) = default;
+};
+struct ModMap {
+  LfoSpec amp, pitch, fil;
+  EgSpec pitch_eg, fil_eg;
+  std::uint8_t eq_count = 0;  // bands 0..eq_count-1 are stored (a band that sfizz would create implicitly is stored as the default band)
+  EqBand eq[kMaxEqBands]{};
+  friend bool operator==(const ModMap&, const ModMap&) = default;
+};
+
 struct Region {
   std::uint32_t sample = 0;  // index into the owning instrument's samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -307,6 +349,8 @@ struct Region {
   CcTriggers trig;
   // Story 13.8 extension (bundle format 2.7).
   FilterMap fmap;
+  // Story 13.9 extension (bundle format 2.8).
+  ModMap mod;
 
   friend bool operator==(const Region&, const Region&) = default;
 };
@@ -332,6 +376,9 @@ bool has_bend_trigger_extension(const Region& r);
 
 // True when the region needs a record in the format 2.7 filter table: a filter tuning or a second filter.
 bool has_filter_extension(const Region& r);
+
+// True when the region needs a record in the format 2.8 modulation table: an LFO, an EG or an EQ band.
+bool has_mod_extension(const Region& r);
 
 // Checks every range invariant of a region against its sample length (`sample_frames`). Returns
 // kNone or kInvalidArgument. Used by the writer, the reader (as kCorruptManifest) and the importer.

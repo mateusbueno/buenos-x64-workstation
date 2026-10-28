@@ -19,6 +19,7 @@ Container (target `velora_format`, namespace `velora::format`):
 - Format 2.5 (Story 13.6, `group`, `off_by`, `off_mode`, `off_time`, `polyphony`, `note_polyphony`, `note_selfmask`): the region record is unchanged. A bundle with at least one region whose `VoiceGroup` differs from its default is stamped minor 5 and carries, after each instrument's minor 4 tables (written in a minor 5 bundle even when empty, `u32 0`), the voice-group table: `u32 n_vg` and `n_vg` fixed 28-byte records in ascending region order (`u32 region_index`, `i32 group`, `i32 off_by` (0 without off_by), `u8 flags` bit 0 = has_off_by, bit 1 = note_selfmask off, `u8 off_mode` 0 fast, 1 normal, 2 time, `u16 0`, `f32 off_time` seconds (0 unless off_mode is time), `u16 polyphony`, `u16 group_polyphony`, `u16 note_polyphony` (each 0..255, 0 = no limit), `u16 0`; layout in `src/layout.hpp`). `group_polyphony` is the limit of the region's group: the importer gives every region of a group the group's final limit (sfizz keeps one limit per group number, the last assignment winning), so the engine needs no group table. Every other bundle keeps minor 0..4 and its exact bytes. A minor 5 bundle with no voice-group record, a record for a region whose `VoiceGroup` is the default, a limit above 255, an unknown flag bit or off_mode, `off_time` outside 0..100 or non-zero without `off_mode` time, -0.0, NaN or non-zero padding is `kCorruptManifest`; minor 7 is `kUnsupportedVersion`. `WriterOptions::format_minor = 4` is the test hook that refuses such regions.
 - Format 2.6 (Story 13.7, `bend_up`/`bend_down`/`bend_step`/`bend_smooth` and `on_locc`/`on_hicc` controller triggers): the region record is unchanged. A bundle with at least one region that sets a bend opcode or has a controller trigger is stamped minor 6 and carries, after each instrument's minor 5 table (written in a minor 6 bundle even when empty, `u32 0`), the bend/trigger table: `u32 n_bt` and `n_bt` records in ascending region order (`u32 region_index`, `u8 flags` bit 0 = bend enabled, bit 1 = the region never starts from a note, `u8 trig_count` 0..4, `u16 smooth_ms` (0 unless bend enabled), `f32 bend_up`, `f32 bend_down`, `f32 bend_step` (200, -200, 1 unless bend enabled), then `trig_count` triggers `{u8 cc, 3 x 0, f32 lo, f32 hi}` ascending by cc, `lo`/`hi` in CC units 0..127 inclusive; layout in `src/layout.hpp`). Every other bundle keeps minor 0..5 and its exact bytes (tested for each writer ceiling). A minor 6 bundle with no record, a record for a region whose bend and triggers are the default, bend values outside +-12000 cents, a step outside 1..12000, a "never from a note" flag without a trigger, nonzero padding, a trigger above controller 127 or out of order, or a minor above 6 is rejected (`kCorruptManifest` / `kUnsupportedVersion`). The reader accepts minor 0..6.
 - Format 2.7 (Story 13.8, per-voice filter): the region record is unchanged. A bundle with at least one region that has a `FilterMap` (a filter tuning on the first filter or a second filter) is stamped minor 7 and carries, after each instrument's minor 6 table (written in a minor 7 bundle even when empty, `u32 0`), the filter table: `u32 n_fl` and `n_fl` records in ascending region order (`u32 region_index`, `u8 flags` bit 0 = second filter present, 3 x 0, the first filter's tune, then with bit 0 `u8 type` 1..5, 3 x 0, `f32 cutoff_hz`, `f32 resonance_db` and the second filter's tune). A tune is `f32 keytrack` (cents per key, 0..1200), `f32 veltrack` (cents at velocity 127, +-12000), `u8 keycenter`, `u8 cutoff_count`, `u8 res_count` (each 0..4), `u8 0`, then the cutoff entries and the resonance entries `{u8 cc, u8 curve, 2 x 0, f32 depth}` ascending by cc (cutoff depth in cents +-12000, resonance depth in dB 0..96; cc a controller 0..127 or a Story 13.5 pseudo-CC; curve a `<curve>` index); layout in `src/layout.hpp`. Every other bundle keeps minor 0..6 and its exact bytes (tested for each writer ceiling, plain and protected). A minor 7 bundle with no record, a record whose map is the default, a tuning or a second filter on a region without a first filter, out-of-range values, nonzero padding, entries out of order or past the bound, or a minor above 7 is rejected (`kCorruptManifest` / `kUnsupportedVersion`). The reader accepts minor 0..7.
+- Format 2.8 (Story 13.9, region EQ and dedicated LFO/EG modulation): the region record is unchanged. A bundle with at least one region that has a `ModMap` (an `amplfo_`/`pitchlfo_`/`fillfo_` LFO, a `pitcheg_`/`fileg_` EG or an `eqN_` band) is stamped minor 8 and carries, after each instrument's minor 7 table (written in a minor 8 bundle even when empty, `u32 0`), the modulation table: `u32 n_md` and `n_md` variable-length records in ascending region order (`u32 region_index`, `u8 flags` bit 0..2 = amplitude, pitch, filter LFO present, bit 3..4 = pitch, filter EG present, `u8 eq_count` 0..3, `u16 0`, then per present LFO `u8 wave` 0..7, 3 x 0, `f32 depth, freq, delay, fade`; per present EG nine `f32` (delay, attack, hold, decay, release, start, sustain, depth, vel2depth); per EQ band `u8 type` 1 peak / 2 low shelf / 3 high shelf, `u8 freq_count, bw_count, gain_count` (each 0..4), `f32 freq, bw, gain, vel2freq, vel2gain`, then the freq, bw and gain entries `{u8 cc, u8 curve, 2 x 0, f32 depth}` ascending by cc); layout in `src/layout.hpp`, design in `_bmad-output/planning-artifacts/sfz-modulation-design.md`. Every other bundle keeps minor 0..7 and its exact bytes. A minor 8 bundle with no record, a record whose map is the default, out-of-range values, a stored LFO or EG without depth, nonzero padding, entries out of order or past the bound, or a minor above 8 is rejected (`kCorruptManifest` / `kUnsupportedVersion`). The reader accepts minor 0..8.
 - PCM exchange convention: interleaved `int32_t`; float32 is carried as its IEEE bit pattern.
 
 Instrument model (`velora/format/instrument_model.hpp`): a `Region` holds sample index, key lo/hi/center, velocity lo/hi, transpose/tune/volume/pan, offset, `seq_length`/`seq_position`, `lorand`/`hirand`, loop mode/start/end and the `ampeg` envelope, plus `trigger` (attack, release, and since Story 13.3 first, legato, release_key), `has_end`/`end` (Story 13.3, exclusive sample end in frames; `end=0` disables the region) and the Story 5.1 extension: `Keyswitch sw` (`sw_lokey`, `sw_hikey`, `sw_last`, `sw_down`, `sw_up`, `sw_previous`, `sw_default`; -1 = not given), `Crossfade xf` (up to `kMaxCcCrossfades` = 4 xfin and 4 xfout controllers, each `{cc, lo, hi}` with cc 0..127 sorted ascending, `xf_cccurve` gain|power, default power) and `Filter filter` (`fil_type` lpf_1p|lpf_2p|hpf_1p|hpf_2p|bpf_2p, `cutoff` Hz 0..48000, `resonance` dB 0..40; type none = no filter). `has_extension(region)` says whether a region needs an extension record. Playing these is Story 5.2 (done: `engine/core/README.md`, "Keyswitches, CC crossfades and filters"; the loader `engine/host/sample_bundle_loader` carries them to the sample-source port). `BundleWriter::add_region` validates a region against its sample (`validate_region`); the reader validates the same invariants and reports `kCorruptManifest`. Regions are part of the manifest, hence of `bundle_id`. `BundleWriter::set_source_id(s)` mints `library_id` = UUIDv5 of SHA-256("velora.source.v1" || 0 || s) instead of the content fingerprint, so re-importing changed content of the same source keeps its `library_id` (the librarian uses the SFZ's canonical absolute path).
@@ -224,6 +225,101 @@ Mapping rules of Story 13.6 (choke groups and polyphony). The model is sfizz 1.2
 | `on_hicc<N>` | supported | on_hicc below 127 covers values up to on_hicc + 1, exclusive (sfizz fill-gap) (Story 13.7) |
 | `start_locc<N>` | supported | alias of on_locc<N> (Story 13.7) |
 | `start_hicc<N>` | supported | alias of on_hicc<N> (Story 13.7) |
+| `eq1_freq` | supported | EQ band 1, Hz (Story 13.9) |
+| `eq1_bw` | supported | EQ band 1, octaves 0.001..4 (Story 13.9) |
+| `eq1_gain` | supported | EQ band 1, dB -96..96 (Story 13.9) |
+| `eq1_type` | supported | peak, lshelf, hshelf (Story 13.9) |
+| `eq1_vel2freq` | supported | Hz added at velocity 127 (Story 13.9) |
+| `eq1_veltofreq` | supported | alias of eq1_vel2freq (Story 13.9) |
+| `eq1_vel2gain` | supported | dB added at velocity 127 (Story 13.9) |
+| `eq1_veltogain` | supported | alias of eq1_vel2gain (Story 13.9) |
+| `eq1_freq_oncc<N>` | supported | Hz added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq1_freq_cc<N>` | supported | alias of eq1_freq_oncc<N> (Story 13.9) |
+| `eq1_freqcc<N>` | supported | SFZ 1 alias of eq1_freq_oncc<N> (Story 13.9) |
+| `eq1_freq_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq1_bw_oncc<N>` | supported | octaves added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq1_bw_cc<N>` | supported | alias of eq1_bw_oncc<N> (Story 13.9) |
+| `eq1_bwcc<N>` | supported | SFZ 1 alias of eq1_bw_oncc<N> (Story 13.9) |
+| `eq1_bw_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq1_gain_oncc<N>` | supported | dB added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq1_gain_cc<N>` | supported | alias of eq1_gain_oncc<N> (Story 13.9) |
+| `eq1_gaincc<N>` | supported | SFZ 1 alias of eq1_gain_oncc<N> (Story 13.9) |
+| `eq1_gain_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq2_freq` | supported | EQ band 2, Hz (Story 13.9) |
+| `eq2_bw` | supported | EQ band 2, octaves 0.001..4 (Story 13.9) |
+| `eq2_gain` | supported | EQ band 2, dB -96..96 (Story 13.9) |
+| `eq2_type` | supported | peak, lshelf, hshelf (Story 13.9) |
+| `eq2_vel2freq` | supported | Hz added at velocity 127 (Story 13.9) |
+| `eq2_veltofreq` | supported | alias of eq2_vel2freq (Story 13.9) |
+| `eq2_vel2gain` | supported | dB added at velocity 127 (Story 13.9) |
+| `eq2_veltogain` | supported | alias of eq2_vel2gain (Story 13.9) |
+| `eq2_freq_oncc<N>` | supported | Hz added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq2_freq_cc<N>` | supported | alias of eq2_freq_oncc<N> (Story 13.9) |
+| `eq2_freqcc<N>` | supported | SFZ 1 alias of eq2_freq_oncc<N> (Story 13.9) |
+| `eq2_freq_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq2_bw_oncc<N>` | supported | octaves added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq2_bw_cc<N>` | supported | alias of eq2_bw_oncc<N> (Story 13.9) |
+| `eq2_bwcc<N>` | supported | SFZ 1 alias of eq2_bw_oncc<N> (Story 13.9) |
+| `eq2_bw_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq2_gain_oncc<N>` | supported | dB added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq2_gain_cc<N>` | supported | alias of eq2_gain_oncc<N> (Story 13.9) |
+| `eq2_gaincc<N>` | supported | SFZ 1 alias of eq2_gain_oncc<N> (Story 13.9) |
+| `eq2_gain_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq3_freq` | supported | EQ band 3, Hz (Story 13.9) |
+| `eq3_bw` | supported | EQ band 3, octaves 0.001..4 (Story 13.9) |
+| `eq3_gain` | supported | EQ band 3, dB -96..96 (Story 13.9) |
+| `eq3_type` | supported | peak, lshelf, hshelf (Story 13.9) |
+| `eq3_vel2freq` | supported | Hz added at velocity 127 (Story 13.9) |
+| `eq3_veltofreq` | supported | alias of eq3_vel2freq (Story 13.9) |
+| `eq3_vel2gain` | supported | dB added at velocity 127 (Story 13.9) |
+| `eq3_veltogain` | supported | alias of eq3_vel2gain (Story 13.9) |
+| `eq3_freq_oncc<N>` | supported | Hz added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq3_freq_cc<N>` | supported | alias of eq3_freq_oncc<N> (Story 13.9) |
+| `eq3_freqcc<N>` | supported | SFZ 1 alias of eq3_freq_oncc<N> (Story 13.9) |
+| `eq3_freq_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq3_bw_oncc<N>` | supported | octaves added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq3_bw_cc<N>` | supported | alias of eq3_bw_oncc<N> (Story 13.9) |
+| `eq3_bwcc<N>` | supported | SFZ 1 alias of eq3_bw_oncc<N> (Story 13.9) |
+| `eq3_bw_curvecc<N>` | supported | curve index (Story 13.9) |
+| `eq3_gain_oncc<N>` | supported | dB added at voice start; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141, at most 4 per target (Story 13.9) |
+| `eq3_gain_cc<N>` | supported | alias of eq3_gain_oncc<N> (Story 13.9) |
+| `eq3_gaincc<N>` | supported | SFZ 1 alias of eq3_gain_oncc<N> (Story 13.9) |
+| `eq3_gain_curvecc<N>` | supported | curve index (Story 13.9) |
+| `amplfo_depth` | supported | amplitude LFO, dB; the LFO exists only with a depth (Story 13.9) |
+| `amplfo_freq` | supported | Hz 0..100 (Story 13.9) |
+| `amplfo_delay` | supported | s 0..30 (Story 13.9) |
+| `amplfo_fade` | supported | s 0..30 (Story 13.9) |
+| `amplfo_wave` | supported | 0 triangle, 1 sine (default), 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw (Story 13.9) |
+| `pitchlfo_depth` | supported | pitch LFO, cents; the LFO exists only with a depth (Story 13.9) |
+| `pitchlfo_freq` | supported | Hz 0..100 (Story 13.9) |
+| `pitchlfo_delay` | supported | s 0..30 (Story 13.9) |
+| `pitchlfo_fade` | supported | s 0..30 (Story 13.9) |
+| `pitchlfo_wave` | supported | 0 triangle, 1 sine (default), 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw (Story 13.9) |
+| `fillfo_depth` | supported | filter LFO, cents on the first filter's cutoff; the LFO exists only with a depth (Story 13.9) |
+| `fillfo_freq` | supported | Hz 0..100 (Story 13.9) |
+| `fillfo_delay` | supported | s 0..30 (Story 13.9) |
+| `fillfo_fade` | supported | s 0..30 (Story 13.9) |
+| `fillfo_wave` | supported | 0 triangle, 1 sine (default), 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw (Story 13.9) |
+| `pitcheg_delay` | supported | s (Story 13.9) |
+| `pitcheg_start` | supported | % (Story 13.9) |
+| `pitcheg_attack` | supported | s (Story 13.9) |
+| `pitcheg_hold` | supported | s (Story 13.9) |
+| `pitcheg_decay` | supported | s (Story 13.9) |
+| `pitcheg_sustain` | supported | % (Story 13.9) |
+| `pitcheg_release` | supported | s (Story 13.9) |
+| `pitcheg_depth` | supported | pitch EG, cents; the EG exists only with a depth or vel2depth (Story 13.9) |
+| `pitcheg_vel2depth` | supported | cents added at velocity 127 (Story 13.9) |
+| `pitcheg_veltodepth` | supported | alias of pitcheg_vel2depth (Story 13.9) |
+| `fileg_delay` | supported | s (Story 13.9) |
+| `fileg_start` | supported | % (Story 13.9) |
+| `fileg_attack` | supported | s (Story 13.9) |
+| `fileg_hold` | supported | s (Story 13.9) |
+| `fileg_decay` | supported | s (Story 13.9) |
+| `fileg_sustain` | supported | % (Story 13.9) |
+| `fileg_release` | supported | s (Story 13.9) |
+| `fileg_depth` | supported | filter EG, cents on the first filter's cutoff; the EG exists only with a depth or vel2depth (Story 13.9) |
+| `fileg_vel2depth` | supported | cents added at velocity 127 (Story 13.9) |
+| `fileg_veltodepth` | supported | alias of fileg_vel2depth (Story 13.9) |
 <!-- sfz-opcode-table:end -->
 
 SF2 import (`velora/format/sf2_import.hpp`, in `velora_format`, Story 5.3): a clean-room reader written from the public SoundFont 2.04 specification (RIFF `sfbk`: `INFO` with `ifil`, `sdta` with `smpl` and the optional `sm24`, `pdta` with `phdr pbag pmod pgen inst ibag imod igen shdr`); no SF2 library is vendored, linked or consulted (FluidSynth is only a test oracle, `tools/oracle`). `parse_sf2_file(path)` / `parse_sf2_memory(bytes)` / `parse_sf2(ByteSource)` return `Sf2ParseResult`: `presets` (one `Sf2Preset` per preset: `key` = `"bank:preset"` in decimal, name, the preset's own `samples` and `regions`), `warnings`, `stats` and a handle to the sample words. Never throws; every chunk size, record index and sample offset is bounds checked; memory is bounded by constants and the file size: tables are read once (each at most 64 MiB), instrument zones are scanned and cached once (at most 256 Ki zones, about 50 MB), regions are capped at 512 Ki (about 100 MB of `Region` records at the cap), sample data is read one sample at a time on request; generator scanning is linear (`Sf2Stats::generator_scans`, asserted by a counted-operations test, not by a clock). The header comment of `sf2_import.hpp` is the full mapping table; in short:

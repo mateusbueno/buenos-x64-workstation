@@ -785,7 +785,7 @@ A keyboardist receives the 6-operator FM and virtual-analog engines by firmware 
 
 The reference corpus (Salamander, VSCO2, Sonatina, Karoryfer, a Pianobook selection) imports and passes the sfizz null test, by widening the SFZ opcode coverage of the importer and the sample engine in measured steps. Follows the Story 5.4 corpus findings: only VSCO 2 imports today, and the Pianobook, Salamander, Sonatina and Karoryfer libraries are rejected on specific opcodes. Starts with an explicit scope decision so the v1 subset (FR18) and the corpus requirement (FR20) agree.
 
-Scope decision (Story 13.1, proposed, awaiting founder ratification; `_bmad-output/planning-artifacts/sfz-scope-decision.md`): tiers of Stories 13.2-13.8 and 13.10 in scope; the region EQ and LFO/EG tier (Story 13.9) deferred and conditional on measured need after 13.8. No story is cancelled by the proposal; if 13.9 ends out of scope it is cancelled and its files stay skipped in the manifest with that reason.
+Scope decision (Story 13.1, proposed, awaiting founder ratification; `_bmad-output/planning-artifacts/sfz-scope-decision.md`): tiers of Stories 13.2-13.8 and 13.10 in scope; the region EQ and LFO/EG tier (Story 13.9) deferred and conditional on measured need after 13.8 (taken up on measured need in the Story 13.9 run, partly: region EQ, `amplfo`/`pitchlfo`/`fillfo`, `pitcheg`/`fileg`; the generic `lfoNN`/`egNN` matrix stays deferred). No story is cancelled by the proposal; if 13.9 ends out of scope it is cancelled and its files stay skipped in the manifest with that reason.
 
 **FRs covered:** FR18 (extension), FR20, FR22
 
@@ -7293,6 +7293,8 @@ So that Karoryfer and Sonatina libraries import with their character intact.
 **Given** the corpus job
 **When** Sonatina and the Karoryfer libraries run
 **Then** they import and pass the null test within recorded tolerances, or the remaining differences are documented per opcode
+
+> **Status note (Story 13.9 run): taken up on measured need, a coherent subset landed; both Epic 13 corpus ACs are NOT MET (Sonatina/Karoryfer import and pass; kamoepiano301/Headroom import and pass).** Landed: region EQ `eq1`..`eq3` (freq, bw, gain, type, vel2freq, vel2gain, controller entries read at voice start), the dedicated `amplfo_`/`pitchlfo_`/`fillfo_` LFOs and `pitcheg_`/`fileg_` EGs, format minor 8, null-tested against sfizz (-63.9 to -67.4 dB). Deferred: the generic `lfoNN_*` and `egNN_*` matrix, CC-driven LFO/EG depth and frequency, continuous CC following. No corpus library imports completely: 746 of Sonatina's 747 files, all of Meatbass and Bear Sax and 12 of Weresax's 13 are `damaged` first, because their sample paths use `..` and the importer refuses a path that leaves the SFZ directory (the opcode histograms hid this); behind that Sonatina needs `delay`, `offset_random`, `lfo01_*`; Meatbass/Bear Sax/Weresax `lfoNN_*`, `eg06_*`, `offset_random`; Headroom Piano `amp_veltrack_oncc73`, `width_oncc*` and FLAC samples. Design note: `_bmad-output/planning-artifacts/sfz-modulation-design.md`.
 
 ### Story 13.10: Random-layer parity with the null oracle
 

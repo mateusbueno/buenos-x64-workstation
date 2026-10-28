@@ -83,6 +83,18 @@ inline constexpr std::size_t kFlRecordFixedSize = 4 + 1 + 1 + 2;
 inline constexpr std::size_t kFlTuneFixedSize = 4 + 4 + 4;
 inline constexpr std::size_t kFlModSize = 4 + 4;
 inline constexpr std::size_t kFlSecondFixedSize = 4 + 4 + 4;
+// Format 2.8 (Story 13.9) modulation table, per instrument, after the minor 7 table:
+//   u32 n_md_regions, then per region (ascending by region index; a record exists only for a region with a non-default ModMap):
+//     u32 region_index, u8 flags (bit 0 amp LFO, bit 1 pitch LFO, bit 2 filter LFO, bit 3 pitch EG, bit 4 filter EG, others 0), u8 eq_count (0..3), u16 0, then
+//     per LFO present (in that order): u8 wave (0..7), u8 0, u16 0, f32 depth, f32 freq, f32 delay, f32 fade
+//     per EG present (pitch, filter): f32 delay, attack, hold, decay, release, start, sustain, depth, vel2depth
+//     per EQ band: u8 type (1 peak, 2 low shelf, 3 high shelf), u8 freq_count, u8 bw_count, u8 gain_count (each <= 4), f32 freq, bw, gain, vel2freq, vel2gain, then the
+//     freq, bw and gain entries, each { u8 cc, u8 curve, u16 0, f32 depth } (ascending cc)
+inline constexpr std::size_t kMdRecordFixedSize = 4 + 1 + 1 + 2;
+inline constexpr std::size_t kMdLfoSize = 4 + 16;
+inline constexpr std::size_t kMdEgSize = 9 * 4;
+inline constexpr std::size_t kMdEqFixedSize = 4 + 5 * 4;
+inline constexpr std::size_t kMdModSize = 4 + 4;
 inline constexpr unsigned kMinorShift = 16;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }

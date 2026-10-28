@@ -1875,6 +1875,209 @@ void test_fl_table() {
   }
 }
 
+// Story 13.9: format 2.8, the modulation table (region EQ, amplitude / pitch / filter LFO, pitch / filter EG).
+void test_md_table() {
+  constexpr std::uint32_t kMdMinor = 8;  // the minor that introduced the modulation table
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
+  auto version_word = [](const Bytes& b) { return layout::get_u32(b.data() + 4); };
+  Region plain;
+  Region lfo = plain;
+  lfo.mod.amp = {true, LfoWave::kSine, 3.f, 5.5f, 0.25f, 1.f};
+  Region eg = plain;
+  eg.filter = {FilterType::kLpf2p, 800.f, 0.f};
+  eg.mod.pitch_eg = {true, 0.01f, 0.1f, 0.02f, 0.3f, 0.4f, 5.f, 20.f, 1200.f, -300.f};
+  eg.mod.fil_eg = {true, 0.f, 0.2f, 0.f, 0.f, 0.f, 0.f, 100.f, 0.f, 2400.f};
+  Region eq = plain;
+  eq.mod.eq_count = 3;
+  eq.mod.eq[0].type = EqType::kLowShelf; eq.mod.eq[0].freq = 100.f; eq.mod.eq[0].bw = 0.5f; eq.mod.eq[0].gain = 3.f; eq.mod.eq[0].vel2freq = 200.f; eq.mod.eq[0].vel2gain = -6.f;
+  eq.mod.eq[0].freq_count = 2; eq.mod.eq[0].freq_mods[0] = {80, 0, 500.f}; eq.mod.eq[0].freq_mods[1] = {131, 7, -100.f};
+  eq.mod.eq[0].bw_count = 1; eq.mod.eq[0].bw_mods[0] = {92, 0, 0.25f};
+  eq.mod.eq[0].gain_count = 1; eq.mod.eq[0].gain_mods[0] = {86, 3, 2.f};
+  eq.mod.eq[1].gain = -4.f;  // freq stays 0, as sfizz leaves a band whose predecessor has a frequency
+  eq.mod.eq[2].type = EqType::kHighShelf; eq.mod.eq[2].freq = 5000.f; eq.mod.eq[2].gain = 1.f;
+  Region all = eq;  // everything, plus minors 1..7 content
+  all.mod.amp = lfo.mod.amp; all.mod.pitch = {true, LfoWave::kSaw, -50.f, 6.f, 0.f, 0.f}; all.mod.fil = {true, LfoWave::kTriangle, 1200.f, 0.5f, 0.f, 0.3f};
+  all.mod.pitch_eg = eg.mod.pitch_eg; all.mod.fil_eg = eg.mod.fil_eg;
+  all.filter = {FilterType::kLpf2p, 500.f, 3.f};
+  all.fmap.f1.veltrack = 2400.f;
+  all.trigger = TriggerMode::kLegato; all.has_end = true; all.end = 900; all.amp.veltrack = 40.f;
+  all.cc.gate_count = 1; all.cc.gates[0] = {1, 10.f, 20.f};
+  all.vg.group = 4; all.vg.polyphony = 1; all.vg.group_polyphony = 1;
+  all.bend.enabled = true; all.bend.up = 300.f;
+  const std::vector<Region> regs = {plain, lfo, eg, eq, all};
+  {  // round trip: two instruments, only the first has records; the second still carries the empty table
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    for (const auto& r : regs) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, plain), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (kMdMinor << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == kMdMinor);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == regs);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && r.value().instruments()[1].regions[0] == plain);
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    CHECK(w.finalize().take() == b);  // deterministic
+    BundleWriter w7(WriterOptions{kFormatVersion, 7});  // the N-1 writer refuses modulation regions
+    const std::size_t j0 = w7.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w7.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w7.add_region(j0, lfo), Error::kNone);
+    CHECK_ERR(w7.finalize().error(), Error::kInvalidArgument);
+  }
+  {  // bundles without a ModMap keep their exact bytes whatever the writer's ceiling (minor 0..7 content)
+    Region trg = plain; trg.trigger = TriggerMode::kReleaseKey;
+    Region amp = plain; amp.amp.veltrack = 10.f;
+    Region ccr = plain; ccr.cc.gate_count = 1; ccr.cc.gates[0] = {64, 64.f, 100.f};
+    Region vgr = plain; vgr.vg.polyphony = 2;
+    Region bnd = plain; bnd.bend.enabled = true;
+    Region fl = ext_region(0); fl.fmap.f1.veltrack = 100.f;
+    for (const Region& rg : {plain, sample_region(0), ext_region(0), trg, amp, ccr, vgr, bnd, fl}) {
+      Bytes by[9];
+      for (std::uint32_t m = 0; m < 9; ++m) {
+        if ((m == 0 && has_extension(rg)) || (m < 2 && has_trigger_extension(rg)) || (m < 3 && has_amp_extension(rg)) || (m < 4 && has_cc_extension(rg)) ||
+            (m < 5 && has_vg_extension(rg)) || (m < 6 && has_bend_trigger_extension(rg)) || (m < 7 && has_filter_extension(rg)))
+          continue;
+        BundleWriter x(WriterOptions{kFormatVersion, m});
+        const std::size_t k = x.add_instrument("A", "a.sfz").value();
+        CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+        CHECK_ERR(x.add_region(k, rg), Error::kNone);
+        by[m] = x.finalize().take();
+      }
+      for (std::uint32_t m = 0; m < 8; ++m) CHECK(by[8] == by[m] || by[m].empty());
+      const std::uint32_t want = has_filter_extension(rg) ? 7u : has_bend_trigger_extension(rg) ? 6u : has_vg_extension(rg) ? 5u : has_cc_extension(rg) ? 4u : has_amp_extension(rg) ? 3u
+                                 : has_trigger_extension(rg) ? 2u : has_extension(rg) ? 1u : 0u;
+      CHECK(version_word(by[8]) == (2u | (want << 16)));
+    }
+  }
+  {  // writer-side validation
+    BundleWriter v;
+    const std::size_t vi = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(vi, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad = [&](auto mutate) { Region x = all; mutate(x); return v.add_region(vi, x); };
+    CHECK_ERR(bad([](Region&) {}), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.mod.amp.depth = 10.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.amp.depth = 0.f; }), Error::kInvalidArgument);        // a stored LFO has a depth
+    CHECK_ERR(bad([](Region& x) { x.mod.amp.freq = 100.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.amp.delay = -1.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.pitch.depth = 1201.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.pitch.wave = static_cast<LfoWave>(8); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.fil.fade = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.fil.fade = -0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.pitch_eg.on = false; }), Error::kInvalidArgument);    // an off EG must be the default
+    CHECK_ERR(bad([](Region& x) { x.mod.pitch_eg.depth = 0.f; x.mod.pitch_eg.vel2depth = 0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.pitch_eg.attack = 101.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.fil_eg.sustain = 101.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.fil_eg.vel2depth = 12001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq_count = 4; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq_count = 2; }), Error::kInvalidArgument);           // band 2 is beyond the count and not the default
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].type = static_cast<EqType>(0); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].type = static_cast<EqType>(4); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].bw = 0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].bw = 4.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain = 97.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].freq = 20001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].vel2freq = -30001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].freq_count = 5; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].freq_mods[1].cc = 80; }), Error::kInvalidArgument);  // not ascending
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].freq_mods[0].cc = 132; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].bw_mods[0].depth = 4.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain_mods[0].depth = 0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain_mods[3].cc = 9; }), Error::kInvalidArgument);    // an unused entry must be zero
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].bw = 0.005f; }), Error::kInvalidArgument);  // the DSP honours 0.01 octave and up
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].bw = 0.01f; }), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain = 60.5f; }), Error::kInvalidArgument);  // ... and +60 dB at most
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain = 60.f; }), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[2] = EqBand{}; }), Error::kInvalidArgument);  // a trailing default band is no band
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[1] = EqBand{}; }), Error::kNone);               // a default band in the middle keeps the index
+    for (unsigned cc : {131u, 135u, 136u, 137u, 140u, 141u}) {  // the pseudo-controllers are sources for every EQ entry
+      CHECK_ERR(bad([cc](Region& x) { x.mod.eq[0].gain_mods[0].cc = static_cast<std::uint8_t>(cc); }), Error::kNone);
+      CHECK_ERR(bad([cc](Region& x) { x.mod.eq[0].freq_mods[1].cc = static_cast<std::uint8_t>(cc); }), Error::kNone);
+      CHECK_ERR(bad([cc](Region& x) { x.mod.eq[0].bw_mods[0].cc = static_cast<std::uint8_t>(cc); }), Error::kNone);
+    }
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain_mods[0].cc = 132; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.mod = ModMap{}; }), Error::kNone);
+  }
+  // Corruption of the table (the tail of the manifest: one record = an amplitude LFO and one EQ band with 1 + 1 + 1 entries).
+  Region rec_region = lfo;
+  rec_region.mod.eq_count = 1;
+  rec_region.mod.eq[0].freq = 200.f; rec_region.mod.eq[0].gain = 2.f;
+  rec_region.mod.eq[0].freq_count = 1; rec_region.mod.eq[0].freq_mods[0] = {74, 0, 100.f};
+  rec_region.mod.eq[0].bw_count = 1; rec_region.mod.eq[0].bw_mods[0] = {75, 0, 0.5f};
+  rec_region.mod.eq[0].gain_count = 1; rec_region.mod.eq[0].gain_mods[0] = {76, 0, 3.f};
+  BundleWriter u;
+  const std::size_t ui = u.add_instrument("A", "a.sfz").value();
+  CHECK_ERR(u.add_sample(ui, {"s", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(u.add_region(ui, plain), Error::kNone);
+  CHECK_ERR(u.add_region(ui, rec_region), Error::kNone);
+  const Bytes good = u.finalize().take();
+  const std::size_t end = rd64(good, 8) + rd64(good, 16);
+  CHECK(layout::kMdRecordFixedSize == 8 && layout::kMdLfoSize == 20 && layout::kMdEgSize == 36 && layout::kMdEqFixedSize == 24 && layout::kMdModSize == 8);
+  const std::size_t rec_len = layout::kMdRecordFixedSize + layout::kMdLfoSize + layout::kMdEqFixedSize + 3 * layout::kMdModSize;
+  const std::size_t rec = end - rec_len;
+  CHECK(layout::get_u32(good.data() + rec - 4) == 1u && layout::get_u32(good.data() + rec) == 1u && good[rec + 4] == 1 && good[rec + 5] == 1);  // n_md, region 1, flags: amp LFO, 1 band
+  auto put_f32 = [](Bytes& by, std::size_t at, float v) { std::uint32_t u32; std::memcpy(&u32, &v, 4); wr32(by, at, u32); };
+  auto expect_bad = [&](Bytes bad_bytes, const char* what) {
+    rehash(bad_bytes);
+    auto rb = BundleReader::open_memory(bad_bytes);
+    if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL modulation table corruption not rejected: %s\n", what); ++g_fail; }
+  };
+  const std::size_t lfo_at = rec + 8, eq_at = lfo_at + 20, mods_at = eq_at + 24;
+  { Bytes b = good; b[rec + 4] = 33; expect_bad(b, "unknown flag bit"); }
+  { Bytes b = good; b[rec + 5] = 4; expect_bad(b, "eq count above 3"); }
+  { Bytes b = good; b[rec + 6] = 1; expect_bad(b, "record padding"); }
+  { Bytes b = good; b[lfo_at] = 8; expect_bad(b, "wave above 7"); }
+  { Bytes b = good; b[lfo_at + 1] = 1; expect_bad(b, "lfo padding"); }
+  { Bytes b = good; put_f32(b, lfo_at + 4, 11.f); expect_bad(b, "amp depth above 10"); }
+  { Bytes b = good; put_f32(b, lfo_at + 8, std::nanf("")); expect_bad(b, "NaN frequency"); }
+  { Bytes b = good; b[eq_at] = 0; expect_bad(b, "eq type 0"); }
+  { Bytes b = good; b[eq_at + 1] = 5; expect_bad(b, "freq entry count above 4"); }
+  { Bytes b = good; put_f32(b, eq_at + 8, 5.f); expect_bad(b, "bandwidth above 4"); }
+  { Bytes b = good; b[mods_at] = 132; expect_bad(b, "entry controller that is not a source"); }
+  { Bytes b = good; b[mods_at + 2] = 1; expect_bad(b, "entry padding"); }
+  { Bytes b = good; put_f32(b, mods_at + 4, 0.f); expect_bad(b, "zero entry depth"); }
+  { Bytes b = good; put_f32(b, mods_at + 16 + 4, 97.f); expect_bad(b, "gain entry depth above 96"); }
+  { Bytes b = good; wr32(b, rec, 5); expect_bad(b, "region index out of range"); }
+  { Bytes b = good; wr32(b, rec - 4, 3); expect_bad(b, "n_md larger than regions"); }
+  for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+    CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+  for (std::size_t off = rec - 4; off < end; ++off)
+    for (int bit = 0; bit < 8; ++bit) {
+      Bytes bad_bytes = good;
+      bad_bytes[off] ^= std::uint8_t(1 << bit);
+      rehash(bad_bytes);
+      auto r3 = BundleReader::open_memory(bad_bytes);
+      if (!r3.ok() && r3.error() != Error::kCorruptManifest) { std::printf("FAIL md flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error())); ++g_fail; }
+    }
+  {  // a record that holds the default map is non-canonical (the LFO region with its LFO switched off in the bytes: flags 0, no payload would be a size change, so zero the depth instead)
+    Bytes b = good;
+    put_f32(b, lfo_at + 4, 0.f);
+    expect_bad(b, "stored LFO without a depth");
+  }
+  {  // a minor 8 stamp on a bundle with no record is non-canonical; so is a newer minor
+    BundleWriter x;
+    const std::size_t k = x.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(x.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+    Region a = plain; a.fmap.f1.veltrack = 100.f; a.filter = {FilterType::kLpf2p, 500.f, 0.f};
+    CHECK_ERR(x.add_region(k, a), Error::kNone);
+    Bytes b = x.finalize().take();  // minor 7
+    const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+    b.insert(b.begin() + mo + ms, 4, std::uint8_t(0));  // n_md = 0
+    wr64(b, 16, ms + 4); wr64(b, 24, io + 4); wr64(b, 40, rd64(b, 40) + 4); wr64(b, 56, rd64(b, 56) + 4);
+    for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
+    wr32(b, 4, 2u | (kMdMinor << 16));
+    wr32(b, mo, 2u | (kMdMinor << 16));
+    rehash(b);
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    wr32(b, 4, 2u | ((kFormatMinor + 1) << 16));
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
+  }
+}
+
 void test_regions() {
   const PcmFormat f{2, 16, false, 48000};
   const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
@@ -2140,6 +2343,7 @@ int main() {
   test_vg_table();
   test_bt_table();
   test_fl_table();
+  test_md_table();
   test_float_goldens();
   test_identity();
   test_file_io();

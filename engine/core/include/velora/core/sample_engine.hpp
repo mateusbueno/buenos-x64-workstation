@@ -47,15 +47,19 @@ inline constexpr std::uint32_t kSampleCrossfadeCostUnits = 1;
 // cost of the first one, `sample_bench`) on top of the extended worst case. Fixed per engine like the rest; the default engine and the extended-only engine keep their
 // figures, so no existing floor or budget changes.
 inline constexpr std::uint32_t kSampleFilter2CostUnits = 3;
+// Story 13.9: an engine that also declares `Config::modulated_voices` budgets every voice for the worst case of the region EQ and the dedicated LFO / EG modulation (three LFOs,
+// a pitch and a filter EG, a cutoff that follows them with per-frame coefficient smoothing, three EQ bands: measured with `sample_bench`, see engine/core/README.md "Region EQ
+// and LFO / EG modulation (Story 13.9)") on top of the extended worst case. Fixed per engine like the rest; no existing engine changes its figure.
+inline constexpr std::uint32_t kSampleModCostUnits = 18;
 // Story 6.5: the length, in frames of engine output, of the fade to silence a voice makes before it reaches a damaged block of a protected library (and of the
 // fade back in after it). It is a straight gain ramp; the voice reads the block-damage flags that non-real-time threads set (ports::SamplePcm::damaged_blocks).
 inline constexpr std::uint32_t kIntegrityFadeFrames = 64;
 // Story 1.17: the length, in frames of engine output, of the fade to silence a streaming voice makes when the stream data it needs has not arrived (and of the fade back in
 // when it has). The voice holds its last output sample under the fade, so there is no click; the position keeps advancing.
 inline constexpr std::uint32_t kStreamFadeFrames = 64;
-constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q, bool extended = false, bool second_filter = false) noexcept {
+constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q, bool extended = false, bool second_filter = false, bool modulated = false) noexcept {
   return (q == SampleInterpolation::kLinear ? 3u : 5u) + (extended ? kSampleFilterCostUnits + kSampleCrossfadeCostUnits : 0u) +
-         (extended && second_filter ? kSampleFilter2CostUnits : 0u);
+         (extended && second_filter ? kSampleFilter2CostUnits : 0u) + (extended && modulated ? kSampleModCostUnits : 0u);
 }
 
 class SampleEngine final : public Engine {
@@ -84,6 +88,9 @@ class SampleEngine final : public Engine {
     // Story 13.8: with extended_voices, also budget every voice for a second filter (sample_voice_cost_units). A voice that starts with a second filter on an engine that
     // did not declare it is counted in undeclared_second_filter_voices().
     bool second_filter_voices = false;
+    // Story 13.9: with extended_voices, also budget every voice for region EQ and LFO / EG modulation (sample_voice_cost_units). A voice that starts with any of it on an
+    // engine that did not declare it is counted in undeclared_modulated_voices().
+    bool modulated_voices = false;
     // Story 3.6: release-trigger regions use the Note Off's release velocity (when it is not 0) instead of the note-on velocity, to select the velocity layer
     // and to scale the gain (velocity squared, as for attacks): a fast key release plays a louder release sample. Off = sfizz behaviour (note-on velocity),
     // which the null tests need. The host turns it on. No curve is applied here: the keybed reader's velocity chain is the only place that shapes velocity.
@@ -182,7 +189,7 @@ class SampleEngine final : public Engine {
   void set_seed(std::uint64_t seed) noexcept;
 
   EngineTypeId type_id() const noexcept override { return EngineTypeId::kSample; }
-  std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation, cfg_.extended_voices, cfg_.second_filter_voices); }
+  std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation, cfg_.extended_voices, cfg_.second_filter_voices, cfg_.modulated_voices); }
   std::uint32_t voice_capacity() const noexcept override { return capacity_; }
 
   // Starts a voice per matching region. Voice slots come from the pool arbiter when one is attached
@@ -211,6 +218,8 @@ class SampleEngine final : public Engine {
   std::uint64_t undeclared_extended_voices() const noexcept { return undeclared_extended_; }
   // Story 13.8: voices that started with a second filter on an engine that did not declare Config::second_filter_voices (budgeted without it).
   std::uint64_t undeclared_second_filter_voices() const noexcept { return undeclared_second_; }
+  // Story 13.9: voices that started with a region EQ band or an LFO / EG on an engine that did not declare Config::modulated_voices (budgeted without it).
+  std::uint64_t undeclared_modulated_voices() const noexcept { return undeclared_mod_; }
   // Story 6.5: times a voice met a damaged block (a rising edge per voice: it faded out for that block). Written by the audio thread, readable anywhere.
   std::uint64_t content_integrity_events() const noexcept override { return integrity_events_.load(std::memory_order_relaxed); }
   std::uint64_t stream_underrun_events() const noexcept override { return underrun_events_.load(std::memory_order_relaxed); }
@@ -250,6 +259,30 @@ class SampleEngine final : public Engine {
     bool free_running = false;
   };
 
+  // Story 13.9: the per-voice state of the dedicated LFOs and EGs, the cutoff they move and the EQ bands. Written only by the voice's own start and render.
+  struct LfoState {
+    float phase = 0.0f, fade_pos = 1.0f, fade_step = 0.0f;
+    std::int32_t delay_left = 0;
+  };
+  struct EqBandState {
+    SampleFilterCoeffs k;
+    SampleFilterState l, r;
+    bool on = false;
+  };
+  struct ModVoice {
+    LfoState lfo[3];                   // amplitude, pitch, filter
+    Env eg[2];                         // pitch, filter
+    float eg_depth[2] = {0.0f, 0.0f};  // cents: depth + velocity * vel2depth
+    bool released = false;             // the EGs follow the amplitude EG into release
+    // The first filter's cutoff modulation: base cutoff (key and velocity track applied), the constant cutoff_oncc cents, resonance, the coefficients in use (smoothed) and
+    // the target of the current 16-frame control interval. age counts the voice's frames.
+    float cut_base = 0.0f, cut_cc_cents = 0.0f, cut_res = 0.0f;
+    SampleFilterCoeffs fcur, ftgt;
+    SampleFilterSmoothState sml, smr;  // the state of the first filter while its cutoff moves (sample_filter_tick_smooth)
+    std::uint32_t age = 0;
+    EqBandState eq[velora::ports::kSampleMaxEqBands];
+  };
+
   struct Voice {
     bool active = false;
     bool release_trigger = false;  // fired by a note off (not tied to the key)
@@ -267,6 +300,7 @@ class SampleEngine final : public Engine {
     // bend_cur (recomputed while it moves).
     bool bend_live = false;  // the voice has stepped at least one frame (a wheel move before that needs no position correction)
     float bend_cur = 0.0f, bend_prev = 0.0f, bend_tgt = 0.0f, bend_step = 0.0f, bend_fac = 1.0f;
+    float prev_pitch_mul = 1.0f;  // Story 13.9: the pitch LFO / EG factor of the previous frame (the oracle-block emulation repeats that frame's step)
     std::uint64_t order = 0, event = 0;
     std::uint32_t fade_left = 0, fade_total = 1;
     std::uint32_t channel = 0, note = 0, region = 0;
@@ -285,6 +319,7 @@ class SampleEngine final : public Engine {
     // Story 13.8: the voice's own filter coefficients, computed (or copied from the region) when the voice starts, and the second filter's coefficients and state.
     SampleFilterCoeffs fk, fk2;
     SampleFilterState fl2, fr2;
+    ModVoice md;  // Story 13.9 (used only by a region with modded / cutmod / eq_on)
     float xf_cur = 1.0f, xf_tgt = 1.0f, xf_step = 0.0f;
     // Story 6.5: the integrity fade of a voice over a protected sample (used only when the region has a damage map).
     float integ_gain = 1.0f;
@@ -338,7 +373,10 @@ class SampleEngine final : public Engine {
     v.active = false;
   }
   void init_env(Env& e, const SampleBank& bank, const RegionRt& r, std::uint32_t channel, std::uint8_t vel7) const noexcept;
-  float env_next(Env& e, const RegionRt& r) const noexcept;
+  // `mod` (Story 13.9): a pitch / filter EG. sfizz's decay runs on to the sustain level exactly (the amplitude EG's port, which only a gain follows, leaves it at the 0.001
+  // threshold and ramps over 50 ms: a level error far too small to hear but a whole sample of position for a pitch EG). block_end: this frame ends an sfizz block
+  // (Config::oracle_block_frames emulation only): a decay that ends a block inside the threshold hands over to sustain there, as sfizz's loop does.
+  float env_next(Env& e, const RegionRt& r, bool mod = false, bool block_end = false) const noexcept;
   // false: the voice must be dropped (released before its envelope delay elapsed).
   bool env_release(Env& e, const RegionRt& r) const noexcept;
   void env_fast_release(Env& e) const noexcept;
@@ -371,9 +409,22 @@ class SampleEngine final : public Engine {
   float cc_norm(unsigned cc, std::uint32_t channel, bool eg) const noexcept;
   float cc_curve(const SampleBank& bank, std::uint8_t curve, float norm) const noexcept;
   float cc_mod_value(const SampleBank& bank, const velora::ports::SampleCcMod& m, std::uint32_t channel, bool eg) const noexcept;
+  // Story 13.8/13.9: the parts of a tuned filter's cutoff and resonance for the voice that is starting: base = the cutoff after key and velocity track (clamped), cc_cents = the sum
+  // of the cutoff entries (cents), res = the resonance with its entries.
+  struct FilterParts {
+    float base = 0.0f, cc_cents = 0.0f, res = 0.0f;
+    bool has_cc = false;
+  };
+  FilterParts filter_parts(const SampleBank& bank, float cutoff_hz, float resonance_db, const velora::ports::SampleFilterTune& tune, std::uint32_t channel, std::uint32_t note,
+                           std::uint8_t vel7) const noexcept;
   // Story 13.8: a tuned filter's coefficients for the voice that is starting (key track, velocity track, CC entries), see sample_filter.hpp.
   SampleFilterCoeffs voice_filter(const SampleBank& bank, velora::ports::SampleFilterType type, float cutoff_hz, float resonance_db,
                                   const velora::ports::SampleFilterTune& tune, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept;
+  // Story 13.9. init_mod: a starting voice's LFOs, EGs, filter-cutoff base and EQ bands. lfo_next: one frame of a dedicated LFO (sfizz LFO.cpp, the v1 form).
+  void init_mod(Voice& v, const SampleBank& bank, const RegionRt& r, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept;
+  void release_mod_egs(Voice& v, const RegionRt& r) const noexcept;
+  float lfo_next(LfoState& s, const velora::ports::SampleLfoDesc& d) const noexcept;
+  float mod_entries(const SampleBank& bank, const velora::ports::SampleFilterMod* e, unsigned n, std::uint32_t channel) const noexcept;
   void note_pseudo(const SampleBank* bank, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7, bool note_on) noexcept;
   bool region_switched(const RegionRt& r, const KeyState& ks) const noexcept;
   float crossfade_target(const RegionRt& r, std::uint32_t channel) const noexcept;
@@ -409,7 +460,9 @@ class SampleEngine final : public Engine {
   float gain_ = 1.0f;
   std::uint32_t unplayable_regions_ = 0;
   std::uint64_t skipped_unplayable_ = 0;
-  std::uint64_t undeclared_extended_ = 0, undeclared_second_ = 0;
+  std::uint64_t undeclared_extended_ = 0, undeclared_second_ = 0, undeclared_mod_ = 0;
+  float inv_sr_ = 0.0f;  // Story 13.9: sfizz LFO samplePeriod
+  double filt_smooth_step_ = 0.0;  // Story 13.9: 1 - exp(-1000 / sample_rate), the per-frame move of a modulated filter's coefficients
   std::atomic<std::uint64_t> integrity_events_{0};
   velora::ports::StreamService* stream_ = nullptr;  // Story 1.17
   std::atomic<std::uint64_t> stream_open_failures_{0};

@@ -37,8 +37,8 @@ Verdict values: **in scope** (will be implemented, story named), **deferred** (d
 | 5 | Choke groups (`group`, `off_by`, `off_mode`, `off_time`, `polyphony`, `note_polyphony`) | in scope | 13.6 | About 25 of 48 Bear Sax, 21 of 39 Meatbass and 135 of 747 Sonatina files (Story 5.4 deferred 1); also Osiris, Headroom, Weresax, Salamander. Needs voice-pool interaction (cutting, fast release) under existing stealing rules. Effort: medium. Risk: medium (parallel render must stay bit-identical; sfizz's stealing and `off_mode` timing may diverge from the engine and must be documented if so). |
 | 6 | Pitch bend and CC-triggered voices (`bend_up`/`bend_down`/`bend_step`, `on_locc`/`on_hicc`, `hikey=-1`) | in scope | 13.7 | Scarypiano, Weresax, Meatbass reject on `bend_up`/`bend_down`; Salamander's pedal-action region needs a controller-triggered voice and is rejected on `lokey=-1`/`hikey=-1` ("a region that never plays by key", Story 5.4 deferred 1). Effort: medium. Risk: medium (voice started from a controller, smoothing without allocation). Depends on 13.2 and 13.5. |
 | 7 | Per-voice filter (`cutoff_oncc`/`cutoff_cc`, `fil_keytrack`, `fil_keycenter`, `fil_veltrack`, `resonance_cc`, second filter) | in scope | 13.8 | `fil_keytrack/keycenter/veltrack` and `gain_cc<N>` appear in 289-373 Sonatina files each; kamoepiano301 and Headroom Piano open the filter with touch (Story 5.4 deferred 1 and 3). Per-voice coefficients cost CPU on the target, so the budget must be measured first. Effort: large. Risk: high (NFR8 voice floors, filter stability at extremes, null-test tolerance). Depends on 13.5. |
-| 8 | Region EQ (`eqN_*`) | deferred | 13.9 (conditional) | Needed by Sonatina (`eq1_bw` etc.) and Karoryfer files, but those files are also blocked by the other tiers; the real remaining need is only measurable after 13.5-13.8 land. Effort: medium per band, CPU cost per voice unknown. Decide after 13.8 from the corpus report: if files remain blocked only by this tier, move it to in scope; otherwise mark it out of scope and keep the affected files skipped in the manifest with the reason. |
-| 9 | LFO/EG modulation (`lfoNN_*`, `egNN_*`, `amplfo_*`, `pitcheg`, `fileg`) | deferred | 13.9 (conditional) | Needed by Sonatina (`amplfo_*` 256, `lfo01_*`), Meatbass and Bear Sax (`eg06_time1_oncc*` in the thousands of issue lines), Weresax (`lfo*`) (Story 5.4 deferred 1). Largest effort and risk of all tiers (modulation matrix, LFO phase, smoothing, CPU cost per voice, 1 versus 3 worker partitions bit-identical). A design note against sfizz must precede any code (Epic 13, Story 13.9). Same decision rule as tier 8. |
+| 8 | Region EQ (`eqN_*`) | deferred, **taken up on measured need (Story 13.9 run, still unratified)** | 13.9 | After 13.8 the corpus report shows Headroom Piano blocked by `eq1_*`/`eq2_*` and Sonatina by `eq1_bw`/`eq1_freq` (86 files); Story 13.9 landed bands 1-3 (`freq`, `bw`, `gain`, `type`, `vel2freq`, `vel2gain`, controller entries read at voice start). Evidence and the design: `_bmad-output/planning-artifacts/sfz-modulation-design.md`, `spec-13-9-region-eq-and-lfo-eg-modulation.md`. Not complete for any library: they have other blockers. |
+| 9 | LFO/EG modulation (`lfoNN_*`, `egNN_*`, `amplfo_*`, `pitcheg`, `fileg`) | deferred, **partly taken up on measured need (Story 13.9 run, still unratified)** | 13.9 | `amplfo_*` (Sonatina, 256 files), `pitchlfo_*`, `fillfo_*`, `pitcheg_*`, `fileg_*` landed in Story 13.9 (dedicated LFOs and EGs, fixed targets). The generic `lfoNN_*` / `egNN_*` matrix (Meatbass, Bear Sax, Weresax, Sonatina `lfo01_*`) is deferred with reasons in the design note and the spec: it needs per-block CC following and a random sample-and-hold the oracle cannot reproduce. |
 
 Related item that is not an opcode tier: **random-layer parity** (`lorand`/`hirand`, Story 13.10) is in scope. It does not widen the
 opcode subset. It decides how the 19 of 75 VSCO files that cannot be null-tested against sfizz are verified (Story 5.4 triage, cause 6),
@@ -55,9 +55,15 @@ This table follows Epic 13's own mapping; it is a plan, not a result.
 | kamoepiano301 | 1, 3-4, 7 | 13.5, 13.8 |
 | Scarypiano, Osiris, Steel Drum | 1, 2, 4, 5, 6 | Epic 13 names 13.5 for these; the histograms also show bend (tier 6), groups (tier 5) and velocity curves (tier 2), so expect 13.4, 13.6 and 13.7 as well |
 | Salamander | 1, 4, 5, 6 | 13.7 (plus 13.2, 13.5) |
-| Headroom Piano | 4, 5, 7 | 13.8 |
-| Meatbass, Bear Sax, Weresax | 2, 4, 5, 6, 8-9 | after 13.9's decision |
-| Sonatina | 2, 4, 5, 7, 8-9 | after 13.9's decision |
+| Headroom Piano | 4, 5, 7, 8 | 13.8, 13.9 (EQ) |
+| Meatbass, Bear Sax, Weresax | 2, 4, 5, 6, 8-9 | 13.9 (partial: EQ and the dedicated LFO/EG; the generic `lfoNN_` / `egNN_` matrix is deferred) |
+| Sonatina | 2, 4, 5, 7, 8-9 | 13.9 (partial: `amplfo_*`, EQ; `lfo01_*` deferred; `delay`, `offset_random` are outside Epic 13) |
+
+## Update from the Story 13.9 run
+
+Tiers 8 and 9 were decided "after 13.8 from the corpus report". The report shows files still blocked by them, so Story 13.9 was taken up on that measured need (this is still the
+unratified proposal's rule, applied by the unattended run; the founder may overturn it). It lands a coherent subset and records the rest as deferred. Evidence, the opcode list that
+landed and the list that stays rejected are in `_bmad-output/planning-artifacts/sfz-modulation-design.md` and `_bmad-output/implementation-artifacts/spec-13-9-region-eq-and-lfo-eg-modulation.md`.
 
 ## Rule for out-of-scope tiers
 

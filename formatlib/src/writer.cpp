@@ -138,6 +138,32 @@ void put_fl(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) 
   }
 }
 
+void put_md(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  const ModMap& m = r.mod;
+  put_u32(v, index);
+  put_u8(v, static_cast<std::uint8_t>((m.amp.on ? 1u : 0u) | (m.pitch.on ? 2u : 0u) | (m.fil.on ? 4u : 0u) | (m.pitch_eg.on ? 8u : 0u) | (m.fil_eg.on ? 16u : 0u)));
+  put_u8(v, m.eq_count); put_u8(v, 0); put_u8(v, 0);
+  for (const LfoSpec* l : {&m.amp, &m.pitch, &m.fil}) {
+    if (!l->on) continue;
+    put_u8(v, static_cast<std::uint8_t>(l->wave)); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+    put_f32(v, l->depth); put_f32(v, l->freq); put_f32(v, l->delay); put_f32(v, l->fade);
+  }
+  for (const EgSpec* e : {&m.pitch_eg, &m.fil_eg}) {
+    if (!e->on) continue;
+    for (float f : {e->delay, e->attack, e->hold, e->decay, e->release, e->start, e->sustain, e->depth, e->vel2depth}) put_f32(v, f);
+  }
+  for (unsigned b = 0; b < m.eq_count; ++b) {
+    const EqBand& q = m.eq[b];
+    put_u8(v, static_cast<std::uint8_t>(q.type)); put_u8(v, q.freq_count); put_u8(v, q.bw_count); put_u8(v, q.gain_count);
+    for (float f : {q.freq, q.bw, q.gain, q.vel2freq, q.vel2gain}) put_f32(v, f);
+    for (int w = 0; w < 3; ++w) {
+      const FilterMod* e = w == 0 ? q.freq_mods : w == 1 ? q.bw_mods : q.gain_mods;
+      const unsigned n = w == 0 ? q.freq_count : w == 1 ? q.bw_count : q.gain_count;
+      for (unsigned i = 0; i < n; ++i) { put_u8(v, e[i].cc); put_u8(v, e[i].curve); put_u8(v, 0); put_u8(v, 0); put_f32(v, e[i].depth); }
+    }
+  }
+}
+
 void put_cc_setup(std::vector<std::uint8_t>& v, const InstrumentCcSetup& s) {
   put_u32(v, static_cast<std::uint32_t>(s.defaults.size()));
   for (const auto& d : s.defaults) {
@@ -333,6 +359,10 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   bool needs_fl = false;
   for (const auto& ins : instruments_)
     for (const auto& r : ins.regions) needs_fl = needs_fl || has_filter_extension(r);
+  bool needs_md = false;
+  for (const auto& ins : instruments_)
+    for (const auto& r : ins.regions) needs_md = needs_md || has_mod_extension(r);
+  if (needs_md && opt_.format_minor < 8) return Error::kInvalidArgument;
   if (needs_fl && opt_.format_minor < 7) return Error::kInvalidArgument;
   if (needs_bt && opt_.format_minor < 6) return Error::kInvalidArgument;
   if (needs_vg && opt_.format_minor < 5) return Error::kInvalidArgument;
@@ -342,7 +372,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
   // a minor N bundle carries the tables of every lower minor too (possibly empty)
-  const std::uint32_t minor = needs_fl ? 7u : needs_bt ? 6u : needs_vg ? 5u : needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
+  const std::uint32_t minor = needs_md ? 8u : needs_fl ? 7u : needs_bt ? 6u : needs_vg ? 5u : needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
   const std::uint32_t version_word =
       (protect ? kProtectedFormatVersion : opt_.format_version) | (minor << kMinorShift);
   Uuid library_id = library_id_;
@@ -491,6 +521,13 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
         put_u32(manifest, n_fl);
         for (std::size_t k = 0; k < ins.regions.size(); ++k)
           if (has_filter_extension(ins.regions[k])) put_fl(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+      }
+      if (minor >= 8) {
+        std::uint32_t n_md = 0;
+        for (const auto& r : ins.regions) n_md += has_mod_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_md);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_mod_extension(ins.regions[k])) put_md(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
       }
     }
   }

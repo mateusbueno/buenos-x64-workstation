@@ -140,6 +140,40 @@ Instrument& filter_instrument() {
   return ins;
 }
 
+// Story 13.9: region EQ and LFO / EG modulation: all three LFOs, both EGs, a modulated cutoff, three EQ bands with entries on controllers 1 and 74 and velocity, mono and
+// stereo, next to a plain region. Every state is per voice; the coefficients are recomputed every 16 frames of the voice's own clock.
+Instrument& mod_instrument() {
+  static Instrument ins = [] {
+    Instrument i;
+    const auto mono = i.add(6000, false, 48000, 0.05f);
+    const auto stereo = i.add(5000, true, 44100, 0.04f);
+    const auto lp = i.add(9000, false, 48000, 0.05f);
+    auto& a = i.region(mono, 24, 70);
+    a.ampeg_release = 0.03f; a.filter_type = ports::SampleFilterType::kLpf2p; a.filter_cutoff_hz = 900.0f; a.filter_resonance_db = 3.0f;
+    a.filter_tune.cutoff[0] = {74, 0, 1200.0f}; a.filter_tune.cutoff_count = 1;
+    a.mod.amp = {true, 1, 3.0f, 7.0f, 0.005f, 0.05f};
+    a.mod.pitch = {true, 0, 40.0f, 5.5f, 0.0f, 0.0f};
+    a.mod.fil = {true, 3, 1200.0f, 4.0f, 0.0f, 0.0f};
+    a.mod.pitch_eg = {true, 0.001f, 0.03f, 0.0f, 0.1f, 0.2f, 20.0f, 60.0f, 200.0f, 100.0f};
+    a.mod.fil_eg = {true, 0.0f, 0.05f, 0.0f, 0.2f, 0.1f, 0.0f, 30.0f, 2400.0f, 600.0f};
+    auto& b = i.region(stereo, 40, 96);
+    b.pan = -30.0f; b.mod.eq_count = 3;
+    b.mod.eq[0].type = 2; b.mod.eq[0].freq = 200.0f; b.mod.eq[0].gain = 3.0f; b.mod.eq[0].gain_count = 1; b.mod.eq[0].gain_mods[0] = {1, 0, 9.0f};
+    b.mod.eq[1].freq = 1500.0f; b.mod.eq[1].bw = 0.7f; b.mod.eq[1].gain = -2.0f; b.mod.eq[1].vel2gain = 6.0f; b.mod.eq[1].freq_count = 1; b.mod.eq[1].freq_mods[0] = {74, 0, 800.0f};
+    b.mod.eq[2].type = 3; b.mod.eq[2].freq = 6000.0f; b.mod.eq[2].gain = 4.0f;
+    b.mod.amp = {true, 2, 2.0f, 3.0f, 0.0f, 0.0f};
+    auto& c = i.region(lp, 24, 96);
+    c.loop_mode = ports::SampleLoopMode::kLoopContinuous; c.has_loop_points = true; c.loop_start = 1000; c.loop_end = 8000; c.ampeg_release = 0.05f;
+    c.mod.pitch = {true, 1, 25.0f, 4.0f, 0.01f, 0.1f};
+    c.mod.pitch_eg = {true, 0.0f, 0.0f, 0.0f, 0.0f, 0.05f, 0.0f, 100.0f, -100.0f, 0.0f};
+    c.mod.eq_count = 1; c.mod.eq[0].freq = 800.0f; c.mod.eq[0].gain = 5.0f;
+    auto& d = i.region(mono, 60, 96);
+    d.filter_type = ports::SampleFilterType::kLpf2p; d.filter_cutoff_hz = 3000.0f;  // plain: the Story 5.2 numbers
+    return i;
+  }();
+  return ins;
+}
+
 constexpr std::uint32_t kBlock = 64;
 
 struct Lcg {
@@ -200,6 +234,7 @@ SampleEngine::Config engine_config(bool big = true) {
   cfg.max_voices = big ? 320 : 16;
   cfg.extended_voices = true;
   cfg.second_filter_voices = true;
+  cfg.modulated_voices = true;
   return cfg;
 }
 
@@ -219,9 +254,11 @@ enum class Mode { kSerial, kPool1, kPool3 };
 // Runs `blocks` blocks of churn on one engine; every block's output is appended to `out` (split: 16 buses, else 1). Identical operations for
 // every Mode (the operations depend only on the LCG), so the outputs can be compared across modes.
 void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float>& out, std::uint32_t& peak, const Instrument& ins = instrument(),
-                  std::vector<std::uint8_t>* states = nullptr, bool wheel_and_cc = false, bool filter_cc = false) {
+                  std::vector<std::uint8_t>* states = nullptr, bool wheel_and_cc = false, bool filter_cc = false, bool modulated = true) {
   WorkerPool pool;
-  SampleEngine se(engine_config());
+  SampleEngine::Config ecfg = engine_config();
+  ecfg.modulated_voices = modulated;
+  SampleEngine se(ecfg);
   se.set_instrument(ins);
   if (mode != Mode::kSerial) {
     pool.start(mode == Mode::kPool1 ? 1 : 3);
@@ -538,7 +575,9 @@ struct LoopRun {
 // threads: -1 = never call set_parallel_voice_render, 0 = call it with 0, 1 / 3 = parallel.
 LoopRun run_loop(int threads, std::uint32_t blocks) {
   LoopRun res;
-  auto se = std::make_unique<SampleEngine>(engine_config());
+  SampleEngine::Config scfg = engine_config();
+  scfg.modulated_voices = false;  // Story 13.9: this instrument has no modulation; its budget below is the one it always had
+  auto se = std::make_unique<SampleEngine>(scfg);
   se->set_instrument(instrument());
   auto br = std::make_unique<BlockRenderer>();
   br->bind_engine(*se);
@@ -685,6 +724,37 @@ void test_filters_in_parallel(bool split) {
   CHECK(energy > 0.01);
 }
 
+// Story 13.9: region EQ and LFO / EG modulation. 1 and 3 threads are bit-identical, the audio equals the serial render within the repository tolerance, the voice table is
+// identical in all three modes, and the controllers changed the sound.
+void test_modulation_in_parallel(bool split) {
+  std::vector<float> ser, p1, p3, still;
+  std::vector<std::uint8_t> st_s, st_1, st_3, st_n;
+  std::uint32_t pk_s = 0, pk_1 = 0, pk_3 = 0, pk_n = 0;
+  drive_engine(Mode::kSerial, split, 400, ser, pk_s, mod_instrument(), &st_s, false, true);
+  drive_engine(Mode::kPool1, split, 400, p1, pk_1, mod_instrument(), &st_1, false, true);
+  drive_engine(Mode::kPool3, split, 400, p3, pk_3, mod_instrument(), &st_3, false, true);
+  std::size_t at = 0;
+  const bool same = bit_identical(p1, p3, at);
+  if (!same) std::printf("  modulation %s: 1 vs 3 threads differ at index %zu\n", split ? "split" : "mono", at);
+  CHECK(same);
+  CHECK(st_s == st_1 && st_1 == st_3 && !st_s.empty());
+  const double d = max_abs_diff(ser, p3);
+  std::printf("parallel_render_tests: modul. %s peak_voices=%u serial-vs-parallel max |diff| = %.3g (tolerance %.0e)\n", split ? "split" : "mono ", pk_3, d, kSerialTolerance);
+  CHECK(d <= kSerialTolerance);
+  drive_engine(Mode::kPool3, split, 400, still, pk_n, mod_instrument(), &st_n, false, false);  // the same notes without any controller traffic
+  CHECK(still != p3);
+  double energy = 0.0;
+  for (float x : ser) energy += static_cast<double>(x) * x;
+  CHECK(energy > 0.01);
+  for (float x : p3) CHECK(std::isfinite(x));
+  // The bank without the new fields renders what it rendered: the plain instrument is bit-identical on an engine that declares modulation and on one that does not.
+  std::vector<float> a, b;
+  std::uint32_t pa = 0, pb = 0;
+  drive_engine(Mode::kPool3, split, 200, a, pa, filter_instrument(), nullptr, false, true, false);
+  drive_engine(Mode::kPool3, split, 200, b, pb, filter_instrument(), nullptr, false, true, true);
+  CHECK(!a.empty() && bit_identical(a, b, at));
+}
+
 }  // namespace
 
 int main() {
@@ -698,6 +768,8 @@ int main() {
   test_bend_and_cc_voices_in_parallel(true);
   test_filters_in_parallel(false);
   test_filters_in_parallel(true);
+  test_modulation_in_parallel(false);
+  test_modulation_in_parallel(true);
   test_split_isolation();
   test_few_voices();
   test_block_loop();

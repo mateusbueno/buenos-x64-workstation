@@ -839,13 +839,118 @@ int main() {
       auto bad_type = parse(R + "cutoff=500 cutoff2=500 fil2_type=lpf_4p\n");
       CHECK(has(bad_type, SfzIssueKind::kUnsupportedValue, "lpf_4p"));
     }
-    for (const char* op : {"fil_random", "fil_gain", "fil_gain_oncc1", "fil_veltrack_oncc1", "cutoff3", "fil3_type", "fil3_keytrack", "cutoff_stepcc1", "cutoff_smoothcc1", "resonance_stepcc1", "cutoff_chanaft", "cutoff_polyaft", "fileg_depth", "fillfo_depth", "cutoff_random"})
+    for (const char* op : {"fil_random", "fil_gain", "fil_gain_oncc1", "fil_veltrack_oncc1", "cutoff3", "fil3_type", "fil3_keytrack", "cutoff_stepcc1", "cutoff_smoothcc1", "resonance_stepcc1", "cutoff_chanaft", "cutoff_polyaft", "cutoff_random"})
       CHECK(classify_opcode(op) == OpcodeClass::kUnsupported);
     for (const char* op : {"filtype", "fil1_type", "fil2_type", "cutoff1", "cutoff2", "resonance1", "resonance2", "fil_keytrack", "fil2_keycenter", "fil1_veltrack", "cutoff_oncc74", "cutoff_cc74",
                            "cutoff_curvecc131", "cutoff2_oncc1", "resonance_oncc1", "resonance2_curvecc1"})
       CHECK(classify_opcode(op) == OpcodeClass::kSupported);
     // determinism
     CHECK(parse(R + "cutoff=500 fil_veltrack=100 cutoff_oncc1=5\n").regions == parse(R + "cutoff_oncc1=5 fil_veltrack=100 cutoff=500\n").regions);
+  }
+  {  // Story 13.9: region EQ, dedicated LFOs and EGs
+    const std::string R = "<region> sample=a.wav key=60 ";
+    {  // no new opcode: nothing stored
+      auto r = parse(R + "cutoff=1000\n");
+      CHECK(r.ok() && r.regions[0].mod == ModMap{} && !has_mod_extension(r.regions[0]));
+    }
+    {  // EQ: three bands, every field, aliases, band type, controller entries with a curve; sfizz's positional default frequencies
+      auto r = parse("<curve>\ncurve_index=7\nv000=0 v127=1\n<region> sample=a.wav key=60 eq1_freq=100 eq1_bw=0.5 eq1_gain=3 eq1_vel2freq=200 eq1_veltogain=-6 eq1_type=lshelf "
+                     "eq1_freq_oncc80=500 eq1_freqcc83=-100 eq1_gain_cc86=2 eq1_gain_curvecc86=7 eq1_bw_oncc92=0.25 eq2_gain=-4 eq3_gain=1 eq3_type=hshelf eq3_vel2gain=2\n");
+      CHECK(r.ok() && r.regions.size() == 1);
+      if (r.regions.size() == 1) {
+        const ModMap& m = r.regions[0].mod;
+        CHECK(m.eq_count == 3 && !m.amp.on && !m.pitch_eg.on && has_mod_extension(r.regions[0]));
+        const EqBand& a = m.eq[0];
+        CHECK(a.type == EqType::kLowShelf && a.freq == 100.f && a.bw == 0.5f && a.gain == 3.f && a.vel2freq == 200.f && a.vel2gain == -6.f);
+        CHECK(a.freq_count == 2 && a.freq_mods[0].cc == 80 && a.freq_mods[0].depth == 500.f && a.freq_mods[1].cc == 83 && a.freq_mods[1].depth == -100.f);
+        CHECK(a.gain_count == 1 && a.gain_mods[0].cc == 86 && a.gain_mods[0].curve == 7 && a.bw_count == 1 && a.bw_mods[0].cc == 92);
+        // eq1_freq is given, so eq2 keeps frequency 0 (sfizz applies the 500 / 5000 defaults only below a band that is itself at the default)
+        CHECK(m.eq[1].freq == 0.f && m.eq[1].gain == -4.f && m.eq[1].bw == 1.f && m.eq[1].type == EqType::kPeak);
+        CHECK(m.eq[2].freq == 0.f && m.eq[2].type == EqType::kHighShelf && m.eq[2].vel2gain == 2.f);
+        CHECK(r.cc_setup.curves.size() == 1 && r.cc_setup.curves[0].index == 7);
+        CHECK(validate_region(r.regions[0], 1000) == Error::kNone);
+      }
+      auto d = parse(R + "eq3_gain=2 eq2_gain=1 eq1_gain=-1\n<region> sample=a.wav key=61 eq2_gain=5\n");
+      CHECK(d.ok() && d.regions.size() == 2);
+      if (d.regions.size() == 2) {
+        CHECK(d.regions[0].mod.eq[0].freq == 50.f && d.regions[0].mod.eq[1].freq == 500.f && d.regions[0].mod.eq[2].freq == 5000.f);
+        CHECK(d.regions[1].mod.eq_count == 2 && d.regions[1].mod.eq[0] == EqBand{} && d.regions[1].mod.eq[1].freq == 500.f);  // band 1 is transparent: the default band
+      }
+      // Nothing that cannot change the sound is stored (it would force format minor 8 for an unchanged sound): a type alone, a curve alone, a zero depth, a band at 0 dB.
+      auto z = parse(R + "eq1_gain_curvecc1=3 eq1_freq_oncc2=0 eq2_type=hshelf eq3_freq=900 eq3_bw=2 eq3_gain_oncc4=0\n");
+      CHECK(z.ok() && z.regions[0].mod == ModMap{} && !has_mod_extension(z.regions[0]));
+      auto tr = parse(R + "eq1_gain=3 eq2_freq=900 eq2_type=lshelf\n");  // a transparent band after a sounding one is dropped, one before it stays as the default band
+      CHECK(tr.ok() && tr.regions[0].mod.eq_count == 1 && tr.regions[0].mod.eq[0].gain == 3.f);
+      // an explicit eq1_freq=0 is sfizz's own "unset" (it compares with 0): the default 50 Hz applies, as in sfizz
+      auto f0 = parse(R + "eq1_freq=0 eq1_gain=3\n");
+      CHECK(f0.ok() && f0.regions[0].mod.eq[0].freq == 50.f);
+      // pseudo-controllers on the EQ entries: 131 velocity, 135 / 136 random, 137 alternate, 140 / 141 key delta; 132 is not a source
+      auto pc = parse(R + "eq1_gain=1 eq1_gain_oncc131=1 eq1_gain_oncc135=2 eq1_gain_oncc136=3 eq1_gain_oncc137=4 eq2_gain=1 eq2_freq_oncc140=5 eq2_bw_oncc141=0.5\n");
+      CHECK(pc.ok() && pc.regions[0].mod.eq[0].gain_count == 4 && pc.regions[0].mod.eq[0].gain_mods[0].cc == 131 && pc.regions[0].mod.eq[0].gain_mods[3].cc == 137);
+      CHECK(pc.ok() && pc.regions[0].mod.eq[1].freq_mods[0].cc == 140 && pc.regions[0].mod.eq[1].bw_mods[0].cc == 141 && validate_region(pc.regions[0], 1000) == Error::kNone);
+      CHECK(has(parse(R + "eq1_gain=1 eq1_gain_oncc132=1\n"), SfzIssueKind::kUnsupportedValue, "eq1_gain_oncc132"));
+      // the DSP honours bw >= 0.01 octave and gain <= +60 dB: the importer clamps there and logs it
+      auto cl = parse(R + "eq1_bw=0.001 eq1_gain=80\n");
+      CHECK(cl.ok() && cl.regions[0].mod.eq[0].bw == 0.01f && cl.regions[0].mod.eq[0].gain == 60.f && cl.ignored_values.size() == 2);
+    }
+    {  // LFOs: every field, the three targets, the sine default, a depth is required, the filter LFO needs a filter
+      auto r = parse(R + "cutoff=2000 amplfo_depth=3 amplfo_freq=5 amplfo_delay=0.2 amplfo_fade=0.5 pitchlfo_depth=-50 pitchlfo_freq=6 pitchlfo_wave=3 fillfo_depth=1200 fillfo_freq=0.5\n");
+      CHECK(r.ok() && r.regions.size() == 1);
+      if (r.regions.size() == 1) {
+        const ModMap& m = r.regions[0].mod;
+        CHECK(m.amp.on && m.amp.depth == 3.f && m.amp.freq == 5.f && m.amp.delay == 0.2f && m.amp.fade == 0.5f && m.amp.wave == LfoWave::kSine);
+        CHECK(m.pitch.on && m.pitch.depth == -50.f && m.pitch.wave == LfoWave::kSquare && m.fil.on && m.fil.depth == 1200.f && m.eq_count == 0);
+        CHECK(validate_region(r.regions[0], 1000) == Error::kNone);
+      }
+      auto nd = parse(R + "amplfo_freq=5 pitchlfo_delay=1 cutoff=500 fillfo_freq=2\n");  // no depth anywhere: nothing stored, three warnings
+      CHECK(nd.ok() && nd.regions[0].mod == ModMap{} && nd.warnings.size() == 3);
+      auto nf = parse(R + "fillfo_depth=100 fillfo_freq=2 fileg_depth=1200 pitchlfo_depth=10 pitchlfo_freq=1\n");  // no cutoff: no filter LFO / EG, the pitch LFO stays
+      CHECK(nf.ok() && !nf.regions[0].mod.fil.on && !nf.regions[0].mod.fil_eg.on && nf.regions[0].mod.pitch.on && nf.warnings.size() == 2);
+    }
+    {  // EGs: defaults are sfizz's (all 0, sustain 100), vel2depth alone is a connection
+      auto r = parse(R + "cutoff=800 pitcheg_depth=1200 pitcheg_attack=0.1 pitcheg_decay=0.3 pitcheg_sustain=20 pitcheg_release=0.4 pitcheg_delay=0.01 pitcheg_start=5 pitcheg_hold=0.02 "
+                         "fileg_vel2depth=2400 fileg_attack=0.2\n");
+      CHECK(r.ok() && r.regions.size() == 1);
+      if (r.regions.size() == 1) {
+        const EgSpec& e = r.regions[0].mod.pitch_eg;
+        CHECK(e.on && e.depth == 1200.f && e.attack == 0.1f && e.decay == 0.3f && e.sustain == 20.f && e.release == 0.4f && e.delay == 0.01f && e.start == 5.f && e.hold == 0.02f);
+        const EgSpec& f = r.regions[0].mod.fil_eg;
+        CHECK(f.on && f.depth == 0.f && f.vel2depth == 2400.f && f.sustain == 100.f && f.attack == 0.2f && f.release == 0.f);
+        CHECK(validate_region(r.regions[0], 1000) == Error::kNone);
+      }
+      auto a = parse(R + "pitcheg_veltodepth=100 pitcheg_depth=-100\n");
+      CHECK(a.ok() && a.regions[0].mod.pitch_eg.vel2depth == 100.f && a.regions[0].mod.pitch_eg.depth == -100.f);
+    }
+    {  // value rules: clamped and logged, -0 normalised; wave 12 (random S&H) and the generic matrix stay rejected
+      auto c = parse(R + "amplfo_depth=99 amplfo_freq=500 eq1_gain=3 eq1_vel2freq=-0 eq1_freq=99999 pitcheg_depth=-0 pitcheg_vel2depth=99999 pitcheg_attack=500\n");
+      CHECK(c.ok() && c.ignored_values.size() == 5);
+      if (c.ok()) {
+        CHECK(c.regions[0].mod.amp.depth == 10.f && c.regions[0].mod.amp.freq == 100.f && !std::signbit(c.regions[0].mod.eq[0].vel2freq) && c.regions[0].mod.eq[0].freq == 20000.f);
+        CHECK(c.regions[0].mod.pitch_eg.vel2depth == 12000.f && c.regions[0].mod.pitch_eg.attack == 100.f && validate_region(c.regions[0], 1000) == Error::kNone);
+      }
+      CHECK(has(parse(R + "amplfo_depth=1 amplfo_wave=12\n"), SfzIssueKind::kUnsupportedValue, "amplfo_wave"));
+      CHECK(has(parse(R + "pitchlfo_depth=1 pitchlfo_wave=9\n"), SfzIssueKind::kUnsupportedValue, "pitchlfo_wave"));
+      CHECK(has(parse(R + "eq1_type=notch\n"), SfzIssueKind::kUnsupportedValue, "eq1_type"));
+      CHECK(has(parse(R + "eq1_gain_oncc1=1 eq1_gain_oncc2=1 eq1_gain_oncc3=1 eq1_gain_oncc4=1 eq1_gain_oncc5=1\n"), SfzIssueKind::kUnsupportedValue, "eqN_gain_oncc<N>"));
+      for (const char* op : {"lfo01_freq=1", "lfo1_pitch=100", "eg01_time1=1", "eg06_time1_oncc109=1", "amplfo_depth_oncc1=1", "amplfo_depthcc1=1", "pitchlfo_freq_oncc1=1", "fillfo_depthchanaft=1",
+                             "pitcheg_depth_oncc1=1", "fileg_vel2attack=1", "pitcheg_vel2decay=1", "ampeg_depth=1", "eq4_freq=1", "eq1_freq_stepcc1=1", "eq1_gain_smoothcc1=1", "amplfo_beats=1", "pitchlfo_phase=0.5",
+                             "var01_mod=1", "pitcheg_dynamic=1", "fileg_attack_oncc1=1", "eq1_bwcc=1"})
+        CHECK(has(parse(R + op + "\n"), SfzIssueKind::kUnsupportedOpcode, std::string(op).substr(0, std::string(op).find('='))));
+      for (const char* op : {"eq1_freq", "eq3_gain", "eq2_bw", "eq1_type", "eq2_vel2freq", "eq3_veltogain", "eq1_gain_oncc99", "eq2_freqcc3", "eq1_bw_curvecc4", "amplfo_wave", "fillfo_fade", "pitcheg_vel2depth", "fileg_veltodepth", "pitcheg_hold"})
+        CHECK(classify_opcode(op) == OpcodeClass::kSupported);
+    }
+    {  // determinism and header inheritance
+      CHECK(parse(R + "eq1_gain=3 amplfo_depth=2 amplfo_freq=4 pitcheg_depth=100\n").regions == parse(R + "pitcheg_depth=100 amplfo_freq=4 eq1_gain=3 amplfo_depth=2\n").regions);
+      auto g = parse("<group>\namplfo_depth=2 amplfo_freq=4\npitcheg_depth=100\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61 amplfo_depth=0 pitcheg_depth=0\n");
+      // overriding an inherited depth to 0 is a deliberate disable: no LFO / EG, and no "without a depth" warning
+      CHECK(g.ok() && g.regions[0].mod.amp.on && !g.regions[1].mod.amp.on && !g.regions[1].mod.pitch_eg.on && g.warnings.empty());
+      // rejected opcodes are reported wherever they are written
+      for (const char* hdr : {"<global>\n", "<master>\n", "<group>\n"})
+        for (const char* op : {"lfo01_freq=1", "eg01_time1=1", "eq4_freq=1"}) {
+          auto r = parse(std::string(hdr) + op + "\n<region> sample=a.wav key=60\n");
+          CHECK(has(r, SfzIssueKind::kUnsupportedOpcode, std::string(op).substr(0, std::string(op).find('='))));
+        }
+    }
   }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
     const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_stepcc1", "width_oncc1", "volume_stepcc1", "pan_smoothcc2",

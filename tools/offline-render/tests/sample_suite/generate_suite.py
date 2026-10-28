@@ -842,6 +842,144 @@ def build_story138_cases():
 """, ev, ccs)
 
 
+def build_story139_cases():
+    """Story 13.9: region EQ and the dedicated LFOs / EGs. One fixture instrument per opcode family on the bright, noisy loop (110 Hz, 40 harmonics): eq_bands (peak, low and
+    high shelf, bandwidth, sfizz's positional default frequencies), eq_velocity (eqN_vel2freq / vel2gain), eq_cc (eqN_*_oncc through a curve; the controllers move BEFORE the
+    note they are meant for, the engine reads them when the note starts, the documented limit of Story 13.5), amplfo (every wave, delay, fade), pitchlfo, pitcheg and
+    fillfo_fileg (the cutoff of the first filter moved by an LFO and by an EG)."""
+    loop = "loop_mode=loop_continuous loop_start=2400 loop_end=7199"
+    curves = "<curve>\ncurve_index=7\nv000=0 v064=0.9 v127=1\n"
+
+    def staged(steps, gap=0.20, length=0.10):
+        """steps: (cc or None, value or None, key, vel): the controller is set 40 ms before its note, and every voice has died before the next move."""
+        ev, ccs = [], []
+        for i, (cc, val, key, vel) in enumerate(steps):
+            t = 0.05 + i * gap
+            if cc is not None:
+                ccs.append((secs(t - 0.04), cc, val))
+            ev.append((secs(t), 1, key, vel))
+            ev.append((secs(t + length), 0, key, vel))
+        ev.sort(key=lambda e: (e[0], e[1]))
+        return ev, sorted(ccs)
+
+    # eq_bands: a peak boost, a cut with a narrow band, a low shelf, a high shelf and the positional default frequencies (eq2 alone is band 2 at 500 Hz with a transparent band 1,
+    # eq3 alone is band 3 at 5000 Hz).
+    steps = [(None, None, k, 100) for k in (60, 62, 64, 65, 67, 69, 71)]
+    ev, ccs = staged(steps, 0.20, 0.10)
+    case("eq_bands", HEADER + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 eq1_freq=800 eq1_bw=1 eq1_gain=9
+<region> lokey=62 hikey=62 pitch_keycenter=62 eq1_freq=1500 eq1_bw=0.25 eq1_gain=-12
+<region> lokey=64 hikey=64 pitch_keycenter=64 eq1_type=lshelf eq1_freq=600 eq1_bw=1 eq1_gain=-9 eq2_type=hshelf eq2_freq=3000 eq2_bw=1 eq2_gain=6
+<region> lokey=65 hikey=65 pitch_keycenter=65 eq2_gain=-8
+<region> lokey=67 hikey=67 pitch_keycenter=67 eq3_gain=10 eq3_bw=0.5
+<region> lokey=69 hikey=69 pitch_keycenter=69 eq1_freq=300 eq1_gain=6 eq2_freq=1200 eq2_gain=-6 eq3_freq=4000 eq3_gain=5 eq3_type=hshelf
+<region> lokey=71 hikey=71 pitch_keycenter=71 eq1_freq=2000 eq1_gain=-20 eq1_bw=2
+""", ev, ccs)
+
+    # eq_velocity: the band frequency and gain follow the note velocity.
+    steps = []
+    for key, vels in ((60, (1, 40, 80, 127)), (62, (1, 64, 127)), (64, (30, 127))):
+        steps += [(None, None, key, v) for v in vels]
+    ev, ccs = staged(steps, 0.20, 0.10)
+    case("eq_velocity", HEADER + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 eq1_freq=500 eq1_gain=0 eq1_vel2gain=12 eq1_bw=1
+<region> lokey=62 hikey=62 pitch_keycenter=62 eq1_freq=300 eq1_vel2freq=3000 eq1_gain=8 eq1_bw=0.5
+<region> lokey=64 hikey=64 pitch_keycenter=64 eq1_freq=1000 eq1_gain=-3 eq1_veltogain=-9 eq1_veltofreq=1000
+""", ev, ccs)
+
+    # eq_cc: the freq, bw and gain of a band follow controllers (Headroom Piano's pattern: eq1_freq_oncc, eq1_gain_oncc with a curve, eq1_bw_oncc).
+    steps = []
+    for v in (0, 64, 127):
+        steps.append((80, v, 60, 100))
+    for v in (0, 100, 127):
+        steps.append((81, v, 62, 100))
+    for v in (0, 127):
+        steps.append((82, v, 64, 100))
+    ev, ccs = staged(steps, 0.20, 0.10)
+    t0 = 0.05 + len(steps) * 0.20
+    ev2, ccs2 = [], []
+    for i, (a, b, c) in enumerate(((0, 0, 0), (127, 127, 127), (60, 30, 90))):
+        t = t0 + i * 0.20
+        ccs2 += [(secs(t - 0.06), 83, a), (secs(t - 0.05), 84, b), (secs(t - 0.04), 85, c)]
+        ev2 += [(secs(t), 1, 65, 100), (blk(secs(t + 0.10)), 0, 65, 100)]
+    ev = sorted(ev + ev2, key=lambda e: (e[0], e[1]))
+    ccs = sorted(ccs + ccs2)
+    case("eq_cc", HEADER + curves + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 eq1_freq=300 eq1_gain=9 eq1_freq_oncc80=3000
+<region> lokey=62 hikey=62 pitch_keycenter=62 eq1_freq=1000 eq1_gain=-12 eq1_gain_oncc81=18 eq1_gain_curvecc81=7
+<region> lokey=64 hikey=64 pitch_keycenter=64 eq1_freq=1200 eq1_gain=10 eq1_bw=0.1 eq1_bw_oncc82=2.0
+<region> lokey=65 hikey=65 pitch_keycenter=65 eq1_freq=500 eq1_gain=4 eq1_freq_oncc83=1000 eq1_gain_oncc84=6 eq1_bw_oncc85=1
+""", ev, ccs)
+
+    # The modulated notes are long (they cross the loop several times), so the four cases below use loop.wav: periodic, without the noise of bright.wav, whose wrap point
+    # only matches sfizz to about -45 dB in a 100 ms window (a property of the loop, not of the modulation: a plain looped note of bright.wav shows the same).
+    # amplfo: every wave (0 triangle, 1 sine, 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw), then a delay and a fade. Notes are held for a second.
+    keys = (60, 61, 62, 63, 64, 65, 66, 67)
+    ev = []
+    for i, k in enumerate(keys):
+        t = 0.05 + i * 1.15
+        ev += [(blk(secs(t)), 1, k, 100), (blk(secs(t + 1.0)), 0, k, 100)]
+    regions = "".join(f"<region> lokey={k} hikey={k} pitch_keycenter={k} amplfo_depth=6 amplfo_freq=4 amplfo_wave={i}\n" for i, k in enumerate(keys))
+    t = 0.05 + len(keys) * 1.15
+    ev += [(blk(secs(t)), 1, 68, 100), (blk(secs(t + 1.2)), 0, 68, 100), (blk(secs(t + 1.4)), 1, 69, 100), (blk(secs(t + 2.6)), 0, 69, 100)]
+    regions += "<region> lokey=68 hikey=68 pitch_keycenter=68 amplfo_depth=-9 amplfo_freq=3 amplfo_delay=0.3 amplfo_fade=0.4\n"
+    regions += "<region> lokey=69 hikey=69 pitch_keycenter=69 amplfo_depth=4 amplfo_freq=7.5 volume=-3 amplfo_fade=0.6\n"
+    ev.sort(key=lambda e: (e[0], e[1]))
+    case("amplfo", HEADER + f"<global> sample=loop.wav {loop} ampeg_release=0.05\n" + regions, ev)
+
+    # NOTE (sfizz 1.2.3): a voice that starts inside a 64-frame block sees its PITCH modulation (LFO, EG) late by the offset inside the block, in that first block only (the
+    # pitch is read from the delayed sub-span, the modulation buffers are block aligned; the amplitude and filter stages are aligned). The oracle of the corpus renders with
+    # blocks of 1 frame, where it cannot happen; the fixtures with a pitch LFO / EG therefore start their notes on block boundaries (blk).
+    # pitchlfo: vibrato with the default sine, a triangle, a saw with a delay and a fade, and a deep wide one.
+    ev = []
+    for i, k in enumerate((60, 62, 64, 65)):
+        t = 0.05 + i * 1.15
+        ev += [(blk(secs(t)), 1, k, 100), (blk(secs(t + 1.0)), 0, k, 100)]
+    ev.sort(key=lambda e: (e[0], e[1]))
+    case("pitchlfo", HEADER + f"""<global> sample=loop.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 pitchlfo_depth=50 pitchlfo_freq=5
+<region> lokey=62 hikey=62 pitch_keycenter=62 pitchlfo_depth=-100 pitchlfo_freq=3.5 pitchlfo_wave=0
+<region> lokey=64 hikey=64 pitch_keycenter=64 pitchlfo_depth=200 pitchlfo_freq=6 pitchlfo_wave=7 pitchlfo_delay=0.2 pitchlfo_fade=0.3
+<region> lokey=65 hikey=65 pitch_keycenter=65 pitchlfo_depth=1200 pitchlfo_freq=1.5
+""", ev)
+
+    # NOTE (sfizz 1.2.3, ADSREnvelope.cpp): an EG whose delay ends exactly at the end of a render block is never released (the release test needs `delay < 0`, and the delay
+    # loop leaves 0 when the block runs out first). The delays below (0.05 s = 2400 frames) are not multiples of the 64-frame block; the oracle of the corpus renders with
+    # blocks of 1 frame, where every EG with a non-zero delay shows this.
+    # pitcheg: attack, decay to a sustain level, a release, a delay and a start level, a negative depth, the velocity depth.
+    steps = []
+    ev = []
+    specs = ((60, 100), (62, 100), (64, 127), (64, 30), (65, 100))
+    for i, (k, v) in enumerate(specs):
+        t = 0.05 + i * 1.15
+        ev += [(blk(secs(t)), 1, k, v), (blk(secs(t + 0.8)), 0, k, v)]
+    ev.sort(key=lambda e: (e[0], e[1]))
+    case("pitcheg", HEADER + f"""<global> sample=loop.wav {loop} ampeg_release=0.4
+<region> lokey=60 hikey=60 pitch_keycenter=60 pitcheg_depth=2400 pitcheg_attack=0.2 pitcheg_decay=0.3 pitcheg_sustain=50 pitcheg_release=0.3
+<region> lokey=62 hikey=62 pitch_keycenter=62 pitcheg_depth=-2400 pitcheg_delay=0.05 pitcheg_start=20 pitcheg_attack=0.1 pitcheg_hold=0.1 pitcheg_decay=0.2 pitcheg_sustain=50 pitcheg_release=0.2
+<region> lokey=64 hikey=64 pitch_keycenter=64 pitcheg_depth=100 pitcheg_vel2depth=800 pitcheg_attack=0.05 pitcheg_sustain=100 pitcheg_release=0.1
+<region> lokey=65 hikey=65 pitch_keycenter=65 pitcheg_veltodepth=1200 pitcheg_decay=0.4 pitcheg_sustain=0 pitcheg_release=0.05
+""", ev)
+
+    # fillfo_fileg: the cutoff of the first filter moved by a LFO (sine, square, triangle with a delay and a fade) and by an EG (attack, decay, sustain, release, velocity depth),
+    # both together, and a cutoff_oncc with the LFO.
+    ev = []
+    specs = ((60, 100), (62, 100), (64, 100), (65, 127), (65, 30), (67, 100), (69, 100))
+    ccs = [(secs(0.05 + 6 * 1.15 - 0.1), 74, 127)]
+    for i, (k, v) in enumerate(specs):
+        t = 0.05 + i * 1.15
+        ev += [(blk(secs(t)), 1, k, v), (blk(secs(t + 0.8)), 0, k, v)]
+    ev.sort(key=lambda e: (e[0], e[1]))
+    case("fillfo_fileg", HEADER + f"""<global> sample=loop.wav {loop} ampeg_release=0.3
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=800 resonance=3 fillfo_depth=1200 fillfo_freq=3
+<region> lokey=62 hikey=62 pitch_keycenter=62 cutoff=500 fillfo_depth=-1200 fillfo_freq=2.5 fillfo_wave=3
+<region> lokey=64 hikey=64 pitch_keycenter=64 fil_type=lpf_1p cutoff=1000 fillfo_depth=900 fillfo_freq=4 fillfo_wave=0 fillfo_delay=0.2 fillfo_fade=0.3
+<region> lokey=65 hikey=65 pitch_keycenter=65 cutoff=400 resonance=2 fileg_depth=2400 fileg_vel2depth=1200 fileg_attack=0.15 fileg_decay=0.2 fileg_sustain=40 fileg_release=0.2
+<region> lokey=67 hikey=67 pitch_keycenter=67 cutoff=600 fil_type=hpf_2p fileg_depth=3000 fileg_delay=0.05 fileg_start=10 fileg_attack=0.2 fileg_hold=0.1 fileg_decay=0.3 fileg_sustain=20 fillfo_depth=600 fillfo_freq=5 fillfo_wave=1
+<region> lokey=69 hikey=69 pitch_keycenter=69 cutoff=500 cutoff_oncc74=1200 fillfo_depth=1200 fillfo_freq=2 fillfo_wave=6
+""", ev, ccs)
+
+
 def make_demo_probe():
     """midi/demo_probe.mid: a short phrase over the keyboard range for the env-gated real-library null test."""
     keys = [28, 40, 52, 64, 76, 88, 100]
@@ -874,9 +1012,9 @@ def make_demo_features():
 
 
 def main():
-    stories = {"story134": build_story134_cases, "story135": build_story135_cases, "story136": build_story136_cases, "story137": build_story137_cases, "story138": build_story138_cases}
+    stories = {"story134": build_story134_cases, "story135": build_story135_cases, "story136": build_story136_cases, "story137": build_story137_cases, "story138": build_story138_cases, "story139": build_story139_cases}
     if sys.argv[1:] != [] and not (len(sys.argv) == 2 and sys.argv[1] in stories):
-        sys.exit("usage: generate_suite.py [story134|story135|story136|story137|story138]")
+        sys.exit("usage: generate_suite.py [story134|story135|story136|story137|story138|story139]")
     if len(sys.argv) == 2:  # only that story's cases (leaves every older file untouched)
         stories[sys.argv[1]]()
         for name, (sfz, events, ccs, setup) in CASES.items():
@@ -895,6 +1033,7 @@ def main():
     build_story136_cases()
     build_story137_cases()
     build_story138_cases()
+    build_story139_cases()
     for name, (sfz, events, ccs, setup) in CASES.items():
         with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
             f.write(sfz)

@@ -58,7 +58,11 @@ inline constexpr std::uint32_t kFormatVersion = 2;
 // track / velocity track / CC modulation (cutoff in cents, resonance in dB) of the first filter and an optional second filter. The writer stamps minor 7 only when
 // a region has a FilterMap; every other bundle keeps the bytes it had (minor 0..6). Minor 7 requires at least one record (kCorruptManifest otherwise). The reader
 // accepts minor 0..7 and rejects a newer one with kUnsupportedVersion.
-inline constexpr std::uint32_t kFormatMinor = 7;
+// Minor 8 (Story 13.9) appends, after the minor 7 table of each instrument (present, possibly empty, in a minor 8 bundle), the modulation table: per region the amplitude,
+// pitch and filter LFOs, the pitch and filter envelope generators and up to three EQ bands. The writer stamps minor 8 only when a region has a ModMap; every other bundle
+// keeps the bytes it had (minor 0..7). Minor 8 requires at least one record (kCorruptManifest otherwise). The reader accepts minor 0..8 and rejects a newer one with
+// kUnsupportedVersion.
+inline constexpr std::uint32_t kFormatMinor = 8;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;

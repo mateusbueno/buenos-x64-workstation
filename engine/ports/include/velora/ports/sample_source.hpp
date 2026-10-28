@@ -71,6 +71,33 @@ struct SampleFilterTune {
   SampleFilterMod cutoff[kSampleMaxFilterMods]{}, res[kSampleMaxFilterMods]{};
 };
 
+// Story 13.9: region EQ and the dedicated LFOs / EGs (see formatlib's ModMap and _bmad-output/planning-artifacts/sfz-modulation-design.md). lfo wave: 0 triangle, 1 sine,
+// 2 pulse75, 3 square, 4 pulse25, 5 pulse12.5, 6 ramp, 7 saw. depth: dB (amp LFO), cents (the others). eg times in seconds, start and sustain in percent, depth and
+// vel2depth in cents. eq type: 1 peak, 2 low shelf, 3 high shelf; the freq / bw / gain entries are CC modulation read at voice start (Hz, octaves, dB). The defaults mean
+// "the region has none", and the engine then takes exactly the paths it took before this story.
+struct SampleLfoDesc {
+  bool on = false;
+  std::uint8_t wave = 1;
+  float depth = 0.0f, freq = 0.0f, delay = 0.0f, fade = 0.0f;
+};
+struct SampleEgDesc {
+  bool on = false;
+  float delay = 0.0f, attack = 0.0f, hold = 0.0f, decay = 0.0f, release = 0.0f, start = 0.0f, sustain = 100.0f, depth = 0.0f, vel2depth = 0.0f;
+};
+inline constexpr unsigned kSampleMaxEqBands = 3;
+struct SampleEqBand {
+  std::uint8_t type = 1;
+  float freq = 0.0f, bw = 1.0f, gain = 0.0f, vel2freq = 0.0f, vel2gain = 0.0f;
+  std::uint8_t freq_count = 0, bw_count = 0, gain_count = 0;
+  SampleFilterMod freq_mods[kSampleMaxFilterMods]{}, bw_mods[kSampleMaxFilterMods]{}, gain_mods[kSampleMaxFilterMods]{};
+};
+struct SampleModDesc {
+  SampleLfoDesc amp, pitch, fil;
+  SampleEgDesc pitch_eg, fil_eg;
+  std::uint8_t eq_count = 0;
+  SampleEqBand eq[kSampleMaxEqBands]{};
+};
+
 // One region of the instrument (the SFZ opcode subset of Story 1.13). Field meaning follows the
 // SFZ specification; times are in seconds, ampeg_start and ampeg_sustain in percent, pan in
 // -100..100, offset and loop points in frames of the region's sample (loop_end inclusive).
@@ -202,6 +229,8 @@ struct SampleRegionDesc {
   SampleFilterType filter2_type = SampleFilterType::kNone;
   float filter2_cutoff_hz = 0.0f, filter2_resonance_db = 0.0f;
   SampleFilterTune filter2_tune;
+  // Story 13.9: region EQ and dedicated LFO / EG modulation; the default means none.
+  SampleModDesc mod;
 };
 
 // Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.

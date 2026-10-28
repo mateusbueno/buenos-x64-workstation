@@ -1,0 +1,9 @@
+<control>
+default_path=samples/
+<global> sample=loop.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.3
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=800 resonance=3 fillfo_depth=1200 fillfo_freq=3
+<region> lokey=62 hikey=62 pitch_keycenter=62 cutoff=500 fillfo_depth=-1200 fillfo_freq=2.5 fillfo_wave=3
+<region> lokey=64 hikey=64 pitch_keycenter=64 fil_type=lpf_1p cutoff=1000 fillfo_depth=900 fillfo_freq=4 fillfo_wave=0 fillfo_delay=0.2 fillfo_fade=0.3
+<region> lokey=65 hikey=65 pitch_keycenter=65 cutoff=400 resonance=2 fileg_depth=2400 fileg_vel2depth=1200 fileg_attack=0.15 fileg_decay=0.2 fileg_sustain=40 fileg_release=0.2
+<region> lokey=67 hikey=67 pitch_keycenter=67 cutoff=600 fil_type=hpf_2p fileg_depth=3000 fileg_delay=0.05 fileg_start=10 fileg_attack=0.2 fileg_hold=0.1 fileg_decay=0.3 fileg_sustain=20 fillfo_depth=600 fillfo_freq=5 fillfo_wave=1
+<region> lokey=69 hikey=69 pitch_keycenter=69 cutoff=500 cutoff_oncc74=1200 fillfo_depth=1200 fillfo_freq=2 fillfo_wave=6

@@ -201,6 +201,32 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   d.filter2_cutoff_hz = r.fmap.f2.cutoff_hz;
   d.filter2_resonance_db = r.fmap.f2.resonance_db;
   tune(r.fmap.f2.tune, d.filter2_tune);
+  // Story 13.9: region EQ and dedicated LFO / EG modulation.
+  {
+    const fmt::ModMap& m = r.mod;
+    ports::SampleModDesc& o = d.mod;
+    auto lfo = [](const fmt::LfoSpec& l, ports::SampleLfoDesc& x) { x = {l.on, static_cast<std::uint8_t>(l.wave), l.depth, l.freq, l.delay, l.fade}; };
+    lfo(m.amp, o.amp);
+    lfo(m.pitch, o.pitch);
+    lfo(m.fil, o.fil);
+    auto eg = [](const fmt::EgSpec& e, ports::SampleEgDesc& x) { x = {e.on, e.delay, e.attack, e.hold, e.decay, e.release, e.start, e.sustain, e.depth, e.vel2depth}; };
+    eg(m.pitch_eg, o.pitch_eg);
+    eg(m.fil_eg, o.fil_eg);
+    static_assert(ports::kSampleMaxEqBands == fmt::kMaxEqBands, "EQ band table sizes must agree");
+    o.eq_count = std::min<std::uint8_t>(m.eq_count, ports::kSampleMaxEqBands);
+    for (unsigned b = 0; b < o.eq_count; ++b) {
+      const fmt::EqBand& q = m.eq[b];
+      ports::SampleEqBand& x = o.eq[b];
+      x.type = static_cast<std::uint8_t>(q.type);
+      x.freq = q.freq; x.bw = q.bw; x.gain = q.gain; x.vel2freq = q.vel2freq; x.vel2gain = q.vel2gain;
+      x.freq_count = std::min<std::uint8_t>(q.freq_count, ports::kSampleMaxFilterMods);
+      x.bw_count = std::min<std::uint8_t>(q.bw_count, ports::kSampleMaxFilterMods);
+      x.gain_count = std::min<std::uint8_t>(q.gain_count, ports::kSampleMaxFilterMods);
+      for (unsigned i = 0; i < x.freq_count; ++i) x.freq_mods[i] = {q.freq_mods[i].cc, q.freq_mods[i].curve, q.freq_mods[i].depth};
+      for (unsigned i = 0; i < x.bw_count; ++i) x.bw_mods[i] = {q.bw_mods[i].cc, q.bw_mods[i].curve, q.bw_mods[i].depth};
+      for (unsigned i = 0; i < x.gain_count; ++i) x.gain_mods[i] = {q.gain_mods[i].cc, q.gain_mods[i].curve, q.gain_mods[i].depth};
+    }
+  }
   return d;
 }
 

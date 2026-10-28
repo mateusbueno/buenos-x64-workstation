@@ -143,6 +143,30 @@ std::shared_ptr<Instrument> make_instrument(std::uint32_t k) {
     c2.filter_tune.cutoff[0] = {74, 0, 12000.0f}; c2.filter_tune.cutoff_count = 1;
     c2.filter2_type = ports::SampleFilterType::kBpf2p; c2.filter2_cutoff_hz = 20000.0f; c2.filter2_resonance_db = 40.0f;
   }
+  {  // Story 13.9: region EQ and dedicated LFO / EG modulation: all three LFOs and both EGs (extreme depths and rates), a modulated cutoff, three EQ bands (entries on
+     // controllers 1, 74 and velocity), on mono and stereo samples: the coefficients are computed in the nonblocking scope at every voice start and every 16 frames.
+    auto& a = t->region(mono, 10, 110);
+    a.volume_db = -12.0f; a.filter_type = ports::SampleFilterType::kLpf2p; a.filter_cutoff_hz = 900.0f; a.filter_resonance_db = 6.0f;
+    a.mod.amp = {true, 1, 10.0f, 100.0f, 0.002f, 0.05f};
+    a.mod.pitch = {true, 3, 1200.0f, 60.0f, 0.0f, 0.0f};
+    a.mod.fil = {true, 0, 1200.0f, 30.0f, 0.0f, 0.0f};
+    a.mod.pitch_eg = {true, 0.001f, 0.01f, 0.0f, 0.1f, 0.05f, 10.0f, 30.0f, 1200.0f, 600.0f};
+    a.mod.fil_eg = {true, 0.0f, 0.02f, 0.01f, 0.2f, 0.1f, 0.0f, 40.0f, 12000.0f, -6000.0f};
+    a.mod.eq_count = 3;
+    a.mod.eq[0].type = 2; a.mod.eq[0].freq = 150.0f; a.mod.eq[0].gain = -12.0f; a.mod.eq[0].gain_count = 1; a.mod.eq[0].gain_mods[0] = {1, 0, 24.0f};
+    a.mod.eq[1].freq = 1000.0f; a.mod.eq[1].bw = 0.01f; a.mod.eq[1].gain = 24.0f; a.mod.eq[1].vel2gain = -24.0f; a.mod.eq[1].freq_count = 1; a.mod.eq[1].freq_mods[0] = {74, 0, 4000.0f};
+    a.mod.eq[2].type = 3; a.mod.eq[2].freq = 19999.0f; a.mod.eq[2].bw = 4.0f; a.mod.eq[2].gain = 60.0f; a.mod.eq[2].bw_count = 1; a.mod.eq[2].bw_mods[0] = {131, 0, -3.0f};
+    auto& b3 = t->region(stereo, 20, 120);
+    b3.volume_db = -12.0f;
+    b3.mod.amp = {true, 7, -10.0f, 7.0f, 0.0f, 0.3f};
+    b3.mod.pitch = {true, 1, -300.0f, 5.5f, 0.01f, 0.1f};
+    b3.mod.pitch_eg = {true, 0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 0.0f, 100.0f, -2400.0f, 0.0f};
+    b3.mod.eq_count = 1; b3.mod.eq[0].freq = 1.0f; b3.mod.eq[0].gain = -96.0f; b3.mod.eq[0].bw = 0.01f;
+    auto& c3 = t->region(mono, 0, 127);
+    c3.volume_db = -12.0f; c3.filter_type = ports::SampleFilterType::kHpf1p; c3.filter_cutoff_hz = 20.0f;
+    c3.mod.fil = {true, 2, -1200.0f, 100.0f, 0.0f, 0.0f};
+    c3.mod.fil_eg = {true, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 12000.0f, 0.0f};  // sustain 0: it releases by itself
+  }
   return t;
 }
 
@@ -268,6 +292,7 @@ bool run_once(bool live, std::uint64_t& hash_out) {
   sc.max_voices = 96;
   sc.extended_voices = true;
   sc.second_filter_voices = true;
+  sc.modulated_voices = true;
   SampleEngine sample(sc);
   if (!br->bind_engine(sample)) {
     std::printf("FAIL: cannot bind the sample engine\n");
@@ -342,6 +367,7 @@ bool run_once(bool live, std::uint64_t& hash_out) {
   need(distinct >= 3, "the keyswitch of part 0 did not move through at least 3 keys");
   need(sample.undeclared_extended_voices() == 0, "extended voices on an engine that declared them");
   need(sample.undeclared_second_filter_voices() == 0, "second-filter voices on an engine that declared them");
+  need(sample.undeclared_modulated_voices() == 0, "modulated voices on an engine that declared them");
   need(br->ignored_events() < 500, "controllers or the wheel are being ignored");  // only the ones no engine reads (a part with another engine)
   if (live) need(ctl->published > 1000 && ctl->epoch >= 50, "too few generations / seamless switches");
   if (live) std::printf("  generations %llu, seamless switches %llu\n", (unsigned long long)ctl->published, (unsigned long long)ctl->epoch);

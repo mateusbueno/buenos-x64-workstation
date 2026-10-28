@@ -1595,6 +1595,575 @@ void test_filter_deterministic_with_random_pseudo_cc() {
 
 }  // namespace
 
+// --- Story 13.9: region EQ and dedicated LFO / EG modulation -------------------------------------------------------------------------
+
+// A mono ramp sample (value i / 20000): the output of a voice reads the playhead, so the slope per frame is the pitch ratio times gain.
+ports::SampleRegionDesc& ramp(Instrument& ins, int key) {
+  std::vector<float> x(20000);
+  for (std::size_t i = 0; i < x.size(); ++i) x[i] = static_cast<float>(i) / 20000.0f;
+  ports::SampleRegionDesc d;
+  d.sample_index = ins.sample(std::move(x));
+  d.key_lo = d.key_hi = d.key_center = static_cast<std::uint8_t>(key);
+  ins.regions.push_back(d);
+  return ins.regions.back();
+}
+// Slope (output per frame, in units of the unity pan gain) of a ramp voice between two frames of its render.
+double slope(const Out& o, std::size_t a, std::size_t b) { return (o.l[b] - o.l[a]) / unity() / static_cast<double>(b - a); }
+
+// The wave of sfizz's LFO.cpp, written out here independently of the engine (double), for the phase p in [0, 1).
+double lfo_ref(int wave, double p) {
+  switch (wave) {
+    case 0: return p < 0.25 ? 4 * p : p > 0.75 ? 4 * p - 4 : -4 * p + 2;
+    case 2: return p < 0.75 ? 1 : 0;
+    case 3: return p < 0.5 ? 1 : 0;
+    case 4: return p < 0.25 ? 1 : 0;
+    case 5: return p < 0.125 ? 1 : 0;
+    case 6: return 2 * p - 1;
+    case 7: return 1 - 2 * p;
+    default: { const double x = 2 * p - 1; return -4 * x * (1 - std::fabs(x)); }
+  }
+}
+
+void test_mod_cost_declaration() {
+  using I = SampleInterpolation;
+  CHECK(sample_voice_cost_units(I::kHermite3, true, false, true) == sample_voice_cost_units(I::kHermite3, true) + kSampleModCostUnits);
+  CHECK(sample_voice_cost_units(I::kHermite3, false, false, true) == 5 && sample_voice_cost_units(I::kHermite3, true, true, true) == sample_voice_cost_units(I::kHermite3, true, true) + kSampleModCostUnits);
+  SampleEngine::Config c = cfg(8, true);
+  c.modulated_voices = true;
+  SampleEngine yes(c), no(cfg(8, true)), plain(cfg(8, false));
+  CHECK(yes.cost_units_per_voice() == sample_voice_cost_units(I::kHermite3, true, false, true) && no.cost_units_per_voice() == sample_voice_cost_units(I::kHermite3, true) && plain.cost_units_per_voice() == 5);
+  Instrument ins;
+  ins.dc(0.3, 60, 60).mod.amp = {true, 1, 2.0f, 5.0f, 0.0f, 0.0f};
+  { auto& r = ins.dc(0.3, 61, 61); r.mod.eq_count = 1; r.mod.eq[0].freq = 1000.0f; r.mod.eq[0].gain = 3.0f; }
+  { auto& r = ins.dc(0.3, 62, 62); r.mod.eq_count = 1; r.mod.eq[0].freq = 1000.0f; }  // a transparent band is not a modulated voice
+  ins.dc(0.3, 63, 63);
+  for (SampleEngine* e : {&yes, &no, &plain}) {
+    e->set_instrument(ins);
+    for (int k = 60; k <= 63; ++k) press(*e, k);
+  }
+  CHECK(yes.undeclared_modulated_voices() == 0 && no.undeclared_modulated_voices() == 2 && plain.undeclared_modulated_voices() == 2);
+}
+
+double playhead(const SampleEngine& e);
+
+// Story 13.9: the pitch and filter EGs leave with the amplitude EG on every release path. A choke (off_mode normal: the voice's own release) plays exactly what a key up
+// plays; an EG still in its delay when the amplitude EG is released goes idle instead of releasing from its start level.
+void test_mod_egs_follow_every_release() {
+  auto run = [](bool choke) {
+    Instrument ins;
+    auto& a = ins.sine(700.0, 60);
+    lpf(a, 600.0, 3.0);
+    a.ampeg_release = 0.3f;
+    a.mod.pitch_eg = {true, 0, 0.05f, 0, 0, 0.4f, 0, 100.0f, 1200.0f, 0.0f};
+    a.mod.fil_eg = {true, 0, 0.05f, 0, 0, 0.3f, 0, 100.0f, 2400.0f, 0.0f};
+    a.group = 1; a.has_off_by = true; a.off_by = 2; a.off_mode = ports::SampleOffMode::kNormal;
+    auto& b = ins.dc(0.0, 61, 61);  // silent: it only starts the choke
+    b.group = 2;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    press(e, 60);
+    Out o = render(e, 2000);
+    if (choke) press(e, 61);
+    else lift(e, 60);
+    const Out t = render(e, 6000);
+    o.l.insert(o.l.end(), t.l.begin(), t.l.end());
+    return o;
+  };
+  const Out ch = run(true), up = run(false);
+  CHECK(ch.l == up.l);
+  double peak = 0;
+  for (std::size_t i = 2100; i < ch.l.size(); ++i) peak = std::max(peak, static_cast<double>(std::fabs(ch.l[i])));
+  CHECK(peak > 1e-4);
+  {  // released during its delay: idle, not a release from the start level (start 100 % = +1200 cents until then)
+    Instrument ins;
+    ramp(ins, 60).ampeg_release = 0.5f;
+    ins.regions[0].mod.pitch_eg = {true, 1.0f, 0, 0, 0, 0, 100.0f, 100.0f, 1200.0f, 0.0f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    render(e, 400);
+    const double p0 = playhead(e);
+    render(e, 100);
+    CHECK_NEAR((playhead(e) - p0) / 100.0, 2.0, 2e-3);  // in the delay at its start level
+    lift(e, 60);
+    render(e, 10);
+    const double q0 = playhead(e);
+    render(e, 100);
+    CHECK_NEAR((playhead(e) - q0) / 100.0, 1.0, 2e-3);  // idle: the original speed at once
+  }
+}
+
+// Story 13.9: modulation without the extended declaration is counted as both missing declarations.
+void test_mod_counts_the_missing_extended_declaration() {
+  Instrument ins;
+  ins.dc(0.3, 60, 60).mod.amp = {true, 1, 2.0f, 5.0f, 0.0f, 0.0f};
+  SampleEngine::Config c = cfg(8, false);
+  c.modulated_voices = true;
+  SampleEngine only_mod(c), none(cfg(8, false)), full(cfg(8, true));
+  for (SampleEngine* e : {&only_mod, &none, &full}) {
+    e->set_instrument(ins);
+    press(*e, 60);
+  }
+  CHECK(only_mod.undeclared_extended_voices() == 1 && only_mod.undeclared_modulated_voices() == 1);
+  CHECK(none.undeclared_extended_voices() == 1 && none.undeclared_modulated_voices() == 1);
+  CHECK(full.undeclared_extended_voices() == 0 && full.undeclared_modulated_voices() == 1);
+}
+
+void test_eq_band_response() {
+  // The bands in the voice match the analytic response of sample_filter_magnitude(make_sample_eq(...)): peak at its centre, shelves far from their corner.
+  auto eq_voice = [](double freq, int key, double band_hz, double bw, double gain, unsigned type) {
+    return voice_gain(freq, key, kVel, [&](auto& r) {
+      r.mod.eq_count = 1;
+      r.mod.eq[0].type = static_cast<std::uint8_t>(type);
+      r.mod.eq[0].freq = static_cast<float>(band_hz);
+      r.mod.eq[0].bw = static_cast<float>(bw);
+      r.mod.eq[0].gain = static_cast<float>(gain);
+    }, none_pre);
+  };
+  auto ana = [](unsigned type, double band_hz, double bw, double gain, double f) { return sample_filter_magnitude(make_sample_eq(type, band_hz, bw, gain, 48000.0), f, 48000.0); };
+  for (double g : {6.0, -9.0, 12.0}) {
+    CHECK_NEAR(eq_voice(1000.0, 60, 1000.0, 1.0, g, 1), std::pow(10.0, g / 20.0), 2e-3 * std::pow(10.0, std::fabs(g) / 20.0));  // the peak's centre gain is the band gain
+    CHECK_NEAR(eq_voice(1000.0, 60, 1000.0, 1.0, g, 1), ana(1, 1000.0, 1.0, g, 1000.0), 2e-3 * std::pow(10.0, std::fabs(g) / 20.0));
+    CHECK_NEAR(eq_voice(2000.0, 60, 1000.0, 0.5, g, 1), ana(1, 1000.0, 0.5, g, 2000.0), 2e-3 * std::pow(10.0, std::fabs(g) / 20.0));
+  }
+  CHECK_NEAR(eq_voice(100.0, 60, 3000.0, 1.0, -6.0, 2), ana(2, 3000.0, 1.0, -6.0, 100.0), 2e-3);   // low shelf: the lows move
+  CHECK_NEAR(eq_voice(100.0, 60, 3000.0, 1.0, -6.0, 2), std::pow(10.0, -6.0 / 20.0), 4e-3);
+  CHECK_NEAR(eq_voice(10000.0, 60, 3000.0, 1.0, -6.0, 2), ana(2, 3000.0, 1.0, -6.0, 10000.0), 3e-3);  // ... and the highs hardly do (the shelf's skirt is wide)
+  CHECK_NEAR(eq_voice(10000.0, 60, 3000.0, 1.0, 8.0, 3), ana(3, 3000.0, 1.0, 8.0, 10000.0), 3e-3);  // high shelf
+  CHECK_NEAR(eq_voice(10000.0, 60, 3000.0, 1.0, 8.0, 3), std::pow(10.0, 8.0 / 20.0), 0.15);
+  CHECK_NEAR(eq_voice(100.0, 60, 3000.0, 1.0, 8.0, 3), 1.0, 4e-3);
+  // a band at 0 dB is skipped: bit-identical to a region without it
+  auto render_band = [](bool band) {
+    Instrument ins;
+    auto& r = ins.sine(700.0, 60);
+    if (band) { r.mod.eq_count = 2; r.mod.eq[0].freq = 100.0f; r.mod.eq[1].freq = 500.0f; r.mod.eq[1].bw = 2.0f; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    press(e, 60);
+    return render(e, 4800);
+  };
+  const Out a = render_band(false), b = render_band(true);
+  CHECK(a.l == b.l && a.r == b.r);
+  // bands run in series and after the filter: lpf 1000 Hz then +6 dB peak at 3000 Hz = the product of the responses
+  const double got = voice_gain(2000.0, 60, kVel, [](auto& r) { lpf(r, 1000.0, 0.0); r.mod.eq_count = 1; r.mod.eq[0].freq = 3000.0f; r.mod.eq[0].gain = 6.0f; r.mod.eq[0].bw = 3.0f; }, none_pre);
+  CHECK_NEAR(got, lp_gain(1000.0, 0.0, 2000.0) * sample_filter_magnitude(make_sample_eq(1, 3000.0, 3.0, 6.0, 48000.0), 2000.0, 48000.0), 2e-3);
+  // two bands: the product
+  const double two = voice_gain(1000.0, 60, kVel, [](auto& r) { r.mod.eq_count = 2; r.mod.eq[0].freq = 1000.0f; r.mod.eq[0].gain = 4.0f; r.mod.eq[1].type = 2; r.mod.eq[1].freq = 4000.0f; r.mod.eq[1].gain = -3.0f; }, none_pre);
+  CHECK_NEAR(two, ana(1, 1000.0, 1.0, 4.0, 1000.0) * ana(2, 4000.0, 1.0, -3.0, 1000.0), 3e-3);
+  // stereo and mono sources get the same band
+  Instrument st;
+  { auto& r = st.sine(1000.0, 60); r.mod.eq_count = 1; r.mod.eq[0].freq = 1000.0f; r.mod.eq[0].gain = 6.0f; }
+  SampleEngine e(cfg());
+  e.set_instrument(st);
+  press(e, 60);
+  render(e, 9600 * 3);
+  const Out o = render(e, 9600);
+  double al = 0, ar = 0;
+  for (std::size_t i = 0; i < o.l.size(); ++i) { al += o.l[i] * o.l[i]; ar += o.r[i] * o.r[i]; }
+  CHECK_NEAR(al, ar, 1e-9 * al);
+}
+
+void test_eq_velocity_and_controllers() {
+  // freq / gain at the note velocity and the controller state at the note on: gain = 0 + vel * vel2gain + sum(depth * curve(cc))
+  using ports::SampleFilterMod;
+  auto gain_at = [](std::uint32_t v16, double cc1, double base_gain, double vel2gain, double cc_depth) {
+    const std::uint32_t v7 = static_cast<std::uint32_t>(std::max(1.0, std::floor((static_cast<double>(v16) * 127.0 + 32767.0) / 65535.0)));
+    (void)v7;
+    return voice_gain(1000.0, 60, v16, [&](auto& r) {
+      r.mod.eq_count = 1;
+      r.mod.eq[0].freq = 1000.0f; r.mod.eq[0].gain = static_cast<float>(base_gain); r.mod.eq[0].vel2gain = static_cast<float>(vel2gain);
+      if (cc_depth != 0.0) { r.mod.eq[0].gain_count = 1; r.mod.eq[0].gain_mods[0] = SampleFilterMod{1, 0, static_cast<float>(cc_depth)}; }
+    }, [&](SampleEngine& e) { e.set_part_cc(0, 1, cc32(cc1)); });
+  };
+  CHECK_NEAR(gain_at(kVel, 0.0, 0.0, 12.0, 0.0), std::pow(10.0, 12.0 / 20.0), 2e-2);                    // velocity 127: +12 dB
+  CHECK_NEAR(gain_at(32768, 0.0, 0.0, 12.0, 0.0), std::pow(10.0, 12.0 * 64.0 / 127.0 / 20.0), 2e-2);    // vel7 64
+  CHECK_NEAR(gain_at(kVel, 127.0, 0.0, 0.0, 6.0), std::pow(10.0, 6.0 / 20.0), 1e-2);                    // controller at full: +6 dB
+  CHECK_NEAR(gain_at(kVel, 63.5, 0.0, 0.0, 6.0), std::pow(10.0, 3.0 / 20.0), 1e-2);                     // half
+  CHECK_NEAR(gain_at(kVel, 0.0, 0.0, 0.0, 6.0), 1.0, 2e-3);                                              // controller at 0: transparent
+  CHECK_NEAR(gain_at(kVel, 127.0, -3.0, 0.0, 9.0), std::pow(10.0, 6.0 / 20.0), 1e-2);                   // sums with the base
+  // the frequency moves with velocity: peak at 500 + 1000 * vel Hz, measured on a 1500 Hz sine
+  const double hi = voice_gain(1500.0, 60, kVel, [](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].freq = 500.0f; r.mod.eq[0].vel2freq = 1000.0f; r.mod.eq[0].gain = 6.0f; r.mod.eq[0].bw = 0.25f; }, none_pre);
+  const double lo = voice_gain(1500.0, 60, 1, [](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].freq = 500.0f; r.mod.eq[0].vel2freq = 1000.0f; r.mod.eq[0].gain = 6.0f; r.mod.eq[0].bw = 0.25f; }, none_pre);
+  CHECK_NEAR(hi, std::pow(10.0, 6.0 / 20.0), 2e-2);
+  CHECK(lo < 1.05);
+}
+
+void test_lfo_amplitude_waves_delay_fade() {
+  // Every wave: the gain of frame n is 10^(depth * wave(phase_n) / 20), the phase advancing by freq / fs from 0 (sfizz LFO.cpp), after a delay with no phase advance.
+  for (int wave = 0; wave <= 7; ++wave) {
+    Instrument ins;
+    auto& r = ins.dc(0.5, 60, 60);
+    r.mod.amp = {true, static_cast<std::uint8_t>(wave), 6.0f, 37.0f, 0.0f, 0.0f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    press(e, 60);
+    const Out o = render(e, 2400);
+    double worst = 0;
+    double phase = 0;
+    for (std::size_t n = 4; n < o.l.size(); ++n) {  // the first frames hold the envelope's attack
+      double ph = 0;
+      for (std::size_t k = 0; k < n; ++k) ph = std::fmod(ph + 37.0 / 48000.0, 1.0);
+      phase = ph;
+      const double want = 0.5 * std::pow(10.0, 6.0 * lfo_ref(wave, phase) / 20.0);
+      worst = std::max(worst, std::fabs(o.l[n] / unity() - want) / want);
+    }
+    CHECK(worst < 5e-4);
+    if (worst >= 5e-4) std::printf("  wave %d worst relative error %g\n", wave, worst);
+  }
+  {  // delay: unity gain for ceil(fs * delay) frames, then the LFO from phase 0; fade: gain ramps 0 -> 1 over fade seconds from the end of the delay
+    Instrument ins;
+    auto& r = ins.dc(0.5, 60, 60);
+    r.mod.amp = {true, 6 /* ramp: -1 at phase 0 */, 10.0f, 10.0f, 0.01f, 0.02f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    const Out o = render(e, 4000);
+    for (std::size_t n = 4; n < 480; ++n) CHECK_NEAR(o.l[n] / unity(), 0.5, 1e-5);   // delay 0.01 s = 480 frames
+    double ph = 0, fade = 0;
+    double worst = 0;
+    for (std::size_t n = 480; n < o.l.size(); ++n) {
+      const double y = lfo_ref(6, ph) * fade;
+      const double want = 0.5 * std::pow(10.0, 10.0 * y / 20.0);
+      worst = std::max(worst, std::fabs(o.l[n] / unity() - want) / want);
+      ph = std::fmod(ph + 10.0 / 48000.0, 1.0);
+      fade = std::min(1.0, fade + (1.0 / 48000.0) / 0.02);
+    }
+    CHECK(worst < 1e-3);
+    CHECK(std::fabs(o.l[480] / unity() - 0.5) < 1e-5);  // the fade starts at 0
+  }
+}
+
+void test_lfo_pitch_and_eg_pitch() {
+  const double base = [] { Instrument ins; ramp(ins, 60); SampleEngine e(cfg()); e.set_instrument(ins); press(e, 60); return slope(render(e, 400), 100, 300); }();
+  CHECK_NEAR(base, 1.0 / 20000.0, 1e-8);
+  {  // a pulse LFO (square: 1 for the first half period, then 0) of 1200 cents doubles the speed for half of each period, then it is the original again
+    Instrument ins;
+    ramp(ins, 60).mod.pitch = {true, 3, 1200.0f, 50.0f, 0.0f, 0.0f};  // 50 Hz: 960 frames per period, high for the first 480
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    press(e, 60);
+    const Out o = render(e, 1200);
+    CHECK_NEAR(slope(o, 100, 400) / base, 2.0, 1e-3);
+    CHECK_NEAR(slope(o, 600, 900) / base, 1.0, 1e-3);
+  }
+  {  // the pitch EG: sustain 100 %, no attack time: depth 1200 doubles the speed from the first frames; velocity depth adds
+    Instrument ins;
+    auto& r = ramp(ins, 60);
+    r.mod.pitch_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, 1200.0f, 0.0f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    CHECK_NEAR(slope(render(e, 400), 100, 300) / base, 2.0, 1e-3);
+    auto at_vel = [](bool eg_on) {  // vel2depth only: 1200 cents at velocity 127, scaled by the note velocity (vel7 64 -> 64 / 127)
+      Instrument iv;
+      auto& rv = ramp(iv, 60);
+      if (eg_on) rv.mod.pitch_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, 0.0f, 1200.0f};
+      SampleEngine ev(cfg());
+      ev.set_instrument(iv);
+      ev.start_voice(0, 60, 32768);
+      return slope(render(ev, 400), 100, 300);
+    };
+    CHECK_NEAR(at_vel(true) / at_vel(false), std::pow(2.0, 64.0 / 127.0), 2e-3);
+  }
+  {  // the EG shape: attack 0.01 s (480 frames) ramps the factor from 1 to 2; the delay 0.005 s holds the start level (0)
+    Instrument ins;
+    auto& r = ramp(ins, 60);
+    r.mod.pitch_eg = {true, 0.005f, 0.01f, 0, 0, 0, 0, 100.0f, 1200.0f, 0.0f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    const Out o = render(e, 1200);
+    CHECK_NEAR(slope(o, 100, 200) / base, 1.0, 1e-3);                  // in the delay (240 frames)
+    const double mid = slope(o, 380, 480) / base;                      // inside the attack: between 1 and 2, rising
+    CHECK(mid > 1.1 && mid < 1.9);
+    CHECK_NEAR(slope(o, 900, 1100) / base, 2.0, 1e-3);                 // after it
+  }
+}
+
+// The read position of the first sounding voice slot (the playhead, independent of the envelope's gain).
+double playhead(const SampleEngine& e) {
+  for (std::uint32_t k = 0; k < 32; ++k)
+    if (e.voice_position(k) > 0.0) return e.voice_position(k);
+  return 0.0;
+}
+
+void test_eg_follows_the_amplitude_release() {
+  Instrument ins;
+  auto& r = ramp(ins, 60);
+  r.mod.pitch_eg = {true, 0, 0, 0, 0, 0.4f, 0, 100.0f, 1200.0f, 0.0f};  // release 0.4 s
+  r.ampeg_release = 0.5f;
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  press(e, 60);
+  render(e, 600);
+  const double p0 = playhead(e);
+  render(e, 100);
+  CHECK_NEAR((playhead(e) - p0) / 100.0, 2.0, 2e-3);  // held: the factor is 2
+  lift(e, 60);
+  render(e, 10);
+  const double q0 = playhead(e);
+  render(e, 100);
+  const double early = (playhead(e) - q0) / 100.0;
+  render(e, 700);
+  const double r0 = playhead(e);
+  render(e, 100);
+  const double late = (playhead(e) - r0) / 100.0;
+  // the EG falls as exp(-9 t / release) from 1: the speed factor 2^eg goes from 2 towards 1
+  CHECK(early > 1.9 && early <= 2.0 + 1e-3);
+  CHECK(late < early && late > 1.0);
+  CHECK_NEAR(late, std::pow(2.0, std::exp(-9.0 * 810.0 / 48000.0 / 0.4)), 2e-2);
+}
+
+void test_filter_cutoff_lfo_and_eg() {
+  auto rms = [](const Out& o, std::size_t a, std::size_t b) {
+    double acc = 0;
+    for (std::size_t i = a; i < b; ++i) acc += static_cast<double>(o.l[i]) * o.l[i];
+    return std::sqrt(2.0 * acc / static_cast<double>(b - a)) / unity() / 0.5;
+  };
+  {  // filter EG: cutoff 500 Hz opened by 2400 cents over 0.1 s attack: starts at 500, settles at 2000
+    Instrument ins;
+    auto& r = ins.sine(1000.0, 60);
+    lpf(r, 500.0);
+    r.mod.fil_eg = {true, 0, 0.1f, 0, 0, 0, 0, 100.0f, 2400.0f, 0.0f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    press(e, 60);
+    const Out o = render(e, 48000);
+    CHECK_NEAR(rms(o, 600, 840), lp_gain(500.0 * std::pow(2.0, 2400.0 * (720.0 / 4800.0) / 1200.0), 0.0, 1000.0), 0.03);  // early in the attack: the EG is at 720 / 4800
+    CHECK_NEAR(rms(o, 40000, 48000), lp_gain(2000.0, 0.0, 1000.0), 3e-3);
+    CHECK(rms(o, 40000, 48000) > 1.05 * rms(o, 600, 840));
+  }
+  {  // filter LFO: a square wave of 2 Hz moves the cutoff between 500 x 4 (first half period, wave = 1) and 500 (second half)
+    Instrument ins;
+    auto& r = ins.sine(1000.0, 60);
+    lpf(r, 500.0);
+    r.mod.fil = {true, 3, 1200.0f, 2.0f, 0.0f, 0.0f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    const Out o = render(e, 48000);
+    CHECK_NEAR(rms(o, 3000, 11000), lp_gain(1000.0, 0.0, 1000.0), 3e-3);
+    CHECK_NEAR(rms(o, 15000, 23000), lp_gain(500.0, 0.0, 1000.0), 3e-3);
+  }
+  {  // with the cutoff_oncc entry of 13.8 and the LFO both: the cents add before the one conversion
+    Instrument ins;
+    auto& r = ins.sine(1000.0, 60);
+    lpf(r, 500.0);
+    r.filter_tune.cutoff[0] = ports::SampleFilterMod{74, 0, 1200.0f};
+    r.filter_tune.cutoff_count = 1;
+    r.mod.fil = {true, 3, 1200.0f, 2.0f, 0.0f, 0.0f};
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 74, cc32(127.0));
+    press(e, 60);
+    const Out o = render(e, 48000);
+    CHECK_NEAR(rms(o, 3000, 11000), lp_gain(500.0 * 4.0, 0.0, 1000.0), 3e-3);
+    CHECK_NEAR(rms(o, 15000, 23000), lp_gain(1000.0, 0.0, 1000.0), 3e-3);
+  }
+  {  // a filter LFO or EG on a region without a filter does nothing (sfizz has no filter to move)
+    Instrument ins;
+    auto& r = ins.sine(1000.0, 60);
+    r.mod.fil = {true, 3, 1200.0f, 2.0f, 0.0f, 0.0f};
+    r.mod.fil_eg = {true, 0, 0.1f, 0, 0, 0, 0, 100.0f, 2400.0f, 0.0f};
+    Instrument plain;
+    plain.sine(1000.0, 60);
+    SampleEngine a(cfg()), b(cfg());
+    a.set_instrument(ins);
+    b.set_instrument(plain);
+    press(a, 60);
+    press(b, 60);
+    const Out oa = render(a, 4800), ob = render(b, 4800);
+    CHECK(oa.l == ob.l && oa.r == ob.r);
+  }
+}
+
+// An instrument with all of it: three LFOs, two EGs, three bands, a filter, stereo and mono samples.
+std::unique_ptr<Instrument> everything() {
+  auto ins = std::make_unique<Instrument>();
+  {
+    auto& r = ins->sine(440.0, 60);
+    lpf(r, 1500.0, 3.0);
+    r.mod.amp = {true, 1, 3.0f, 6.0f, 0.01f, 0.1f};
+    r.mod.pitch = {true, 0, 50.0f, 5.0f, 0.0f, 0.0f};
+    r.mod.fil = {true, 3, 1200.0f, 3.0f, 0.0f, 0.0f};
+    r.mod.pitch_eg = {true, 0.001f, 0.05f, 0.01f, 0.2f, 0.3f, 10.0f, 50.0f, 300.0f, 100.0f};
+    r.mod.fil_eg = {true, 0, 0.1f, 0, 0.3f, 0.2f, 0, 40.0f, 1200.0f, 0.0f};
+    r.mod.eq_count = 3;
+    r.mod.eq[0].freq = 100.0f; r.mod.eq[0].gain = -6.0f; r.mod.eq[0].type = 2;
+    r.mod.eq[1].freq = 1200.0f; r.mod.eq[1].gain = 4.0f; r.mod.eq[1].vel2gain = 3.0f;
+    r.mod.eq[2].freq = 5000.0f; r.mod.eq[2].gain = 2.0f; r.mod.eq[2].type = 3;
+    r.mod.eq[2].gain_count = 1; r.mod.eq[2].gain_mods[0] = ports::SampleFilterMod{1, 0, 5.0f};
+  }
+  {
+    std::vector<float> l(9600), rr(9600);
+    for (std::size_t i = 0; i < l.size(); ++i) { l[i] = 0.4f * static_cast<float>(std::sin(2 * kPi * 330.0 * static_cast<double>(i) / 48000.0)); rr[i] = 0.3f * static_cast<float>(std::sin(2 * kPi * 495.0 * static_cast<double>(i) / 48000.0)); }
+    ports::SampleRegionDesc d;
+    d.sample_index = ins->sample(std::move(l), std::move(rr));
+    d.key_lo = d.key_hi = d.key_center = 64;
+    d.loop_mode = ports::SampleLoopMode::kLoopContinuous;
+    d.mod.amp = {true, 2, 2.0f, 7.0f, 0.0f, 0.0f};
+    d.mod.pitch = {true, 1, 20.0f, 4.0f, 0.0f, 0.0f};
+    d.mod.eq_count = 1; d.mod.eq[0].freq = 800.0f; d.mod.eq[0].gain = 5.0f;
+    ins->regions.push_back(d);
+  }
+  return ins;
+}
+
+void test_mod_segmentation_polyphony_and_determinism() {
+  auto run = [](std::uint32_t seg) {
+    auto ins = everything();
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    CHECK(e.unplayable_regions() == 0);
+    press(e, 60);
+    Out a = render(e, 3000, seg);
+    press(e, 64);
+    Out b = render(e, 12000, seg);
+    lift(e, 60);
+    Out c = render(e, 12000, seg);
+    a.l.insert(a.l.end(), b.l.begin(), b.l.end());
+    a.l.insert(a.l.end(), c.l.begin(), c.l.end());
+    a.r.insert(a.r.end(), b.r.begin(), b.r.end());
+    a.r.insert(a.r.end(), c.r.begin(), c.r.end());
+    return a;
+  };
+  const Out x = run(37), y = run(480), z = run(1), w = run(37);
+  CHECK(x.l == y.l && x.r == y.r && x.l == z.l && x.r == z.r);  // voice-local clocks: the host block size cannot change the sound
+  CHECK(x.l == w.l && x.r == w.r);                               // deterministic
+  double peak = 0;
+  for (float v : x.l) { CHECK(std::isfinite(v)); peak = std::max(peak, static_cast<double>(std::fabs(v))); }
+  CHECK(peak > 0.05 && peak < 4.0);
+  // per-voice state: a note started later plays exactly what the same note plays alone, shifted
+  auto solo = [](int key, std::uint32_t lead) {
+    auto ins = everything();
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    render(e, lead);
+    press(e, key);
+    return render(e, 4000);
+  };
+  auto both = [] {
+    auto ins = everything();
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    press(e, 60);
+    render(e, 1000);
+    press(e, 64);
+    return render(e, 4000);
+  };
+  const Out s60 = [] { auto ins = everything(); SampleEngine e(cfg()); e.set_instrument(*ins); press(e, 60); render(e, 1000); return render(e, 4000); }();
+  const Out s64 = solo(64, 0), mix = both();
+  double worst = 0;
+  for (std::size_t i = 0; i < mix.l.size(); ++i) worst = std::max(worst, static_cast<double>(std::fabs(mix.l[i] - s60.l[i] - s64.l[i])));
+  CHECK(worst < 1e-5);
+}
+
+void test_mod_invalid_fields_are_unplayable() {
+  auto unplayable = [](auto mutate) {
+    Instrument ins;
+    auto& r = ins.sine(440.0, 60);
+    lpf(r, 1000.0);
+    mutate(r);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    return e.unplayable_regions() == 1;
+  };
+  CHECK(!unplayable([](auto& r) { r.mod.amp = {true, 1, 2.0f, 5.0f, 0.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.amp = {true, 1, 11.0f, 5.0f, 0.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.amp = {true, 8, 1.0f, 5.0f, 0.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.pitch = {true, 1, std::nanf(""), 5.0f, 0.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.pitch = {true, 1, 10.0f, std::numeric_limits<float>::infinity(), 0.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.fil = {true, 1, 10.0f, 5.0f, 31.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.pitch_eg = {true, 0, 101.0f, 0, 0, 0, 0, 100.0f, 10.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.fil_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, 12001.0f, 0.0f}; }));
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 4; }));
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].type = 4; }));
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].bw = 0.0f; }));
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].bw = 0.005f; }));  // below what the DSP honours
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].gain = 61.0f; }));
+  CHECK(unplayable([](auto& r) { r.mod.amp = {true, 1, 0.0f, 5.0f, 0.0f, 0.0f}; }));  // on without a depth: not canonical in the format either
+  CHECK(unplayable([](auto& r) { r.mod.pitch_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, 0.0f, 0.0f}; }));
+  CHECK(!unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].bw = 0.01f; r.mod.eq[0].gain = 60.0f; }));
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].gain = std::nanf(""); }));
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].gain_count = 5; }));
+  CHECK(unplayable([](auto& r) { r.mod.eq_count = 1; r.mod.eq[0].gain_count = 1; r.mod.eq[0].gain_mods[0] = ports::SampleFilterMod{200, 0, 1.0f}; }));
+  // a pitch LFO whose depth would take the region beyond the supported ratio at its extreme key is unplayable
+  CHECK(unplayable([](auto& r) { r.key_hi = 127; r.key_lo = 0; r.key_center = 0; r.mod.pitch = {true, 1, 1200.0f, 5.0f, 0.0f, 0.0f}; r.mod.pitch_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, 12000.0f, 0.0f}; }));
+}
+
+void test_mod_extremes_stay_finite() {
+  Instrument ins;
+  for (int k = 0; k < 4; ++k) {
+    auto& r = ins.sine(300.0 * (k + 1), 60 + k);
+    lpf(r, k == 0 ? 20.0 : 18000.0, k == 1 ? 60.0 : 0.0);
+    r.mod.amp = {true, static_cast<std::uint8_t>(k), 10.0f, 100.0f, 0.0f, 0.0f};
+    r.mod.pitch = {true, static_cast<std::uint8_t>(7 - k), 1200.0f, 100.0f, 0.0f, 0.0f};
+    r.mod.fil = {true, 3, 1200.0f, 100.0f, 0.0f, 0.0f};
+    r.mod.pitch_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, 2000.0f, 2000.0f};
+    r.mod.fil_eg = {true, 0, 0, 0, 0, 0, 0, 100.0f, -12000.0f, -12000.0f};
+    r.mod.eq_count = 3;
+    for (unsigned b = 0; b < 3; ++b) { r.mod.eq[b].freq = b == 0 ? 0.0f : b == 1 ? 20000.0f : 1.0f; r.mod.eq[b].bw = b == 0 ? 0.01f : 4.0f; r.mod.eq[b].gain = (b % 2) ? -96.0f : 60.0f; r.mod.eq[b].type = static_cast<std::uint8_t>(1 + (b + static_cast<unsigned>(k)) % 3); }
+  }
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  CHECK(e.unplayable_regions() == 0);
+  for (int k = 60; k < 64; ++k) press(e, k);
+  double peak = 0;
+  for (int blk = 0; blk < 200; ++blk) {
+    const Out o = render(e, 480);
+    for (std::size_t i = 0; i < o.l.size(); ++i) { CHECK(std::isfinite(o.l[i]) && std::isfinite(o.r[i])); peak = std::max(peak, static_cast<double>(std::fabs(o.l[i]))); }
+  }
+  CHECK(peak < 1.0e9);
+  for (int k = 60; k < 64; ++k) lift(e, k);
+  settle(e);
+  const Out tail = render(e, 480);
+  for (float v : tail.l) CHECK(std::isfinite(v));
+  // an eq coefficient set is finite for every clamp corner
+  for (unsigned type = 1; type <= 3; ++type)
+    for (double f : {-1.0, 0.0, 1.0, 20000.0, 1.0e9, std::numeric_limits<double>::quiet_NaN()})
+      for (double bw : {0.0, 0.001, 4.0, 100.0})
+        for (double g : {-500.0, -96.0, 96.0, 500.0}) {
+          const SampleFilterCoeffs k = make_sample_eq(type, f, bw, g, 48000.0);
+          CHECK(std::isfinite(k.b0) && std::isfinite(k.b1) && std::isfinite(k.b2) && std::isfinite(k.a1) && std::isfinite(k.a2));
+        }
+}
+
+void test_mod_regions_without_the_opcodes_are_bit_identical() {
+  // A plain region next to a modulated one renders what it rendered alone; a region that carries only default mod fields takes the old paths.
+  auto render_pair = [](bool with_other) {
+    Instrument ins;
+    auto& a = ins.sine(700.0, 60);
+    lpf(a, 900.0, 4.0);
+    if (with_other) {
+      auto& b = ins.sine(500.0, 62);
+      b.mod.amp = {true, 1, 6.0f, 9.0f, 0.0f, 0.0f};
+      b.mod.eq_count = 1; b.mod.eq[0].freq = 500.0f; b.mod.eq[0].gain = 6.0f;
+    }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    return render(e, 9600);
+  };
+  const Out a = render_pair(false), b = render_pair(true);
+  CHECK(a.l == b.l && a.r == b.r);
+  // an LFO of depth 0 dB-equivalent (wave 2 pulse at its low half is 0) ... the amplitude path with a unity factor equals the plain voice up to float rounding of the extra multiply
+  Instrument m, p;
+  m.dc(0.5, 60, 60).mod.pitch = {true, 1, 1.0f, 0.0f, 0.0f, 0.0f};  // freq 0: the sine of phase 0 is 0 cents: unity
+  p.dc(0.5, 60, 60);
+  SampleEngine em(cfg()), ep(cfg());
+  em.set_instrument(m);
+  ep.set_instrument(p);
+  press(em, 60);
+  press(ep, 60);
+  const Out om = render(em, 2000), op = render(ep, 2000);
+  CHECK(om.l == op.l && om.r == op.r);
+}
+
 int main() {
   test_sw_last_default_and_range();
   test_sw_without_default_and_mapped_switch_key();
@@ -1631,6 +2200,19 @@ int main() {
   test_filter_extremes_nan_and_subnormal();
   test_filter_invalid_fields_are_unplayable();
   test_filter_deterministic_with_random_pseudo_cc();
+  test_mod_cost_declaration();
+  test_mod_counts_the_missing_extended_declaration();
+  test_eq_band_response();
+  test_eq_velocity_and_controllers();
+  test_lfo_amplitude_waves_delay_fade();
+  test_lfo_pitch_and_eg_pitch();
+  test_eg_follows_the_amplitude_release();
+  test_mod_egs_follow_every_release();
+  test_filter_cutoff_lfo_and_eg();
+  test_mod_segmentation_polyphony_and_determinism();
+  test_mod_invalid_fields_are_unplayable();
+  test_mod_extremes_stay_finite();
+  test_mod_regions_without_the_opcodes_are_bit_identical();
   if (g_fail) {
     std::printf("sample_features_test: %d failure(s)\n", g_fail);
     return 1;

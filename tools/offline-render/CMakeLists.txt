@@ -831,6 +831,10 @@ endforeach()
 foreach(_neg fil_keytrack fil_veltrack cutoff_oncc resonance_oncc filter2)
   add_test(NAME sample_null_neg_strip138_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip138)
 endforeach()
+# Story 13.9: the EQ, LFO and EG cases must fail when the same instrument is imported without those opcodes.
+foreach(_neg eq_bands eq_velocity eq_cc amplfo pitchlfo pitcheg fillfo_fileg)
+  add_test(NAME sample_null_neg_strip139_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip139)
+endforeach()
 add_test(NAME sample_render_cli_errors COMMAND sample_suite_test cli-errors)
 # Story 1.18: --voice-threads 3 equals --voice-threads 1 bit for bit; 2 and a non-sample engine exit 2.
 add_test(NAME sample_render_voice_threads COMMAND sample_suite_test voice-threads)

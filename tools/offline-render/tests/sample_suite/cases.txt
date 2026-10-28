@@ -47,3 +47,11 @@ fil_veltrack      hermite  2  -60
 cutoff_oncc       hermite  2  -60
 resonance_oncc    hermite  2  -60
 filter2           hermite  2  -60
+# Story 13.9: region EQ (bands, velocity, controllers) and the dedicated LFOs / EGs (amplfo, pitchlfo, pitcheg, fillfo + fileg on the cutoff).
+eq_bands          hermite  2  -60
+eq_velocity       hermite  2  -60
+eq_cc             hermite  2  -60
+amplfo            hermite  2  -60
+pitchlfo          hermite  2  -60
+pitcheg           hermite  2  -60
+fillfo_fileg      hermite  2  -60

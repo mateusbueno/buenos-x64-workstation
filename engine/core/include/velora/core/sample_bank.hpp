@@ -48,6 +48,12 @@ struct SampleBankRegion {
   bool bends = false, cc_trigger = false, no_note = false;
   std::int32_t bend_smooth_frames = 0;
   float bend_fac_max = 1.0f;
+  // Story 13.9. modded: the region has an amplitude / pitch / filter LFO or a pitch / filter EG (the voice then runs the modulation path per frame); lfo_a, lfo_p, lfo_f,
+  // eg_p, eg_f say which; cutmod: the first filter's cutoff follows lfo_f / eg_f (coefficients recomputed every 16 frames, smoothed per frame); eq_on: at least one EQ band
+  // can change the sound (a band at gain 0 with no velocity or controller gain is transparent and skipped); mod_fac_max: the largest pitch factor the pitch LFO and EG can
+  // produce (bounds the stream window).
+  bool modded = false, lfo_a = false, lfo_p = false, lfo_f = false, eg_p = false, eg_f = false, cutmod = false, eq_on = false;
+  float mod_fac_max = 1.0f;
   bool uses_sequence = false;
   bool loops = false;  // loop_continuous / loop_sustain with a valid loop range
   std::int64_t loop_start = 0, loop_end = 0, loop_size = 0;

@@ -29,6 +29,11 @@
 //             cutoff[N]_oncc<N> / _cc<N> / _curvecc<N> (cents) and resonance[N]_oncc<N> / _cc<N> / _curvecc<N> (dB), read once when a voice starts (controllers 0..127 and
 //             the Story 13.5 pseudo-CCs; at most 4 entries per target and filter). Stored as Region::fmap. fil_random, fil_gain, fil_veltrack_oncc, *_stepcc, *_smoothcc,
 //             a third filter, other filter types and a second filter without a first stay rejected.
+//   Story 13.9: region EQ eq1..eq3 (freq, bw, gain, type peak|lshelf|hshelf, vel2freq / veltofreq, vel2gain / veltogain, and the freq / bw / gain _oncc<N> / _cc<N> / cc<N> /
+//             _curvecc<N> entries read once when a voice starts), the dedicated LFOs amplfo_ / pitchlfo_ / fillfo_ (depth, freq, delay, fade, wave 0..7) and EGs pitcheg_ /
+//             fileg_ (delay, start, attack, hold, decay, sustain, release, depth, vel2depth), stored as Region::mod. A LFO or EG without a depth, and a filter LFO or EG without
+//             `cutoff`, does nothing in sfizz and is dropped with a warning. The generic lfoNN_ / egNN_ matrix, CC-driven LFO / EG depth and frequency, the other EG vel2*
+//             opcodes, eq4 and above and wave 12 (random sample and hold) stay rejected (see _bmad-output/planning-artifacts/sfz-modulation-design.md).
 //   Allow-listed non-sounding opcodes (label_*, image, hint_*, ...) are accepted, not stored,
 //   and reported in SfzParseResult::allowlisted. The authoritative list is sfz_opcode_table().
 // Sample paths must stay inside the SFZ's directory ("..", absolute paths elsewhere and an

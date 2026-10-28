@@ -1,0 +1,10 @@
+<control>
+default_path=samples/
+<global> sample=bright.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 eq1_freq=800 eq1_bw=1 eq1_gain=9
+<region> lokey=62 hikey=62 pitch_keycenter=62 eq1_freq=1500 eq1_bw=0.25 eq1_gain=-12
+<region> lokey=64 hikey=64 pitch_keycenter=64 eq1_type=lshelf eq1_freq=600 eq1_bw=1 eq1_gain=-9 eq2_type=hshelf eq2_freq=3000 eq2_bw=1 eq2_gain=6
+<region> lokey=65 hikey=65 pitch_keycenter=65 eq2_gain=-8
+<region> lokey=67 hikey=67 pitch_keycenter=67 eq3_gain=10 eq3_bw=0.5
+<region> lokey=69 hikey=69 pitch_keycenter=69 eq1_freq=300 eq1_gain=6 eq2_freq=1200 eq2_gain=-6 eq3_freq=4000 eq3_gain=5 eq3_type=hshelf
+<region> lokey=71 hikey=71 pitch_keycenter=71 eq1_freq=2000 eq1_gain=-20 eq1_bw=2

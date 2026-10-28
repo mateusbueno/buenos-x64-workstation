@@ -1,0 +1,13 @@
+<control>
+default_path=samples/
+<global> sample=loop.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 amplfo_depth=6 amplfo_freq=4 amplfo_wave=0
+<region> lokey=61 hikey=61 pitch_keycenter=61 amplfo_depth=6 amplfo_freq=4 amplfo_wave=1
+<region> lokey=62 hikey=62 pitch_keycenter=62 amplfo_depth=6 amplfo_freq=4 amplfo_wave=2
+<region> lokey=63 hikey=63 pitch_keycenter=63 amplfo_depth=6 amplfo_freq=4 amplfo_wave=3
+<region> lokey=64 hikey=64 pitch_keycenter=64 amplfo_depth=6 amplfo_freq=4 amplfo_wave=4
+<region> lokey=65 hikey=65 pitch_keycenter=65 amplfo_depth=6 amplfo_freq=4 amplfo_wave=5
+<region> lokey=66 hikey=66 pitch_keycenter=66 amplfo_depth=6 amplfo_freq=4 amplfo_wave=6
+<region> lokey=67 hikey=67 pitch_keycenter=67 amplfo_depth=6 amplfo_freq=4 amplfo_wave=7
+<region> lokey=68 hikey=68 pitch_keycenter=68 amplfo_depth=-9 amplfo_freq=3 amplfo_delay=0.3 amplfo_fade=0.4
+<region> lokey=69 hikey=69 pitch_keycenter=69 amplfo_depth=4 amplfo_freq=7.5 volume=-3 amplfo_fade=0.6
