@@ -21,6 +21,7 @@
 #include "import_fixtures.hpp"
 #include "lib_test_util.hpp"
 #include "protected_fixtures.hpp"
+#include "velora/format/bundle.hpp"
 #include "velora/librarian/import.hpp"
 #include "velora/librarian/library_index.hpp"
 #include "velora/librarian/library_service.hpp"
@@ -319,8 +320,8 @@ void test_rejections_leave_nothing() {
     pfx::write_bytes(d / "bundle.vlrp", pfx::resign(p.bundle, K1().seed, [](Bytes& manifest, Bytes&) { manifest[96 + 3] ^= 0x01; }));
     expect(d.string(), ws::v1::INSTALL_REASON_HASH_LIST_MISMATCH, "hash list root");
     pfx::write_bytes(d / "bundle.vlrp", pfx::resign(p.bundle, K1().seed, [](Bytes& manifest, Bytes& header) {
-                       manifest[2] = 7;
-                       header[6] = 7;
+                       manifest[2] = static_cast<std::uint8_t>(velora::format::kFormatMinor + 1);
+                       header[6] = static_cast<std::uint8_t>(velora::format::kFormatMinor + 1);
                      }));
     expect(d.string(), ws::v1::INSTALL_REASON_UNSUPPORTED_VERSION, "unknown minor");
     // an unprotected (format 2) bundle

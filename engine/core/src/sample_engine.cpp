@@ -85,6 +85,33 @@ bool cc_sane(const velora::ports::SampleRegionDesc& d) noexcept {
   return true;
 }
 
+// Story 13.8 fields: the filter tuning and the second filter must be inside the documented ranges and need a first filter (a region that is not is unplayable).
+bool filter_tune_default(const velora::ports::SampleFilterTune& t) noexcept {
+  return t.keytrack == 0.0f && t.veltrack == 0.0f && t.cutoff_count == 0 && t.res_count == 0;  // keycenter alone changes nothing
+}
+bool filter_tune_sane(const velora::ports::SampleFilterTune& t) noexcept {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+  if (!in(t.keytrack, 0.0f, 1200.0f) || !in(t.veltrack, -12000.0f, 12000.0f) || t.keycenter > 127) return false;
+  if (t.cutoff_count > velora::ports::kSampleMaxFilterMods || t.res_count > velora::ports::kSampleMaxFilterMods) return false;
+  for (int which = 0; which < 2; ++which) {
+    const velora::ports::SampleFilterMod* e = which == 0 ? t.cutoff : t.res;
+    const unsigned n = which == 0 ? t.cutoff_count : t.res_count;
+    for (unsigned i = 0; i < n; ++i) {
+      const bool source = e[i].cc <= 127 || e[i].cc == 131 || e[i].cc == 135 || e[i].cc == 136 || e[i].cc == 137 || e[i].cc == 140 || e[i].cc == 141;
+      if (!source || !in(e[i].depth, which == 0 ? -12000.0f : 0.0f, which == 0 ? 12000.0f : 96.0f)) return false;
+    }
+  }
+  return true;
+}
+bool filter_map_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  using F = velora::ports::SampleFilterType;
+  if (!filter_tune_sane(d.filter_tune) || !filter_tune_sane(d.filter2_tune)) return false;
+  if (static_cast<unsigned>(d.filter2_type) > static_cast<unsigned>(F::kBpf2p)) return false;
+  if (d.filter_type == F::kNone && !filter_tune_default(d.filter_tune)) return false;  // a tuning needs a filter
+  if (d.filter2_type == F::kNone) return filter_tune_default(d.filter2_tune);
+  return d.filter_type != F::kNone && std::isfinite(d.filter2_cutoff_hz) && d.filter2_cutoff_hz >= 0.0f && std::isfinite(d.filter2_resonance_db);
+}
+
 // Story 13.6 fields: the off time and the limits must be inside the documented ranges (a region that is not is unplayable).
 bool voice_group_sane(const velora::ports::SampleRegionDesc& d) noexcept {
   if (static_cast<unsigned>(d.off_mode) > static_cast<unsigned>(velora::ports::SampleOffMode::kTime)) return false;
@@ -116,6 +143,12 @@ bool bend_trigger_sane(const velora::ports::SampleRegionDesc& d) noexcept {
 bool cc_curves_ok(const velora::ports::SampleRegionDesc& d, const std::array<bool, 256>& bad_curve) noexcept {
   for (unsigned i = 0; i < d.cc_mod_count && i < velora::ports::kSampleMaxCcMods; ++i)
     if (bad_curve[d.cc_mods[i].curve]) return false;
+  for (const velora::ports::SampleFilterTune* t : {&d.filter_tune, &d.filter2_tune}) {  // Story 13.8
+    for (unsigned i = 0; i < t->cutoff_count && i < velora::ports::kSampleMaxFilterMods; ++i)
+      if (bad_curve[t->cutoff[i].curve]) return false;
+    for (unsigned i = 0; i < t->res_count && i < velora::ports::kSampleMaxFilterMods; ++i)
+      if (bad_curve[t->res[i].curve]) return false;
+  }
   return true;
 }
 
@@ -124,7 +157,7 @@ float engine_cc_default(unsigned cc) noexcept { return cc == 7 ? 100.0f : cc == 
 
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return extension_sane(d) && amp_sane(d) && cc_sane(d) && voice_group_sane(d) && bend_trigger_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && amp_sane(d) && cc_sane(d) && filter_map_sane(d) && voice_group_sane(d) && bend_trigger_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -433,6 +466,20 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
         }
       }
     }
+    // Story 13.8: the curve tables and the random pseudo-CCs of the filter entries (the same bank tables as the Story 13.5 entries).
+    if (filter_map_sane(d)) {
+      for (const velora::ports::SampleFilterTune* t : {&d.filter_tune, &d.filter2_tune})
+        for (int which = 0; which < 2; ++which) {
+          const velora::ports::SampleFilterMod* e = which == 0 ? t->cutoff : t->res;
+          for (unsigned i = 0; i < (which == 0 ? t->cutoff_count : t->res_count); ++i) {
+            if (e[i].cc == 135 || e[i].cc == 136) bank->uses_cc_random = true;
+            if (bank->cc_curve_slot[e[i].curve] < 0) {
+              bank->cc_curve_slot[e[i].curve] = static_cast<std::int16_t>(bank->cc_curves.size());
+              bank->cc_curves.push_back(build_cc_curve(e[i].curve, view.curves));
+            }
+          }
+        }
+    }
     // Story 13.6: choke groups and polyphony limits. A region with none keeps the bank's flag clear.
     if (voice_group_sane(d)) {
       if (d.off_mode == velora::ports::SampleOffMode::kTime) r.off_rate = seconds_to_exp_rate(std::max(d.off_time, kFastReleaseTime), sr);  // the 6 ms floor first: off_time=0 is a fast cut, not an instant one
@@ -469,6 +516,15 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
     if (d.filter_type != velora::ports::SampleFilterType::kNone && extension_sane(d)) {
       r.filter = make_sample_filter(d.filter_type, d.filter_cutoff_hz, d.filter_resonance_db, static_cast<double>(cfg_.sample_rate));
       r.filtered = r.filter.kind != SampleFilterCoeffs::Kind::kNone;
+      if (r.filtered && filter_map_sane(d)) {  // Story 13.8
+        r.filter_dyn = !filter_tune_default(d.filter_tune);
+        if (d.filter2_type != velora::ports::SampleFilterType::kNone) {
+          r.filter2_on = true;
+          r.filter2_dyn = !filter_tune_default(d.filter2_tune);
+          r.filter2 = make_sample_filter(d.filter2_type, d.filter2_cutoff_hz, d.filter2_resonance_db, static_cast<double>(cfg_.sample_rate));
+          r.filter2_on = r.filter2.kind != SampleFilterCoeffs::Kind::kNone;
+        }
+      }
     }
     if (extension_sane(d)) {
       if (d.sw.last >= 0) bank->switch_key[static_cast<std::size_t>(d.sw.last)] = 1;
@@ -547,6 +603,7 @@ void SampleEngine::clear_instrument() {
   unplayable_regions_ = 0;
   skipped_unplayable_ = 0;
   undeclared_extended_ = 0;
+  undeclared_second_ = 0;
   for (std::uint32_t ch = 0; ch < 16; ++ch) reset_part_keys(ch);
 }
 
@@ -838,6 +895,36 @@ float SampleEngine::cc_mod_value(const SampleBank& bank, const velora::ports::Sa
   return cc_curve(bank, m.curve, x);
 }
 
+// Story 13.8: sfizz FilterHolder::setup plus the constant CC modulation of that instant. The base cutoff is scaled by the key track and the velocity track in cents and
+// clamped to 0..20000 Hz, then scaled by the CC entries (sum of depth x curve(controller), cents) and clamped again; the resonance adds the CC entries (dB). All in float,
+// as sfizz. Called when a voice starts, on the render thread: plain arithmetic and std::pow / std::sin / std::cos (in make_sample_filter), no allocation or lock.
+SampleFilterCoeffs SampleEngine::voice_filter(const SampleBank& bank, velora::ports::SampleFilterType type, float cutoff_hz, float resonance_db,
+                                              const velora::ports::SampleFilterTune& tune, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept {
+  auto factor = [](float cents) { return std::pow(2.0f, cents / 1200.0f); };
+  constexpr float kMaxCut = static_cast<float>(kSampleFilterMaxCutoffHz);
+  float base = cutoff_hz;
+  base *= factor(tune.keytrack * static_cast<float>(static_cast<int>(note) - static_cast<int>(tune.keycenter)));
+  base *= factor(tune.veltrack * (static_cast<float>(vel7) / 127.0f));
+  base = std::isfinite(base) ? std::clamp(base, 0.0f, kMaxCut) : kMaxCut;
+  float cut = base;
+  if (tune.cutoff_count != 0) {
+    float cents = 0.0f;
+    for (unsigned i = 0; i < tune.cutoff_count; ++i) {
+      const velora::ports::SampleFilterMod& m = tune.cutoff[i];
+      const float x = cc_norm(m.cc, channel, false);
+      cents += m.depth * ((m.cc == 140 || m.cc == 141) ? x : cc_curve(bank, m.curve, x));
+    }
+    cut = std::clamp(base * factor(std::clamp(cents, -48000.0f, 48000.0f)), 0.0f, kMaxCut);
+  }
+  float res = resonance_db;
+  for (unsigned i = 0; i < tune.res_count; ++i) {
+    const velora::ports::SampleFilterMod& m = tune.res[i];
+    const float x = cc_norm(m.cc, channel, false);
+    res += m.depth * ((m.cc == 140 || m.cc == 141) ? x : cc_curve(bank, m.curve, x));
+  }
+  return make_sample_filter(type, static_cast<double>(cut), static_cast<double>(res), static_cast<double>(cfg_.sample_rate));
+}
+
 std::uint32_t SampleEngine::active_voices() const noexcept {
   std::uint32_t n = 0;
   for (const auto& v : voices_) n += v.active ? 1 : 0;
@@ -1083,7 +1170,14 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
     v->xf_cur = v->xf_tgt;
     v->xf_step = 0.0f;
   }
+  if (r.filtered) {  // Story 13.8: the voice owns its coefficients; a region without tuning hands over its prepared ones
+    const velora::ports::SampleRegionDesc& fd = r.d;
+    v->fk = r.filter_dyn ? voice_filter(bank, fd.filter_type, fd.filter_cutoff_hz, fd.filter_resonance_db, fd.filter_tune, channel, note, vel7) : r.filter;
+    if (r.filter2_on)
+      v->fk2 = r.filter2_dyn ? voice_filter(bank, fd.filter2_type, fd.filter2_cutoff_hz, fd.filter2_resonance_db, fd.filter2_tune, channel, note, vel7) : r.filter2;
+  }
   if ((r.filtered || r.has_xfade) && !cfg_.extended_voices) ++undeclared_extended_;
+  if (r.filter2_on && !(cfg_.extended_voices && cfg_.second_filter_voices)) ++undeclared_second_;
   if (stream_ != nullptr && r.has_tail && r.tail_source != nullptr) {
     // Story 1.17: register the stream (non-blocking). The ring starts at the head end: frames below it are read from the head. No ring = the Story 1.16 placeholder.
     velora::ports::StreamOpen req;
@@ -1503,7 +1597,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
   const bool head_cut = r.end_cut >= 0 && r.end_cut <= static_cast<std::int64_t>(r.frames);  // the sample ends inside the resident head: not an underrun
   const bool sustain_loop = r.d.loop_mode == velora::ports::SampleLoopMode::kLoopSustain;
   const float gl = v.gain_l * gain_, gr = v.gain_r * gain_;
-  const bool has_xf = r.has_xfade, filtered = r.filtered;
+  const bool has_xf = r.has_xfade, filtered = r.filtered, filter2 = r.filter2_on;
   if (has_xf) {  // the controllers as they are for this render segment: a new target restarts the linear ramp (sfizz LinearSmoother)
     const float want = crossfade_target(r, v.channel);
     if (want != v.xf_tgt) {
@@ -1833,8 +1927,12 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       float ol, orr;
       if (filtered) {  // amplitude stage -> filter -> pan (mono) / pan -> filter (stereo; the same linear result)
         const float a = env * xf * v.base_gain;
-        const float yl = static_cast<float>(sample_filter_tick(r.filter, v.fl, static_cast<double>(sl * a)));
-        const float yr = r.stereo ? static_cast<float>(sample_filter_tick(r.filter, v.fr, static_cast<double>(sr_ * a))) : yl;
+        float yl = static_cast<float>(sample_filter_tick(v.fk, v.fl, static_cast<double>(sl * a)));
+        float yr = r.stereo ? static_cast<float>(sample_filter_tick(v.fk, v.fr, static_cast<double>(sr_ * a))) : yl;
+        if (filter2) {  // Story 13.8: the second filter in series; a float between the stages, as sfizz's buffers
+          yl = static_cast<float>(sample_filter_tick(v.fk2, v.fl2, static_cast<double>(yl)));
+          yr = r.stereo ? static_cast<float>(sample_filter_tick(v.fk2, v.fr2, static_cast<double>(yr))) : yl;
+        }
         ol = yl * cl;
         orr = yr * cr;
       } else {

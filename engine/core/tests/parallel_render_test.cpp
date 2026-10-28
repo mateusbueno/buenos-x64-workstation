@@ -112,6 +112,34 @@ Instrument& instrument() {
   return ins;
 }
 
+// Story 13.8: per-voice filters: tuned first filters (key track, velocity track, entries on controllers 1, 11, 74 and the velocity pseudo-CC), a second filter with its own
+// tuning, mono and stereo, on top of an untuned filter and a plain region. The coefficients are computed at each voice start.
+Instrument& filter_instrument() {
+  static Instrument ins = [] {
+    Instrument i;
+    const auto mono = i.add(6000, false, 48000, 0.05f);
+    const auto stereo = i.add(5000, true, 44100, 0.04f);
+    const auto lp = i.add(9000, false, 48000, 0.05f);
+    auto& a = i.region(mono, 24, 70);
+    a.ampeg_release = 0.03f; a.filter_type = ports::SampleFilterType::kLpf2p; a.filter_cutoff_hz = 600.0f; a.filter_resonance_db = 4.0f;
+    a.filter_tune.keytrack = 100.0f; a.filter_tune.veltrack = 2400.0f;
+    a.filter_tune.cutoff[0] = {1, 0, 1200.0f}; a.filter_tune.cutoff[1] = {131, 0, 1200.0f}; a.filter_tune.cutoff_count = 2;
+    a.filter_tune.res[0] = {11, 0, 18.0f}; a.filter_tune.res_count = 1;
+    auto& b = i.region(stereo, 40, 96);
+    b.pan = -30.0f; b.filter_type = ports::SampleFilterType::kHpf2p; b.filter_cutoff_hz = 150.0f;
+    b.filter2_type = ports::SampleFilterType::kLpf2p; b.filter2_cutoff_hz = 6000.0f; b.filter2_resonance_db = 6.0f;
+    b.filter2_tune.cutoff[0] = {74, 0, -3600.0f}; b.filter2_tune.cutoff_count = 1;
+    auto& c = i.region(lp, 24, 96);
+    c.loop_mode = ports::SampleLoopMode::kLoopContinuous; c.has_loop_points = true; c.loop_start = 1000; c.loop_end = 8000; c.ampeg_release = 0.05f;
+    c.filter_type = ports::SampleFilterType::kLpf1p; c.filter_cutoff_hz = 2000.0f;
+    c.filter2_type = ports::SampleFilterType::kBpf2p; c.filter2_cutoff_hz = 800.0f; c.filter2_resonance_db = 3.0f; c.filter2_tune.keytrack = 50.0f;
+    auto& d = i.region(mono, 60, 96);
+    d.filter_type = ports::SampleFilterType::kLpf2p; d.filter_cutoff_hz = 3000.0f;  // untuned: the Story 5.2 numbers
+    return i;
+  }();
+  return ins;
+}
+
 constexpr std::uint32_t kBlock = 64;
 
 struct Lcg {
@@ -171,6 +199,7 @@ SampleEngine::Config engine_config(bool big = true) {
   SampleEngine::Config cfg;
   cfg.max_voices = big ? 320 : 16;
   cfg.extended_voices = true;
+  cfg.second_filter_voices = true;
   return cfg;
 }
 
@@ -190,7 +219,7 @@ enum class Mode { kSerial, kPool1, kPool3 };
 // Runs `blocks` blocks of churn on one engine; every block's output is appended to `out` (split: 16 buses, else 1). Identical operations for
 // every Mode (the operations depend only on the LCG), so the outputs can be compared across modes.
 void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float>& out, std::uint32_t& peak, const Instrument& ins = instrument(),
-                  std::vector<std::uint8_t>* states = nullptr, bool wheel_and_cc = false) {
+                  std::vector<std::uint8_t>* states = nullptr, bool wheel_and_cc = false, bool filter_cc = false) {
   WorkerPool pool;
   SampleEngine se(engine_config());
   se.set_instrument(ins);
@@ -216,6 +245,11 @@ void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float
       se.set_part_pitch_bend(pw, blk % 5 == 0 ? kWheel[(blk / 5) % 3] : wv);
       if (blk % 3 == 0) se.set_part_cc((rng.next() >> 8) % 16, 64, (rng.next() >> 9) & 1u ? 0xFFFFFFFFu : 0u);
       if (blk % 4 == 1) se.set_part_cc((rng.next() >> 8) % 16, 20, rng.next());
+    }
+    if (filter_cc) {  // Story 13.8: the controllers the filter entries read, on random parts
+      if (blk % 2 == 0) se.set_part_cc((rng.next() >> 8) % 16, 1, rng.next());
+      if (blk % 3 == 1) se.set_part_cc((rng.next() >> 8) % 16, 74, rng.next());
+      if (blk % 5 == 2) se.set_part_cc((rng.next() >> 8) % 16, 11, rng.next());
     }
     const std::uint32_t steals = (rng.next() >> 30);
     for (std::uint32_t k = 0; k < steals; ++k) se.begin_steal_fade((rng.next() >> 8) % se.voice_capacity(), 40 + (rng.next() >> 8) % 300);
@@ -627,6 +661,30 @@ void test_renderer_affinity() {
   CHECK(aff.calls.load() == 3);
 }
 
+// Story 13.8: per-voice filters. 1 and 3 threads are bit-identical, the audio equals the serial render within the repository tolerance, the voice table is identical in
+// all three modes, and the controllers changed the sound.
+void test_filters_in_parallel(bool split) {
+  std::vector<float> ser, p1, p3, still;
+  std::vector<std::uint8_t> st_s, st_1, st_3, st_n;
+  std::uint32_t pk_s = 0, pk_1 = 0, pk_3 = 0, pk_n = 0;
+  drive_engine(Mode::kSerial, split, 400, ser, pk_s, filter_instrument(), &st_s, false, true);
+  drive_engine(Mode::kPool1, split, 400, p1, pk_1, filter_instrument(), &st_1, false, true);
+  drive_engine(Mode::kPool3, split, 400, p3, pk_3, filter_instrument(), &st_3, false, true);
+  std::size_t at = 0;
+  const bool same = bit_identical(p1, p3, at);
+  if (!same) std::printf("  filters %s: 1 vs 3 threads differ at index %zu\n", split ? "split" : "mono", at);
+  CHECK(same);
+  CHECK(st_s == st_1 && st_1 == st_3 && !st_s.empty());
+  const double d = max_abs_diff(ser, p3);
+  std::printf("parallel_render_tests: filter %s peak_voices=%u serial-vs-parallel max |diff| = %.3g (tolerance %.0e)\n", split ? "split" : "mono ", pk_3, d, kSerialTolerance);
+  CHECK(d <= kSerialTolerance);
+  drive_engine(Mode::kPool3, split, 400, still, pk_n, filter_instrument(), &st_n, false, false);  // the same notes without any controller traffic
+  CHECK(still != p3);
+  double energy = 0.0;
+  for (float x : ser) energy += static_cast<double>(x) * x;
+  CHECK(energy > 0.01);
+}
+
 }  // namespace
 
 int main() {
@@ -638,6 +696,8 @@ int main() {
   test_inert_group_fields_change_nothing();
   test_bend_and_cc_voices_in_parallel(false);
   test_bend_and_cc_voices_in_parallel(true);
+  test_filters_in_parallel(false);
+  test_filters_in_parallel(true);
   test_split_isolation();
   test_few_voices();
   test_block_loop();

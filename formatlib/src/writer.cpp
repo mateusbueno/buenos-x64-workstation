@@ -118,6 +118,26 @@ void put_bt(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) 
   }
 }
 
+void put_tune(std::vector<std::uint8_t>& v, const FilterTune& t) {
+  put_f32(v, t.keytrack); put_f32(v, t.veltrack);
+  put_u8(v, t.keycenter); put_u8(v, t.cutoff_count); put_u8(v, t.res_count); put_u8(v, 0);
+  for (unsigned i = 0; i < t.cutoff_count; ++i) { put_u8(v, t.cutoff[i].cc); put_u8(v, t.cutoff[i].curve); put_u8(v, 0); put_u8(v, 0); put_f32(v, t.cutoff[i].depth); }
+  for (unsigned i = 0; i < t.res_count; ++i) { put_u8(v, t.res[i].cc); put_u8(v, t.res[i].curve); put_u8(v, 0); put_u8(v, 0); put_f32(v, t.res[i].depth); }
+}
+
+void put_fl(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  const FilterMap& m = r.fmap;
+  const bool second = m.f2.type != FilterType::kNone;
+  put_u32(v, index);
+  put_u8(v, second ? 1 : 0); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+  put_tune(v, m.f1);
+  if (second) {
+    put_u8(v, static_cast<std::uint8_t>(m.f2.type)); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+    put_f32(v, m.f2.cutoff_hz); put_f32(v, m.f2.resonance_db);
+    put_tune(v, m.f2.tune);
+  }
+}
+
 void put_cc_setup(std::vector<std::uint8_t>& v, const InstrumentCcSetup& s) {
   put_u32(v, static_cast<std::uint32_t>(s.defaults.size()));
   for (const auto& d : s.defaults) {
@@ -310,6 +330,10 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   bool needs_bt = false;
   for (const auto& ins : instruments_)
     for (const auto& r : ins.regions) needs_bt = needs_bt || has_bend_trigger_extension(r);
+  bool needs_fl = false;
+  for (const auto& ins : instruments_)
+    for (const auto& r : ins.regions) needs_fl = needs_fl || has_filter_extension(r);
+  if (needs_fl && opt_.format_minor < 7) return Error::kInvalidArgument;
   if (needs_bt && opt_.format_minor < 6) return Error::kInvalidArgument;
   if (needs_vg && opt_.format_minor < 5) return Error::kInvalidArgument;
   if (needs_cc && opt_.format_minor < 4) return Error::kInvalidArgument;
@@ -318,7 +342,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
   // a minor N bundle carries the tables of every lower minor too (possibly empty)
-  const std::uint32_t minor = needs_bt ? 6u : needs_vg ? 5u : needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
+  const std::uint32_t minor = needs_fl ? 7u : needs_bt ? 6u : needs_vg ? 5u : needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
   const std::uint32_t version_word =
       (protect ? kProtectedFormatVersion : opt_.format_version) | (minor << kMinorShift);
   Uuid library_id = library_id_;
@@ -460,6 +484,13 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
         put_u32(manifest, n_bt);
         for (std::size_t k = 0; k < ins.regions.size(); ++k)
           if (has_bend_trigger_extension(ins.regions[k])) put_bt(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+      }
+      if (minor >= 7) {
+        std::uint32_t n_fl = 0;
+        for (const auto& r : ins.regions) n_fl += has_filter_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_fl);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_filter_extension(ins.regions[k])) put_fl(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
       }
     }
   }

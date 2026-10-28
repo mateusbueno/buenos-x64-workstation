@@ -789,7 +789,7 @@ void test_extensions() {
     CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
     const Bytes good = w.finalize().take();
     CHECK(BundleReader::open_memory(good).ok());
-    { Bytes b = good; wr32(b, 4, 2u | (7u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 2u | ((kFormatMinor + 1) << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 3u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 1u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 2u); CHECK(!BundleReader::open_memory(b).ok()); }  // word differs from the manifest's
@@ -1381,7 +1381,7 @@ void test_cc_table() {
     wr32(b, mo, 2u | (4u << 16));
     rehash(b);
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
-    wr32(b, 4, 2u | (7u << 16));
+    wr32(b, 4, 2u | ((kFormatMinor + 1) << 16));
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
   }
 }
@@ -1524,7 +1524,7 @@ void test_vg_table() {
     wr32(b, mo, 2u | (5u << 16));
     rehash(b);
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
-    wr32(b, 4, 2u | (7u << 16));
+    wr32(b, 4, 2u | ((kFormatMinor + 1) << 16));
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
   }
 }
@@ -1684,7 +1684,193 @@ void test_bt_table() {
     wr32(b, mo, 2u | (6u << 16));
     rehash(b);
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
-    wr32(b, 4, 2u | (7u << 16));
+    wr32(b, 4, 2u | ((kFormatMinor + 1) << 16));
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
+  }
+}
+
+// Story 13.8: format 2.7, the filter table (key track, velocity track, CC entries, second filter).
+void test_fl_table() {
+  constexpr std::uint32_t kFlMinor = 7;  // the minor that introduced the filter table: what a filter record stamps, whatever kFormatMinor becomes
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
+  auto version_word = [](const Bytes& b) { return layout::get_u32(b.data() + 4); };
+  Region plain;
+  Region filt = plain;  // a filter with a velocity track only
+  filt.filter = {FilterType::kLpf2p, 500.f, 0.f};
+  filt.fmap.f1.veltrack = 2400.f;
+  Region tuned = filt;  // every field of the first filter's tuning
+  tuned.filter.resonance_db = 3.f;
+  tuned.fmap.f1.keytrack = 50.5f; tuned.fmap.f1.keycenter = 72; tuned.fmap.f1.veltrack = -1200.f;
+  tuned.fmap.f1.cutoff_count = 2; tuned.fmap.f1.cutoff[0] = {74, 7, 1200.f}; tuned.fmap.f1.cutoff[1] = {131, 0, -2400.5f};
+  tuned.fmap.f1.res_count = 1; tuned.fmap.f1.res[0] = {1, 3, 12.f};
+  Region second = tuned;  // plus a second filter with its own tuning
+  second.fmap.f2.type = FilterType::kHpf2p; second.fmap.f2.cutoff_hz = 250.f; second.fmap.f2.resonance_db = 1.5f;
+  second.fmap.f2.tune.keytrack = 100.f; second.fmap.f2.tune.cutoff_count = 1; second.fmap.f2.tune.cutoff[0] = {1, 0, 600.f};
+  Region only2 = ext_region(0);  // a second filter and no tuning on the first
+  only2.fmap.f2.type = FilterType::kBpf2p; only2.fmap.f2.cutoff_hz = 1000.f;
+  Region all = second;  // minors 1..6 content in one region
+  all.trigger = TriggerMode::kLegato; all.has_end = true; all.end = 900; all.amp.veltrack = 40.f;
+  all.cc.gate_count = 1; all.cc.gates[0] = {1, 10.f, 20.f};
+  all.vg.group = 4; all.vg.polyphony = 1; all.vg.group_polyphony = 1;
+  all.bend.enabled = true; all.bend.up = 300.f;
+  const std::vector<Region> regs = {plain, filt, tuned, second, only2, all};
+  {  // round trip: two instruments, only the first has records; the second still carries the empty table
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    for (const auto& r : regs) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, plain), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (kFlMinor << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == kFlMinor);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == regs);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && r.value().instruments()[1].regions[0] == plain);
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    CHECK(w.finalize().take() == b);  // deterministic
+    // The N-1 writer (minor ceiling 6) refuses filter-table regions.
+    BundleWriter w6(WriterOptions{kFormatVersion, 6});
+    const std::size_t j0 = w6.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w6.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w6.add_region(j0, filt), Error::kNone);
+    CHECK_ERR(w6.finalize().error(), Error::kInvalidArgument);
+  }
+  {  // bundles without a filter map keep their exact bytes whatever the writer's ceiling (minor 0..6 content)
+    Region trg = plain; trg.trigger = TriggerMode::kReleaseKey;
+    Region amp = plain; amp.amp.veltrack = 10.f;
+    Region ccr = plain; ccr.cc.gate_count = 1; ccr.cc.gates[0] = {64, 64.f, 100.f};
+    Region vgr = plain; vgr.vg.polyphony = 2;
+    Region bnd = plain; bnd.bend.enabled = true;
+    Region plain_filter = ext_region(0);  // a Story 5.1 filter with no tuning is still minor 1
+    for (const Region& rg : {plain, sample_region(0), plain_filter, trg, amp, ccr, vgr, bnd}) {
+      Bytes by[8];
+      for (std::uint32_t m = 0; m < 8; ++m) {
+        if ((m == 0 && has_extension(rg)) || (m < 2 && has_trigger_extension(rg)) || (m < 3 && has_amp_extension(rg)) || (m < 4 && has_cc_extension(rg)) ||
+            (m < 5 && has_vg_extension(rg)) || (m < 6 && has_bend_trigger_extension(rg)))
+          continue;
+        BundleWriter x(WriterOptions{kFormatVersion, m});
+        const std::size_t k = x.add_instrument("A", "a.sfz").value();
+        CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+        CHECK_ERR(x.add_region(k, rg), Error::kNone);
+        by[m] = x.finalize().take();
+      }
+      for (std::uint32_t m = 0; m < 7; ++m) CHECK(by[7] == by[m] || by[m].empty());
+      const std::uint32_t want = has_bend_trigger_extension(rg) ? 6u : has_vg_extension(rg) ? 5u : has_cc_extension(rg) ? 4u : has_amp_extension(rg) ? 3u
+                                 : has_trigger_extension(rg) ? 2u : has_extension(rg) ? 1u : 0u;
+      CHECK(version_word(by[7]) == (2u | (want << 16)));
+    }
+  }
+  // Writer-side validation.
+  {
+    BundleWriter v;
+    const std::size_t vi = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(vi, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad = [&](auto mutate) { Region x = second; mutate(x); return v.add_region(vi, x); };
+    CHECK_ERR(bad([](Region&) {}), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.keytrack = 1201.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.keytrack = -1.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.keytrack = 1200.f; x.fmap.f1.veltrack = 12000.f; }), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.veltrack = -12001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.veltrack = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.veltrack = -0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.keycenter = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.keytrack = 0.f; x.fmap.f1.keycenter = 48; }), Error::kInvalidArgument);  // a centre without a key track: two encodings
+    CHECK_ERR(bad([](Region& x) { x.fmap.f2.tune.keytrack = 0.f; x.fmap.f2.tune.keycenter = 48; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.cutoff_count = 5; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.cutoff[1].cc = 74; }), Error::kInvalidArgument);  // not ascending
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.cutoff[0].cc = 132; }), Error::kInvalidArgument);  // not a source
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.cutoff[0].depth = 12001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.res[0].depth = -1.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.res[0].depth = 97.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1.res[3].cc = 9; }), Error::kInvalidArgument);  // an unused entry must be zero
+    CHECK_ERR(bad([](Region& x) { x.fmap.f2.cutoff_hz = 48001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f2.type = static_cast<FilterType>(6); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.fmap.f2.type = FilterType::kNone; }), Error::kInvalidArgument);  // values without a type: two encodings
+    CHECK_ERR(bad([](Region& x) { x.filter = Filter{}; }), Error::kInvalidArgument);                  // a second filter and a tuning need the first filter
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1 = FilterTune{}; x.fmap.f2 = Filter2{}; x.filter = Filter{}; }), Error::kNone);
+  }
+  // Corruption of the table (the tail of the manifest: one record, a first tuning with 2 + 1 entries and a second filter).
+  BundleWriter u;
+  const std::size_t ui = u.add_instrument("A", "a.sfz").value();
+  CHECK_ERR(u.add_sample(ui, {"s", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(u.add_region(ui, plain), Error::kNone);
+  CHECK_ERR(u.add_region(ui, second), Error::kNone);
+  const Bytes good = u.finalize().take();
+  const std::size_t end = rd64(good, 8) + rd64(good, 16);
+  CHECK(layout::kFlRecordFixedSize == 8 && layout::kFlTuneFixedSize == 12 && layout::kFlModSize == 8 && layout::kFlSecondFixedSize == 12);
+  const std::size_t rec_len = layout::kFlRecordFixedSize + layout::kFlTuneFixedSize + 3 * layout::kFlModSize + layout::kFlSecondFixedSize + layout::kFlTuneFixedSize + layout::kFlModSize;
+  const std::size_t rec = end - rec_len;
+  CHECK(layout::get_u32(good.data() + rec - 4) == 1u && layout::get_u32(good.data() + rec) == 1u);  // n_fl, region index 1
+  CHECK(good[rec + 4] == 1);                                                                          // flags: second filter
+  auto put_f32 = [](Bytes& by, std::size_t at, float v) { std::uint32_t u32; std::memcpy(&u32, &v, 4); wr32(by, at, u32); };
+  auto expect_bad = [&](Bytes bad_bytes, const char* what) {
+    rehash(bad_bytes);
+    auto rb = BundleReader::open_memory(bad_bytes);
+    if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL filter table corruption not rejected: %s\n", what); ++g_fail; }
+  };
+  const std::size_t t1 = rec + 8, m1 = t1 + 12, s2 = m1 + 3 * 8;  // first tune, its entries, the second filter
+  { Bytes b = good; b[rec + 4] = 2; expect_bad(b, "unknown flag bit"); }
+  { Bytes b = good; b[rec + 5] = 1; expect_bad(b, "flag padding"); }
+  { Bytes b = good; b[t1 + 9] = 5; expect_bad(b, "cutoff count above 4"); }
+  { Bytes b = good; b[t1 + 11] = 1; expect_bad(b, "tune padding"); }
+  { Bytes b = good; put_f32(b, t1, 2000.f); expect_bad(b, "keytrack above 1200"); }
+  { Bytes b = good; put_f32(b, t1 + 4, std::nanf("")); expect_bad(b, "NaN veltrack"); }
+  { Bytes b = good; b[t1 + 8] = 200; expect_bad(b, "keycenter above 127"); }
+  { Bytes b = good; b[m1] = 132; expect_bad(b, "entry controller that is not a source"); }
+  { Bytes b = good; b[m1 + 8] = 1; expect_bad(b, "entries not ascending"); }
+  { Bytes b = good; b[m1 + 2] = 1; expect_bad(b, "entry padding"); }
+  { Bytes b = good; put_f32(b, m1 + 4, 50000.f); expect_bad(b, "cutoff depth out of range"); }
+  { Bytes b = good; put_f32(b, m1 + 16 + 4, -3.f); expect_bad(b, "negative resonance depth"); }
+  { Bytes b = good; b[s2] = 0; expect_bad(b, "second filter flagged with type none"); }
+  { Bytes b = good; b[s2] = 6; expect_bad(b, "second filter type above 5"); }
+  { Bytes b = good; b[s2 + 1] = 1; expect_bad(b, "second filter padding"); }
+  { Bytes b = good; put_f32(b, s2 + 4, 60000.f); expect_bad(b, "second cutoff out of range"); }
+  { Bytes b = good; wr32(b, rec, 5); expect_bad(b, "region index out of range"); }
+  { Bytes b = good; wr32(b, rec - 4, 3); expect_bad(b, "n_fl larger than regions"); }
+  for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+    CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+  for (std::size_t off = rec - 4; off < end; ++off)
+    for (int bit = 0; bit < 8; ++bit) {
+      Bytes bad_bytes = good;
+      bad_bytes[off] ^= std::uint8_t(1 << bit);
+      rehash(bad_bytes);
+      auto r3 = BundleReader::open_memory(bad_bytes);
+      if (!r3.ok() && r3.error() != Error::kCorruptManifest) { std::printf("FAIL fl flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error())); ++g_fail; }
+    }
+  // A record that holds the default map is non-canonical (a veltrack-only record whose veltrack is set back to 0).
+  {
+    BundleWriter d;
+    const std::size_t di = d.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(d.add_sample(di, {"s", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(d.add_region(di, plain), Error::kNone);
+    CHECK_ERR(d.add_region(di, filt), Error::kNone);
+    Bytes b = d.finalize().take();
+    const std::size_t dend = rd64(b, 8) + rd64(b, 16), drec = dend - (layout::kFlRecordFixedSize + layout::kFlTuneFixedSize);
+    CHECK(layout::get_u32(b.data() + drec) == 1u && b[drec + 4] == 0);
+    put_f32(b, drec + 8 + 4, 0.f);
+    expect_bad(b, "record with the default map");
+  }
+  // A minor 7 stamp on a bundle with no record is non-canonical; so is a newer minor.
+  {
+    BundleWriter x;
+    const std::size_t k = x.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(x.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+    Region a = plain; a.bend.enabled = true;
+    CHECK_ERR(x.add_region(k, a), Error::kNone);
+    Bytes b = x.finalize().take();  // minor 6
+    const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+    b.insert(b.begin() + mo + ms, 4, std::uint8_t(0));  // n_fl = 0
+    wr64(b, 16, ms + 4); wr64(b, 24, io + 4); wr64(b, 40, rd64(b, 40) + 4); wr64(b, 56, rd64(b, 56) + 4);
+    for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
+    wr32(b, 4, 2u | (kFlMinor << 16));
+    wr32(b, mo, 2u | (kFlMinor << 16));
+    rehash(b);
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    wr32(b, 4, 2u | ((kFormatMinor + 1) << 16));
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
   }
 }
@@ -1953,6 +2139,7 @@ int main() {
   test_cc_table();
   test_vg_table();
   test_bt_table();
+  test_fl_table();
   test_float_goldens();
   test_identity();
   test_file_io();

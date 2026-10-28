@@ -20,6 +20,8 @@ bool has_vg_extension(const Region& r) { return r.vg != VoiceGroup{}; }
 
 bool has_bend_trigger_extension(const Region& r) { return r.bend != PitchBend{} || r.trig != CcTriggers{}; }
 
+bool has_filter_extension(const Region& r) { return r.fmap != FilterMap{}; }
+
 
 namespace {
 // -0.0 == 0.0 as a number but not as bytes: one encoding per value.
@@ -53,6 +55,40 @@ Error validate_bend_trigger(const PitchBend& b, const CcTriggers& t) {
     if (e.cc > 127 || !std::isfinite(e.lo) || !std::isfinite(e.hi) || e.lo < 0.f || e.hi > 127.f || e.lo > e.hi || neg_zero(e.lo) || neg_zero(e.hi)) return Error::kInvalidArgument;
     if (i > 0 && e.cc <= t.t[i - 1].cc) return Error::kInvalidArgument;  // strictly ascending, so unique
   }
+  return Error::kNone;
+}
+
+Error validate_filter_tune(const FilterTune& t) {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi && !neg_zero(v); };
+  if (!in(t.keytrack, 0.f, 1200.f) || !in(t.veltrack, -12000.f, 12000.f) || t.keycenter > 127) return Error::kInvalidArgument;
+  if (t.keytrack == 0.f && t.keycenter != 60) return Error::kInvalidArgument;  // the centre means nothing without a key track: one encoding per behaviour
+  if (t.cutoff_count > kMaxFilterMods || t.res_count > kMaxFilterMods) return Error::kInvalidArgument;
+  for (int which = 0; which < 2; ++which) {
+    const FilterMod* e = which == 0 ? t.cutoff : t.res;
+    const unsigned n = which == 0 ? t.cutoff_count : t.res_count;
+    const float lo = which == 0 ? -12000.f : 0.f, hi = which == 0 ? 12000.f : 96.f;
+    for (unsigned i = 0; i < kMaxFilterMods; ++i) {
+      if (i >= n) {
+        if (e[i] != FilterMod{}) return Error::kInvalidArgument;  // unused entries are zero
+        continue;
+      }
+      if (!is_cc_mod_source(e[i].cc) || !in(e[i].depth, lo, hi)) return Error::kInvalidArgument;
+      if (i > 0 && e[i].cc <= e[i - 1].cc) return Error::kInvalidArgument;  // strictly ascending, so unique
+    }
+  }
+  return Error::kNone;
+}
+
+Error validate_filter_map(const Region& r) {
+  const FilterMap& m = r.fmap;
+  if (validate_filter_tune(m.f1) != Error::kNone || validate_filter_tune(m.f2.tune) != Error::kNone) return Error::kInvalidArgument;
+  if (m.f1 != FilterTune{} && r.filter.type == FilterType::kNone) return Error::kInvalidArgument;  // a tuning needs a filter
+  const Filter2& f = m.f2;
+  if (static_cast<std::uint8_t>(f.type) > 5) return Error::kInvalidArgument;
+  if (f.type == FilterType::kNone) return f == Filter2{} ? Error::kNone : Error::kInvalidArgument;
+  if (r.filter.type == FilterType::kNone) return Error::kInvalidArgument;  // the second filter follows the first
+  if (!std::isfinite(f.cutoff_hz) || !std::isfinite(f.resonance_db) || neg_zero(f.cutoff_hz) || neg_zero(f.resonance_db)) return Error::kInvalidArgument;
+  if (f.cutoff_hz < 0.f || f.cutoff_hz > 48000.f || f.resonance_db < 0.f || f.resonance_db > 40.f) return Error::kInvalidArgument;
   return Error::kNone;
 }
 
@@ -203,6 +239,7 @@ Error validate_region(const Region& r, std::uint64_t frames) {
   if (validate_cc(r.cc) != Error::kNone) return Error::kInvalidArgument;
   if (validate_vg(r.vg) != Error::kNone) return Error::kInvalidArgument;
   if (validate_bend_trigger(r.bend, r.trig) != Error::kNone) return Error::kInvalidArgument;
+  if (validate_filter_map(r) != Error::kNone) return Error::kInvalidArgument;
   if (r.offset >= frames) return Error::kInvalidArgument;
   if (r.has_loop_points) {
     if (r.loop_start > r.loop_end || r.loop_end >= frames) return Error::kInvalidArgument;

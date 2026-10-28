@@ -96,6 +96,41 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"fil_type", C::kSupported, "lpf_1p, lpf_2p, hpf_1p, hpf_2p, bpf_2p (Story 5.1)"},
       {"cutoff", C::kSupported, "Hz; the filter exists only when cutoff is given (Story 5.1)"},
       {"resonance", C::kSupported, "dB (Story 5.1)"},
+      // Story 13.8: per-voice filter tuning and a second filter (see the importer comment in sfz_import.hpp).
+      {"filtype", C::kSupported, "alias of fil_type (Story 13.8)"},
+      {"fil1_type", C::kSupported, "alias of fil_type (Story 13.8)"},
+      {"fil2_type", C::kSupported, "type of the second filter, which exists only when cutoff2 is given (Story 13.8)"},
+      {"cutoff1", C::kSupported, "alias of cutoff (Story 13.8)"},
+      {"cutoff2", C::kSupported, "Hz, the second filter, in series after the first; needs a first filter (Story 13.8)"},
+      {"resonance1", C::kSupported, "alias of resonance (Story 13.8)"},
+      {"resonance2", C::kSupported, "dB, the second filter (Story 13.8)"},
+      {"fil_keytrack", C::kSupported, "cents per key 0..1200 from fil_keycenter (Story 13.8)"},
+      {"fil1_keytrack", C::kSupported, "alias of fil_keytrack (Story 13.8)"},
+      {"fil2_keytrack", C::kSupported, "fil_keytrack of the second filter (Story 13.8)"},
+      {"fil_keycenter", C::kSupported, "note number or name, default 60 (Story 13.8)"},
+      {"fil1_keycenter", C::kSupported, "alias of fil_keycenter (Story 13.8)"},
+      {"fil2_keycenter", C::kSupported, "fil_keycenter of the second filter (Story 13.8)"},
+      {"fil_veltrack", C::kSupported, "cents at velocity 127, -12000..12000 (Story 13.8)"},
+      {"fil1_veltrack", C::kSupported, "alias of fil_veltrack (Story 13.8)"},
+      {"fil2_veltrack", C::kSupported, "fil_veltrack of the second filter (Story 13.8)"},
+      {"cutoff_oncc<N>", C::kSupported, "cents added at voice start, -12000..12000; N = controller 0..127 or pseudo-CC 131, 135, 136, 137, 140, 141 (Story 13.8)"},
+      {"cutoff_cc<N>", C::kSupported, "alias of cutoff_oncc<N> (Story 13.8)"},
+      {"cutoff_curvecc<N>", C::kSupported, "curve index (Story 13.8)"},
+      {"cutoff1_oncc<N>", C::kSupported, "alias of cutoff_oncc<N> (Story 13.8)"},
+      {"cutoff1_cc<N>", C::kSupported, "alias of cutoff_oncc<N> (Story 13.8)"},
+      {"cutoff1_curvecc<N>", C::kSupported, "curve index (Story 13.8)"},
+      {"cutoff2_oncc<N>", C::kSupported, "cutoff_oncc<N> of the second filter (Story 13.8)"},
+      {"cutoff2_cc<N>", C::kSupported, "alias of cutoff2_oncc<N> (Story 13.8)"},
+      {"cutoff2_curvecc<N>", C::kSupported, "curve index (Story 13.8)"},
+      {"resonance_oncc<N>", C::kSupported, "dB added at voice start, 0..96; N as above (Story 13.8)"},
+      {"resonance_cc<N>", C::kSupported, "alias of resonance_oncc<N> (Story 13.8)"},
+      {"resonance_curvecc<N>", C::kSupported, "curve index (Story 13.8)"},
+      {"resonance1_oncc<N>", C::kSupported, "alias of resonance_oncc<N> (Story 13.8)"},
+      {"resonance1_cc<N>", C::kSupported, "alias of resonance_oncc<N> (Story 13.8)"},
+      {"resonance1_curvecc<N>", C::kSupported, "curve index (Story 13.8)"},
+      {"resonance2_oncc<N>", C::kSupported, "resonance_oncc<N> of the second filter (Story 13.8)"},
+      {"resonance2_cc<N>", C::kSupported, "alias of resonance2_oncc<N> (Story 13.8)"},
+      {"resonance2_curvecc<N>", C::kSupported, "curve index (Story 13.8)"},
       {"label_cc<N>", C::kAllowListed, "controller name"},
       {"label_key<N>", C::kAllowListed, "key name"},
       {"global_label", C::kAllowListed, ""},
@@ -270,6 +305,19 @@ struct Acc {
   const Op* poly_op = nullptr;
   const Op* hdr_poly_op = nullptr;  // the first polyphony given in a <global>/<master>/<group> header (a region-set limit in sfizz)
   float off_time = 0.006f;
+  // Story 13.8. Per filter (0 = the first, tuned here; 1 = the second, complete here): key track, velocity track, CC entries for the cutoff and the resonance.
+  struct FilterAcc {
+    float keytrack = 0, veltrack = 0;
+    int keycenter = 60;
+    std::map<int, ModAcc> cut, res;  // by controller, ascending
+    std::vector<const Op*> ops;      // the Story 13.8 opcodes as given, for the "no effect without cutoff" warnings
+    // the second filter only
+    bool cutoff_set = false, type_set = false;
+    FilterType type = FilterType::kLpf2p;
+    float cutoff = 0, resonance = 0;
+    const Op* cutoff_op = nullptr;
+  };
+  FilterAcc fil[2];
 };
 
 // Story 13.5: a recognised CC opcode split into its parts. gate: locc/hicc/lohdcc/hihdcc (lo = true for the low end, hd = normalized value); def: set_cc/set_hdcc;
@@ -279,6 +327,35 @@ struct CcOp {
   bool lo = false, hd = false, curve = false, canonical = true;
   int target = 0, cc = 0;
 };
+
+// Story 13.8: target ids of the filter CC entries, above the CcTarget range.
+constexpr int kFilCutoff0 = 100, kFilCutoff1 = 101, kFilRes0 = 102, kFilRes1 = 103;
+
+struct FilterOp {
+  int idx = 0;
+  char kind = 0;
+};
+
+// Story 13.8: "cutoff2" -> filter 1 (the second), kind 'C'. Kinds: T type, C cutoff, R resonance, K keytrack, Z keycenter, V veltrack. The first filter is index 0.
+bool filter_opcode(const std::string& k, int& idx, char& kind) {
+  if (k == "filtype") { idx = 0; kind = 'T'; return true; }
+  for (const char* base : {"cutoff", "resonance"}) {
+    const std::string b = base;
+    if (k == b || k == b + "1") { idx = 0; kind = b[0] == 'c' ? 'C' : 'R'; return true; }
+    if (k == b + "2") { idx = 1; kind = b[0] == 'c' ? 'C' : 'R'; return true; }
+  }
+  for (const char* pre : {"fil_", "fil1_", "fil2_"}) {
+    const std::string p = pre;
+    if (k.compare(0, p.size(), p) != 0) continue;
+    const std::string rest = k.substr(p.size());
+    idx = p == "fil2_" ? 1 : 0;
+    if (rest == "type") { kind = 'T'; return true; }
+    if (rest == "keytrack") { kind = 'K'; return true; }
+    if (rest == "keycenter") { kind = 'Z'; return true; }
+    if (rest == "veltrack") { kind = 'V'; return true; }
+  }
+  return false;
+}
 
 CcOp split_cc_opcode(const std::string& k) {
   CcOp o;
@@ -313,7 +390,10 @@ CcOp split_cc_opcode(const std::string& k) {
       {"pan", int(CcTarget::kPan)}, {"tune", int(CcTarget::kTune)}, {"pitch", int(CcTarget::kTune)}, {"offset", int(CcTarget::kOffset)},
       {"ampeg_delay", int(CcTarget::kEgDelay)}, {"ampeg_start", int(CcTarget::kEgStart)}, {"ampeg_attack", int(CcTarget::kEgAttack)},
       {"ampeg_hold", int(CcTarget::kEgHold)}, {"ampeg_decay", int(CcTarget::kEgDecay)}, {"ampeg_sustain", int(CcTarget::kEgSustain)},
-      {"ampeg_release", int(CcTarget::kEgRelease)}};
+      {"ampeg_release", int(CcTarget::kEgRelease)},
+      // Story 13.8: filter targets (ids above the CcTarget range; they live in the filter table, not the cc table)
+      {"cutoff", kFilCutoff0}, {"cutoff1", kFilCutoff0}, {"cutoff2", kFilCutoff1},
+      {"resonance", kFilRes0}, {"resonance1", kFilRes0}, {"resonance2", kFilRes1}};
   for (const Target& t : targets)
     if (stem == t.name) { o.kind = CcOp::Kind::kMod; o.target = t.id; return o; }
   return o;
@@ -686,6 +766,26 @@ class Importer final : public sfz::ParserListener {
       unsupported_cc(op, "controllers 0..127 and the pseudo-controllers 131 (velocity), 135, 136 (random), 137 (alternate), 140, 141 (key delta) are supported");
       return false;
     }
+    if (o.target >= kFilCutoff0) {  // Story 13.8: cutoff / resonance entries of the first or second filter
+      Acc::FilterAcc& fa = acc.fil[(o.target == kFilCutoff1 || o.target == kFilRes1) ? 1 : 0];
+      const bool is_cut = o.target == kFilCutoff0 || o.target == kFilCutoff1;
+      Acc::ModAcc& e = (is_cut ? fa.cut : fa.res)[o.cc];
+      fa.ops.push_back(&op);
+      if (o.curve) {
+        std::int64_t n = 0;
+        if (!parse_int(op.value, n) || n < 0 || n > 255) {
+          ignore(op, "expected a curve index 0..255; curve 0 is used");
+          n = 0;
+        }
+        e.curve = int(n);
+        return true;
+      }
+      if (is_cut ? !as_clamped(op, -12000, 12000, d) : !as_clamped(op, 0, 96, d)) return false;
+      if (d == 0) d = 0;
+      e.depth = float(d);
+      e.depth_set = true;
+      return true;
+    }
     if (o.curve) {
       if (o.target == int(CcTarget::kOffset)) {  // sfizz has no offset_curvecc: the opcode is ignored
         if (report_)
@@ -910,21 +1010,44 @@ class Importer final : public sfz::ParserListener {
       if (v == "gain") r.xf.curve = XfCurve::kGain;
       else if (v == "power") r.xf.curve = XfCurve::kPower;
       else { unsupported_value(op); return false; }
-    } else if (k == "fil_type") {
-      const std::string v = trim(op.value);
-      FilterType t;
-      if (v == "lpf_1p") t = FilterType::kLpf1p;
-      else if (v == "lpf_2p") t = FilterType::kLpf2p;
-      else if (v == "hpf_1p") t = FilterType::kHpf1p;
-      else if (v == "hpf_2p") t = FilterType::kHpf2p;
-      else if (v == "bpf_2p") t = FilterType::kBpf2p;
-      else { unsupported_value(op); return false; }
-      acc.type = t;
-      acc.type_set = true;
-      acc.type_op = &op;
     }
-    else if (k == "cutoff") { if (!as_float(op, 0, 48000, d)) return false; r.filter.cutoff_hz = float(d); acc.cutoff_set = true; }
-    else if (k == "resonance") { if (!as_float(op, 0, 40, d)) return false; r.filter.resonance_db = float(d); acc.res_op = &op; }
+    else if (FilterOp fo; filter_opcode(k, fo.idx, fo.kind)) {  // Story 13.8 (fil_type, cutoff, resonance, fil_keytrack, ...)
+      const int fi = fo.idx;
+      const char fk = fo.kind;
+      Acc::FilterAcc& fa = acc.fil[fi];
+      fa.ops.push_back(&op);
+      if (fk == 'T') {
+        const std::string v = trim(op.value);
+        FilterType t;
+        if (v == "lpf_1p") t = FilterType::kLpf1p;
+        else if (v == "lpf_2p") t = FilterType::kLpf2p;
+        else if (v == "hpf_1p") t = FilterType::kHpf1p;
+        else if (v == "hpf_2p") t = FilterType::kHpf2p;
+        else if (v == "bpf_2p") t = FilterType::kBpf2p;
+        else { unsupported_value(op); return false; }
+        if (fi == 0) { acc.type = t; acc.type_set = true; acc.type_op = &op; }
+        else { fa.type = t; fa.type_set = true; }
+      } else if (fk == 'C') {
+        if (!as_float(op, 0, 48000, d)) return false;
+        if (d == 0) d = 0;  // "-0" parses as negative zero; the bundle stores one encoding per value
+        if (fi == 0) { r.filter.cutoff_hz = float(d); acc.cutoff_set = true; }
+        else { fa.cutoff = float(d); fa.cutoff_set = true; fa.cutoff_op = &op; }
+      } else if (fk == 'R') {
+        if (!as_float(op, 0, 40, d)) return false;
+        if (d == 0) d = 0;  // "-0" -> +0, as above
+        if (fi == 0) { r.filter.resonance_db = float(d); acc.res_op = &op; }
+        else fa.resonance = float(d);
+      } else if (fk == 'K') {
+        if (!as_clamped(op, 0, 1200, d)) return false;  // as_clamped also turns "-0" into +0
+        fa.keytrack = float(d);
+      } else if (fk == 'Z') {
+        if (!as_note(op, n)) return false;
+        fa.keycenter = int(n);
+      } else {  // 'V'
+        if (!as_clamped(op, -12000, 12000, d)) return false;
+        fa.veltrack = float(d);
+      }
+    }
     else if (bool in = false, lo = false; xf_opcode(k, in, lo, cc_)) {
       {
         const std::size_t base = std::string(in ? "xfin_" : "xfout_").size() + 4;  // prefix + "locc"/"hicc"
@@ -1092,6 +1215,58 @@ class Importer final : public sfz::ParserListener {
           result.warnings.push_back({o->name, o->file, o->line,
                                      "opcode '" + o->name + "' has no effect without 'cutoff'; the region gets no filter"});
     }
+    {  // Story 13.8: filter tuning (key track, velocity track, CC entries) and the second filter
+      FilterMap fm;
+      auto warn_none = [&](const Acc::FilterAcc& a, bool skip_type_res, const char* needs) {
+        for (const Op* o : a.ops) {
+          FilterOp fo;
+          if (skip_type_res && filter_opcode(o->name, fo.idx, fo.kind) && (fo.kind == 'T' || fo.kind == 'R')) continue;  // the Story 5.1 loop above reports these
+          if (warned_.insert(o->file + ":" + std::to_string(o->line) + ":" + o->name).second)
+            result.warnings.push_back({o->name, o->file, o->line, "opcode '" + o->name + "' has no effect without '" + needs + "'; the region gets no such filter"});
+        }
+      };
+      auto build = [&](const Acc::FilterAcc& a, FilterTune& t) {
+        t.keytrack = a.keytrack;
+        t.keycenter = a.keytrack != 0.0f ? std::uint8_t(a.keycenter) : std::uint8_t(60);  // the centre only matters with a key track; one encoding for "no tuning"
+        t.veltrack = a.veltrack;
+        for (int w = 0; w < 2; ++w) {
+          const auto& m = w == 0 ? a.cut : a.res;
+          FilterMod* out = w == 0 ? t.cutoff : t.res;
+          std::uint8_t& cnt = w == 0 ? t.cutoff_count : t.res_count;
+          for (const auto& [cc, e] : m) {
+            if (!e.depth_set || e.depth == 0.0f) continue;  // a curve alone is no connection; a zero depth adds nothing to an additive target
+            if (cnt >= kMaxFilterMods) {
+              issue(SfzIssueKind::kUnsupportedValue, region_loc_,
+                    std::string("more than ") + std::to_string(kMaxFilterMods) + (w == 0 ? " cutoff_oncc<N>" : " resonance_oncc<N>") + " entries on one filter",
+                    w == 0 ? "cutoff_oncc<N>" : "resonance_oncc<N>");
+              return false;
+            }
+            out[cnt++] = {std::uint8_t(cc), std::uint8_t(e.curve), e.depth};
+          }
+        }
+        return true;
+      };
+      if (acc.cutoff_set) {
+        if (!build(acc.fil[0], fm.f1)) return;
+      } else {
+        warn_none(acc.fil[0], true, "cutoff");
+      }
+      const Acc::FilterAcc& a2 = acc.fil[1];
+      if (a2.cutoff_set) {
+        if (!acc.cutoff_set) {
+          issue(SfzIssueKind::kUnsupportedValue, Loc{a2.cutoff_op->file, a2.cutoff_op->line},
+                "cutoff2 on a region without 'cutoff': sfizz would run the missing first filter at cutoff 0, which this engine does not model", a2.cutoff_op->name);
+          return;
+        }
+        fm.f2.type = a2.type_set ? a2.type : FilterType::kLpf2p;
+        fm.f2.cutoff_hz = a2.cutoff;
+        fm.f2.resonance_db = a2.resonance;
+        if (!build(a2, fm.f2.tune)) return;
+      } else {
+        warn_none(a2, false, "cutoff2");
+      }
+      r.fmap = fm;
+    }
     if (r.sw.lokey >= 0 && r.sw.hikey >= 0 && r.sw.lokey > r.sw.hikey) {
       issue(SfzIssueKind::kInvalidValue, region_loc_, "sw_lokey > sw_hikey");
       return;
@@ -1226,6 +1401,14 @@ void build_cc_setup(SfzParseResult& r, bool report) {
       if (g.cc.mods[i].cc <= 127) used_cc.insert(g.cc.mods[i].cc);
       used_curve.insert(g.cc.mods[i].curve);
     }
+    for (const FilterTune* t : {&g.fmap.f1, &g.fmap.f2.tune})  // Story 13.8
+      for (int w = 0; w < 2; ++w) {
+        const FilterMod* e = w == 0 ? t->cutoff : t->res;
+        for (unsigned i = 0; i < (w == 0 ? t->cutoff_count : t->res_count); ++i) {
+          if (e[i].cc <= 127) used_cc.insert(e[i].cc);
+          used_curve.insert(e[i].curve);
+        }
+      }
     for (unsigned i = 0; i < g.xf.in_count; ++i) used_cc.insert(g.xf.in[i].cc);
     for (unsigned i = 0; i < g.xf.out_count; ++i) used_cc.insert(g.xf.out[i].cc);
   }

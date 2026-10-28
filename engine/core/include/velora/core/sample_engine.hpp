@@ -43,14 +43,19 @@ enum class SampleInterpolation : std::uint8_t {
 // `sample_bench` (tests/sample_bench.cpp, -O3 host figures, see engine/core/README.md); still to be calibrated on the board.
 inline constexpr std::uint32_t kSampleFilterCostUnits = 2;
 inline constexpr std::uint32_t kSampleCrossfadeCostUnits = 1;
+// Story 13.8: an engine that also declares `Config::second_filter_voices` budgets every voice for a second filter in series (a stereo biquad pair: measured at about the
+// cost of the first one, `sample_bench`) on top of the extended worst case. Fixed per engine like the rest; the default engine and the extended-only engine keep their
+// figures, so no existing floor or budget changes.
+inline constexpr std::uint32_t kSampleFilter2CostUnits = 3;
 // Story 6.5: the length, in frames of engine output, of the fade to silence a voice makes before it reaches a damaged block of a protected library (and of the
 // fade back in after it). It is a straight gain ramp; the voice reads the block-damage flags that non-real-time threads set (ports::SamplePcm::damaged_blocks).
 inline constexpr std::uint32_t kIntegrityFadeFrames = 64;
 // Story 1.17: the length, in frames of engine output, of the fade to silence a streaming voice makes when the stream data it needs has not arrived (and of the fade back in
 // when it has). The voice holds its last output sample under the fade, so there is no click; the position keeps advancing.
 inline constexpr std::uint32_t kStreamFadeFrames = 64;
-constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q, bool extended = false) noexcept {
-  return (q == SampleInterpolation::kLinear ? 3u : 5u) + (extended ? kSampleFilterCostUnits + kSampleCrossfadeCostUnits : 0u);
+constexpr std::uint32_t sample_voice_cost_units(SampleInterpolation q, bool extended = false, bool second_filter = false) noexcept {
+  return (q == SampleInterpolation::kLinear ? 3u : 5u) + (extended ? kSampleFilterCostUnits + kSampleCrossfadeCostUnits : 0u) +
+         (extended && second_filter ? kSampleFilter2CostUnits : 0u);
 }
 
 class SampleEngine final : public Engine {
@@ -76,6 +81,9 @@ class SampleEngine final : public Engine {
     // cost; instruments that use filters or CC crossfades still play, and every such voice that starts on an undeclared engine is
     // counted in undeclared_extended_voices() so the under-budgeting is visible.
     bool extended_voices = false;
+    // Story 13.8: with extended_voices, also budget every voice for a second filter (sample_voice_cost_units). A voice that starts with a second filter on an engine that
+    // did not declare it is counted in undeclared_second_filter_voices().
+    bool second_filter_voices = false;
     // Story 3.6: release-trigger regions use the Note Off's release velocity (when it is not 0) instead of the note-on velocity, to select the velocity layer
     // and to scale the gain (velocity squared, as for attacks): a fast key release plays a louder release sample. Off = sfizz behaviour (note-on velocity),
     // which the null tests need. The host turns it on. No curve is applied here: the keybed reader's velocity chain is the only place that shapes velocity.
@@ -174,7 +182,7 @@ class SampleEngine final : public Engine {
   void set_seed(std::uint64_t seed) noexcept;
 
   EngineTypeId type_id() const noexcept override { return EngineTypeId::kSample; }
-  std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation, cfg_.extended_voices); }
+  std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation, cfg_.extended_voices, cfg_.second_filter_voices); }
   std::uint32_t voice_capacity() const noexcept override { return capacity_; }
 
   // Starts a voice per matching region. Voice slots come from the pool arbiter when one is attached
@@ -201,6 +209,8 @@ class SampleEngine final : public Engine {
   std::uint64_t skipped_unplayable_starts() const noexcept { return skipped_unplayable_; }
   // Voices that started with a filter or a CC crossfade on an engine that did not declare Config::extended_voices (budgeted at the plain cost).
   std::uint64_t undeclared_extended_voices() const noexcept { return undeclared_extended_; }
+  // Story 13.8: voices that started with a second filter on an engine that did not declare Config::second_filter_voices (budgeted without it).
+  std::uint64_t undeclared_second_filter_voices() const noexcept { return undeclared_second_; }
   // Story 6.5: times a voice met a damaged block (a rising edge per voice: it faded out for that block). Written by the audio thread, readable anywhere.
   std::uint64_t content_integrity_events() const noexcept override { return integrity_events_.load(std::memory_order_relaxed); }
   std::uint64_t stream_underrun_events() const noexcept override { return underrun_events_.load(std::memory_order_relaxed); }
@@ -272,6 +282,9 @@ class SampleEngine final : public Engine {
     // towards by xf_step per frame (a linear ramp, sfizz's LinearSmoother).
     float base_gain = 0.0f;
     SampleFilterState fl, fr;
+    // Story 13.8: the voice's own filter coefficients, computed (or copied from the region) when the voice starts, and the second filter's coefficients and state.
+    SampleFilterCoeffs fk, fk2;
+    SampleFilterState fl2, fr2;
     float xf_cur = 1.0f, xf_tgt = 1.0f, xf_step = 0.0f;
     // Story 6.5: the integrity fade of a voice over a protected sample (used only when the region has a damage map).
     float integ_gain = 1.0f;
@@ -358,6 +371,9 @@ class SampleEngine final : public Engine {
   float cc_norm(unsigned cc, std::uint32_t channel, bool eg) const noexcept;
   float cc_curve(const SampleBank& bank, std::uint8_t curve, float norm) const noexcept;
   float cc_mod_value(const SampleBank& bank, const velora::ports::SampleCcMod& m, std::uint32_t channel, bool eg) const noexcept;
+  // Story 13.8: a tuned filter's coefficients for the voice that is starting (key track, velocity track, CC entries), see sample_filter.hpp.
+  SampleFilterCoeffs voice_filter(const SampleBank& bank, velora::ports::SampleFilterType type, float cutoff_hz, float resonance_db,
+                                  const velora::ports::SampleFilterTune& tune, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) const noexcept;
   void note_pseudo(const SampleBank* bank, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7, bool note_on) noexcept;
   bool region_switched(const RegionRt& r, const KeyState& ks) const noexcept;
   float crossfade_target(const RegionRt& r, std::uint32_t channel) const noexcept;
@@ -393,7 +409,7 @@ class SampleEngine final : public Engine {
   float gain_ = 1.0f;
   std::uint32_t unplayable_regions_ = 0;
   std::uint64_t skipped_unplayable_ = 0;
-  std::uint64_t undeclared_extended_ = 0;
+  std::uint64_t undeclared_extended_ = 0, undeclared_second_ = 0;
   std::atomic<std::uint64_t> integrity_events_{0};
   velora::ports::StreamService* stream_ = nullptr;  // Story 1.17
   std::atomic<std::uint64_t> stream_open_failures_{0};

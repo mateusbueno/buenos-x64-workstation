@@ -10,6 +10,7 @@ which is why the outputs are committed and the goldens are rendered from the com
     python3 generate_suite.py story135   # only the Story 13.5 cases (no existing file is touched)
     python3 generate_suite.py story136   # only the Story 13.6 cases (no existing file is touched)
     python3 generate_suite.py story137   # only the Story 13.7 cases (no existing file is touched)
+    python3 generate_suite.py story138   # only the Story 13.8 cases (no existing file is touched)
 
 MIDI timing: the files use 32000 PPQ at 500000 us per quarter, i.e. 0.75 audio frames per tick at
 48 kHz. A frame is mapped to a tick that puts the event at a quarter-frame fraction (never on an
@@ -725,6 +726,122 @@ def build_story137_cases():
 """, ev, ccs)
 
 
+def build_story138_cases():
+    """Story 13.8: the per-voice filter. One fixture instrument per opcode family on the bright, noisy loop (110 Hz, 40 harmonics, so a filter always has something to
+    remove): fil_keytrack/fil_keycenter, fil_veltrack, cutoff_oncc/cutoff_cc/cutoff_curvecc (controllers and the velocity pseudo-CC 131), resonance_oncc/resonance_cc and the
+    second filter (cutoff2, fil2_*). Every controller is moved BEFORE the note it is meant for (sfizz modulates continuously, the engine reads the controller when the note
+    starts, so no controller moves while a note sounds: the documented limit of Story 13.5)."""
+    loop = "loop_mode=loop_continuous loop_start=2400 loop_end=7199"
+    curves = "<curve>\ncurve_index=7\nv000=0 v064=0.9 v127=1\n<curve>\ncurve_index=8\nv000=0 v064=0.3 v127=1\n"
+
+    def staged(steps, gap=0.20, length=0.10):
+        """steps: (cc or None, value or None, key, vel): the controller is set 40 ms before its note, and every voice has died (note + 0.05 s release) before the next move."""
+        ev, ccs = [], []
+        for i, (cc, val, key, vel) in enumerate(steps):
+            t = 0.05 + i * gap
+            if cc is not None:
+                ccs.append((secs(t - 0.04), cc, val))
+            ev.append((secs(t), 1, key, vel))
+            ev.append((secs(t + length), 0, key, vel))
+        ev.sort(key=lambda e: (e[0], e[1]))
+        return ev, sorted(ccs)
+
+    # fil_keytrack / fil_keycenter: three pitched regions (the sample follows the key), the cutoff follows the key at 100 cents per key from the default centre 60, at 50 from
+    # centre 64 (one pole), and an hpf from centre 72.
+    steps = [(None, None, k, 100) for k in (40, 47, 55, 56, 64, 72, 73, 84, 96)]
+    ev, ccs = staged(steps, 0.20, 0.10)
+    case("fil_keytrack", HEADER + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=40 hikey=55 pitch_keycenter=48 cutoff=1200 fil_keytrack=100
+<region> lokey=56 hikey=72 pitch_keycenter=64 fil_type=lpf_1p cutoff=900 fil_keytrack=50 fil_keycenter=64
+<region> lokey=73 hikey=96 pitch_keycenter=84 fil_type=hpf_2p cutoff=600 resonance=3 filtype=hpf_2p fil_keytrack=100 fil_keycenter=72
+""", ev, ccs)
+
+    # fil_veltrack: cents at velocity 127 (the raw velocity, not the amplitude curve), positive and negative, with a key track on top.
+    steps = []
+    for key, vels in ((60, (1, 32, 64, 100, 127)), (62, (1, 64, 127)), (64, (20, 90, 127)), (65, (1, 64, 127))):
+        steps += [(None, None, key, v) for v in vels]
+    ev, ccs = staged(steps, 0.20, 0.10)
+    case("fil_veltrack", HEADER + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=300 resonance=2 fil_veltrack=3600
+<region> lokey=62 hikey=62 pitch_keycenter=62 cutoff=8000 fil_veltrack=-2400
+<region> lokey=64 hikey=64 pitch_keycenter=64 cutoff=500 fil_veltrack=1200 fil_keytrack=50 fil_keycenter=60
+<region> lokey=65 hikey=65 pitch_keycenter=65 fil_type=hpf_2p cutoff=200 fil1_veltrack=2400 fil1_type=hpf_2p
+""", ev, ccs)
+
+    # cutoff_oncc / cutoff_cc / cutoff_curvecc: a controller through the default curve, the SFZ 1 spelling with a <curve> block, two controllers (one negative), the
+    # velocity pseudo-CC 131 through a curve (kamoepiano301's pattern), and every touch at once.
+    steps = []
+    for v in (0, 40, 64, 127):
+        steps.append((74, v, 60, 100))
+    for v in (0, 64, 127):
+        steps.append((75, v, 62, 100))
+    ev, ccs = staged(steps, 0.20, 0.10)
+    n = len(steps)
+    t0 = 0.05 + n * 0.20
+    ev2, ccs2 = [], []
+    # key 64 with two controllers: both are set before the note
+    for i, (a, b) in enumerate(((0, 0), (127, 0), (0, 127), (100, 50))):
+        t = t0 + i * 0.20
+        ccs2 += [(secs(t - 0.05), 76, a), (secs(t - 0.04), 77, b)]
+        ev2 += [(secs(t), 1, 64, 100), (secs(t + 0.10), 0, 64, 100)]
+    # the velocity pseudo-CC on key 65 (curve 8) and key 67 (default curve), swept over velocities
+    t1 = t0 + 4 * 0.20
+    for i, v in enumerate((1, 30, 64, 100, 127)):
+        t = t1 + i * 0.20
+        ev2 += [(secs(t), 1, 65, v), (secs(t + 0.10), 0, 65, v)]
+    t2 = t1 + 5 * 0.20
+    for i, v in enumerate((10, 64, 127)):
+        t = t2 + i * 0.20
+        ev2 += [(secs(t), 1, 67, v), (secs(t + 0.10), 0, 67, v)]
+    # key 69: controller, velocity track and key track together
+    t3 = t2 + 3 * 0.20
+    for i, (c, v) in enumerate(((0, 40), (127, 40), (64, 110))):
+        t = t3 + i * 0.20
+        ccs2 += [(secs(t - 0.04), 78, c)]
+        ev2 += [(secs(t), 1, 69, v), (secs(t + 0.10), 0, 69, v)]
+    ev = sorted(ev + ev2, key=lambda e: (e[0], e[1]))
+    ccs = sorted(ccs + ccs2)
+    case("cutoff_oncc", HEADER + curves + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=300 cutoff_oncc74=3000
+<region> lokey=62 hikey=62 pitch_keycenter=62 cutoff=300 cutoff_cc75=2400 cutoff_curvecc75=7
+<region> lokey=64 hikey=64 pitch_keycenter=64 cutoff=2000 cutoff_oncc76=-2400 cutoff1_oncc77=1200
+<region> lokey=65 hikey=65 pitch_keycenter=65 cutoff=400 cutoff_oncc131=3000 cutoff_curvecc131=8
+<region> lokey=67 hikey=67 pitch_keycenter=67 cutoff=500 cutoff_oncc131=2400
+<region> lokey=69 hikey=69 pitch_keycenter=69 cutoff=400 cutoff_oncc78=2400 fil_veltrack=1200 fil_keytrack=100
+""", ev, ccs)
+
+    # resonance_oncc / resonance_cc / resonance_curvecc: the Q at the cutoff follows a controller (dB added).
+    steps = []
+    for v in (0, 64, 127):
+        steps.append((79, v, 60, 100))
+    for v in (0, 127, 40):
+        steps.append((80, v, 62, 100))
+    for v in (0, 100):
+        steps.append((81, v, 64, 100))
+    ev, ccs = staged(steps, 0.20, 0.10)
+    case("resonance_oncc", HEADER + curves + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=900 resonance_oncc79=24
+<region> lokey=62 hikey=62 pitch_keycenter=62 fil_type=hpf_2p cutoff=700 resonance=6 resonance_cc80=12 resonance_curvecc80=7
+<region> lokey=64 hikey=64 pitch_keycenter=64 fil_type=bpf_2p cutoff=1500 resonance1_oncc81=20
+""", ev, ccs)
+
+    # the second filter: in series after the first, with its own type, resonance, key track, velocity track and CC entries.
+    steps = [(None, None, 60, 100), (None, None, 62, 100), (None, None, 64, 100), (None, None, 76, 100)]
+    for v in (0, 127):
+        steps.append((82, v, 65, 100))
+    for v in (20, 127):
+        steps.append((None, None, 67, v))
+    ev, ccs = staged(steps, 0.20, 0.10)
+    case("filter2", HEADER + f"""<global> sample=bright.wav {loop} ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=4000 cutoff2=500 fil2_type=hpf_2p
+<region> lokey=62 hikey=62 pitch_keycenter=62 cutoff=2000 resonance=3 cutoff2=1500 fil2_type=lpf_2p resonance2=6
+<region> lokey=64 hikey=64 pitch_keycenter=64 fil_type=lpf_1p cutoff=3000 cutoff2=300 fil2_type=hpf_1p fil2_keytrack=100 fil2_keycenter=64
+<region> lokey=76 hikey=76 pitch_keycenter=76 fil_type=lpf_1p cutoff=3000 cutoff2=300 fil2_type=hpf_1p fil2_keytrack=100 fil2_keycenter=64
+<region> lokey=65 hikey=65 pitch_keycenter=65 cutoff=6000 cutoff2=200 fil2_type=hpf_2p cutoff2_oncc82=3000 resonance2_oncc82=12
+<region> lokey=67 hikey=67 pitch_keycenter=67 cutoff=1000 fil_veltrack=2400 cutoff2=8000 fil2_veltrack=-1200
+""", ev, ccs)
+
+
 def make_demo_probe():
     """midi/demo_probe.mid: a short phrase over the keyboard range for the env-gated real-library null test."""
     keys = [28, 40, 52, 64, 76, 88, 100]
@@ -757,9 +874,9 @@ def make_demo_features():
 
 
 def main():
-    stories = {"story134": build_story134_cases, "story135": build_story135_cases, "story136": build_story136_cases, "story137": build_story137_cases}
+    stories = {"story134": build_story134_cases, "story135": build_story135_cases, "story136": build_story136_cases, "story137": build_story137_cases, "story138": build_story138_cases}
     if sys.argv[1:] != [] and not (len(sys.argv) == 2 and sys.argv[1] in stories):
-        sys.exit("usage: generate_suite.py [story134|story135|story136|story137]")
+        sys.exit("usage: generate_suite.py [story134|story135|story136|story137|story138]")
     if len(sys.argv) == 2:  # only that story's cases (leaves every older file untouched)
         stories[sys.argv[1]]()
         for name, (sfz, events, ccs, setup) in CASES.items():
@@ -777,6 +894,7 @@ def main():
     build_story135_cases()
     build_story136_cases()
     build_story137_cases()
+    build_story138_cases()
     for name, (sfz, events, ccs, setup) in CASES.items():
         with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
             f.write(sfz)

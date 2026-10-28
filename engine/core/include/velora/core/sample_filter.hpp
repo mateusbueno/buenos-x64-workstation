@@ -81,21 +81,38 @@ inline SampleFilterCoeffs make_sample_filter(velora::ports::SampleFilterType typ
 // Denormals in a decaying filter are slow on some CPUs: states under 1e-200 (far below any audible or float-representable signal) flush to 0.
 inline double sample_filter_flush(double v) noexcept { return std::fabs(v) < 1e-200 ? 0.0 : v; }
 
+// Story 13.8: a sample the filter cannot digest (NaN, infinity, or a magnitude no audio has) makes the new state non-finite or out of bound; the tick then clears the
+// state and answers silence instead of storing it, so the filter never keeps a NaN, an infinity or a runaway value (a NaN input yields a NaN candidate, an infinite one an
+// infinity or a NaN). One compare per tick on the finite path, which it does not change.
+inline constexpr double kSampleFilterSignalLimit = 1.0e18;
+
 inline double sample_filter_tick(const SampleFilterCoeffs& k, SampleFilterState& s, double x) noexcept {
   switch (k.kind) {
     case SampleFilterCoeffs::Kind::kOnePoleLow: {
       const double w = sample_filter_flush(x + k.p * s.w1);
+      if (!(std::fabs(w) < kSampleFilterSignalLimit)) {
+        s = SampleFilterState{};
+        return 0.0;
+      }
       s.w1 = w;
       return w * (1.0 - k.p);
     }
     case SampleFilterCoeffs::Kind::kOnePoleHigh: {
       const double w = sample_filter_flush(x + k.p * s.w1);
+      if (!(std::fabs(w) < kSampleFilterSignalLimit)) {
+        s = SampleFilterState{};
+        return 0.0;
+      }
       const double y = k.g * (w - s.w1);
       s.w1 = w;
       return y;
     }
     case SampleFilterCoeffs::Kind::kBiquad: {
-      const double y = sample_filter_flush(k.b0 * x + k.b1 * s.x1 + k.b2 * s.x2 - k.a1 * s.y1 - k.a2 * s.y2);
+      double y = sample_filter_flush(k.b0 * x + k.b1 * s.x1 + k.b2 * s.x2 - k.a1 * s.y1 - k.a2 * s.y2);
+      if (!(std::fabs(y) < kSampleFilterSignalLimit)) {
+        s = SampleFilterState{};
+        return 0.0;
+      }
       s.x2 = s.x1;
       s.x1 = sample_filter_flush(x);
       s.y2 = s.y1;

@@ -1,0 +1,9 @@
+<control>
+default_path=samples/
+<global> sample=bright.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=4000 cutoff2=500 fil2_type=hpf_2p
+<region> lokey=62 hikey=62 pitch_keycenter=62 cutoff=2000 resonance=3 cutoff2=1500 fil2_type=lpf_2p resonance2=6
+<region> lokey=64 hikey=64 pitch_keycenter=64 fil_type=lpf_1p cutoff=3000 cutoff2=300 fil2_type=hpf_1p fil2_keytrack=100 fil2_keycenter=64
+<region> lokey=76 hikey=76 pitch_keycenter=76 fil_type=lpf_1p cutoff=3000 cutoff2=300 fil2_type=hpf_1p fil2_keytrack=100 fil2_keycenter=64
+<region> lokey=65 hikey=65 pitch_keycenter=65 cutoff=6000 cutoff2=200 fil2_type=hpf_2p cutoff2_oncc82=3000 resonance2_oncc82=12
+<region> lokey=67 hikey=67 pitch_keycenter=67 cutoff=1000 fil_veltrack=2400 cutoff2=8000 fil2_veltrack=-1200

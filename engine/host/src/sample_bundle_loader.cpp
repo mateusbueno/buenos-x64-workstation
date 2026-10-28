@@ -185,6 +185,22 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   d.no_note = r.trig.no_note;
   static_assert(ports::kSampleMaxCcTriggers == fmt::kMaxCcTriggers, "trigger table sizes must agree");
   for (unsigned i = 0; i < r.trig.count && i < ports::kSampleMaxCcTriggers; ++i) d.cc_triggers[i] = {r.trig.t[i].cc, r.trig.t[i].lo, r.trig.t[i].hi};
+  // Story 13.8: filter tuning and the second filter. formatlib bounds the entries at the port's 4 (static_assert); a count beyond is passed on and made unplayable by the engine.
+  static_assert(ports::kSampleMaxFilterMods == fmt::kMaxFilterMods, "filter entry table sizes must agree");
+  auto tune = [](const fmt::FilterTune& t, ports::SampleFilterTune& o) {
+    o.keytrack = t.keytrack;
+    o.veltrack = t.veltrack;
+    o.keycenter = t.keycenter;
+    o.cutoff_count = t.cutoff_count;
+    o.res_count = t.res_count;
+    for (unsigned i = 0; i < std::min<unsigned>(t.cutoff_count, ports::kSampleMaxFilterMods); ++i) o.cutoff[i] = {t.cutoff[i].cc, t.cutoff[i].curve, t.cutoff[i].depth};
+    for (unsigned i = 0; i < std::min<unsigned>(t.res_count, ports::kSampleMaxFilterMods); ++i) o.res[i] = {t.res[i].cc, t.res[i].curve, t.res[i].depth};
+  };
+  tune(r.fmap.f1, d.filter_tune);
+  d.filter2_type = static_cast<ports::SampleFilterType>(static_cast<std::uint8_t>(r.fmap.f2.type));
+  d.filter2_cutoff_hz = r.fmap.f2.cutoff_hz;
+  d.filter2_resonance_db = r.fmap.f2.resonance_db;
+  tune(r.fmap.f2.tune, d.filter2_tune);
   return d;
 }
 

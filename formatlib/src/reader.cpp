@@ -280,7 +280,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
-  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0, total_vg = 0, total_bt = 0;
+  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0, total_vg = 0, total_bt = 0, total_fl = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -570,6 +570,56 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
             return Error::kCorruptManifest;
         }
       }
+      if (minor >= 7) {  // the filter table (Story 13.8) follows the minor 6 table
+        const std::uint32_t n_fl = c.u32();
+        if (!c.ok() || n_fl > n_regions || n_fl > c.remaining() / (kFlRecordFixedSize + kFlTuneFixedSize)) return Error::kCorruptManifest;
+        total_fl += n_fl;
+        auto read_tune = [&c](FilterTune& t) {
+          t.keytrack = c.f32();
+          t.veltrack = c.f32();
+          t.keycenter = c.u8();
+          t.cutoff_count = c.u8();
+          t.res_count = c.u8();
+          const std::uint8_t q = c.u8();
+          if (!c.ok() || q || t.cutoff_count > kMaxFilterMods || t.res_count > kMaxFilterMods ||
+              (std::size_t(t.cutoff_count) + t.res_count) * kFlModSize > c.remaining())
+            return false;
+          for (int which = 0; which < 2; ++which) {
+            FilterMod* e = which == 0 ? t.cutoff : t.res;
+            const unsigned n = which == 0 ? t.cutoff_count : t.res_count;
+            for (unsigned i = 0; i < n; ++i) {
+              e[i].cc = c.u8();
+              e[i].curve = c.u8();
+              const std::uint8_t p0 = c.u8(), p1 = c.u8();
+              e[i].depth = c.f32();
+              if (!c.ok() || p0 || p1) return false;
+            }
+          }
+          return true;
+        };
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_fl; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          const std::uint8_t flags = c.u8(), p0 = c.u8(), p1 = c.u8(), p2 = c.u8();
+          if (!c.ok() || (flags & ~1u) || p0 || p1 || p2) return Error::kCorruptManifest;
+          if (!read_tune(rg.fmap.f1)) return Error::kCorruptManifest;
+          if (flags & 1u) {
+            const std::uint8_t type = c.u8(), q0 = c.u8(), q1 = c.u8(), q2 = c.u8();
+            rg.fmap.f2.cutoff_hz = c.f32();
+            rg.fmap.f2.resonance_db = c.f32();
+            if (!c.ok() || q0 || q1 || q2 || type < 1 || type > 5) return Error::kCorruptManifest;
+            rg.fmap.f2.type = static_cast<FilterType>(type);
+            if (!read_tune(rg.fmap.f2.tune)) return Error::kCorruptManifest;
+          }
+          // Canonical: a record exists only for a region that really needs it.
+          if (!has_filter_extension(rg) ||
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+      }
     }
     r.instruments.push_back(std::move(ins));
   }
@@ -582,7 +632,8 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   if (minor == 3 && total_amp == 0) return Error::kCorruptManifest;
   if (minor == 4 && total_cc == 0 && total_cc_setup == 0) return Error::kCorruptManifest;
   if (minor == 5 && total_vg == 0) return Error::kCorruptManifest;
-  if (minor >= 6 && total_bt == 0) return Error::kCorruptManifest;
+  if (minor == 6 && total_bt == 0) return Error::kCorruptManifest;
+  if (minor >= 7 && total_fl == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index.resize(n_blocks);

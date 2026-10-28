@@ -7265,6 +7265,8 @@ So that libraries that open the filter with touch (kamoepiano301, Headroom Piano
 **When** the corpus job runs
 **Then** they import and pass, or the manifest records the exact remaining opcode and reason
 
+> **Status note (Story 13.8 run): the last AC ("kamoepiano301 and Headroom Piano import and pass, or the manifest records the exact remaining opcode and reason") is recorded, not met.** The filter opcodes of this story (`fil_keytrack`, `fil_keycenter`, `fil_veltrack`, `cutoff*_oncc`/`_cc`/`_curvecc`, `resonance*_oncc`/`_cc`, the second filter) import and are null-tested against sfizz. kamoepiano301 still fails import on `sustain_cc`, `ampeg_release_shape` and `ampeg_dynamic=1` together with `ampeg_releasecc64` (Story 13.5 rule); Headroom Piano on `amp_veltrack_oncc73`, `width_oncc76`/`79` (+ `_curvecc`) and `eq1_*`/`eq2_*` (Story 13.9). With those three opcodes removed from a scratch copy for both renderers, kamoepiano301 imports (90 regions) and 5 of its 6 corpus suites null-test at -94 to -104 dB; `sustained_loops` fails at -54.9 dB with and without the filter opcodes.
+
 ### Story 13.9: Region EQ and LFO/EG modulation (conditional)
 
 As a keyboardist,

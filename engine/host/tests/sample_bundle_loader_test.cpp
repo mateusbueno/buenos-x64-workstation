@@ -468,7 +468,51 @@ static void test_bend_and_triggers_reach_the_port() {
   CHECK(eng.set_part_pitch_bend(0, 0xFFFFFFFFu));  // the keyed region bends: the wheel is taken
 }
 
+static void test_filter_map_reaches_the_port() {
+  using namespace velora::format;
+  Region r;
+  r.filter = {FilterType::kLpf2p, 500.f, 2.f};
+  r.fmap.f1.keytrack = 100.f; r.fmap.f1.keycenter = 48; r.fmap.f1.veltrack = -1200.f;
+  r.fmap.f1.cutoff_count = 2; r.fmap.f1.cutoff[0] = {74, 7, 1200.f}; r.fmap.f1.cutoff[1] = {131, 0, 2400.f};
+  r.fmap.f1.res_count = 1; r.fmap.f1.res[0] = {1, 3, 12.f};
+  r.fmap.f2.type = FilterType::kHpf2p; r.fmap.f2.cutoff_hz = 250.f; r.fmap.f2.resonance_db = 1.5f;
+  r.fmap.f2.tune.keytrack = 50.f; r.fmap.f2.tune.cutoff_count = 1; r.fmap.f2.tune.cutoff[0] = {1, 0, -600.f};
+  const ports::SampleRegionDesc d = host::to_port_region(r);
+  const ports::SampleFilterTune& t = d.filter_tune;
+  CHECK(t.keytrack == 100.f && t.keycenter == 48 && t.veltrack == -1200.f && t.cutoff_count == 2 && t.cutoff[0].cc == 74 && t.cutoff[0].curve == 7 && t.cutoff[0].depth == 1200.f &&
+        t.cutoff[1].cc == 131 && t.cutoff[1].depth == 2400.f && t.res_count == 1 && t.res[0].cc == 1 && t.res[0].curve == 3 && t.res[0].depth == 12.f);
+  CHECK(d.filter2_type == ports::SampleFilterType::kHpf2p && d.filter2_cutoff_hz == 250.f && d.filter2_resonance_db == 1.5f && d.filter2_tune.keytrack == 50.f &&
+        d.filter2_tune.keycenter == 60 && d.filter2_tune.cutoff_count == 1 && d.filter2_tune.cutoff[0].cc == 1 && d.filter2_tune.cutoff[0].depth == -600.f);
+  const ports::SampleRegionDesc plain = host::to_port_region(Region{});
+  CHECK(plain.filter_tune.keytrack == 0.f && plain.filter_tune.keycenter == 60 && plain.filter_tune.cutoff_count == 0 && plain.filter2_type == ports::SampleFilterType::kNone);
+  // Through a real bundle (format 2.7): the loader hands the engine a playable region with a tuned first filter and a second filter.
+  BundleWriter w;
+  const auto inst = w.add_instrument("Fl", "Fl.sfz");
+  std::vector<std::int32_t> pcm(60000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 60000, pcm});
+  Region keyed = r;
+  keyed.key_lo = keyed.key_hi = keyed.key_center = 62;
+  CHECK(w.add_region(inst.value(), keyed) == Error::kNone);
+  const auto bundle_bytes = w.finalize().take();
+  auto rd = BundleReader::open_memory(bundle_bytes);
+  CHECK(rd.ok() && rd.value().format_minor() == 7);
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  velora::core::SampleEngine::Config cfg;
+  cfg.max_voices = 4;
+  cfg.extended_voices = true;
+  cfg.second_filter_voices = true;
+  velora::core::SampleEngine eng(cfg);
+  eng.set_instrument(*loaded.instrument);
+  CHECK(eng.unplayable_regions() == 0);
+  eng.start_voice(0, 62, 0xFFFF);
+  CHECK(eng.active_voices() == 1 && eng.undeclared_second_filter_voices() == 0);
+}
+
 int main() {
+  test_filter_map_reaches_the_port();
   test_bend_and_triggers_reach_the_port();
   test_voice_groups_reach_the_port();
   test_cc_map_reaches_the_port();

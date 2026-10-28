@@ -1,0 +1,15 @@
+<control>
+default_path=samples/
+<curve>
+curve_index=7
+v000=0 v064=0.9 v127=1
+<curve>
+curve_index=8
+v000=0 v064=0.3 v127=1
+<global> sample=bright.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=300 cutoff_oncc74=3000
+<region> lokey=62 hikey=62 pitch_keycenter=62 cutoff=300 cutoff_cc75=2400 cutoff_curvecc75=7
+<region> lokey=64 hikey=64 pitch_keycenter=64 cutoff=2000 cutoff_oncc76=-2400 cutoff1_oncc77=1200
+<region> lokey=65 hikey=65 pitch_keycenter=65 cutoff=400 cutoff_oncc131=3000 cutoff_curvecc131=8
+<region> lokey=67 hikey=67 pitch_keycenter=67 cutoff=500 cutoff_oncc131=2400
+<region> lokey=69 hikey=69 pitch_keycenter=69 cutoff=400 cutoff_oncc78=2400 fil_veltrack=1200 fil_keytrack=100

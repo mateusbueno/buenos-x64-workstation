@@ -1,0 +1,12 @@
+<control>
+default_path=samples/
+<curve>
+curve_index=7
+v000=0 v064=0.9 v127=1
+<curve>
+curve_index=8
+v000=0 v064=0.3 v127=1
+<global> sample=bright.wav loop_mode=loop_continuous loop_start=2400 loop_end=7199 ampeg_release=0.05
+<region> lokey=60 hikey=60 pitch_keycenter=60 cutoff=900 resonance_oncc79=24
+<region> lokey=62 hikey=62 pitch_keycenter=62 fil_type=hpf_2p cutoff=700 resonance=6 resonance_cc80=12 resonance_curvecc80=7
+<region> lokey=64 hikey=64 pitch_keycenter=64 fil_type=bpf_2p cutoff=1500 resonance1_oncc81=20

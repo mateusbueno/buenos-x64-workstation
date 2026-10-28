@@ -791,6 +791,20 @@ void test_cost_declaration() {
     press(*e, 60); press(*e, 61); press(*e, 62); press(*e, 63);
   }
   CHECK(plain.undeclared_extended_voices() == 2 && ext.undeclared_extended_voices() == 0);
+  // Story 13.8: the second filter's worst case is a separate per-engine declaration; the default and the extended-only engine keep their figures.
+  CHECK(sample_voice_cost_units(I::kHermite3, true, true) == 5 + kSampleFilterCostUnits + kSampleCrossfadeCostUnits + kSampleFilter2CostUnits);
+  CHECK(sample_voice_cost_units(I::kHermite3, false, true) == 5 && sample_voice_cost_units(I::kHermite3, true, false) == sample_voice_cost_units(I::kHermite3, true));
+  SampleEngine::Config c2 = cfg(8, true);
+  c2.second_filter_voices = true;
+  SampleEngine two(c2), one(cfg(8, true));
+  CHECK(two.cost_units_per_voice() == sample_voice_cost_units(I::kHermite3, true, true) && one.cost_units_per_voice() == sample_voice_cost_units(I::kHermite3, true));
+  Instrument tw;
+  { auto& r = tw.sine(440.0, 60); r.filter_type = ports::SampleFilterType::kLpf2p; r.filter_cutoff_hz = 1000.0f; r.filter2_type = ports::SampleFilterType::kHpf2p; r.filter2_cutoff_hz = 100.0f; }
+  for (SampleEngine* e : {&two, &one}) {
+    e->set_instrument(tw);
+    press(*e, 60);
+  }
+  CHECK(two.undeclared_second_filter_voices() == 0 && one.undeclared_second_filter_voices() == 1 && plain.undeclared_second_filter_voices() == 0);
 }
 
 // --- through the block loop -----------------------------------------------------------------------------------------------------------
@@ -1164,6 +1178,421 @@ void test_pedal_up_does_not_free_a_held_switch_key() {
   CHECK(rig.sample.part_key_held(0, 36));
 }
 
+
+// --- Story 13.8: per-voice filter ---------------------------------------------------------------------------------------------------
+
+// The steady-state amplitude of a 100 Hz-multiple sine through the real voice, relative to the sample's 0.5 and the unity pan gain. `setup` edits the region, `pre` the engine
+// (controllers) before the note; `v16` is the note velocity.
+template <class Setup, class Pre>
+double voice_gain(double freq, int key, std::uint32_t v16, Setup setup, Pre pre) {
+  Instrument ins;
+  auto& r = ins.sine(freq, key);
+  setup(r);
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  CHECK(e.unplayable_regions() == 0);
+  pre(e);
+  e.start_voice(0, static_cast<std::uint32_t>(key), v16);
+  render(e, 9600 * 3);
+  const Out o = render(e, 9600);
+  double acc = 0;
+  for (float x : o.l) acc += static_cast<double>(x) * x;
+  // the velocity law (gain = velocity squared, vel7 as the engine derives it) is not part of the filter's response
+  const double vel7 = std::max(1.0, std::floor((static_cast<double>(v16) * 127.0 + 32767.0) / 65535.0));
+  return std::sqrt(2.0 * acc / static_cast<double>(o.l.size())) / unity() / 0.5 / ((vel7 / 127.0) * (vel7 / 127.0));
+}
+double lp_gain(double cutoff, double res, double f, ports::SampleFilterType t = ports::SampleFilterType::kLpf2p) {
+  return sample_filter_magnitude(make_sample_filter(t, cutoff, res, 48000.0), f, 48000.0);
+}
+void lpf(ports::SampleRegionDesc& r, double cutoff, double res = 0.0) {
+  r.filter_type = ports::SampleFilterType::kLpf2p;
+  r.filter_cutoff_hz = static_cast<float>(cutoff);
+  r.filter_resonance_db = static_cast<float>(res);
+}
+const auto none_pre = [](SampleEngine&) {};
+
+void test_filter_keytrack_and_veltrack() {
+  // fil_keytrack=100 (a cutoff that follows the key one octave per 12 keys) from fil_keycenter=60, all notes play their own sine at 1000 Hz.
+  for (int key : {72, 60, 48, 84}) {
+    const double want = lp_gain(1000.0 * std::pow(2.0, (key - 60) / 12.0), 0.0, 1000.0);
+    const double got = voice_gain(1000.0, key, kVel, [](auto& r) { lpf(r, 1000.0); r.filter_tune.keytrack = 100.0f; }, none_pre);
+    CHECK_NEAR(got, want, std::max(2e-4, 2e-3 * want));
+  }
+  // fil_keycenter moves the pivot; fil_keytrack of 50 cents per key
+  CHECK_NEAR(voice_gain(1000.0, 72, kVel, [](auto& r) { lpf(r, 1000.0); r.filter_tune.keytrack = 50.0f; r.filter_tune.keycenter = 72; }, none_pre), lp_gain(1000.0, 0.0, 1000.0), 2e-3);
+  CHECK_NEAR(voice_gain(1000.0, 72, kVel, [](auto& r) { lpf(r, 1000.0); r.filter_tune.keytrack = 50.0f; r.filter_tune.keycenter = 60; }, none_pre),
+             lp_gain(1000.0 * std::pow(2.0, 600.0 / 1200.0), 0.0, 1000.0), 2e-3);
+  // fil_veltrack=2400: velocity 127 opens two octaves, 0.5 opens one (v7 = 64 -> 2400 * 64 / 127)
+  CHECK_NEAR(voice_gain(1000.0, 60, 65535, [](auto& r) { lpf(r, 500.0); r.filter_tune.veltrack = 2400.0f; }, none_pre), lp_gain(2000.0, 0.0, 1000.0), 2e-3);
+  CHECK_NEAR(voice_gain(1000.0, 60, 32768, [](auto& r) { lpf(r, 500.0); r.filter_tune.veltrack = 2400.0f; }, none_pre),
+             lp_gain(500.0 * std::pow(2.0, 2400.0 * 64.0 / 127.0 / 1200.0), 0.0, 1000.0), 2e-3);
+  CHECK_NEAR(voice_gain(1000.0, 60, 1, [](auto& r) { lpf(r, 500.0); r.filter_tune.veltrack = 2400.0f; }, none_pre),
+             lp_gain(500.0 * std::pow(2.0, 2400.0 * 1.0 / 127.0 / 1200.0), 0.0, 1000.0), 2e-3);
+  // a negative veltrack closes the filter
+  CHECK_NEAR(voice_gain(1000.0, 60, 65535, [](auto& r) { lpf(r, 4000.0); r.filter_tune.veltrack = -2400.0f; }, none_pre), lp_gain(1000.0, 0.0, 1000.0), 2e-3);
+  // the 20 kHz clamp of the base: 18 kHz opened by 12000 cents is 20 kHz, not 36 MHz
+  CHECK_NEAR(voice_gain(1000.0, 60, 65535, [](auto& r) { lpf(r, 18000.0); r.filter_tune.veltrack = 12000.0f; }, none_pre), lp_gain(20000.0, 0.0, 1000.0), 2e-3);
+}
+
+void test_filter_cc_entries() {
+  using ports::SampleFilterMod;
+  auto cut = [](ports::SampleRegionDesc& r, std::uint8_t cc, float depth, std::uint8_t curve = 0) {
+    r.filter_tune.cutoff[r.filter_tune.cutoff_count++] = SampleFilterMod{cc, curve, depth};
+  };
+  // cutoff_oncc74=1200 on a 500 Hz filter: CC 0 leaves it, CC 127 opens one octave, CC 64 by 64/127 of an octave; the sine is at 1000 Hz
+  for (double ccv : {0.0, 64.0, 127.0}) {
+    const double want = lp_gain(500.0 * std::pow(2.0, 1200.0 * ccv / 127.0 / 1200.0), 0.0, 1000.0);
+    const double got = voice_gain(1000.0, 60, kVel, [&](auto& r) { lpf(r, 500.0); cut(r, 74, 1200.0f); }, [&](SampleEngine& e) { e.set_part_cc(0, 74, cc32(ccv)); });
+    CHECK_NEAR(got, want, std::max(2e-4, 2e-3 * want));
+  }
+  // fixed at voice start: the controller moving under a sounding voice changes nothing
+  {
+    Instrument ins;
+    lpf(ins.sine(1000.0, 60), 500.0);
+    ins.regions[0].filter_tune.cutoff[0] = {74, 0, 2400.0f};
+    ins.regions[0].filter_tune.cutoff_count = 1;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 74, cc32(0.0));
+    press(e, 60);
+    render(e, 9600 * 3);
+    const Out a = render(e, 9600);
+    e.set_part_cc(0, 74, cc32(127.0));
+    const Out b = render(e, 9600);
+    CHECK(a.l == b.l && a.r == b.r);
+    lift(e, 60);
+    settle(e);
+    press(e, 60);  // a new voice reads the new value
+    render(e, 9600 * 3);
+    const Out c = render(e, 9600);
+    CHECK(c.l != a.l);
+  }
+  // velocity as a controller (131), linear curve: 500 Hz opened by 2400 cents x (vel / 127)
+  {
+    const double want = lp_gain(500.0 * std::pow(2.0, 2400.0 * (64.0 / 127.0) / 1200.0), 0.0, 1000.0);
+    CHECK_NEAR(voice_gain(1000.0, 60, 32768, [&](auto& r) { lpf(r, 500.0); cut(r, 131, 2400.0f); }, none_pre), want, std::max(2e-4, 2e-3 * want));
+  }
+  // two entries add: CC 1 and CC 2 together
+  {
+    const double want = lp_gain(500.0 * std::pow(2.0, (600.0 * 0.5 - 300.0) / 1200.0), 0.0, 1000.0);
+    const double got = voice_gain(1000.0, 60, kVel, [&](auto& r) { lpf(r, 500.0); cut(r, 1, 600.0f); cut(r, 2, -600.0f); },
+                                  [&](SampleEngine& e) { e.set_part_cc(0, 1, cc32(63.5)); e.set_part_cc(0, 2, cc32(63.5)); });
+    CHECK_NEAR(got, want, std::max(2e-4, 2e-3 * want));
+  }
+  // the CC factor is applied to the clamped base: 18 kHz x veltrack (clamped to 20 kHz) then -2400 cents of CC 1 is 5 kHz, not 18 kHz * 2^(12000-2400)
+  {
+    const double want = lp_gain(20000.0 * 0.25, 0.0, 4000.0);
+    const double got = voice_gain(4000.0, 60, kVel, [&](auto& r) { lpf(r, 18000.0); r.filter_tune.veltrack = 12000.0f; cut(r, 1, -2400.0f); },
+                                  [&](SampleEngine& e) { e.set_part_cc(0, 1, cc32(127.0)); });
+    CHECK_NEAR(got, want, std::max(2e-4, 2e-3 * want));
+  }
+  // resonance_oncc1=12 dB: Q at the cutoff is 10^(12/20)
+  {
+    for (double ccv : {0.0, 127.0}) {
+      const double want = lp_gain(1000.0, 12.0 * ccv / 127.0, 1000.0);
+      const double got = voice_gain(1000.0, 60, kVel, [&](auto& r) { lpf(r, 1000.0); r.filter_tune.res[r.filter_tune.res_count++] = SampleFilterMod{1, 0, 12.0f}; },
+                                    [&](SampleEngine& e) { e.set_part_cc(0, 1, cc32(ccv)); });
+      CHECK_NEAR(got, want, std::max(2e-4, 2e-3 * want));
+    }
+  }
+}
+
+// Filter entries on the pseudo-CCs 136 (bipolar random), 137 (alternate), 140 and 141 (key delta). Three regions of one sine (keys 60, 67, 55) with the same
+// entry on a 500 Hz low-pass, played in that order: the alternate is 0, 1, 0; the key delta (note minus the previous note on) 0, +7, -12 semitones, raw (no curve).
+void test_filter_pseudo_cc_entries() {
+  struct Case { std::uint8_t cc; double depth; double x[3]; };
+  const Case cases[] = {{137, 1200.0, {0.0, 1.0, 0.0}}, {140, 100.0, {0.0, 7.0, -12.0}}, {141, 100.0, {0.0, 7.0, 12.0}}};
+  for (const Case& c : cases) {
+    Instrument ins;
+    for (int key : {60, 67, 55}) {
+      auto& r = ins.sine(1000.0, key);
+      lpf(r, 500.0);
+      r.filter_tune.cutoff[0] = {c.cc, 0, static_cast<float>(c.depth)};
+      r.filter_tune.cutoff_count = 1;
+    }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    const int keys[3] = {60, 67, 55};
+    for (int n = 0; n < 3; ++n) {
+      press(e, keys[n]);
+      render(e, 9600 * 3);
+      const Out o = render(e, 9600);
+      double acc = 0;
+      for (float v : o.l) acc += static_cast<double>(v) * v;
+      const double got = std::sqrt(2.0 * acc / static_cast<double>(o.l.size())) / unity() / 0.5 / (1.0);
+      const double want = lp_gain(500.0 * std::pow(2.0, c.depth * c.x[n] / 1200.0), 0.0, 1000.0);
+      CHECK_NEAR(got, want, std::max(3e-4, 3e-3 * want));
+      lift(e, keys[n]);
+      settle(e);
+    }
+  }
+  // 136: a uniform draw in [-1, 1) through the linear curve (a negative value clamps to 0): the cutoff is one of 500 * 2^(1200 * max(0, u) / 1200) Hz; find that u
+  {
+    Instrument ins;
+    auto& r = ins.sine(1000.0, 60);
+    lpf(r, 500.0);
+    r.filter_tune.cutoff[0] = {136, 0, 1200.0f};
+    r.filter_tune.cutoff_count = 1;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    render(e, 9600 * 3);
+    const Out o = render(e, 9600);
+    double acc = 0;
+    for (float v : o.l) acc += static_cast<double>(v) * v;
+    const double got = std::sqrt(2.0 * acc / static_cast<double>(o.l.size())) / unity() / 0.5;
+    double best = 1e9;
+    for (int i = 0; i <= 1000; ++i) best = std::min(best, std::fabs(got - lp_gain(500.0 * std::pow(2.0, i / 1000.0), 0.0, 1000.0)));
+    CHECK(best < 3e-3);
+  }
+}
+
+void test_filter_second_filter() {
+  using T = ports::SampleFilterType;
+  // lpf_2p at 2000 then hpf_2p at 500, in series: the response is the product
+  for (double f : {200.0, 500.0, 1000.0, 2000.0, 4000.0}) {
+    const double want = lp_gain(2000.0, 0.0, f) * lp_gain(500.0, 3.0, f, T::kHpf2p);
+    const double got = voice_gain(f, 60, kVel, [](auto& r) {
+      lpf(r, 2000.0);
+      r.filter2_type = T::kHpf2p; r.filter2_cutoff_hz = 500.0f; r.filter2_resonance_db = 3.0f;
+    }, none_pre);
+    CHECK_NEAR(got, want, std::max(3e-4, 3e-3 * want));
+  }
+  // the second filter has its own tuning: key track on the second one only
+  {
+    const double want = lp_gain(8000.0, 0.0, 1000.0) * lp_gain(250.0 * 2.0, 0.0, 1000.0, T::kHpf2p);
+    const double got = voice_gain(1000.0, 72, kVel, [](auto& r) {
+      lpf(r, 8000.0);
+      r.filter2_type = T::kHpf2p; r.filter2_cutoff_hz = 250.0f; r.filter2_tune.keytrack = 100.0f;
+    }, none_pre);
+    CHECK_NEAR(got, want, std::max(3e-4, 3e-3 * want));
+  }
+  // and a cutoff entry on the second
+  {
+    const double want = lp_gain(8000.0, 0.0, 1000.0) * lp_gain(250.0 * 2.0, 0.0, 1000.0, T::kHpf2p);
+    const double got = voice_gain(1000.0, 60, kVel, [](auto& r) {
+      lpf(r, 8000.0);
+      r.filter2_type = T::kHpf2p; r.filter2_cutoff_hz = 250.0f;
+      r.filter2_tune.cutoff[0] = {1, 0, 1200.0f}; r.filter2_tune.cutoff_count = 1;
+    }, [](SampleEngine& e) { e.set_part_cc(0, 1, cc32(127.0)); });
+    CHECK_NEAR(got, want, std::max(3e-4, 3e-3 * want));
+  }
+  // a stereo sample is filtered per channel through both
+  {
+    Instrument st;
+    std::vector<float> l(9600), r(9600);
+    for (std::size_t i = 0; i < l.size(); ++i) {
+      l[i] = 0.5f * static_cast<float>(std::sin(2.0 * kPi * 500.0 * static_cast<double>(i) / 48000.0));
+      r[i] = 0.5f * static_cast<float>(std::sin(2.0 * kPi * 4000.0 * static_cast<double>(i) / 48000.0));
+    }
+    ports::SampleRegionDesc d;
+    d.sample_index = st.sample(l, r);
+    d.key_lo = d.key_hi = d.key_center = 60;
+    d.loop_mode = ports::SampleLoopMode::kLoopContinuous;
+    lpf(d, 1000.0);
+    d.filter2_type = T::kLpf1p; d.filter2_cutoff_hz = 3000.0f;
+    st.regions.push_back(d);
+    SampleEngine e(cfg());
+    e.set_instrument(st);
+    press(e, 60);
+    render(e, 9600 * 2);
+    const Out o = render(e, 9600);
+    auto amp = [](const std::vector<float>& x) {
+      double acc = 0;
+      for (float v : x) acc += static_cast<double>(v) * v;
+      return std::sqrt(2.0 * acc / static_cast<double>(x.size()));
+    };
+    const double stereo_comp = std::cos(2047.0 * kPi / 2.0 / 4094.0) * std::cos(2047.0 * kPi / 2.0 / 4094.0) * 1.9952623149688797;
+    CHECK_NEAR(amp(o.l) / stereo_comp / 0.5, lp_gain(1000.0, 0.0, 500.0) * lp_gain(3000.0, 0.0, 500.0, T::kLpf1p), 2e-3);
+    CHECK_NEAR(amp(o.r) / stereo_comp / 0.5, lp_gain(1000.0, 0.0, 4000.0) * lp_gain(3000.0, 0.0, 4000.0, T::kLpf1p), 2e-3);
+  }
+}
+
+void test_filter_bit_identity_without_new_fields() {
+  // A tuned region whose tuning evaluates to nothing (key track on the key centre) computes the very coefficients the region would have prepared: the same bits.
+  auto render_key = [](bool tuned) {
+    Instrument ins;
+    auto& r = ins.sine(700.0, 60);
+    lpf(r, 900.0, 4.0);
+    if (tuned) { r.filter_tune.keytrack = 100.0f; r.filter_tune.keycenter = 60; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    return render(e, 9600);
+  };
+  const Out a = render_key(false), b = render_key(true);
+  CHECK(a.l == b.l && a.r == b.r);
+  // a second filter on one region does not touch the output of another
+  auto render_two = [](bool second) {
+    Instrument ins;
+    lpf(ins.sine(700.0, 60), 900.0, 4.0);
+    auto& r = ins.sine(300.0, 62);
+    lpf(r, 2000.0);
+    if (second) { r.filter2_type = ports::SampleFilterType::kHpf2p; r.filter2_cutoff_hz = 100.0f; }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    press(e, 60);
+    return render(e, 9600);
+  };
+  const Out c = render_two(false), d = render_two(true);
+  CHECK(c.l == d.l && c.r == d.r);
+  // a key centre without a key track is no tuning: same bits, and the region is playable
+  auto render_centre = [](bool centre) {
+    Instrument ins;
+    auto& r = ins.sine(700.0, 60);
+    lpf(r, 900.0, 4.0);
+    if (centre) r.filter_tune.keycenter = 72;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    press(e, 60);
+    return render(e, 9600);
+  };
+  const Out g = render_centre(false), h = render_centre(true);
+  CHECK(g.l == h.l && g.r == h.r);
+}
+
+void test_filter_per_voice_state_and_polyphony() {
+  // two notes of one region with a key-tracked cutoff each use their own coefficients (a chord: the mix is the sum of the two single notes)
+  auto one = [](std::vector<int> keys) {
+    Instrument ins;
+    auto& r = ins.dc(0.5, 0, 127);
+    r.key_center = 60;
+    lpf(r, 1000.0, 6.0);
+    r.filter_tune.keytrack = 100.0f;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    for (int k : keys) press(e, k);
+    return render(e, 2000);
+  };
+  const Out a = one({48}), b = one({72}), ab = one({48, 72});
+  double worst = 0;
+  for (std::size_t i = 0; i < ab.l.size(); ++i) worst = std::max(worst, static_cast<double>(std::fabs(ab.l[i] - a.l[i] - b.l[i])));
+  CHECK(worst < 1e-5);
+  CHECK(a.l != b.l);
+}
+
+void test_filter_extremes_nan_and_subnormal() {
+  using T = ports::SampleFilterType;
+  // the per-voice parameters at their extremes never produce a non-finite coefficient or output
+  struct P { double cut, res; };
+  const P extremes[] = {{1.0, -60.0}, {1.0, 60.0}, {20000.0, 60.0}, {20000.0, -60.0}, {0.0, 0.0}, {1e30, 1e30}, {-5.0, -1e9}, {std::nan(""), std::nan("")},
+                        {std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()}, {1e-310, 1e-310}};
+  for (T t : {T::kLpf1p, T::kLpf2p, T::kHpf1p, T::kHpf2p, T::kBpf2p})
+    for (const P& p : extremes) {
+      const auto k = make_sample_filter(t, p.cut, p.res, 48000.0);
+      CHECK(k.kind != SampleFilterCoeffs::Kind::kNone);
+      CHECK(std::isfinite(k.b0) && std::isfinite(k.b1) && std::isfinite(k.b2) && std::isfinite(k.a1) && std::isfinite(k.a2) && std::isfinite(k.p) && std::isfinite(k.g));
+      SampleFilterState st;
+      std::uint32_t seed = 99;
+      double peak = 0.0;
+      for (int i = 0; i < 100000; ++i) {
+        seed = seed * 1664525u + 1013904223u;
+        double x = static_cast<double>(seed >> 8) / 8388608.0 - 1.0;
+        if (i % 1000 == 7) x = std::numeric_limits<double>::quiet_NaN();              // NaN input
+        else if (i % 1000 == 11) x = std::numeric_limits<double>::infinity();           // infinity
+        else if (i % 1000 == 13) x = -std::numeric_limits<double>::infinity();
+        else if (i % 1000 == 17) x = 1e300;                                             // a magnitude no audio has
+        else if (i % 1000 >= 100 && i % 1000 < 140) x = 1e-310 * (seed & 0xff);         // subnormal stream
+        const double y = sample_filter_tick(k, st, x);
+        CHECK(std::isfinite(y));
+        peak = std::max(peak, std::fabs(y));
+      }
+      CHECK(peak < 1.0e6);
+      CHECK(std::isfinite(st.x1) && std::isfinite(st.x2) && std::isfinite(st.y1) && std::isfinite(st.y2) && std::isfinite(st.w1));
+    }
+  // a state that is fed only subnormals flushes to exact zero
+  for (T t : {T::kLpf1p, T::kLpf2p, T::kHpf1p, T::kHpf2p, T::kBpf2p}) {
+    const auto k = make_sample_filter(t, 1000.0, 6.0, 48000.0);
+    SampleFilterState st;
+    for (int i = 0; i < 1000; ++i) sample_filter_tick(k, st, (i & 1) ? 1e-310 : -1e-310);
+    CHECK(std::fpclassify(st.y1) != FP_SUBNORMAL && std::fpclassify(st.y2) != FP_SUBNORMAL && std::fpclassify(st.x1) != FP_SUBNORMAL && std::fpclassify(st.w1) != FP_SUBNORMAL);
+  }
+  // through the real voice: a sample full of NaN, infinity and subnormals, extreme tuning (every entry at the largest depth), both filters: the output stays finite
+  {
+    Instrument ins;
+    std::vector<float> x(9600);
+    for (std::size_t i = 0; i < x.size(); ++i) {
+      x[i] = 0.5f * static_cast<float>(std::sin(0.05 * static_cast<double>(i)));
+      if (i % 500 == 3) x[i] = std::numeric_limits<float>::quiet_NaN();
+      if (i % 500 == 5) x[i] = std::numeric_limits<float>::infinity();
+      if (i % 500 >= 100 && i % 500 < 120) x[i] = 1e-40f;  // subnormal float
+    }
+    ports::SampleRegionDesc d;
+    d.sample_index = ins.sample(std::move(x));
+    d.key_lo = d.key_hi = d.key_center = 60;
+    d.loop_mode = ports::SampleLoopMode::kLoopContinuous;
+    lpf(d, 20000.0, 40.0);
+    d.filter_tune.keytrack = 1200.0f; d.filter_tune.keycenter = 0; d.filter_tune.veltrack = 12000.0f;
+    d.filter_tune.cutoff[0] = {1, 0, 12000.0f}; d.filter_tune.cutoff[1] = {2, 0, 12000.0f}; d.filter_tune.cutoff[2] = {3, 0, 12000.0f}; d.filter_tune.cutoff[3] = {4, 0, 12000.0f};
+    d.filter_tune.cutoff_count = 4;
+    d.filter_tune.res[0] = {1, 0, 96.0f}; d.filter_tune.res[1] = {2, 0, 96.0f}; d.filter_tune.res_count = 2;
+    d.filter2_type = T::kBpf2p; d.filter2_cutoff_hz = 1.0f; d.filter2_resonance_db = 40.0f;
+    d.filter2_tune.cutoff[0] = {1, 0, -12000.0f}; d.filter2_tune.cutoff_count = 1;
+    ins.regions.push_back(d);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 0);
+    for (unsigned cc : {1u, 2u, 3u, 4u}) e.set_part_cc(0, cc, cc32(127.0));
+    press(e, 60);
+    bool finite = true;
+    for (int i = 0; i < 20; ++i) {
+      const Out o = render(e, 9600);
+      for (std::size_t j = 0; j < o.l.size(); ++j) finite = finite && std::isfinite(o.l[j]) && std::isfinite(o.r[j]);
+    }
+    CHECK(finite);
+  }
+}
+
+void test_filter_invalid_fields_are_unplayable() {
+  using T = ports::SampleFilterType;
+  Instrument ins;
+  auto ok = [&](int key) -> ports::SampleRegionDesc& { auto& r = ins.dc(0.5, key, key); lpf(r, 1000.0); return r; };
+  ok(60).filter_tune.keytrack = 100.0f;                                                                // fine
+  ok(61).filter_tune.keytrack = 1201.0f;                                                               // keytrack out of range
+  ok(62).filter_tune.veltrack = std::numeric_limits<float>::quiet_NaN();                               // NaN
+  ok(63).filter_tune.keycenter = 128;                                                                  // not a note
+  ok(64).filter_tune.cutoff_count = 5;                                                                 // more entries than the bound
+  { auto& r = ok(65); r.filter_tune.cutoff[0] = {132, 0, 1.0f}; r.filter_tune.cutoff_count = 1; }     // not a source
+  { auto& r = ok(66); r.filter_tune.cutoff[0] = {1, 0, 13000.0f}; r.filter_tune.cutoff_count = 1; }   // depth out of range
+  { auto& r = ok(67); r.filter_tune.res[0] = {1, 0, -1.0f}; r.filter_tune.res_count = 1; }            // negative resonance depth
+  { auto& r = ins.dc(0.5, 68, 68); r.filter_tune.veltrack = 100.0f; }                                  // a tuning without a first filter
+  { auto& r = ins.dc(0.5, 69, 69); r.filter2_type = T::kLpf2p; r.filter2_cutoff_hz = 100.0f; }       // a second filter without a first
+  ok(70).filter2_type = static_cast<T>(77);                                                            // unknown type
+  { auto& r = ok(71); r.filter2_type = T::kLpf2p; r.filter2_cutoff_hz = std::numeric_limits<float>::infinity(); }
+  { auto& r = ok(72); r.filter2_tune.keytrack = 10.0f; }                                               // a tuning of an absent second filter
+  { auto& r = ok(73); r.filter2_type = T::kHpf1p; r.filter2_cutoff_hz = 100.0f; r.filter2_tune.keytrack = 10.0f; }  // fine
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  CHECK(e.unplayable_regions() == 12);
+  // the unplayable ones are never started
+  for (int k = 60; k <= 73; ++k) {
+    press(e, k);
+    render(e, 64);
+    lift(e, k);
+  }
+  CHECK(e.skipped_unplayable_starts() == 12);
+}
+
+void test_filter_deterministic_with_random_pseudo_cc() {
+  // a cutoff entry on the random pseudo-CC 135: deterministic for a seed, different between seeds
+  auto run = [](float seed) {
+    Instrument ins;
+    auto& r = ins.sine(1000.0, 60);
+    lpf(r, 500.0);
+    r.filter_tune.cutoff[0] = {135, 0, 2400.0f};
+    r.filter_tune.cutoff_count = 1;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_param(SampleEngine::kParamSeed, seed);
+    press(e, 60);
+    return render(e, 2000);
+  };
+  const Out a = run(5.0f), b = run(5.0f), c = run(6.0f);
+  CHECK(a.l == b.l);
+  CHECK(a.l != c.l);
+}
+
 }  // namespace
 
 int main() {
@@ -1193,6 +1622,15 @@ int main() {
   test_mapped_cc_is_a_raw_controller_only_when_midi();
   test_replay_without_epoch_and_stale_clear();
   test_pedal_up_does_not_free_a_held_switch_key();
+  test_filter_keytrack_and_veltrack();
+  test_filter_cc_entries();
+  test_filter_pseudo_cc_entries();
+  test_filter_second_filter();
+  test_filter_bit_identity_without_new_fields();
+  test_filter_per_voice_state_and_polyphony();
+  test_filter_extremes_nan_and_subnormal();
+  test_filter_invalid_fields_are_unplayable();
+  test_filter_deterministic_with_random_pseudo_cc();
   if (g_fail) {
     std::printf("sample_features_test: %d failure(s)\n", g_fail);
     return 1;

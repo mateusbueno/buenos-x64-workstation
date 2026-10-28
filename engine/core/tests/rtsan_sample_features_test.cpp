@@ -125,6 +125,24 @@ std::shared_ptr<Instrument> make_instrument(std::uint32_t k) {
     range.cc_trigger_count = 2; range.cc_triggers[0] = {20, 30.0f, 100.0f}; range.cc_triggers[1] = {21, 0.0f, 127.0f};
     range.cc_gate_count = 1; range.cc_gates[0] = {74, 0.0f, 100.0f}; range.volume_db = -9.0f;
   }
+  {  // Story 13.8: per-voice filters. Key track, velocity track, CC entries on cutoff and resonance (controllers 1, 11, 74, 131 velocity, 135 random, 140 key delta), a
+     // second filter with its own tuning, near the clamps, on mono and stereo samples: the coefficients are computed in the nonblocking scope at every voice start.
+    auto& a = t->region(mono, 20, 100);
+    a.filter_type = ports::SampleFilterType::kLpf2p; a.filter_cutoff_hz = 800.0f; a.filter_resonance_db = 6.0f; a.volume_db = -12.0f;
+    a.filter_tune.keytrack = 100.0f; a.filter_tune.veltrack = 2400.0f;
+    a.filter_tune.cutoff[0] = {1, 0, 1200.0f}; a.filter_tune.cutoff[1] = {74, 0, -2400.0f}; a.filter_tune.cutoff[2] = {131, 0, 1200.0f}; a.filter_tune.cutoff[3] = {140, 0, 100.0f};
+    a.filter_tune.cutoff_count = 4;
+    a.filter_tune.res[0] = {11, 0, 24.0f}; a.filter_tune.res[1] = {135, 0, 12.0f}; a.filter_tune.res_count = 2;
+    auto& b2 = t->region(stereo, 30, 110);
+    b2.filter_type = ports::SampleFilterType::kHpf2p; b2.filter_cutoff_hz = 200.0f; b2.volume_db = -12.0f;
+    b2.filter_tune.keytrack = 1200.0f; b2.filter_tune.keycenter = 0; b2.filter_tune.veltrack = 12000.0f;
+    b2.filter2_type = ports::SampleFilterType::kLpf2p; b2.filter2_cutoff_hz = 18000.0f; b2.filter2_resonance_db = 40.0f;
+    b2.filter2_tune.veltrack = -1200.0f; b2.filter2_tune.cutoff[0] = {1, 0, -12000.0f}; b2.filter2_tune.cutoff_count = 1;
+    auto& c2 = t->region(mono, 0, 127);
+    c2.filter_type = ports::SampleFilterType::kLpf1p; c2.filter_cutoff_hz = 1.0f; c2.volume_db = -12.0f;
+    c2.filter_tune.cutoff[0] = {74, 0, 12000.0f}; c2.filter_tune.cutoff_count = 1;
+    c2.filter2_type = ports::SampleFilterType::kBpf2p; c2.filter2_cutoff_hz = 20000.0f; c2.filter2_resonance_db = 40.0f;
+  }
   return t;
 }
 
@@ -249,6 +267,7 @@ bool run_once(bool live, std::uint64_t& hash_out) {
   SampleEngine::Config sc;
   sc.max_voices = 96;
   sc.extended_voices = true;
+  sc.second_filter_voices = true;
   SampleEngine sample(sc);
   if (!br->bind_engine(sample)) {
     std::printf("FAIL: cannot bind the sample engine\n");
@@ -322,6 +341,7 @@ bool run_once(bool live, std::uint64_t& hash_out) {
   need(pl.switches > 500 && pl.ccs > 10000, "traffic too light");
   need(distinct >= 3, "the keyswitch of part 0 did not move through at least 3 keys");
   need(sample.undeclared_extended_voices() == 0, "extended voices on an engine that declared them");
+  need(sample.undeclared_second_filter_voices() == 0, "second-filter voices on an engine that declared them");
   need(br->ignored_events() < 500, "controllers or the wheel are being ignored");  // only the ones no engine reads (a part with another engine)
   if (live) need(ctl->published > 1000 && ctl->epoch >= 50, "too few generations / seamless switches");
   if (live) std::printf("  generations %llu, seamless switches %llu\n", (unsigned long long)ctl->published, (unsigned long long)ctl->epoch);

@@ -65,6 +65,10 @@ struct SampleBankRegion {
   bool has_xfade = false;
   bool filtered = false;
   SampleFilterCoeffs filter;
+  // Story 13.8: a tuned first filter (key track, velocity track, CC entries) or a second filter. A voice of the region copies the coefficients above (and `filter2`)
+  // when no tuning exists (the Story 5.2 numbers, bit for bit) and computes its own at start otherwise. filter2_on: the second filter exists.
+  bool filter_dyn = false, filter2_on = false, filter2_dyn = false;
+  SampleFilterCoeffs filter2;
   // Story 6.5: the damage map of the region's sample (SamplePcm::damaged_blocks), nullptr for every unprotected sample. Read only, with relaxed loads;
   // set by non-real-time threads that found a block of a protected library damaged.
   const std::atomic<std::uint8_t>* damage = nullptr;

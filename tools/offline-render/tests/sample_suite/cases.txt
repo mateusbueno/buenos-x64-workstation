@@ -41,3 +41,9 @@ pitch_bend        hermite  2  -60
 pitch_bend_fine   hermite  2  -60
 pitch_bend_smooth hermite  2  -60
 cc_trigger        hermite  2  -60
+# Story 13.8: the per-voice filter (fil_keytrack/fil_keycenter, fil_veltrack, cutoff_oncc/cutoff_cc/cutoff_curvecc incl. velocity as CC 131, resonance_oncc/resonance_cc, the second filter).
+fil_keytrack      hermite  2  -60
+fil_veltrack      hermite  2  -60
+cutoff_oncc       hermite  2  -60
+resonance_oncc    hermite  2  -60
+filter2           hermite  2  -60

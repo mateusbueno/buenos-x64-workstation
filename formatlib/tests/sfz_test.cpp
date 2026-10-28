@@ -226,8 +226,8 @@ int main() {
     CHECK(has(parse("<region> sample=a.wav fil_type=lpf_4p cutoff=100\n"), SfzIssueKind::kUnsupportedValue, "'lpf_4p'"));
     CHECK(has(parse("<region> sample=a.wav cutoff=-5\n"), SfzIssueKind::kInvalidValue, "'-5'"));
     CHECK(has(parse("<region> sample=a.wav cutoff=100 resonance=99\n"), SfzIssueKind::kInvalidValue, "'99'"));
-    CHECK(has(parse("<region> sample=a.wav cutoff_oncc1=100\n"), SfzIssueKind::kUnsupportedOpcode, "'cutoff_oncc1'"));
-    CHECK(has(parse("<region> sample=a.wav fil_veltrack=100\n"), SfzIssueKind::kUnsupportedOpcode, "'fil_veltrack'"));
+    CHECK(has(parse("<region> sample=a.wav cutoff_stepcc1=100\n"), SfzIssueKind::kUnsupportedOpcode, "'cutoff_stepcc1'"));
+    CHECK(has(parse("<region> sample=a.wav fil_random=100\n"), SfzIssueKind::kUnsupportedOpcode, "'fil_random'"));
   }
   {  // sound-affecting opcodes that have no effect are reported as warnings, once per opcode line
     auto r = parse("<group>\nfil_type=lpf_1p\n<region> sample=a.wav key=1 resonance=3\n<region> sample=a.wav key=2\n"
@@ -383,7 +383,7 @@ int main() {
       auto oc = parse(R + "offset_oncc1=100 offset_curvecc1=3\n");
       CHECK(oc.ok() && oc.regions[0].cc.mods[0].curve == 0 && oc.warnings.size() == 1 && oc.warnings[0].opcode == "offset_curvecc1");
       // not implemented: still named
-      for (const char* op : {"pan_stepcc1=1", "tune_smoothcc1=1", "cutoff_oncc131=1", "width_oncc1=1", "amp_veltrack_oncc7=5", "delay_oncc1=1", "end_oncc1=1"}) {
+      for (const char* op : {"pan_stepcc1=1", "tune_smoothcc1=1", "cutoff_stepcc131=1", "width_oncc1=1", "amp_veltrack_oncc7=5", "delay_oncc1=1", "end_oncc1=1"}) {
         auto b = parse(R + op + "\n");
         bool named = false;
         for (const auto& i : b.issues) named = named || (i.kind == SfzIssueKind::kUnsupportedOpcode && i.opcode == std::string(op).substr(0, std::string(op).find('=')));
@@ -755,10 +755,102 @@ int main() {
       CHECK(r.ok() && drop_never_note_triggered(r) == 1);
     }
   }
+  {  // Story 13.8: per-voice filter tuning, CC entries on cutoff and resonance, a second filter
+    const std::string R = "<region> sample=a.wav key=60 ";
+    {  // no new opcode: the region is exactly what it was
+      auto r = parse(R + "cutoff=1000 resonance=3\n");
+      CHECK(r.ok() && r.regions[0].fmap == FilterMap{} && !has_filter_extension(r.regions[0]) && r.regions[0].filter == (Filter{FilterType::kLpf2p, 1000.f, 3.f}));
+    }
+    {  // key track, key centre (note name), velocity track, aliases
+      auto r = parse(R + "cutoff=1000 fil_keytrack=100 fil_keycenter=a3 fil_veltrack=2400\n<region> sample=a.wav key=61 cutoff1=500 filtype=hpf_2p fil1_keytrack=10 fil1_keycenter=40 fil1_veltrack=-100 resonance1=2\n");
+      CHECK(r.ok() && r.regions.size() == 2);
+      if (r.regions.size() == 2) {
+        const FilterTune& a = r.regions[0].fmap.f1;
+        CHECK(a.keytrack == 100.f && a.keycenter == 57 && a.veltrack == 2400.f && a.cutoff_count == 0 && a.res_count == 0 && r.regions[0].fmap.f2.type == FilterType::kNone);
+        const FilterTune& b = r.regions[1].fmap.f1;
+        CHECK(b.keytrack == 10.f && b.keycenter == 40 && b.veltrack == -100.f && r.regions[1].filter == (Filter{FilterType::kHpf2p, 500.f, 2.f}));
+        CHECK(has_filter_extension(r.regions[0]) && validate_region(r.regions[0], 1000) == Error::kNone && validate_region(r.regions[1], 1000) == Error::kNone);
+      }
+      auto g = parse("<group>\ncutoff=800 fil_veltrack=1200\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61 fil_veltrack=0\n");
+      CHECK(g.ok() && g.regions[0].fmap.f1.veltrack == 1200.f && g.regions[1].fmap.f1.veltrack == 0.f && !has_filter_extension(g.regions[1]));
+    }
+    {  // CC entries: cents on the cutoff, dB on the resonance; _oncc, _cc and the numbered spellings, a curve, a pseudo-CC, several controllers
+      auto r = parse("<curve>\ncurve_index=7\nv000=0 v064=0.9 v127=1\n<region> sample=a.wav key=60 cutoff=500 cutoff_oncc131=2400 cutoff_curvecc131=7 cutoff_cc74=-1200 cutoff1_oncc1=100\n"
+                     "resonance=1 resonance_cc1=6 resonance1_oncc2=3 resonance_curvecc2=7\n");
+      CHECK(r.ok() && r.regions.size() == 1);
+      if (r.regions.size() == 1) {
+        const FilterTune& t = r.regions[0].fmap.f1;
+        CHECK(t.cutoff_count == 3 && t.cutoff[0].cc == 1 && t.cutoff[0].depth == 100.f && t.cutoff[1].cc == 74 && t.cutoff[1].depth == -1200.f &&
+              t.cutoff[2].cc == 131 && t.cutoff[2].curve == 7 && t.cutoff[2].depth == 2400.f);
+        CHECK(t.res_count == 2 && t.res[0].cc == 1 && t.res[0].depth == 6.f && t.res[0].curve == 0 && t.res[1].cc == 2 && t.res[1].curve == 7 && t.res[1].depth == 3.f);
+        CHECK(r.regions[0].cc.mod_count == 0);                                       // the filter entries are not in the Story 13.5 table
+        CHECK(r.cc_setup.curves.size() == 1 && r.cc_setup.curves[0].index == 7);      // the curve a filter entry names is kept
+        CHECK(validate_region(r.regions[0], 1000) == Error::kNone);
+      }
+      auto d = parse("<control>\nset_cc1=90 set_cc2=50\n<region> sample=a.wav key=60 cutoff=500 resonance_oncc1=12\n");
+      CHECK(d.ok() && d.cc_setup.defaults.size() == 1 && d.cc_setup.defaults[0].cc == 1);  // set_cc1 seeds a controller a filter entry reads; set_cc2 is dropped
+      // a curve alone is no connection; a zero depth adds nothing
+      auto z = parse(R + "cutoff=500 cutoff_curvecc1=7 cutoff_oncc2=0 resonance_oncc3=0\n");
+      CHECK(z.ok() && z.regions[0].fmap == FilterMap{});
+    }
+    {  // value rules: clamped and logged
+      auto c = parse(R + "cutoff=500 cutoff_oncc1=99999 resonance_oncc2=200 resonance_oncc3=-5 fil_keytrack=5000 fil_veltrack=-99999\n");
+      CHECK(c.ok() && c.ignored_values.size() == 5);
+      if (c.ok()) {
+        const FilterTune& t = c.regions[0].fmap.f1;
+        CHECK(t.cutoff[0].depth == 12000.f && t.res_count == 1 && t.res[0].cc == 2 && t.res[0].depth == 96.f);  // resonance_oncc3=-5 -> 0 (dropped as neutral)
+        CHECK(t.keytrack == 1200.f && t.veltrack == -12000.f);
+      }
+      CHECK(has(parse(R + "cutoff=500 cutoff_oncc1=abc\n"), SfzIssueKind::kInvalidValue, "cutoff_oncc1"));
+      CHECK(has(parse(R + "cutoff=500 fil_keycenter=zz\n"), SfzIssueKind::kInvalidValue, "fil_keycenter"));
+      CHECK(has(parse(R + "cutoff=500 cutoff_oncc064=1\n"), SfzIssueKind::kInvalidValue, "non-canonical"));
+      CHECK(has(parse(R + "cutoff=500 cutoff_oncc132=1\n"), SfzIssueKind::kUnsupportedValue, "cutoff_oncc132"));
+      CHECK(has(parse(R + "cutoff=500 cutoff_oncc1=1 cutoff_oncc2=1 cutoff_oncc3=1 cutoff_oncc4=1 cutoff_oncc5=1\n"), SfzIssueKind::kUnsupportedValue, "cutoff_oncc<N>"));
+      CHECK(has(parse(R + "cutoff=500 resonance_oncc1=1 resonance_oncc2=1 resonance_oncc3=1 resonance_oncc4=1 resonance_oncc5=1\n"), SfzIssueKind::kUnsupportedValue, "resonance_oncc<N>"));
+      auto neg = parse(R + "cutoff=500 cutoff_oncc1=-0 fil_veltrack=-0 fil_keytrack=-0 resonance_oncc2=-0\n");
+      CHECK(neg.ok() && validate_region(neg.regions[0], 1000) == Error::kNone && !has_filter_extension(neg.regions[0]));
+      auto neg2 = parse(R + "cutoff=-0 resonance=-0 cutoff2=-0 resonance2=-0 fil2_veltrack=-0 fil2_keytrack=-0 cutoff2_oncc1=-0\n");
+      CHECK(neg2.ok() && validate_region(neg2.regions[0], 1000) == Error::kNone && !std::signbit(neg2.regions[0].filter.cutoff_hz) && !std::signbit(neg2.regions[0].fmap.f2.cutoff_hz) &&
+            !std::signbit(neg2.regions[0].fmap.f2.resonance_db));
+      // a key centre without a key track means nothing: the region stays untuned (no table record, no minor 7)
+      auto kc = parse(R + "cutoff=500 fil_keycenter=72 fil2_keycenter=30\n<region> sample=a.wav key=61 cutoff=500 cutoff_curvecc1=7 fil_keycenter=72\n");
+      CHECK(kc.ok() && kc.regions.size() == 2 && kc.regions[0].fmap == FilterMap{} && kc.regions[1].fmap == FilterMap{} && !has_filter_extension(kc.regions[0]) && !has_filter_extension(kc.regions[1]));
+      auto kt = parse(R + "cutoff=500 fil_keytrack=10 fil_keycenter=72\n");
+      CHECK(kt.ok() && kt.regions[0].fmap.f1.keycenter == 72 && has_filter_extension(kt.regions[0]));
+    }
+    {  // second filter
+      auto r = parse(R + "cutoff=2000 cutoff2=500 fil2_type=hpf_2p resonance2=3 fil2_keytrack=50 fil2_keycenter=48 fil2_veltrack=600 cutoff2_oncc1=600 cutoff2_curvecc1=3 resonance2_cc2=4\n"
+                         "<region> sample=a.wav key=61 cutoff=900 cutoff2=300\n");
+      CHECK(r.ok() && r.regions.size() == 2);
+      if (r.regions.size() == 2) {
+        const Filter2& f = r.regions[0].fmap.f2;
+        CHECK(f.type == FilterType::kHpf2p && f.cutoff_hz == 500.f && f.resonance_db == 3.f && f.tune.keytrack == 50.f && f.tune.keycenter == 48 && f.tune.veltrack == 600.f);
+        CHECK(f.tune.cutoff_count == 1 && f.tune.cutoff[0].cc == 1 && f.tune.cutoff[0].curve == 3 && f.tune.cutoff[0].depth == 600.f && f.tune.res_count == 1 && f.tune.res[0].cc == 2);
+        CHECK(r.regions[0].fmap.f1 == FilterTune{} && r.regions[0].filter == (Filter{FilterType::kLpf2p, 2000.f, 0.f}));
+        CHECK(r.regions[1].fmap.f2.type == FilterType::kLpf2p && r.regions[1].fmap.f2.cutoff_hz == 300.f);  // fil2_type defaults to lpf_2p
+        CHECK(validate_region(r.regions[0], 1000) == Error::kNone && validate_region(r.regions[1], 1000) == Error::kNone);
+      }
+      // a second filter needs the first (sfizz would run the missing one at cutoff 0)
+      CHECK(has(parse(R + "cutoff2=500\n"), SfzIssueKind::kUnsupportedValue, "cutoff2"));
+      // fil2_* without cutoff2 and tuning without cutoff: no filter, never silent
+      auto n = parse(R + "cutoff=1000 fil2_type=hpf_2p resonance2=3 fil2_keytrack=10\n<region> sample=a.wav key=61 fil_veltrack=1200 cutoff_oncc1=100 fil_keytrack=5\n");
+      CHECK(n.ok() && n.regions[0].fmap == FilterMap{} && n.regions[1].fmap == FilterMap{} && n.regions[1].filter == Filter{});
+      CHECK(n.warnings.size() >= 5);
+      auto bad_type = parse(R + "cutoff=500 cutoff2=500 fil2_type=lpf_4p\n");
+      CHECK(has(bad_type, SfzIssueKind::kUnsupportedValue, "lpf_4p"));
+    }
+    for (const char* op : {"fil_random", "fil_gain", "fil_gain_oncc1", "fil_veltrack_oncc1", "cutoff3", "fil3_type", "fil3_keytrack", "cutoff_stepcc1", "cutoff_smoothcc1", "resonance_stepcc1", "cutoff_chanaft", "cutoff_polyaft", "fileg_depth", "fillfo_depth", "cutoff_random"})
+      CHECK(classify_opcode(op) == OpcodeClass::kUnsupported);
+    for (const char* op : {"filtype", "fil1_type", "fil2_type", "cutoff1", "cutoff2", "resonance1", "resonance2", "fil_keytrack", "fil2_keycenter", "fil1_veltrack", "cutoff_oncc74", "cutoff_cc74",
+                           "cutoff_curvecc131", "cutoff2_oncc1", "resonance_oncc1", "resonance2_curvecc1"})
+      CHECK(classify_opcode(op) == OpcodeClass::kSupported);
+    // determinism
+    CHECK(parse(R + "cutoff=500 fil_veltrack=100 cutoff_oncc1=5\n").regions == parse(R + "cutoff_oncc1=5 fil_veltrack=100 cutoff=500\n").regions);
+  }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
-    const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_oncc1", "width_oncc1", "volume_stepcc1", "pan_smoothcc2",
+    const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_stepcc1", "width_oncc1", "volume_stepcc1", "pan_smoothcc2",
                          "effect1", "output", "note_offset", "octave_offset",
-                         "amp_veltrack_oncc7", "sample_quality", "delay", "rt_decay", "amp_random", "ampeg_vel2delay", "amp_veltrack_curvecc3", "xfin_lovel", "cutoff2", "fil2_type", "pitch_keytrack"};
+                         "amp_veltrack_oncc7", "sample_quality", "delay", "rt_decay", "amp_random", "ampeg_vel2delay", "amp_veltrack_curvecc3", "xfin_lovel", "cutoff3", "fil3_type", "fil_random", "fil_gain", "fil_veltrack_oncc1", "cutoff_smoothcc1", "resonance_stepcc1", "cutoff_random", "pitch_keytrack"};
     for (const char* op : bad) {
       auto r = parse(std::string("<region> sample=a.wav key=60 ") + op + "=1\n");
       bool found = false;
@@ -801,7 +893,7 @@ int main() {
     CHECK(classify_opcode("xfin_locc1a") == OpcodeClass::kUnsupported);
     CHECK(classify_opcode("label_cc") == OpcodeClass::kUnsupported);
     CHECK(classify_opcode("hint_") == OpcodeClass::kUnsupported);
-    CHECK(classify_opcode("cutoff2") == OpcodeClass::kUnsupported);
+    CHECK(classify_opcode("cutoff3") == OpcodeClass::kUnsupported);
     // The README carries exactly this table (one authoritative list, checked here).
     std::ifstream in(FORMATLIB_README);
     CHECK(in.good());

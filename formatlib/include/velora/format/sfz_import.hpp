@@ -24,6 +24,11 @@
 //             (alias start_locc / start_hicc, N = 0..127, up to 4 per region): a region triggered by a controller, which with hikey=-1 never starts from a note.
 //             hikey=-1 without an on_locc/on_hicc trigger stays flagged (never_note_triggered) and is dropped before the bundle. on_lohdcc/on_hihdcc, bend_* beyond
 //             +-12000 cents and triggers on the pseudo-controllers stay rejected.
+//   Story 13.8: the per-voice filter. fil_keytrack (cents per key), fil_keycenter, fil_veltrack (cents at velocity 127), filtype / fil_type, cutoff, resonance and their 1 / 2
+//             spellings (fil1_*, fil2_*, cutoff1, cutoff2, resonance1, resonance2: the second filter, in series, exists when cutoff2 is given), and the CC entries
+//             cutoff[N]_oncc<N> / _cc<N> / _curvecc<N> (cents) and resonance[N]_oncc<N> / _cc<N> / _curvecc<N> (dB), read once when a voice starts (controllers 0..127 and
+//             the Story 13.5 pseudo-CCs; at most 4 entries per target and filter). Stored as Region::fmap. fil_random, fil_gain, fil_veltrack_oncc, *_stepcc, *_smoothcc,
+//             a third filter, other filter types and a second filter without a first stay rejected.
 //   Allow-listed non-sounding opcodes (label_*, image, hint_*, ...) are accepted, not stored,
 //   and reported in SfzParseResult::allowlisted. The authoritative list is sfz_opcode_table().
 // Sample paths must stay inside the SFZ's directory ("..", absolute paths elsewhere and an

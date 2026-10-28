@@ -73,6 +73,16 @@ inline constexpr std::size_t kVgRecordSize = 4 + 4 + 4 + 1 + 1 + 2 + 4 + 2 + 2 +
 //     f32 bend_up, f32 bend_down, f32 bend_step (200, -200, 1 unless bend enabled), then trig_count x { u8 cc, u8 0, u8 0, u8 0, f32 lo, f32 hi }
 inline constexpr std::size_t kBtRecordSize = 4 + 1 + 1 + 2 + 4 + 4 + 4;
 inline constexpr std::size_t kBtTriggerSize = 4 + 4 + 4;
+// Format 2.7 (Story 13.8) filter table, per instrument, after the minor 6 table:
+//   u32 n_fl_regions, then per region (ascending by region index; a record exists only for a region with a non-default FilterMap):
+//     u32 region_index, u8 flags (bit 0 = second filter present, others 0), u8 0, u16 0, tune (the first filter's), then, with bit 0:
+//     u8 type (1..5), u8 0, u16 0, f32 cutoff_hz, f32 resonance_db, tune (the second filter's)
+//   tune: f32 keytrack, f32 veltrack, u8 keycenter, u8 cutoff_count (<= 4), u8 res_count (<= 4), u8 0,
+//         cutoff_count x { u8 cc, u8 curve, u16 0, f32 depth }, res_count x { u8 cc, u8 curve, u16 0, f32 depth }   (ascending cc)
+inline constexpr std::size_t kFlRecordFixedSize = 4 + 1 + 1 + 2;
+inline constexpr std::size_t kFlTuneFixedSize = 4 + 4 + 4;
+inline constexpr std::size_t kFlModSize = 4 + 4;
+inline constexpr std::size_t kFlSecondFixedSize = 4 + 4 + 4;
 inline constexpr unsigned kMinorShift = 16;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }

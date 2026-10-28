@@ -241,6 +241,37 @@ struct CcTriggers {
   friend bool operator==(const CcTriggers&, const CcTriggers&) = default;
 };
 
+// Story 13.8 (bundle format 2.7): the per-voice shaping of the region's filters. Everything here is evaluated once when a voice starts (sfizz FilterHolder::setup plus
+// the constant CC modulation of that instant): cutoff = clamp(clamp(cutoff * 2^((keytrack * (note - keycenter) + veltrack * velocity) / 1200)) * 2^(sum of
+// cutoff-entry depth * curve(controller) / 1200)) in 0..20000 Hz, resonance = resonance + sum of resonance-entry depth * curve(controller) in dB. A filter
+// exists only when the region has a `cutoff` (Filter::type != kNone); a tuning or a second filter on a region without a first filter is not stored.
+inline constexpr unsigned kMaxFilterMods = 4;
+struct FilterMod {
+  std::uint8_t cc = 0, curve = 0;  // cc: a controller 0..127 or a pseudo-CC (is_cc_mod_source); curve: a <curve> index (0 = sfizz's linear default)
+  float depth = 0;                 // cents for the cutoff entries (-12000..12000), dB for the resonance entries (0..96)
+  friend bool operator==(const FilterMod&, const FilterMod&) = default;
+};
+struct FilterTune {
+  float keytrack = 0;               // fil_keytrack, cents per key 0..1200
+  std::uint8_t keycenter = 60;      // fil_keycenter
+  float veltrack = 0;               // fil_veltrack, cents at velocity 127, -12000..12000
+  std::uint8_t cutoff_count = 0, res_count = 0;  // entries, ascending by cc (unique); unused entries are zero
+  FilterMod cutoff[kMaxFilterMods]{}, res[kMaxFilterMods]{};
+  friend bool operator==(const FilterTune&, const FilterTune&) = default;
+};
+// The second filter (cutoff2, resonance2, fil2_*): in series after the first. type == kNone = none (everything else is then zero).
+struct Filter2 {
+  FilterType type = FilterType::kNone;
+  float cutoff_hz = 0, resonance_db = 0;
+  FilterTune tune;
+  friend bool operator==(const Filter2&, const Filter2&) = default;
+};
+struct FilterMap {
+  FilterTune f1;  // the tuning of Region::filter
+  Filter2 f2;
+  friend bool operator==(const FilterMap&, const FilterMap&) = default;
+};
+
 struct Region {
   std::uint32_t sample = 0;  // index into the owning instrument's samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -274,6 +305,8 @@ struct Region {
   // Story 13.7 extension (bundle format 2.6).
   PitchBend bend;
   CcTriggers trig;
+  // Story 13.8 extension (bundle format 2.7).
+  FilterMap fmap;
 
   friend bool operator==(const Region&, const Region&) = default;
 };
@@ -296,6 +329,9 @@ bool has_vg_extension(const Region& r);
 
 // True when the region needs a record in the format 2.6 table: a pitch-bend range or any controller trigger.
 bool has_bend_trigger_extension(const Region& r);
+
+// True when the region needs a record in the format 2.7 filter table: a filter tuning or a second filter.
+bool has_filter_extension(const Region& r);
 
 // Checks every range invariant of a region against its sample length (`sample_frames`). Returns
 // kNone or kInvalidArgument. Used by the writer, the reader (as kCorruptManifest) and the importer.

@@ -54,7 +54,11 @@ inline constexpr std::uint32_t kFormatVersion = 2;
 // per region the bend_up / bend_down / bend_step / bend_smooth values and the on_locc / on_hicc triggers (with the flag that the region never starts from a note).
 // The writer stamps minor 6 only when a region has a PitchBend or CcTriggers; every other bundle keeps the bytes it had (minor 0..5). Minor 6 requires at least one
 // record (kCorruptManifest otherwise). The reader accepts minor 0..6 and rejects a newer one with kUnsupportedVersion.
-inline constexpr std::uint32_t kFormatMinor = 6;
+// Minor 7 (Story 13.8) appends, after the minor 6 table of each instrument (present, possibly empty, in a minor 7 bundle), the filter table: per region the key
+// track / velocity track / CC modulation (cutoff in cents, resonance in dB) of the first filter and an optional second filter. The writer stamps minor 7 only when
+// a region has a FilterMap; every other bundle keeps the bytes it had (minor 0..6). Minor 7 requires at least one record (kCorruptManifest otherwise). The reader
+// accepts minor 0..7 and rejects a newer one with kUnsupportedVersion.
+inline constexpr std::uint32_t kFormatMinor = 7;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -97,7 +101,7 @@ struct WriterOptions {
   std::uint32_t format_version = kFormatVersion;
   // Test hook for the minor policy: 0 makes the writer refuse regions that need the extension
   // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 refuses regions that need the minor 3 amp table; 3 refuses
-  // the minor 4 cc table; 4 refuses the minor 5 voice-group table; 5 refuses the minor 6 bend / trigger table; 6 (default) stamps minor 1 to 6 only when one is needed.
+  // the minor 4 cc table; 4 refuses the minor 5 voice-group table; 5 refuses the minor 6 bend / trigger table; 6 refuses the minor 7 filter table; 7 (default) stamps minor 1 to 7 only when one is needed.
   std::uint32_t format_minor = kFormatMinor;
 };
 

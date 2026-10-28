@@ -57,6 +57,20 @@ enum class SampleFilterType : std::uint8_t {
   kBpf2p = 5,
 };
 
+// Story 13.8: the per-voice shaping of a filter. cutoff / resonance entries are CC modulation read once at voice start (cc: a controller 0..127 or a pseudo-CC; curve as
+// in SampleCcMod); depth is cents for the cutoff, dB for the resonance. keytrack: cents per key from keycenter; veltrack: cents at velocity 127. The defaults add nothing.
+inline constexpr unsigned kSampleMaxFilterMods = 4;
+struct SampleFilterMod {
+  std::uint8_t cc = 0, curve = 0;
+  float depth = 0.0f;
+};
+struct SampleFilterTune {
+  float keytrack = 0.0f, veltrack = 0.0f;
+  std::uint8_t keycenter = 60;
+  std::uint8_t cutoff_count = 0, res_count = 0;
+  SampleFilterMod cutoff[kSampleMaxFilterMods]{}, res[kSampleMaxFilterMods]{};
+};
+
 // One region of the instrument (the SFZ opcode subset of Story 1.13). Field meaning follows the
 // SFZ specification; times are in seconds, ampeg_start and ampeg_sustain in percent, pan in
 // -100..100, offset and loop points in frames of the region's sample (loop_end inclusive).
@@ -182,6 +196,12 @@ struct SampleRegionDesc {
   std::uint8_t cc_trigger_count = 0;
   bool no_note = false;
   SampleCcTrigger cc_triggers[kSampleMaxCcTriggers]{};
+  // Story 13.8: the tuning of the filter above and an optional second filter in series after it (filter2_type kNone = none). A tuning or a second filter without a first
+  // filter is unplayable.
+  SampleFilterTune filter_tune;
+  SampleFilterType filter2_type = SampleFilterType::kNone;
+  float filter2_cutoff_hz = 0.0f, filter2_resonance_db = 0.0f;
+  SampleFilterTune filter2_tune;
 };
 
 // Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.
