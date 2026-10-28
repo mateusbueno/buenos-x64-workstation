@@ -63,10 +63,10 @@ bool is_syx(const fs::path& p) {
   for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return e == ".syx";
 }
-bool has_wav_ext(const std::string& path) {
+bool has_audio_ext(const std::string& path) {
   std::string e = fs::path(path).extension().string();
   for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  return e == ".wav";
+  return e == ".wav" || e == ".flac";
 }
 
 bool inside(const fs::path& root, const fs::path& p) {
@@ -171,6 +171,38 @@ WavHead wav_head(const std::string& path, Counter& cnt) {
   std::uint8_t hdr[12];
   if (fsz < 12 || !f.read(0, hdr, 12)) {
     h.err = fsz < 12 ? fmt::Error::kTruncated : fmt::Error::kIo;
+    return h;
+  }
+  if (std::memcmp(hdr, "fLaC", 4) == 0) {
+    if (fsz < 42) {
+      h.err = fmt::Error::kTruncated;
+      return h;
+    }
+    std::uint8_t fhdr[42];
+    if (!f.read(0, fhdr, 42)) {
+      h.err = fmt::Error::kIo;
+      return h;
+    }
+    const std::uint8_t block_type = fhdr[4] & 0x7F;
+    if (block_type != 0) {
+      h.err = fmt::Error::kCorruptHeader;
+      return h;
+    }
+    std::uint64_t v = 0;
+    for (int k = 18; k < 26; ++k) v = (v << 8) | fhdr[k];
+    const std::uint32_t sample_rate = static_cast<std::uint32_t>((v >> 44) & 0xFFFFF);
+    const std::uint8_t channels = static_cast<std::uint8_t>(((v >> 41) & 0x7) + 1);
+    const std::uint8_t bits = static_cast<std::uint8_t>(((v >> 36) & 0x1F) + 1);
+    const std::uint64_t total_samples = v & 0xFFFFFFFFF;
+    h.format.channels = channels;
+    h.format.bits_per_sample = bits;
+    h.format.sample_rate = sample_rate;
+    h.format.is_float = false;
+    h.frames = total_samples;
+    if (!format_supported(h.format)) {
+      h.err = fmt::Error::kUnsupportedFormat;
+      return h;
+    }
     return h;
   }
   if (std::memcmp(hdr, "RIFF", 4) != 0 || std::memcmp(hdr + 8, "WAVE", 4) != 0) {
@@ -350,11 +382,11 @@ Analysis analyze_sfz(const fs::path& file, const fs::path* root, Counter& cnt) {
     }
     const WavHead h = wav_head(real.string(), cnt);
     if (h.err != fmt::Error::kNone) {
-      const bool unsup = h.err == fmt::Error::kUnsupportedFormat || (h.err == fmt::Error::kBadMagic && !has_wav_ext(s.path));
+      const bool unsup = h.err == fmt::Error::kUnsupportedFormat || (h.err == fmt::Error::kBadMagic && !has_audio_ext(s.path));
       (unsup ? unsupported : damaged) = true;
       std::string& slot = unsup ? first_unsupported : first_damaged;
       if (slot.empty())
-        slot = s.ref_file + ":" + std::to_string(s.ref_line) + ": " + s.path + (unsup ? ": unsupported audio format" : std::string(": damaged WAV file (") + fmt::to_string(h.err) + ")");
+        slot = s.ref_file + ":" + std::to_string(s.ref_line) + ": " + s.path + (unsup ? ": unsupported audio format" : std::string(": damaged audio file (") + fmt::to_string(h.err) + ")");
       continue;
     }
     frames[i] = h.frames;

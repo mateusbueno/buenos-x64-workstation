@@ -1,5 +1,6 @@
 #include "velora/format/wav_source.hpp"
 
+#include <FLAC/stream_decoder.h>
 #include <cstdio>
 #include <cstring>
 
@@ -10,6 +11,71 @@ using namespace layout;
 
 namespace {
 std::uint32_t u16(const std::uint8_t* p) { return p[0] | (p[1] << 8); }
+
+struct FlacFileCtx {
+  const std::uint8_t* p = nullptr;
+  std::size_t n = 0, pos = 0;
+  WavData w;
+  bool err = false;
+  bool have_info = false;
+};
+
+FLAC__StreamDecoderReadStatus flac_file_read(
+    const FLAC__StreamDecoder*, FLAC__byte buf[], size_t* bytes, void* client) {
+  auto* c = static_cast<FlacFileCtx*>(client);
+  if (c->pos >= c->n) {
+    *bytes = 0;
+    return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+  }
+  const std::size_t take = (c->n - c->pos < *bytes) ? (c->n - c->pos) : *bytes;
+  std::memcpy(buf, c->p + c->pos, take);
+  c->pos += take;
+  *bytes = take;
+  return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+}
+
+void flac_file_metadata(
+    const FLAC__StreamDecoder*, const FLAC__StreamMetadata* meta, void* client) {
+  auto* c = static_cast<FlacFileCtx*>(client);
+  if (meta->type == FLAC__METADATA_TYPE_STREAMINFO) {
+    const auto& si = meta->data.stream_info;
+    c->w.format.channels = static_cast<std::uint8_t>(si.channels);
+    c->w.format.bits_per_sample = static_cast<std::uint8_t>(si.bits_per_sample);
+    c->w.format.sample_rate = si.sample_rate;
+    c->w.format.is_float = false;
+    c->w.frame_count = si.total_samples;
+    if (si.total_samples > 0 && is_supported(c->w.format)) {
+      c->w.data.reserve(si.total_samples * si.channels);
+    }
+    c->have_info = true;
+  }
+}
+
+FLAC__StreamDecoderWriteStatus flac_file_write(
+    const FLAC__StreamDecoder*, const FLAC__Frame* frame,
+    const FLAC__int32* const buffer[], void* client) {
+  auto* c = static_cast<FlacFileCtx*>(client);
+  if (!c->have_info || !is_supported(c->w.format)) {
+    c->err = true;
+    return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+  }
+  const std::uint32_t bs = frame->header.blocksize;
+  const unsigned chs = frame->header.channels;
+  if (chs != c->w.format.channels || frame->header.bits_per_sample != c->w.format.bits_per_sample) {
+    c->err = true;
+    return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+  }
+  for (std::uint32_t i = 0; i < bs; ++i) {
+    for (unsigned ch = 0; ch < chs; ++ch) {
+      c->w.data.push_back(buffer[ch][i]);
+    }
+  }
+  return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+}
+
+void flac_file_error(const FLAC__StreamDecoder*, FLAC__StreamDecoderErrorStatus, void* client) {
+  static_cast<FlacFileCtx*>(client)->err = true;
+}
 }  // namespace
 
 Result<WavData> parse_wav(std::span<const std::uint8_t> b, WavOptions opt) {
@@ -74,6 +140,40 @@ Result<WavData> parse_wav(std::span<const std::uint8_t> b, WavOptions opt) {
   return Error::kTruncated;  // no data chunk
 }
 
+Result<WavData> parse_flac(std::span<const std::uint8_t> b) {
+  if (b.size() < 4) return Error::kTruncated;
+  if (std::memcmp(b.data(), "fLaC", 4) != 0) return Error::kBadMagic;
+  if (b.size() < 42) return Error::kTruncated;
+
+  FlacFileCtx ctx;
+  ctx.p = b.data();
+  ctx.n = b.size();
+
+  FLAC__StreamDecoder* dec = FLAC__stream_decoder_new();
+  if (!dec) return Error::kIo;
+
+  FLAC__stream_decoder_set_md5_checking(dec, false);
+  FLAC__stream_decoder_set_metadata_respond_all(dec);
+
+  auto init_status = FLAC__stream_decoder_init_stream(
+      dec, flac_file_read, nullptr, nullptr, nullptr, nullptr,
+      flac_file_write, flac_file_metadata, flac_file_error, &ctx);
+
+  if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
+    FLAC__stream_decoder_delete(dec);
+    return Error::kCorruptHeader;
+  }
+
+  const bool ok = FLAC__stream_decoder_process_until_end_of_stream(dec);
+  FLAC__stream_decoder_delete(dec);
+
+  if (!ok || ctx.err || !ctx.have_info) return Error::kCorruptHeader;
+  if (!is_supported(ctx.w.format)) return Error::kUnsupportedFormat;
+
+  ctx.w.frame_count = ctx.w.data.size() / ctx.w.format.channels;
+  return std::move(ctx.w);
+}
+
 Result<WavData> load_wav_file(const std::string& path, WavOptions opt) {
   std::FILE* f = std::fopen(path.c_str(), "rb");
   if (!f) return Error::kIo;
@@ -84,6 +184,9 @@ Result<WavData> load_wav_file(const std::string& path, WavOptions opt) {
   const bool bad = std::ferror(f) != 0;
   std::fclose(f);
   if (bad) return Error::kIo;
+  if (bytes.size() >= 4 && std::memcmp(bytes.data(), "fLaC", 4) == 0) {
+    return parse_flac(bytes);
+  }
   return parse_wav(bytes, opt);
 }
 

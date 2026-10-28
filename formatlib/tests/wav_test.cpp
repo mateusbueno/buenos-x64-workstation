@@ -155,6 +155,22 @@ int main() {
     CHECK(r.ok() && r.value().read_frames(0, 0, 9000, out) == Error::kNone && out == pcm);
     CHECK(r.ok() && r.value().verify_all() == Error::kNone);
   }
+  {  // Story 13.13: FLAC support
+    CHECK_ERR(parse_flac(Bytes{1, 2, 3}).error(), Error::kTruncated);
+    CHECK_ERR(parse_flac(Bytes{'N', 'O', 'P', 'E', 0, 0, 0, 0}).error(), Error::kBadMagic);
+    const std::string flac_sample = "/Users/mateusbueno/.cache/velora-corpus/salamander-grand-piano-v3/f36bef84632067387909ba03064daee6e81afdea3f93526c4ee56a22e12613ba/tree/Samples/rel13.flac";
+    if (std::filesystem::exists(flac_sample)) {
+      auto fw = load_wav_file(flac_sample);
+      CHECK(fw.ok());
+      if (fw.ok()) {
+        CHECK(fw.value().format.channels == 2);
+        CHECK(fw.value().format.bits_per_sample == 24);
+        CHECK(fw.value().format.sample_rate == 48000);
+        CHECK(fw.value().frame_count == 21901);
+        CHECK(fw.value().data.size() == 21901 * 2);
+      }
+    }
+  }
   if (g_fail == 0) std::printf("wav_test OK\n");
   return g_fail == 0 ? 0 : 1;
 }

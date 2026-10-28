@@ -311,8 +311,8 @@ development_status:
   13-10-random-layer-parity-with-the-null-oracle: done
   13-11-sf2-libraries-in-the-reference-corpus: done
   13-12-allow-relative-sample-paths-within-library-root: done
-  13-13-flac-sample-support-in-the-importer: ready-for-dev
-  13-14-remaining-corpus-opcodes: backlog
+  13-13-flac-sample-support-in-the-importer: done
+  13-14-remaining-corpus-opcodes: ready-for-dev
   epic-13-retrospective: optional
 action_items:
   - id: "epic-13-retro-item-1-story-allow-or-rewrite-sample-paths-that"

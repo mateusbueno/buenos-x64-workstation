@@ -34,6 +34,7 @@ struct WavOptions {
   bool reject_truncated_data = false;
 };
 Result<WavData> parse_wav(std::span<const std::uint8_t> bytes, WavOptions opt = {});
+Result<WavData> parse_flac(std::span<const std::uint8_t> bytes);
 Result<WavData> load_wav_file(const std::string& path, WavOptions opt = {});
 
 }  // namespace velora::format

@@ -710,6 +710,23 @@ void test_base_dir_and_root() {
   CHECK(r_rel.ok());
   auto b_rel = fmt::BundleReader::open_file(r_rel.bundle_dir + "/bundle.vlb");
   CHECK(b_rel.ok() && b_rel.value().samples()[0].name == "samples/a.wav");
+
+  // Story 13.13: FLAC sample import
+  const std::string flac_src = "/Users/mateusbueno/.cache/velora-corpus/salamander-grand-piano-v3/f36bef84632067387909ba03064daee6e81afdea3f93526c4ee56a22e12613ba/tree/Samples/rel13.flac";
+  if (fs::exists(flac_src)) {
+    fs::copy_file(flac_src, e.src / "samples/test.flac");
+    write_file(e.src / "Flac.sfz", "<region> sample=samples/test.flac key=60\n");
+    const auto r_flac = import_sfz(e.opts("Flac.sfz"));
+    CHECK(r_flac.ok());
+    if (r_flac.ok()) {
+      auto b_flac = fmt::BundleReader::open_file(r_flac.bundle_dir + "/bundle.vlb");
+      CHECK(b_flac.ok() && b_flac.value().samples().size() == 1);
+      if (b_flac.ok() && !b_flac.value().samples().empty()) {
+        CHECK(b_flac.value().samples()[0].format.bits_per_sample == 24);
+        CHECK(b_flac.value().samples()[0].frame_count == 21901);
+      }
+    }
+  }
 }
 
 void test_salamander_like_fixture() {
