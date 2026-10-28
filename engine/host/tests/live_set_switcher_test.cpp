@@ -195,7 +195,13 @@ class Heads final : public host::HeadProvider {
     if (st != host::LoadStatus::kOk) return st;
     ++alive;
     Heads* self = this;
-    out = std::shared_ptr<const host::BundleInstrument>(inner.get(), [inner, self](const host::BundleInstrument*) { --self->alive; });
+    // The deleter releases `inner` itself: a captured copy would live as long as the control block, i.e. as long as the weak_ptr kept in `loaded`
+    // (libstdc++ destroys the deleter object with the control block, libc++ when the last owner goes), which would keep the bundle lease alive.
+    auto* held = new std::shared_ptr<const host::BundleInstrument>(std::move(inner));
+    out = std::shared_ptr<const host::BundleInstrument>(held->get(), [held, self](const host::BundleInstrument*) {
+      delete held;
+      --self->alive;
+    });
     {
       std::lock_guard<std::mutex> lk(m);
       loaded.emplace_back(r.instrument_info().key, out);

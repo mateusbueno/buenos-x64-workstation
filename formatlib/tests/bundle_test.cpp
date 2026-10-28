@@ -1790,8 +1790,8 @@ void test_fl_table() {
     CHECK_ERR(bad([](Region& x) { x.fmap.f2.cutoff_hz = 48001.f; }), Error::kInvalidArgument);
     CHECK_ERR(bad([](Region& x) { x.fmap.f2.type = static_cast<FilterType>(6); }), Error::kInvalidArgument);
     CHECK_ERR(bad([](Region& x) { x.fmap.f2.type = FilterType::kNone; }), Error::kInvalidArgument);  // values without a type: two encodings
-    CHECK_ERR(bad([](Region& x) { x.filter = Filter{}; }), Error::kInvalidArgument);                  // a second filter and a tuning need the first filter
-    CHECK_ERR(bad([](Region& x) { x.fmap.f1 = FilterTune{}; x.fmap.f2 = Filter2{}; x.filter = Filter{}; }), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.filter = Filter(); }), Error::kInvalidArgument);                  // a second filter and a tuning need the first filter
+    CHECK_ERR(bad([](Region& x) { x.fmap.f1 = FilterTune(); x.fmap.f2 = Filter2(); x.filter = Filter(); }), Error::kNone);
   }
   // Corruption of the table (the tail of the manifest: one record, a first tuning with 2 + 1 entries and a second filter).
   BundleWriter u;
@@ -1992,15 +1992,15 @@ void test_md_table() {
     CHECK_ERR(bad([](Region& x) { x.mod.eq[0].bw = 0.01f; }), Error::kNone);
     CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain = 60.5f; }), Error::kInvalidArgument);  // ... and +60 dB at most
     CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain = 60.f; }), Error::kNone);
-    CHECK_ERR(bad([](Region& x) { x.mod.eq[2] = EqBand{}; }), Error::kInvalidArgument);  // a trailing default band is no band
-    CHECK_ERR(bad([](Region& x) { x.mod.eq[1] = EqBand{}; }), Error::kNone);               // a default band in the middle keeps the index
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[2] = EqBand(); }), Error::kInvalidArgument);  // a trailing default band is no band
+    CHECK_ERR(bad([](Region& x) { x.mod.eq[1] = EqBand(); }), Error::kNone);               // a default band in the middle keeps the index
     for (unsigned cc : {131u, 135u, 136u, 137u, 140u, 141u}) {  // the pseudo-controllers are sources for every EQ entry
       CHECK_ERR(bad([cc](Region& x) { x.mod.eq[0].gain_mods[0].cc = static_cast<std::uint8_t>(cc); }), Error::kNone);
       CHECK_ERR(bad([cc](Region& x) { x.mod.eq[0].freq_mods[1].cc = static_cast<std::uint8_t>(cc); }), Error::kNone);
       CHECK_ERR(bad([cc](Region& x) { x.mod.eq[0].bw_mods[0].cc = static_cast<std::uint8_t>(cc); }), Error::kNone);
     }
     CHECK_ERR(bad([](Region& x) { x.mod.eq[0].gain_mods[0].cc = 132; }), Error::kInvalidArgument);
-    CHECK_ERR(bad([](Region& x) { x.mod = ModMap{}; }), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.mod = ModMap(); }), Error::kNone);
   }
   // Corruption of the table (the tail of the manifest: one record = an amplitude LFO and one EQ band with 1 + 1 + 1 entries).
   Region rec_region = lfo;

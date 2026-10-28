@@ -15,7 +15,7 @@ docker build -q -t "$IMAGE" tools/ci/docker >/dev/null
 job="${1:-all}"
 run() { # builds in a container-local copy so the host tree stays untouched
   docker run --rm -v "$PWD":/src:ro "$IMAGE" bash -euc "
-    mkdir /work/s && cd /src && tar --exclude=./build --exclude=./.git --exclude='__pycache__' --exclude=./tools/oracle/.work -cf - . | tar -xf - -C /work/s && cd /work/s
+    mkdir /work/s && cd /src && tar --exclude=./build --exclude=./.git --exclude='__pycache__' --exclude=./tools/oracle/.work -cf - . | tar -xf - -C /work/s && cd /work/s && git init -q . # git ls-files (corpus_no_audio_guard) needs a work tree to honour .gitignore, else it scans build/
     $1"
 }
 case "$job" in purity|all)

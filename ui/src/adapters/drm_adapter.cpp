@@ -11,7 +11,7 @@ bool DrmAdapter::initialize(int width, int height) {
   display_ = lv_linux_drm_create();
   if (!display_) return false;
 
-  lv_linux_drm_set_file(display_, "/dev/dri/card0");
+  lv_linux_drm_set_file(display_, "/dev/dri/card0", -1);  // -1: first connected connector (LVGL 9.6 signature)
   
 #if LV_USE_EVDEV
   // Open touchscreen event device on Linux

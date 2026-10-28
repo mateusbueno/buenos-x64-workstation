@@ -3,7 +3,7 @@
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git wget gnupg build-essential cmake ninja-build python3 libflac-dev protobuf-compiler libprotobuf-dev libsqlite3-dev libssl-dev \
+      ca-certificates git wget gnupg build-essential cmake ninja-build python3 libflac-dev protobuf-compiler libprotobuf-dev libsqlite3-dev libssl-dev libdrm-dev pkg-config \
     && wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key > /etc/apt/trusted.gpg.d/apt.llvm.org.asc \
     && echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" > /etc/apt/sources.list.d/llvm20.list \
     && apt-get update && apt-get install -y --no-install-recommends clang-20 libclang-rt-20-dev \

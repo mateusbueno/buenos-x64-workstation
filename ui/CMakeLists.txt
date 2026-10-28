@@ -28,7 +28,17 @@ FetchContent_Declare(
 set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/include/lv_conf.h" CACHE STRING "" FORCE)
 set(LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
+# LVGL 9.6 reads the CONFIG_ spelling (the two above are ignored by it): without these it builds ~400 example/demo objects
+set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(lvgl)
+
+# lv_conf.h turns LV_USE_LINUX_DRM on for Linux; LVGL's driver includes <xf86drm.h>, whose own include of <drm.h> lives in the libdrm include directory.
+if(TARGET lvgl AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
+  target_link_libraries(lvgl PUBLIC PkgConfig::LIBDRM)
+endif()
 
 if(TARGET lvgl AND SDL2_FOUND)
   target_include_directories(lvgl PUBLIC ${SDL2_INCLUDE_DIRS})

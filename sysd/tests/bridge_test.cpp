@@ -115,8 +115,9 @@ struct Client {
   int fd = -1;
   std::string rx;
   std::uint64_t next_id = 1;
-  bool connect_to(int port) {
+  bool connect_to(int port, int rcvbuf = 0) {
     fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (rcvbuf > 0) ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);  // before connect: fixes the advertised window
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_port = htons(static_cast<std::uint16_t>(port));
@@ -845,7 +846,8 @@ void test_push_relay_and_slow_client() {
     o.max_queued_bytes = 64 * 1024;
   }));
   Client a, slow;
-  CHECK(a.connect_to(r.port()) && slow.connect_to(r.port()));
+  // The slow reader's receive buffer is small, so that Linux loopback's large autotuned buffers do not absorb the flood (macOS's did not).
+  CHECK(a.connect_to(r.port()) && slow.connect_to(r.port(), 4096));
   a.hello(kAll, "a");
   slow.hello(kAll, "slow");
   ws::v1::ClientMessage sub;
@@ -869,7 +871,11 @@ void test_push_relay_and_slow_client() {
     ws::v1::ServerMessage d;
     while (draining.load()) a.recv(d, 50);
   });
-  for (int i = 0; i < 400; ++i) eng.push_all(big);
+  // Paced, until the drop: the output cap here is two messages, and an unpaced flood outruns the reader thread of `a` too on a fast Linux loopback.
+  for (int i = 0; i < 400 && r.bridge->slow_dropped() == 0; ++i) {
+    eng.push_all(big);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
   CHECK(wait_for([&] { return r.bridge->sessions() == 1; }, 8000));
   CHECK(r.bridge->slow_dropped() == 1);  // dropped for the output queue cap, not for any other reason
   draining.store(false);

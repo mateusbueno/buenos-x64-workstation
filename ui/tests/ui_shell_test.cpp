@@ -39,7 +39,7 @@ int main() {
 
   // Update clock lost
   shell.set_clock_lost(true);
-  CHECK(std::string(lv_label_get_text(shell.root_container())).empty() || true);
+  // (removed: lv_label_get_text() on the root container, which is not a label, behind `|| true`: it asserted nothing and crashed on Linux where the text pointer is null)
 
   // Test update_from_state
   ws::v1::State st;

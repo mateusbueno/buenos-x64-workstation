@@ -883,8 +883,9 @@ ImportResult import_sysex(const ImportOptions& opt) {
 
   std::string cur_link = rl.lib_root + "/" + lib_id_str + "/" + host::kCurrentLinkName;
   char buf[PATH_MAX];
-  bool had_current = ::readlink(cur_link.c_str(), buf, sizeof buf - 1) > 0;
-  std::string old_bundle_id = had_current ? std::string(buf) : "";
+  const ssize_t cur_len = ::readlink(cur_link.c_str(), buf, sizeof buf - 1);  // readlink does not NUL-terminate
+  const bool had_current = cur_len > 0;
+  std::string old_bundle_id = had_current ? std::string(buf, static_cast<std::size_t>(cur_len)) : "";
 
   std::string staging_dir = rl.lib_root + "/.staging/syx-" + bundle_id_str.substr(0, 8) + "-" + std::to_string(::getpid());
   std::filesystem::create_directories(staging_dir, ec);
