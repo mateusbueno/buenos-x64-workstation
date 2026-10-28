@@ -321,6 +321,26 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"fileg_depth", C::kSupported, "filter EG, cents on the first filter's cutoff; the EG exists only with a depth or vel2depth (Story 13.9)"},
       {"fileg_vel2depth", C::kSupported, "cents added at velocity 127 (Story 13.9)"},
       {"fileg_veltodepth", C::kSupported, "alias of fileg_vel2depth (Story 13.9)"},
+      // Story 13.14: Remaining corpus opcodes.
+      {"delay", C::kSupported, "s: onset delay, maps to ampeg_delay (Story 13.14)"},
+      {"delay_random", C::kAllowListed, "s: random onset delay (Story 13.14)"},
+      {"offset_random", C::kAllowListed, "frames: random sample offset (Story 13.14)"},
+      {"sustain_cc", C::kAllowListed, "sustain pedal controller, default 64 (Story 13.14)"},
+      {"ampeg_release_shape", C::kAllowListed, "envelope release curvature in dB (Story 13.14)"},
+      {"ampeg_attack_shape", C::kAllowListed, "envelope attack curvature (Story 13.14)"},
+      {"ampeg_decay_shape", C::kAllowListed, "envelope decay curvature (Story 13.14)"},
+      {"xfin_lovel", C::kAllowListed, "velocity crossfade low in (Story 13.14)"},
+      {"xfin_hivel", C::kAllowListed, "velocity crossfade high in (Story 13.14)"},
+      {"xfout_lovel", C::kAllowListed, "velocity crossfade low out (Story 13.14)"},
+      {"xfout_hivel", C::kAllowListed, "velocity crossfade high out (Story 13.14)"},
+      {"width", C::kAllowListed, "percent -100..100: stereo width (Story 13.14)"},
+      {"width_oncc<N>", C::kAllowListed, "percent: stereo width modulated by CC (Story 13.14)"},
+      {"width_cc<N>", C::kAllowListed, "alias of width_oncc<N> (Story 13.14)"},
+      {"width_curvecc<N>", C::kAllowListed, "curve index for width modulation (Story 13.14)"},
+      {"rt_decay", C::kAllowListed, "dB/s: release trigger decay rate (Story 13.14)"},
+      {"amp_veltrack_oncc<N>", C::kAllowListed, "percent: velocity tracking modulated by CC (Story 13.14)"},
+      {"amp_veltrack_cc<N>", C::kAllowListed, "alias of amp_veltrack_oncc<N> (Story 13.14)"},
+      {"amp_veltrack_curvecc<N>", C::kAllowListed, "curve index for amp_veltrack modulation (Story 13.14)"},
   };
   return t;
 }
@@ -1336,7 +1356,7 @@ class Importer final : public sfz::ParserListener {
       XfPart& part = (in ? acc.in : acc.out)[cc_];
       (lo ? part.lo : part.hi) = std::uint8_t(n);
     }
-    else if (k == "ampeg_delay") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.delay = float(d); }
+    else if (k == "ampeg_delay" || k == "delay") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.delay = float(d); }
     else if (k == "ampeg_start") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.start = float(d); }
     else if (k == "ampeg_attack") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.attack = float(d); }
     else if (k == "ampeg_hold") { if (!as_float(op, 0, 100, d)) return false; r.ampeg.hold = float(d); }

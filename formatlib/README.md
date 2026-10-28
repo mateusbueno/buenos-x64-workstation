@@ -320,6 +320,25 @@ Mapping rules of Story 13.6 (choke groups and polyphony). The model is sfizz 1.2
 | `fileg_depth` | supported | filter EG, cents on the first filter's cutoff; the EG exists only with a depth or vel2depth (Story 13.9) |
 | `fileg_vel2depth` | supported | cents added at velocity 127 (Story 13.9) |
 | `fileg_veltodepth` | supported | alias of fileg_vel2depth (Story 13.9) |
+| `delay` | supported | s: onset delay, maps to ampeg_delay (Story 13.14) |
+| `delay_random` | allow-listed | s: random onset delay (Story 13.14) |
+| `offset_random` | allow-listed | frames: random sample offset (Story 13.14) |
+| `sustain_cc` | allow-listed | sustain pedal controller, default 64 (Story 13.14) |
+| `ampeg_release_shape` | allow-listed | envelope release curvature in dB (Story 13.14) |
+| `ampeg_attack_shape` | allow-listed | envelope attack curvature (Story 13.14) |
+| `ampeg_decay_shape` | allow-listed | envelope decay curvature (Story 13.14) |
+| `xfin_lovel` | allow-listed | velocity crossfade low in (Story 13.14) |
+| `xfin_hivel` | allow-listed | velocity crossfade high in (Story 13.14) |
+| `xfout_lovel` | allow-listed | velocity crossfade low out (Story 13.14) |
+| `xfout_hivel` | allow-listed | velocity crossfade high out (Story 13.14) |
+| `width` | allow-listed | percent -100..100: stereo width (Story 13.14) |
+| `width_oncc<N>` | allow-listed | percent: stereo width modulated by CC (Story 13.14) |
+| `width_cc<N>` | allow-listed | alias of width_oncc<N> (Story 13.14) |
+| `width_curvecc<N>` | allow-listed | curve index for width modulation (Story 13.14) |
+| `rt_decay` | allow-listed | dB/s: release trigger decay rate (Story 13.14) |
+| `amp_veltrack_oncc<N>` | allow-listed | percent: velocity tracking modulated by CC (Story 13.14) |
+| `amp_veltrack_cc<N>` | allow-listed | alias of amp_veltrack_oncc<N> (Story 13.14) |
+| `amp_veltrack_curvecc<N>` | allow-listed | curve index for amp_veltrack modulation (Story 13.14) |
 <!-- sfz-opcode-table:end -->
 
 SF2 import (`velora/format/sf2_import.hpp`, in `velora_format`, Story 5.3): a clean-room reader written from the public SoundFont 2.04 specification (RIFF `sfbk`: `INFO` with `ifil`, `sdta` with `smpl` and the optional `sm24`, `pdta` with `phdr pbag pmod pgen inst ibag imod igen shdr`); no SF2 library is vendored, linked or consulted (FluidSynth is only a test oracle, `tools/oracle`). `parse_sf2_file(path)` / `parse_sf2_memory(bytes)` / `parse_sf2(ByteSource)` return `Sf2ParseResult`: `presets` (one `Sf2Preset` per preset: `key` = `"bank:preset"` in decimal, name, the preset's own `samples` and `regions`), `warnings`, `stats` and a handle to the sample words. Never throws; every chunk size, record index and sample offset is bounds checked; memory is bounded by constants and the file size: tables are read once (each at most 64 MiB), instrument zones are scanned and cached once (at most 256 Ki zones, about 50 MB), regions are capped at 512 Ki (about 100 MB of `Region` records at the cap), sample data is read one sample at a time on request; generator scanning is linear (`Sf2Stats::generator_scans`, asserted by a counted-operations test, not by a clock). The header comment of `sf2_import.hpp` is the full mapping table; in short:

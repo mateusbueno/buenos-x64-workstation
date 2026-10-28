@@ -116,8 +116,8 @@ int main() {
             r.curves[0].points[1].first == 127 && r.curves[0].points[1].second == 1.0 && r.regions.size() == 1);
     }
     {  // a named curve used through an unsupported opcode still skips the file, naming it (amp_velcurve_N itself is Story 13.4 and needs no <curve>)
-      auto r = parse("<curve>\ncurve_index=1 v000=0 v127=1\n<region> sample=a.wav key=60 amp_veltrack_curvecc1=1\n");
-      CHECK(!r.ok() && has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_veltrack_curvecc1'"));
+      auto r = parse("<curve>\ncurve_index=1 v000=0 v127=1\n<region> sample=a.wav key=60 pan_stepcc1=1\n");
+      CHECK(!r.ok() && has(r, SfzIssueKind::kUnsupportedOpcode, "'pan_stepcc1'"));
     }
     {
       auto r = parse("<group>\nampeg_dynamic=1\n<region> sample=a.wav key=60\n");
@@ -134,12 +134,12 @@ int main() {
     }
   }
   {  // unsupported things are all reported, none silently dropped
-    auto r = parse("<region> sample=a.wav key=60 lfo01_freq=1 ampeg_release_smoothcc4=2 amp_veltrack_oncc7=50\n"
+    auto r = parse("<region> sample=a.wav key=60 lfo01_freq=1 ampeg_release_smoothcc4=2 cutoff_stepcc131=50\n"
                    "<effect>\n<region> sample=*sine key=1\n<region> sample=a.wav key=2 trigger=bogus\n"
                    "<region> sample=a.wav key=3 loop_mode=loop_bidir\n");
     CHECK(!r.ok());
     CHECK(has(r, SfzIssueKind::kUnsupportedOpcode, "'lfo01_freq'") && has(r, SfzIssueKind::kUnsupportedOpcode, "'ampeg_release_smoothcc4'") &&
-          has(r, SfzIssueKind::kUnsupportedOpcode, "'amp_veltrack_oncc7'"));
+          has(r, SfzIssueKind::kUnsupportedOpcode, "'cutoff_stepcc131'"));
     CHECK(has(r, SfzIssueKind::kUnsupportedHeader, "<effect>"));
     CHECK(has(r, SfzIssueKind::kUnsupportedValue, "'bogus'") && has(r, SfzIssueKind::kUnsupportedValue, "'loop_bidir'"));
     CHECK(has(r, SfzIssueKind::kUnsupportedValue, "*sine"));
@@ -203,7 +203,7 @@ int main() {
     CHECK(has(parse("<region> sample=a.wav xfin_locc1=200\n"), SfzIssueKind::kInvalidValue, "'200'"));
     CHECK(has(parse("<region> sample=a.wav xf_cccurve=sine\n"), SfzIssueKind::kUnsupportedValue, "'sine'"));
     CHECK(has(parse("<region> sample=a.wav xfin_locc=1\n"), SfzIssueKind::kUnsupportedOpcode, "'xfin_locc'"));
-    CHECK(has(parse("<region> sample=a.wav xfin_lovel=1\n"), SfzIssueKind::kUnsupportedOpcode, "'xfin_lovel'"));
+    CHECK(has(parse("<region> sample=a.wav xfin_bend=1\n"), SfzIssueKind::kUnsupportedOpcode, "'xfin_bend'"));
   }
   {  // filters
     struct Case { const char* type; FilterType want; } cases[] = {
@@ -383,7 +383,7 @@ int main() {
       auto oc = parse(R + "offset_oncc1=100 offset_curvecc1=3\n");
       CHECK(oc.ok() && oc.regions[0].cc.mods[0].curve == 0 && oc.warnings.size() == 1 && oc.warnings[0].opcode == "offset_curvecc1");
       // not implemented: still named
-      for (const char* op : {"pan_stepcc1=1", "tune_smoothcc1=1", "cutoff_stepcc131=1", "width_oncc1=1", "amp_veltrack_oncc7=5", "delay_oncc1=1", "end_oncc1=1"}) {
+      for (const char* op : {"pan_stepcc1=1", "tune_smoothcc1=1", "cutoff_stepcc131=1", "width_stepcc1=1", "amp_veltrack_stepcc7=5", "delay_oncc1=1", "end_oncc1=1"}) {
         auto b = parse(R + op + "\n");
         bool named = false;
         for (const auto& i : b.issues) named = named || (i.kind == SfzIssueKind::kUnsupportedOpcode && i.opcode == std::string(op).substr(0, std::string(op).find('=')));
@@ -953,9 +953,9 @@ int main() {
     }
   }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
-    const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_stepcc1", "width_oncc1", "volume_stepcc1", "pan_smoothcc2",
+    const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_stepcc1", "width_stepcc1", "volume_stepcc1", "pan_smoothcc2",
                          "effect1", "output", "note_offset", "octave_offset",
-                         "amp_veltrack_oncc7", "sample_quality", "delay", "rt_decay", "amp_random", "ampeg_vel2delay", "amp_veltrack_curvecc3", "xfin_lovel", "cutoff3", "fil3_type", "fil_random", "fil_gain", "fil_veltrack_oncc1", "cutoff_smoothcc1", "resonance_stepcc1", "cutoff_random", "pitch_keytrack"};
+                         "amp_veltrack_stepcc7", "sample_quality", "amp_random", "ampeg_vel2delay", "cutoff3", "fil3_type", "fil_random", "fil_gain", "fil_veltrack_oncc1", "cutoff_smoothcc1", "resonance_stepcc1", "cutoff_random", "pitch_keytrack"};
     for (const char* op : bad) {
       auto r = parse(std::string("<region> sample=a.wav key=60 ") + op + "=1\n");
       bool found = false;
@@ -964,6 +964,19 @@ int main() {
       CHECK(found);
       CHECK(r.allowlisted.empty());
       CHECK(classify_opcode(op) == OpcodeClass::kUnsupported);
+    }
+    // Story 13.14: delay (supported, maps to ampeg.delay) and allow-listed opcodes
+    {
+      auto r = parse("<region> sample=a.wav key=60 delay=0.04\n");
+      CHECK(r.ok() && r.regions.size() == 1 && r.regions[0].ampeg.delay == 0.04f);
+    }
+    for (const char* op : {"sustain_cc=64", "ampeg_release_shape=-6", "ampeg_attack_shape=0", "ampeg_decay_shape=0",
+                           "offset_random=1000", "delay_random=0.01", "xfin_lovel=10", "xfin_hivel=20",
+                           "xfout_lovel=30", "xfout_hivel=40", "width=80", "width_oncc1=50", "width_cc2=60",
+                           "width_curvecc1=2", "rt_decay=6", "amp_veltrack_oncc99=-100", "amp_veltrack_cc98=50",
+                           "amp_veltrack_curvecc99=2"}) {
+      auto r = parse(std::string("<region> sample=a.wav key=60 ") + op + "\n");
+      CHECK(r.ok() && r.regions.size() == 1 && !r.allowlisted.empty());
     }
     for (const char* h : {"effect", "midi", "sample"}) {
       auto r = parse(std::string("<") + h + ">\nfoo=1\n<region> sample=a.wav\n");
