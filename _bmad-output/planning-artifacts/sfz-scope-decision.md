@@ -1,8 +1,6 @@
 # SFZ scope for the reference corpus (Story 13.1)
 
-**Status: PROPOSED, awaiting founder ratification.** This record was written by an unattended run. It records the ordering already
-laid out in Epic 13 as the proposed decision. It is not a founder decision, and nothing here may be cited as approved until the
-founder ratifies it (see "Ratification" at the end). No importer, engine, corpus audio or tolerance was changed to produce it.
+**Status: RATIFIED by Mateus, 2026-10-28** (in the Claude Code session that ran Epic 13, answering the scope question; Story 13.9 included on measured need). The record was first written by an unattended run as a proposal; the verdicts below are now the founder's decision. See "Ratification" at the end for the additions made on ratification. No importer, engine, corpus audio or tolerance was changed to produce it.
 
 ## Why a decision is needed
 
@@ -92,3 +90,9 @@ failing honestly until their tiers land; hiding them in the manifest would break
 
 Awaiting the founder. To ratify: change the Status line to "ratified by <name>, <date>", or to amend, change a verdict and update
 `epics.md` (FR18, Epic 13) to match. Until then the proposal governs planning only; no story is cancelled on its strength.
+
+### Ratified 2026-10-28 (Mateus)
+
+- Ratified as written, including Story 13.9 taken up on measured need (region EQ, `amplfo`/`pitchlfo`/`fillfo`, `pitcheg`/`fileg`; the generic `lfoNN`/`egNN` matrix stays deferred).
+- Added by the Epic 13 retrospective follow-up (same session): sample paths that use `..` are **in scope** when the resolved path stays inside the library's root folder (an escape outside the root stays rejected); FLAC samples are **in scope** for the importer; the remaining corpus opcodes are taken in the order of libraries unlocked per opcode.
+- Still open: whether regions without a bend opcode should follow sfizz's default of +/-200 cents (the wheel is ignored for them today; no change until decided).
