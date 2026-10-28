@@ -36,3 +36,8 @@ cc_pseudo         hermite  2  -60
 choke_groups      hermite  2  -60
 choke_sustain     hermite  2  -60
 polyphony_limits  hermite  2  -60
+# Story 13.7: pitch bend (bend_up/bend_down/bend_step/bend_smooth, wheel events on block boundaries) and controller-started voices (hikey=-1 with on_locc/on_hicc).
+pitch_bend        hermite  2  -60
+pitch_bend_fine   hermite  2  -60
+pitch_bend_smooth hermite  2  -60
+cc_trigger        hermite  2  -60

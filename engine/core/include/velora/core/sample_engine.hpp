@@ -114,6 +114,28 @@ class SampleEngine final : public Engine {
   // sfizz's: 0 everywhere except CC7 = 100, CC10 = 63.5, CC11 = 127. Delivered by the block loop, RT-owned, lock-free.
   bool set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
   float part_cc(std::uint32_t part, std::uint32_t cc) const noexcept { return cc_[part & 15u][cc & 127u]; }
+  // Story 13.7: pitch bend (value32 centre 0x80000000) is stored per part; a region follows it only when it set a bend opcode (bend_up / bend_down / bend_step /
+  // bend_smooth). Returns true only when the part's bank has such a region, so a part without them counts the event as ignored exactly as before. A CC that moves into
+  // the trigger range of a region (on_locc / on_hicc) starts that region's voice from the controller, in set_part_cc(); take_cc_started() then reports the key the
+  // voice was bound to (the region's pitch_keycenter) so the block loop can bind the snapshot generation to it.
+  bool set_part_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
+  float part_bend(std::uint32_t part) const noexcept { return bend_[part & 15u]; }
+  // The read position, in frames of the sample, of the voice in `slot` (tests and diagnostics; 0 for a free slot).
+  double voice_position(std::uint32_t slot) const noexcept { return slot < voices_.size() && voices_[slot].active ? voices_[slot].pos : 0.0; }
+  // Drains one key per call from the set of keys that controller voices started since the last drain (a 128-bit mask: one controller event can start regions with different pitch_keycenters).
+  bool take_cc_started(std::uint32_t& key) noexcept VELORA_NONBLOCKING override {
+    for (std::uint32_t w = 0; w < 2; ++w) {
+      if (cc_started_[w] == 0) continue;
+      std::uint32_t b = 0;
+      while (!((cc_started_[w] >> b) & 1u)) ++b;
+      cc_started_[w] &= ~(std::uint64_t{1} << b);
+      key = w * 64u + b;
+      return true;
+    }
+    return false;
+  }
+  // The keyboard replay of a Live Set switch: stores the controller without firing triggers (no controller moved).
+  bool set_part_cc_replay(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
   bool key_released(std::uint32_t channel, std::uint32_t note) noexcept VELORA_NONBLOCKING override;
   void all_keys_released(std::uint32_t channel) noexcept VELORA_NONBLOCKING override { ks_[channel & 15u].held = {}; }  // trigger=first / legato must not see stuck keys
   void reset_play_state() noexcept VELORA_NONBLOCKING override;
@@ -229,6 +251,12 @@ class SampleEngine final : public Engine {
     // again). order: the start order of the voice, the engine's notion of "oldest" (smaller = older); event: the note on / note off that started it (its sister
     // voices share it); mark: scratch bit of the note polyphony check.
     bool offed = false, mark = false;
+    // Story 13.7: started by a controller (on_locc / on_hicc), not by a key: no note off, key up or pedal ever releases it (note = the region's pitch_keycenter).
+    bool cc_voice = false;
+    // Story 13.7 pitch bend (only a region with `bends` uses them): the smoothed cents applied (and the previous frame's), the target they move to by bend_step per frame, the pitch factor of
+    // bend_cur (recomputed while it moves).
+    bool bend_live = false;  // the voice has stepped at least one frame (a wheel move before that needs no position correction)
+    float bend_cur = 0.0f, bend_prev = 0.0f, bend_tgt = 0.0f, bend_step = 0.0f, bend_fac = 1.0f;
     std::uint64_t order = 0, event = 0;
     std::uint32_t fade_left = 0, fade_total = 1;
     std::uint32_t channel = 0, note = 0, region = 0;
@@ -303,13 +331,17 @@ class SampleEngine final : public Engine {
   void env_fast_release(Env& e) const noexcept;
 
   bool start_region(const SampleBank& bank, std::uint32_t region, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7,
-                    bool release_trigger) noexcept;
+                    bool release_trigger, bool cc_voice = false) noexcept;
+  // Story 13.7. The cents the wheel position asks of a region (sfizz Region::getBendInCents, quantised to bend_step above 1), and the controller trigger of set_part_cc.
+  static float bend_cents(const SampleBankRegion& r, float wheel) noexcept;
+  bool put_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32, bool fire) noexcept;
+  void cc_trigger(SampleBank& bank, std::uint32_t part, std::uint32_t cc, float value) noexcept;
   SampleBank* bank_for(std::uint32_t channel) const noexcept {
     return part_bound_[channel & 15u] ? part_bank_[channel & 15u] : default_bank_.get();
   }
   // Story 13.6, sfizz's order at a voice start: choke groups (Synth::checkOffGroups), then the note, region and group polyphony limits (VoiceManager::
   // checkPolyphony; the engine-wide limit is the voice pool's arbiter). Real-time safe: fixed loops over the voice table, no allocation.
-  void apply_voice_limits(const SampleBank& bank, std::uint32_t region, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) noexcept;
+  void apply_voice_limits(const SampleBank& bank, std::uint32_t region, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7, bool from_cc = false) noexcept;
   void off_voice(Voice& v) noexcept;
   void off_sisters(std::uint64_t event) noexcept;  // the sisters that have not been cut yet
   bool playing_attack_voice(const RegionRt& r, std::uint32_t channel, bool match_velocity = true) const noexcept;
@@ -370,6 +402,8 @@ class SampleEngine final : public Engine {
   std::array<std::array<std::uint64_t, 2>, 16> cc_seeded_{}, cc_touched_{};  // Story 13.5: controllers a bank seeded / a real message set since the last bind
   PseudoCc pseudo_{};                                   // Story 13.5: audio thread only, set before each start_region batch
   std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units
+  std::array<float, 16> bend_{};                        // Story 13.7: per part pitch wheel, -1..1
+  std::array<std::uint64_t, 2> cc_started_{};           // Story 13.7: keys of the controller-started voices, until take_cc_started()
   // Story 1.18 (parallel voice render).
   WorkerPool* pool_ = nullptr;
   std::uint32_t par_max_frames_ = 0;

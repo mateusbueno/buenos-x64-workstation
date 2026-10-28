@@ -1524,6 +1524,592 @@ static void test_gain_and_pan() {
   CHECK_NEAR(vl, G * (64.0 / 127.0) * (64.0 / 127.0), 1e-5);
 }
 
+// --- Story 13.7: pitch bend and controller-started voices ----------------------------------------------------------------------
+
+static void bend_on(ports::SampleRegionDesc& r, float up, float down, float step = 1.0f, std::uint16_t smooth_ms = 0) {
+  r.bend_enabled = true;
+  r.bend_up = up;
+  r.bend_down = down;
+  r.bend_step = step;
+  r.bend_smooth_ms = smooth_ms;
+}
+constexpr std::uint32_t kWheelUp = 0xFFFFFFFFu, kWheelDown = 0u, kWheelCentre = 0x80000000u;
+static void add_trigger(ports::SampleRegionDesc& r, int cc, float lo, float hi) { r.cc_triggers[r.cc_trigger_count++] = {static_cast<std::uint8_t>(cc), lo, hi}; }
+
+// The position a voice has reached after `frames` frames of a 1e-5/frame ramp sample, read back from the output: out = G * 1e-5 * (pos + 1) (a ramp is interpolated exactly).
+static double ramp_pos(double out) { return out / mono_center_gain() / 1e-5 - 1.0; }
+
+static void test_pitch_bend() {
+  auto make = [](float up, float down, float step, std::uint16_t smooth, bool enabled = true) {
+    auto ins = std::make_unique<TestInstrument>();
+    auto& r = ins->region(ins->ramp(40000, 0.00001f), 0, 127, 60);
+    r.amp_veltrack = 0.0f;
+    if (enabled) bend_on(r, up, down, step, smooth);
+    return ins;
+  };
+  // Rate of the position after the wheel moved: the increment per frame of the ramp, measured away from the start.
+  auto rate = [&](std::uint32_t wheel, float up, float down, float step = 1.0f) {
+    auto ins = make(up, down, step, 0);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    CHECK(e.set_part_pitch_bend(0, wheel));  // the bank has a bending region: the event is taken
+    e.start_voice(0, 60, v16(127));
+    const Out o = render(e, 400);
+    return (ramp_pos(o.l[350]) - ramp_pos(o.l[250])) / 100.0;  // averaged over 100 frames: the float output of a ramp resolves a position to about 1e-4
+  };
+  // Both extremes and the centre: full travel up is +bend_up cents, full travel down is bend_down cents (negative = down).
+  CHECK_NEAR(rate(kWheelUp, 1200.0f, -1200.0f), 2.0, 1e-4);
+  CHECK_NEAR(rate(kWheelDown, 1200.0f, -1200.0f), 0.5, 1e-4);
+  CHECK_NEAR(rate(kWheelCentre, 1200.0f, -1200.0f), 1.0, 1e-4);
+  // sfizz defaults (200, -200) when only one side is given, and asymmetric ranges.
+  CHECK_NEAR(rate(kWheelUp, 200.0f, -200.0f), std::pow(2.0, 200.0 / 1200.0), 1e-4);
+  CHECK_NEAR(rate(kWheelUp, 700.0f, -200.0f), std::pow(2.0, 700.0 / 1200.0), 1e-4);
+  CHECK_NEAR(rate(kWheelDown, 700.0f, -300.0f), std::pow(2.0, -300.0 / 1200.0), 1e-4);
+  // A positive bend_down (an inverted wheel, as sfizz allows).
+  CHECK_NEAR(rate(kWheelDown, 200.0f, 400.0f), std::pow(2.0, 400.0 / 1200.0), 1e-4);
+  // The 14-bit extremes reach full travel (sfizz clamps v - 8192 to +-8191): 16383 << 18 and 1 << 18 and 0.
+  CHECK_NEAR(rate(16383u << 18, 1200.0f, -1200.0f), 2.0, 1e-3);
+  CHECK_NEAR(rate(0u << 18, 1200.0f, -1200.0f), 0.5, 1e-4);
+  CHECK_NEAR(rate(1u << 18, 1200.0f, -1200.0f), 0.5, 1e-3);
+  // bend_step: the cents are truncated to a multiple (150 -> 100; -150 -> -100).
+  {
+    const std::uint32_t w = static_cast<std::uint32_t>(0x80000000u + 0.75 * (2147483648.0 - 262144.0));
+    CHECK_NEAR(rate(w, 200.0f, -200.0f, 100.0f), std::pow(2.0, 100.0 / 1200.0), 1e-4);
+    const std::uint32_t wd = static_cast<std::uint32_t>(0x80000000u - 0.75 * (2147483648.0 - 262144.0));
+    CHECK_NEAR(rate(wd, 200.0f, -200.0f, 100.0f), std::pow(2.0, -100.0 / 1200.0), 1e-4);
+  }
+  // The wheel bends only the part it was sent to.
+  {
+    auto ins = make(1200.0f, -1200.0f, 1.0f, 0);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.set_part_pitch_bend(1, kWheelUp);
+    e.start_voice(0, 60, v16(127));
+    e.start_voice(1, 60, v16(127));
+    render(e, 300);
+    // part 1's voice reads at twice the rate and part 0's at the plain rate: after 300 frames they stand at ~600 and ~300
+    CHECK(e.voice_position(0) > 295.0 && e.voice_position(0) < 305.0 && e.voice_position(1) > 595.0 && e.voice_position(1) < 605.0);
+    CHECK_NEAR(e.part_bend(0), 0.0, 0.0);
+    CHECK_NEAR(e.part_bend(1), 1.0, 1e-6);
+  }
+  // A voice that starts with the wheel held starts bent, with no ramp (sfizz resets the smoother) even with bend_smooth.
+  {
+    auto ins = make(1200.0f, -1200.0f, 1.0f, 100);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.set_part_pitch_bend(0, kWheelUp);
+    e.start_voice(0, 60, v16(127));
+    const Out o = render(e, 40);
+    CHECK_NEAR(ramp_pos(o.l[20]) - ramp_pos(o.l[19]), 2.0, 1e-4);
+  }
+  // bend_smooth: a linear ramp of the cents over the smoothing time (50 ms = 2400 frames), then the target.
+  {
+    auto ins = make(1200.0f, -1200.0f, 1.0f, 50);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.start_voice(0, 60, v16(127));
+    const Out head = render(e, 10);
+    CHECK_NEAR(ramp_pos(head.l[9]), 9.0, 1e-3);  // centred so far
+    e.set_part_pitch_bend(0, kWheelUp);
+    const Out o = render(e, 4000);
+    // The model, as sfizz computes a voice: the step into frame j uses the smoother output of frame j (the first output already moved by one step), and the position at
+    // frame 9, the last one read before the wheel moved, is 9.
+    double pos = 9.0, cents = 0.0;
+    const double step = 1200.0 / 2400.0;
+    for (int f = 0; f < 4000; ++f) {
+      cents = std::min(1200.0, cents + step);
+      pos += std::pow(2.0, cents / 1200.0);
+      CHECK_NEAR(ramp_pos(o.l[static_cast<std::size_t>(f)]), pos, 0.02 + 1e-5 * pos);
+    }
+    CHECK_NEAR((ramp_pos(o.l[3999]) - ramp_pos(o.l[3899])) / 100.0, 2.0, 1e-3);  // settled at the target
+    // Back to the centre: the same ramp downwards, continuing from the position the voice has reached.
+    e.set_part_pitch_bend(0, kWheelCentre);
+    const Out d = render(e, 3000);
+    for (int f = 0; f < 3000; ++f) {
+      cents = std::max(0.0, cents - step);
+      pos += std::pow(2.0, cents / 1200.0);
+      CHECK_NEAR(ramp_pos(d.l[static_cast<std::size_t>(f)]), pos, 0.05 + 1e-5 * pos);
+    }
+    CHECK_NEAR((ramp_pos(d.l[2999]) - ramp_pos(d.l[2899])) / 100.0, 1.0, 1e-3);
+    // A jump (no smoothing) takes effect on the step into the frame of the event: a wheel event at frame 10 makes frame 10 read at 9 + 2.
+  }
+  {
+    auto ins = make(1200.0f, -1200.0f, 1.0f, 0);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.start_voice(0, 60, v16(127));
+    render(e, 10);
+    e.set_part_pitch_bend(0, kWheelUp);
+    const Out o = render(e, 6);
+    for (int f = 0; f < 6; ++f) CHECK_NEAR(ramp_pos(o.l[static_cast<std::size_t>(f)]), 9.0 + 2.0 * (f + 1), 1e-3);
+  }
+  // A wheel event while the voice releases: the releasing voice follows. The envelope depends on time only, so the output ratio of a bent twin to a plain twin is the
+  // ratio of (pos + 1).
+  {
+    auto bent = make(1200.0f, -1200.0f, 1.0f, 0), plain = make(1200.0f, -1200.0f, 1.0f, 0);
+    for (auto* ins : {bent.get(), plain.get()}) { ins->regions[0].ampeg_release = 50.0f; }
+    SampleEngine a(cfg()), b(cfg());
+    a.set_instrument(*bent);
+    b.set_instrument(*plain);
+    a.start_voice(0, 60, v16(127));
+    b.start_voice(0, 60, v16(127));
+    render(a, 200);
+    render(b, 200);
+    a.stop_voice(0, 60);
+    b.stop_voice(0, 60);
+    render(a, 100);
+    render(b, 100);
+    a.set_part_pitch_bend(0, kWheelUp);  // during the release
+    const Out oa = render(a, 400), ob = render(b, 400);
+    CHECK(a.active_voices() == 1 && b.active_voices() == 1);
+    for (std::uint32_t f : {0u, 100u, 399u}) {
+      const double pb = 301.0 + 2.0 * f;  // the bent voice steps into the event frame at twice the rate (300 - 1 + 2), then reads at twice the rate
+      const double pp = 300.0 + f;
+      CHECK_NEAR(oa.l[f] / ob.l[f], (pb + 1.0) / (pp + 1.0), 2e-3);
+    }
+    CHECK(oa.l[399] > 0.0f);
+  }
+  // No bend opcode on the region: the wheel changes nothing, bit for bit, and the event is reported as not followed.
+  {
+    auto bare = make(0, 0, 1.0f, 0, false);
+    SampleEngine a(cfg()), b(cfg());
+    a.set_instrument(*bare);
+    b.set_instrument(*bare);
+    CHECK(!a.set_part_pitch_bend(0, kWheelUp));
+    a.start_voice(0, 60, v16(127));
+    b.start_voice(0, 60, v16(127));
+    const Out oa = render(a, 500);
+    a.set_part_pitch_bend(0, kWheelDown);
+    const Out oa2 = render(a, 500), ob = render(b, 1000);
+    CHECK(oa.l.size() == 500 && std::equal(oa.l.begin(), oa.l.end(), ob.l.begin()) && std::equal(oa2.l.begin(), oa2.l.end(), ob.l.begin() + 500));
+  }
+  // A bank with one bending region and one that is not: only the first follows.
+  {
+    TestInstrument ins;
+    auto& a = ins.region(ins.ramp(40000, 0.00001f), 60, 60, 60); a.amp_veltrack = 0.0f; bend_on(a, 1200.0f, -1200.0f);
+    auto& b = ins.region(ins.ramp(40000, 0.00001f), 62, 62, 62); b.amp_veltrack = 0.0f;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.set_part_pitch_bend(0, kWheelUp));
+    e.start_voice(0, 62, v16(127));
+    const Out o = render(e, 300);
+    CHECK_NEAR(ramp_pos(o.l[250]) - ramp_pos(o.l[249]), 1.0, 1e-4);  // the plain region
+    e.start_voice(0, 60, v16(127));
+    const Out o2 = render(e, 300);
+    CHECK(e.active_voices() == 2);
+    (void)o2;
+  }
+  // Non-finite or crazy descriptors are unplayable, never UB.
+  {
+    TestInstrument ins;
+    auto& a = ins.region(ins.dc(0.5f), 60, 60); bend_on(a, std::numeric_limits<float>::infinity(), -200.0f);
+    auto& b = ins.region(ins.dc(0.5f), 61, 61); bend_on(b, 200.0f, -200.0f, 0.5f);
+    auto& c = ins.region(ins.dc(0.5f), 62, 62); c.no_note = true;  // nothing can start it
+    auto& d = ins.region(ins.dc(0.5f), 63, 63); add_trigger(d, 200, 0.0f, 127.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 4);
+    e.start_voice(0, 60, v16(100));
+    CHECK(e.active_voices() == 0);
+  }
+}
+
+static void test_cc_triggered_voices() {
+  const double G = mono_center_gain();
+  auto make = [](float lo, float hi, bool no_note = true, int cc = 64) {
+    auto ins = std::make_unique<TestInstrument>();
+    auto& r = ins->region(ins->dc(0.5f, 40000), 0, 127, 60);
+    r.no_note = no_note;
+    r.ampeg_release = 0.01f;
+    add_trigger(r, cc, lo, hi);
+    return ins;
+  };
+  // Salamander's pedal-down region: lokey/hikey out of reach, on_locc64=127 on_hicc64=127. A note never starts it; the controller does, once per change.
+  {
+    auto ins = make(127.0f, 127.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.start_voice(0, 60, v16(100));
+    CHECK(e.active_voices() == 0);
+    std::uint32_t key = 99;
+    CHECK(!e.take_cc_started(key));
+    e.set_part_cc(0, 64, cc32(126));
+    CHECK(e.active_voices() == 0);
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 1 && e.take_cc_started(key) && key == 60 && !e.take_cc_started(key));
+    const Out o = render(e, 8);
+    CHECK_NEAR(o.l[7], 0.5 * G, 1e-5);  // no velocity law: the full sample level whatever the controller value
+    VoiceInfo vi;
+    CHECK(e.voice_info(0, vi) && vi.state == VoiceState::kReleasing && vi.note == 60 && vi.channel == 0);
+    e.set_part_cc(0, 64, cc32(127));  // the same value again starts nothing
+    CHECK(e.active_voices() == 1);
+    // Not released by the key of its pitch_keycenter, a key up or a note off, and not by the pedal travel that does not start anything.
+    e.start_voice(0, 60, v16(100));
+    e.key_released(0, 60);
+    e.stop_voice(0, 60);
+    e.release_voice(0, 60, 40000);
+    render(e, 2000);
+    CHECK(e.active_voices() == 1);
+    CHECK_NEAR(render(e, 8).l[7], 0.5 * G, 1e-5);
+    // Another change into the range starts another voice.
+    e.set_part_cc(0, 64, cc32(0));
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 2);
+    // Another part's controller starts that part's own voice (the default instrument plays on every part), not this one's.
+    e.set_part_cc(1, 64, cc32(127));
+    CHECK(e.active_voices() == 3);
+    VoiceInfo v2;
+    CHECK(e.voice_info(2, v2) && v2.channel == 1);
+    // The voices end with their samples.
+    render(e, 45000);
+    CHECK(e.active_voices() == 0);
+  }
+  // Range boundaries: on_locc1=10 on_hicc1=20 is [10, nextafter(21, 0)] in CC units.
+  {
+    auto ins = make(10.0f, std::nextafter(21.0f, 0.0f), true, 1);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    int fired = 0;
+    for (const auto& [v, plays] : std::initializer_list<std::pair<double, bool>>{{9, false}, {10, true}, {15, true}, {20, true}, {20.5, true}, {21, false}, {127, false}, {0, false}, {20, true}}) {
+      const std::uint32_t before = e.active_voices();
+      e.set_part_cc(0, 1, cc32(v));
+      CHECK((e.active_voices() == before + (plays ? 1u : 0u)));
+      fired += plays ? 1 : 0;
+    }
+    CHECK(fired == 5);
+  }
+  // Pedal up (on_locc64=0 on_hicc64=0 is [0, nextafter(1, 0)]): the first message at 0 equals the start value and starts nothing; down then up does.
+  {
+    auto ins = make(0.0f, std::nextafter(1.0f, 0.0f));
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.set_part_cc(0, 64, cc32(0));
+    CHECK(e.active_voices() == 0);
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 0);
+    e.set_part_cc(0, 64, cc32(0));
+    CHECK(e.active_voices() == 1);
+  }
+  // The gates of the region see the new value (Layer::updateCCState runs before the trigger check): locc64=127 hicc64=127 together with the trigger.
+  {
+    auto ins = make(127.0f, 127.0f);
+    add_gate(ins->regions[0], 64, 127.0f, 127.0f);
+    add_gate(ins->regions[0], 2, 64.0f, 127.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 0);  // the other gate (CC2) is closed
+    e.set_part_cc(0, 64, cc32(0));
+    e.set_part_cc(0, 2, cc32(100));
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 1);
+  }
+  // A region with a key range that is also triggered by a controller starts from both; one with no_note only from the controller.
+  {
+    auto ins = make(1.0f, 127.0f, false, 1);
+    SampleEngine e(cfg());
+    e.set_instrument(*ins);
+    e.start_voice(0, 40, v16(127));
+    CHECK(e.active_voices() == 1);
+    e.set_part_cc(0, 1, cc32(50));
+    CHECK(e.active_voices() == 2);
+    VoiceInfo vi;
+    // the note voice is the first slot (key 40, held), the controller voice the second (key = pitch_keycenter 60)
+    CHECK(e.voice_info(0, vi) && vi.note == 40 && vi.state == VoiceState::kHeld);
+    CHECK(e.voice_info(1, vi) && vi.note == 60 && vi.state == VoiceState::kReleasing);
+    e.stop_voice(0, 40);
+    render(e, 2000);
+    CHECK(e.active_voices() == 1);  // the note voice released, the controller voice still sounding
+  }
+  // Pitch: a controller voice plays at pitch_keycenter whatever the region's key range (ratio 1), tune and transpose still apply.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.ramp(40000, 0.00001f), 30, 40, 60);
+    r.no_note = true; r.amp_veltrack = 0.0f; r.transpose = 12;
+    add_trigger(r, 20, 0.0f, 127.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 20, cc32(40));
+    const Out o = render(e, 100);
+    CHECK_NEAR(ramp_pos(o.l[60]) - ramp_pos(o.l[59]), 2.0, 1e-4);
+  }
+  // Round robin and random layers: two layers split by lorand/hirand, one controller event picks at most one; over many events both play.
+  {
+    TestInstrument ins;
+    for (int k = 0; k < 2; ++k) {
+      auto& r = ins.region(ins.dc(k == 0 ? 0.25f : 0.5f, 400), 0, 127, 60);
+      r.no_note = true; r.lorand = k == 0 ? 0.0f : 0.5f; r.hirand = k == 0 ? 0.5f : 1.0f;
+      add_trigger(r, 64, 127.0f, 127.0f);
+    }
+    SampleEngine e(cfg(64));
+    e.set_instrument(ins);
+    int a = 0, b = 0;
+    for (int i = 0; i < 40; ++i) {
+      e.set_part_cc(0, 64, cc32(0));
+      const std::uint32_t before = e.active_voices();
+      e.set_part_cc(0, 64, cc32(127));
+      CHECK(e.active_voices() == before + 1);
+      const double l = render(e, 8).l[7];
+      (std::fabs(l - 0.25 * G) < 1e-4 ? a : b) += 1;
+      render(e, 5000);  // the 400-frame samples end and their 6 ms tails die away
+    }
+    CHECK(a > 5 && b > 5 && a + b == 40);
+  }
+  // seq_position: a triggered region with seq_length 2 position 2 fires on every second event inside its range.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.dc(0.5f, 400), 0, 127, 60);
+    r.no_note = true; r.seq_length = 2; r.seq_position = 2;
+    add_trigger(r, 64, 127.0f, 127.0f);
+    SampleEngine e(cfg(64));
+    e.set_instrument(ins);
+    int fired = 0;
+    for (int i = 0; i < 6; ++i) {
+      e.set_part_cc(0, 64, cc32(0));
+      const std::uint32_t before = e.active_voices();
+      e.set_part_cc(0, 64, cc32(127));
+      fired += e.active_voices() > before ? 1 : 0;
+    }
+    CHECK(fired == 3);
+  }
+  // Choke / polyphony: the pedal noise regions of Salamander (group 1, polyphony 1): the second start cuts the first.
+  {
+    TestInstrument ins;
+    for (int k = 0; k < 2; ++k) {
+      auto& r = ins.region(ins.dc(0.5f, 400000), 0, 127, 60);
+      r.no_note = true; r.group = 1; r.polyphony = 1; r.group_polyphony = 1; r.off_mode = ports::SampleOffMode::kTime; r.off_time = 0.1f;
+      add_trigger(r, 64, k == 0 ? 127.0f : 0.0f, k == 0 ? 127.0f : std::nextafter(1.0f, 0.0f));
+    }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 1);
+    e.set_part_cc(0, 64, cc32(0));
+    CHECK(e.active_voices() == 2);       // the first is releasing (0.1 s), the second plays
+    render(e, 6000);                     // 0.125 s
+    CHECK(e.active_voices() == 1);
+  }
+  // A bank without triggers draws no random number on a controller message and keeps its note renders bit for bit.
+  {
+    auto build = []() {
+      auto ins = std::make_unique<TestInstrument>();
+      for (int k = 0; k < 2; ++k) {
+        auto& r = ins->region(ins->dc(k == 0 ? 0.25f : 0.5f, 2000), 60, 60);
+        r.lorand = k == 0 ? 0.0f : 0.5f; r.hirand = k == 0 ? 0.5f : 1.0f;
+      }
+      return ins;
+    };
+    auto ia = build(), ib = build();
+    SampleEngine a(cfg()), b(cfg());
+    a.set_instrument(*ia);
+    b.set_instrument(*ib);
+    std::vector<float> ra, rb;
+    for (int i = 0; i < 20; ++i) {
+      a.set_part_cc(0, 64, cc32(i % 2 ? 127 : 0));
+      a.set_part_cc(0, 1, cc32(i));
+      a.start_voice(0, 60, v16(100));
+      b.start_voice(0, 60, v16(100));
+      ra.push_back(render(a, 2).l[1]);
+      rb.push_back(render(b, 2).l[1]);
+      drain(a);
+      drain(b);
+    }
+    CHECK(ra == rb);
+  }
+}
+
+static void test_bend_and_trigger_through_block_renderer() {
+  // The wheel and a controller reach the engine through the block loop: the wheel is "ignored" for a part whose bank does not bend, and a controller voice binds like any
+  // voice. CC 64 takes the sustain path of the block loop.
+  TestInstrument ins;
+  auto& r = ins.region(ins.ramp(20000, 0.00001f), 0, 127, 60);
+  r.no_note = true; r.amp_veltrack = 0.0f;
+  add_trigger(r, 1, 100.0f, 127.0f);
+  add_trigger(r, 64, 127.0f, 127.0f);
+  bend_on(r, 1200.0f, -1200.0f);
+  auto br = std::make_unique<BlockRenderer>();
+  SampleEngine e(cfg());
+  e.set_instrument(ins);
+  br->set_channel_engine(2, static_cast<std::uint32_t>(EngineTypeId::kSample));
+  CHECK(br->bind_engine(e));
+  float l[kBlockFrames], rr[kBlockFrames];
+  br->submit({make_note_on(0, 2, 60, 0xFFFF), 0});
+  br->process_block(l, rr);
+  CHECK(e.active_voices() == 0);  // no_note
+  br->submit({make_control_change(0, 2, 64, 0xFFFFFFFFu), 10});
+  br->process_block(l, rr);
+  CHECK(e.active_voices() == 1);
+  for (int i = 0; i < 10; ++i) CHECK(l[i] == 0.0f);
+  CHECK(l[11] > 0.0f);
+  br->submit({make_control_change(0, 2, 1, 0xFFFFFFFFu), 0});
+  br->process_block(l, rr);
+  CHECK(e.active_voices() == 2);
+  const std::uint64_t ignored_before = br->ignored_events();
+  br->submit({make_pitch_bend(0, 2, 0xFFFFFFFFu), 0});
+  br->process_block(l, rr);
+  CHECK(br->ignored_events() == ignored_before);  // taken: the bank bends
+  CHECK_NEAR(e.part_bend(2), 1.0, 1e-6);
+  // A part with an instrument that does not bend counts the wheel as ignored, as before this story.
+  TestInstrument plain;
+  plain.region(plain.dc(0.5f), 60, 60);
+  auto br2 = std::make_unique<BlockRenderer>();
+  SampleEngine e2(cfg());
+  e2.set_instrument(plain);
+  br2->set_channel_engine(2, static_cast<std::uint32_t>(EngineTypeId::kSample));
+  CHECK(br2->bind_engine(e2));
+  br2->submit({make_pitch_bend(0, 2, 0xFFFFFFFFu), 0});
+  br2->process_block(l, rr);
+  CHECK(br2->ignored_events() == 1);
+}
+
+// --- Story 13.7 review fixes -----------------------------------------------------------------------------------------------------
+
+static void test_cc_voice_review_fixes() {
+  const double G = mono_center_gain();
+  (void)G;
+  // (a) One controller event that starts regions with different key centres reports every key, once each.
+  {
+    TestInstrument ins;
+    for (int k : {60, 61, 100}) {
+      auto& r = ins.region(ins.dc(0.5f, 4000), 0, 127, k);
+      r.no_note = true;
+      add_trigger(r, 64, 127.0f, 127.0f);
+    }
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 3);
+    std::uint32_t key = 0, seen = 0, mask_lo = 0;
+    while (e.take_cc_started(key)) { ++seen; if (key == 60) mask_lo |= 1; if (key == 61) mask_lo |= 2; if (key == 100) mask_lo |= 4; }
+    CHECK(seen == 3 && mask_lo == 7);
+    CHECK(!e.take_cc_started(key));
+    // The replay path stores the value and fires nothing; reset_play_state drops pending keys and the stale wheel.
+    e.set_part_cc(0, 64, cc32(0));
+    e.set_part_cc_replay(0, 64, cc32(127));
+    CHECK(e.active_voices() == 3 && !e.take_cc_started(key) && e.part_cc(0, 64) > 126.9f);
+    e.set_part_cc(0, 64, cc32(0));
+    e.set_part_cc(0, 64, cc32(127));
+    e.reset_play_state();
+    CHECK(!e.take_cc_started(key));
+  }
+  // (b) reset_play_state resets the stored wheel, so the first voices of the next set start straight.
+  {
+    TestInstrument ins;
+    auto& r = ins.region(ins.ramp(40000, 0.00001f), 0, 127, 60);
+    r.amp_veltrack = 0.0f; bend_on(r, 1200.0f, -1200.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_pitch_bend(0, kWheelUp);
+    CHECK_NEAR(e.part_bend(0), 1.0, 1e-6);
+    e.reset_play_state();
+    CHECK(e.part_bend(0) == 0.0f);
+    e.start_voice(0, 60, v16(127));
+    const Out o = render(e, 300);
+    CHECK_NEAR((ramp_pos(o.l[250]) - ramp_pos(o.l[150])) / 100.0, 1.0, 1e-3);
+  }
+  // (c) A wheel move between the start of a voice and its first render must not shift its position.
+  for (std::uint32_t wheel : {kWheelUp, kWheelDown}) {
+    TestInstrument ins;
+    auto& r = ins.region(ins.ramp(40000, 0.00001f), 0, 127, 60);
+    r.amp_veltrack = 0.0f; bend_on(r, 1200.0f, -1200.0f);
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.start_voice(0, 60, v16(127));
+    e.set_part_pitch_bend(0, wheel);
+    const Out o = render(e, 4);
+    CHECK_NEAR(ramp_pos(o.l[0]), 0.0, 1e-3);
+    CHECK(e.voice_position(0) > 0.0);
+  }
+  // (d) A real key at the controller region's key centre does not touch the controller voice: play, key up, retrigger, release velocity, stop, with note polyphony and a choke group on both.
+  {
+    TestInstrument ins;
+    auto& c = ins.region(ins.dc(0.5f, 400000), 0, 127, 60);
+    c.no_note = true; c.group = 1; c.note_polyphony = 1; c.has_off_by = true; c.off_by = 9;
+    add_trigger(c, 64, 127.0f, 127.0f);
+    auto& n = ins.region(ins.dc(0.25f, 400000), 60, 60, 60);
+    n.group = 1; n.note_polyphony = 1; n.ampeg_release = 0.01f;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 1);
+    for (int i = 0; i < 3; ++i) {
+      e.start_voice(0, 60, v16(100));
+      render(e, 100);
+      e.key_released(0, 60);
+      e.stop_voice(0, 60);
+      e.release_voice(0, 60, 30000);
+      render(e, 2000);
+    }
+    e.all_keys_released(0);
+    render(e, 40000);
+    CHECK(e.active_voices() == 1);
+    VoiceInfo vi;
+    CHECK(e.voice_info(0, vi) && vi.state == VoiceState::kReleasing && vi.note == 60);
+    CHECK_NEAR(render(e, 8).l[7], 0.5 * mono_center_gain(), 1e-5);
+  }
+  // (e) A region with a trigger and a non-attack mode never fires from a controller; trigger lists must be ascending, unique and clean; a controller-only region is judged at its key centre.
+  {
+    TestInstrument ins;
+    auto& rel = ins.region(ins.dc(0.5f, 4000), 0, 127, 60);
+    rel.no_note = true; rel.trigger = ports::SampleTrigger::kRelease; add_trigger(rel, 64, 127.0f, 127.0f);
+    auto& dup = ins.region(ins.dc(0.5f, 4000), 0, 127, 60);
+    dup.no_note = true; add_trigger(dup, 64, 0.0f, 127.0f); add_trigger(dup, 64, 0.0f, 127.0f);
+    auto& desc = ins.region(ins.dc(0.5f, 4000), 0, 127, 60);
+    desc.no_note = true; add_trigger(desc, 70, 0.0f, 127.0f); add_trigger(desc, 64, 0.0f, 127.0f);
+    auto& dirty = ins.region(ins.dc(0.5f, 4000), 0, 127, 60);
+    dirty.no_note = true; add_trigger(dirty, 64, 0.0f, 127.0f); dirty.cc_triggers[2] = {5, 0.0f, 127.0f};
+    auto& wide = ins.region(ins.dc(0.5f, 4000), 0, 127, 60);
+    wide.no_note = true; wide.tune_cents = 1200.0f; wide.transpose = 12;  add_trigger(wide, 64, 127.0f, 127.0f);  // 2400 cents at the key centre: fine
+    auto& keyed = ins.region(ins.dc(0.5f, 4000), 0, 127, 60);  // the same range with a key range is out of the pitch bounds
+    keyed.tune_cents = 1200.0f; keyed.transpose = 60;
+    SampleEngine e(cfg());
+    e.set_instrument(ins);
+    CHECK(e.unplayable_regions() == 4);  // dup, desc, dirty, keyed
+    e.set_part_cc(0, 64, cc32(127));
+    CHECK(e.active_voices() == 1);       // only `wide`; the release region is skipped
+  }
+}
+
+static void test_cc_voice_generation_binding() {
+  // Live Set: a controller voice holds the snapshot generation it started on while it sounds, through a generation swap, and the generation is reaped after it ends.
+  TestInstrument ins;
+  auto& a = ins.region(ins.dc(0.5f, 30000), 0, 127, 60);
+  a.no_note = true; a.loop_mode = ports::SampleLoopMode::kNoLoop; add_trigger(a, 20, 0.0f, 127.0f);
+  auto& b = ins.region(ins.dc(0.5f, 30000), 0, 127, 61);
+  b.no_note = true; b.loop_mode = ports::SampleLoopMode::kNoLoop; add_trigger(b, 20, 0.0f, 127.0f);
+  auto br = std::make_unique<BlockRenderer>(8);
+  SampleEngine e(cfg());
+  CHECK(br->bind_engine(e));
+  VoiceArbiter::LiveSetConfig rc;
+  rc.budget = 1u << 20; rc.waive_organ_reservation = true; rc.waive_sample_floor = true;
+  CHECK(br->arbiter().reserve(rc) == VoiceArbiter::ReserveStatus::kOk);
+  auto bank = e.prepare(ins, nullptr);
+  Snapshot base = Snapshot::defaults();
+  base.live_set = true;
+  base.parts[0].engine_type = static_cast<std::uint32_t>(EngineTypeId::kSample);
+  base.parts[0].state = PartState::kReady;
+  base.parts[0].sample_bank = bank;
+  auto s1 = std::make_unique<Snapshot>(base), s2 = std::make_unique<Snapshot>(base);
+  s1->ledger_index = 0; s1->revision = 1;
+  s2->ledger_index = 1; s2->revision = 2;
+  SnapshotExchange& ex = br->snapshots();
+  float l[kBlockFrames], r[kBlockFrames];
+  ex.publish(s1.get());
+  br->process_block(l, r);
+  br->submit({make_control_change(0, 0, 20, 0xFFFFFFFFu), 0});  // channel 0 = the keyboard source -> the part
+  br->process_block(l, r);
+  CHECK(e.active_voices() == 2);  // two regions, two key centres
+  ex.publish(s2.get());
+  br->process_block(l, r);
+  CHECK(e.active_voices() == 2);
+  CHECK(!ex.safe_to_free(s1.get()));  // both keys bound s1 for as long as the voices sound
+  int blocks = 0;
+  while (e.active_voices() > 0 && blocks++ < 2000) br->process_block(l, r);
+  CHECK(e.active_voices() == 0);
+  for (int i = 0; i < 4; ++i) br->process_block(l, r);
+  CHECK(ex.safe_to_free(s1.get()));  // reaped after they end
+}
+
 static void test_pool_missing_cost_and_info() {
   // Pool exhaustion: typed status, the voices that fit still play.
   {
@@ -2364,6 +2950,11 @@ int main() {
   test_choke_with_sustain_pedal();
   test_polyphony_limits();
   test_choke_review_fixes();
+  test_pitch_bend();
+  test_cc_triggered_voices();
+  test_bend_and_trigger_through_block_renderer();
+  test_cc_voice_review_fixes();
+  test_cc_voice_generation_binding();
   test_pool_missing_cost_and_info();
   test_interpolation_quality();
   test_oracle_block_stall();

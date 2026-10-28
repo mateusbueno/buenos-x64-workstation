@@ -260,7 +260,7 @@ class BlockRenderer {
   // Pitch bend (Story 3.10): like a controller. In a Live Set generation the keyboard's bend goes to every part that sounds with the keyboard on; otherwise to the channel's part.
   void route_pitch_bend(std::uint32_t channel, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
   bool deliver_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
-  bool deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
+  bool deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32, bool replay = false) noexcept VELORA_NONBLOCKING;
   // Gives the keyboard's last controller values to the parts that listen and did not have them (all = a seamless switch: every listening part).
   void replay_keyboard_ccs(const Snapshot& s, bool all, const std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
   void leave_live_set(std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;

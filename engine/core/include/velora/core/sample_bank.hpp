@@ -42,6 +42,12 @@ struct SampleBankRegion {
   bool cc_gate = false, cc_mod = false, eg_cc = false;
   // Story 13.6: the exponential release rate of an off_mode=time cut (off_time seconds, at least sfizz's 6 ms); unused for the other modes.
   float off_rate = 0.0f;
+  // Story 13.7. bends: the region follows the pitch wheel (SampleRegionDesc::bend_enabled and sane). bend_smooth_frames: the ramp length in engine frames (sfizz
+  // LinearSmoother: below 2 = at once). bend_fac_max: the largest pitch factor the wheel can produce (bounds the stream window). cc_trigger / no_note: the region
+  // starts voices from its controller triggers / never from a note.
+  bool bends = false, cc_trigger = false, no_note = false;
+  std::int32_t bend_smooth_frames = 0;
+  float bend_fac_max = 1.0f;
   bool uses_sequence = false;
   bool loops = false;  // loop_continuous / loop_sustain with a valid loop range
   std::int64_t loop_start = 0, loop_end = 0, loop_size = 0;
@@ -91,6 +97,12 @@ struct SampleBank {
   // Story 13.6: some region has an off_by or a polyphony limit, so every voice start of this bank runs the choke / limit checks (a bank without any skips them
   // entirely and renders exactly as before).
   bool uses_voice_groups = false;
+  // Story 13.7: some region follows the pitch wheel / is started by a controller. A bank with neither ignores the wheel and runs no controller trigger code.
+  // cct_list: region indices grouped by trigger controller (a region with several triggers appears once per controller): controller c uses cct_list[cct_begin[c],
+  // cct_begin[c+1]).
+  bool uses_bend = false, uses_cc_triggers = false;
+  std::array<std::uint32_t, 129> cct_begin{};
+  std::vector<std::uint32_t> cct_list;
   std::vector<std::array<float, 128>> vel_tables;  // Story 13.4: the amp_velcurve_N curves, one table of 128 entries per region that has points
   std::vector<std::uint32_t> note_list;         // region indices, grouped by note
   std::array<std::uint32_t, 129> note_begin{};  // note n uses note_list[note_begin[n], note_begin[n+1])

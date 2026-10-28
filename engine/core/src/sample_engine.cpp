@@ -95,6 +95,23 @@ bool voice_group_sane(const velora::ports::SampleRegionDesc& d) noexcept {
          d.note_polyphony <= velora::ports::kSampleMaxVoiceLimit;
 }
 
+// Story 13.7 fields: the bend range and the controller triggers must be inside the documented ranges (a region that is not is unplayable).
+bool bend_trigger_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+  if (!in(d.bend_up, -12000.0f, 12000.0f) || !in(d.bend_down, -12000.0f, 12000.0f) || !in(d.bend_step, 1.0f, 12000.0f)) return false;
+  if (d.cc_trigger_count > velora::ports::kSampleMaxCcTriggers) return false;
+  for (unsigned i = 0; i < velora::ports::kSampleMaxCcTriggers; ++i) {
+    const auto& t = d.cc_triggers[i];
+    if (i >= d.cc_trigger_count) {  // unused entries stay at their defaults (the count and the loaded entries agree)
+      if (t.cc != 0 || t.lo != 0.0f || t.hi != 127.0f) return false;
+      continue;
+    }
+    if (t.cc > 127 || !in(t.lo, 0.0f, 127.0f) || !in(t.hi, 0.0f, 127.0f) || t.lo > t.hi) return false;
+    if (i > 0 && t.cc <= d.cc_triggers[i - 1].cc) return false;  // ascending and unique
+  }
+  return !(d.no_note && d.cc_trigger_count == 0);  // a region nothing can start
+}
+
 // The curves a region's entries name must have finite, bounded points (bad_curve[i]: the instrument's definition of curve i is not).
 bool cc_curves_ok(const velora::ports::SampleRegionDesc& d, const std::array<bool, 256>& bad_curve) noexcept {
   for (unsigned i = 0; i < d.cc_mod_count && i < velora::ports::kSampleMaxCcMods; ++i)
@@ -107,7 +124,7 @@ float engine_cc_default(unsigned cc) noexcept { return cc == 7 ? 100.0f : cc == 
 
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return extension_sane(d) && amp_sane(d) && cc_sane(d) && voice_group_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && amp_sane(d) && cc_sane(d) && voice_group_sane(d) && bend_trigger_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -314,10 +331,14 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
         // Pitch ratio at the extreme keys of the range must be finite and sane.
         const float spd = r.speed;
         const float base = d.tune_cents + 100.0f * static_cast<float>(d.transpose);
-        const float up = 100.0f * static_cast<float>(static_cast<int>(d.key_hi) - static_cast<int>(d.key_center)) + base;
-        const float dn = 100.0f * static_cast<float>(static_cast<int>(d.key_lo) - static_cast<int>(d.key_center)) + base;
+        const int khi = d.no_note ? d.key_center : d.key_hi, klo = d.no_note ? d.key_center : d.key_lo;  // a controller-only region plays at its key centre only
+        const float up = 100.0f * static_cast<float>(khi - static_cast<int>(d.key_center)) + base;
+        const float dn = 100.0f * static_cast<float>(klo - static_cast<int>(d.key_center)) + base;
         const float rmax = std::pow(2.0f, up / 1200.0f) * spd, rmin = std::pow(2.0f, dn / 1200.0f) * spd;
-        r.playable = std::isfinite(rmax) && std::isfinite(rmin) && rmax <= kMaxRatio && rmin >= kMinRatio;
+        // Story 13.7: the wheel can add up to bend_up / bend_down cents on top.
+        const float bmax = d.bend_enabled && bend_trigger_sane(d) ? std::pow(2.0f, std::max({0.0f, d.bend_up, d.bend_down}) / 1200.0f) : 1.0f;
+        const float bmin = d.bend_enabled && bend_trigger_sane(d) ? std::pow(2.0f, std::min({0.0f, d.bend_up, d.bend_down}) / 1200.0f) : 1.0f;
+        r.playable = std::isfinite(rmax) && std::isfinite(rmin) && rmax * bmax <= kMaxRatio && rmin * bmin >= kMinRatio;
       }
     }
     r.disabled = d.has_end && d.end == 0;  // sfizz: end=0 switches the region off
@@ -417,6 +438,20 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
       if (d.off_mode == velora::ports::SampleOffMode::kTime) r.off_rate = seconds_to_exp_rate(std::max(d.off_time, kFastReleaseTime), sr);  // the 6 ms floor first: off_time=0 is a fast cut, not an instant one
       if (d.has_off_by || d.polyphony != 0 || d.group_polyphony != 0 || d.note_polyphony != 0) bank->uses_voice_groups = true;
     }
+    // Story 13.7: pitch bend range and controller triggers. A region with neither keeps every flag false and the bank its flags clear.
+    if (bend_trigger_sane(d)) {
+      if (d.bend_enabled) {
+        r.bends = true;
+        r.bend_smooth_frames = static_cast<std::int32_t>(1e-3f * static_cast<float>(d.bend_smooth_ms) * sr);  // sfizz LinearSmoother::setSmoothing
+        r.bend_fac_max = std::pow(2.0f, std::max({0.0f, d.bend_up, d.bend_down}) / 1200.0f);
+        bank->uses_bend = true;
+      }
+      if (d.cc_trigger_count != 0) {
+        r.cc_trigger = true;
+        bank->uses_cc_triggers = true;
+      }
+      r.no_note = d.no_note;
+    }
     pan_gains(pan_table_, d.pan, r.stereo, r.chan_l, r.chan_r);
 
     r.env_delay = seconds_to_samples(d.ampeg_delay, sr);
@@ -453,7 +488,7 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
   // Per-note lookup, regions in table order (a note's regions are visited in that order).
   std::array<std::uint32_t, 128> counts{};
   for (const auto& r : regions) {
-    if (r.disabled) continue;
+    if (r.disabled || r.no_note) continue;  // Story 13.7: a controller-only region is in no note's list
     for (unsigned n = r.d.key_lo; n <= std::min<unsigned>(r.d.key_hi, 127); ++n) ++counts[n];
   }
   bank->note_begin[0] = 0;
@@ -461,9 +496,27 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
   bank->note_list.assign(bank->note_begin[128], 0);
   std::array<std::uint32_t, 128> fill{};
   for (std::uint32_t i = 0; i < regions.size(); ++i) {
-    if (regions[i].disabled) continue;
+    if (regions[i].disabled || regions[i].no_note) continue;
     for (unsigned n = regions[i].d.key_lo; n <= std::min<unsigned>(regions[i].d.key_hi, 127); ++n)
       bank->note_list[bank->note_begin[n] + fill[n]++] = i;
+  }
+
+  // Story 13.7: the per-controller lists of triggered regions, in region order. A disabled (end=0) or unplayable region is skipped at run time like for a note.
+  {
+    std::array<std::uint32_t, 128> cc_counts{};
+    for (const auto& r : regions)
+      if (r.cc_trigger && !r.disabled)
+        for (unsigned i = 0; i < r.d.cc_trigger_count; ++i) ++cc_counts[r.d.cc_triggers[i].cc];
+    bank->cct_begin[0] = 0;
+    for (unsigned c = 0; c < 128; ++c) bank->cct_begin[c + 1] = bank->cct_begin[c] + cc_counts[c];
+    bank->cct_list.assign(bank->cct_begin[128], 0);
+    std::array<std::uint32_t, 128> cc_fill{};
+    for (std::uint32_t ri = 0; ri < regions.size(); ++ri)
+      if (regions[ri].cc_trigger && !regions[ri].disabled)
+        for (unsigned i = 0; i < regions[ri].d.cc_trigger_count; ++i) {
+          const unsigned c = regions[ri].d.cc_triggers[i].cc;
+          bank->cct_list[bank->cct_begin[c] + cc_fill[c]++] = ri;
+        }
   }
 
   bank->seq_counter.assign(regions.size(), 0);
@@ -551,6 +604,8 @@ void SampleEngine::clear_part_banks() noexcept {
 }
 
 void SampleEngine::reset_play_state() noexcept {
+  cc_started_ = {};
+  bend_.fill(0.0f);  // a stale wheel must not bend the first voices of the next set (the block loop replays the keyboard's wheel after a switch)
   for (std::uint32_t ch = 0; ch < 16; ++ch) {
     reset_part_keys(ch);
     part_engaged_[ch].clear();  // the new Live Set's stored part_attack / part_release arrive right after and engage again where they differ from the default
@@ -571,7 +626,13 @@ void SampleEngine::put_part_param(std::uint32_t part, std::uint32_t param_id, fl
   else part_release_rate_[part] = seconds_to_exp_rate(ms * 0.001f, sr);
 }
 
-bool SampleEngine::set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept {
+bool SampleEngine::set_part_cc_replay(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept {
+  return put_part_cc(part, cc, value32, false);
+}
+
+bool SampleEngine::set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept { return put_part_cc(part, cc, value32, true); }
+
+bool SampleEngine::put_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32, bool fire) noexcept {
   if (cc > 127) return false;
   // 32-bit value -> CC units. A 7-bit MIDI 1.0 value v arrives as the bit repetition of v, which is v / 127 of full scale to
   // better than 1e-8: values within 1e-6 of a whole CC step snap to it, so a controller sitting exactly on a crossfade
@@ -579,9 +640,76 @@ bool SampleEngine::set_part_cc(std::uint32_t part, std::uint32_t cc, std::uint32
   double x = static_cast<double>(value32) * (127.0 / 4294967295.0);
   const double nearest = std::floor(x + 0.5);
   if (std::fabs(x - nearest) < 1e-6) x = nearest;
+  const float before = cc_[part & 15u][cc];
   cc_[part & 15u][cc] = static_cast<float>(x);
   cc_touched_[part & 15u][cc >> 6] |= std::uint64_t{1} << (cc & 63u);
+  // Story 13.7: the controller may move into the trigger range of a region (sfizz Synth::ccDispatch, which runs before the value is stored, so a repeat of the same
+  // value starts nothing). The gates of the region see the new value (Layer::updateCCState runs first).
+  SampleBank* bank = bank_for(part);
+  if (fire && bank != nullptr && bank->uses_cc_triggers && static_cast<float>(x) != before) cc_trigger(*bank, part & 15u, cc, static_cast<float>(x));
   return true;
+}
+
+// --- Story 13.7: pitch bend and controller-started voices ------------------------------------------------------------------------
+
+bool SampleEngine::set_part_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept {
+  // A 14-bit MIDI 1.0 bend v arrives as v << 18 (a bit-repeating upscale differs from it by less than 1.3e-4 of the travel). sfizz normalises v - 8192 by 8191 and clamps to
+  // +-1 (v = 0 and 1 are both -1): dividing by 2^31 - 2^18 and clamping reproduces it, and a full-resolution MIDI 2.0 value reaches +-1 at the same points.
+  const double x = (static_cast<double>(value32) - 2147483648.0) / (2147483648.0 - 262144.0);
+  bend_[part & 15u] = static_cast<float>(std::clamp(x, -1.0, 1.0));
+  const SampleBank* bank = bank_for(part);
+  return bank != nullptr && bank->uses_bend;
+}
+
+float SampleEngine::bend_cents(const SampleBankRegion& r, float wheel) noexcept {
+  // sfizz Region::getBendInCents, then the quantiser of linearEnvelope(..., step): trunc(cents / step) * step.
+  const float c = wheel > 0.0f ? wheel * r.d.bend_up : -wheel * r.d.bend_down;
+  return r.d.bend_step > 1.0f ? std::trunc(c / r.d.bend_step) * r.d.bend_step : c;
+}
+
+// sfizz Layer::registerCC for every region listening to `cc`: the random number first, then the trigger range (inclusive), then the round robin counter, then the
+// layer's switches (keyswitch, controller gates). The voice starts as a note on at the region's pitch_keycenter would for pitch, with no velocity law (sfizz skips
+// noteGain for a controller trigger) and the controller's value as its velocity.
+void SampleEngine::cc_trigger(SampleBank& bank, std::uint32_t part, std::uint32_t cc, float value) noexcept {
+  const std::uint32_t b = bank.cct_begin[cc], e = bank.cct_begin[cc + 1];
+  if (b == e) return;
+  const float rnd = next_random();  // one draw per controller event that reaches a triggered region: a bank without them never moves the random sequence
+  ++event_seq_;                     // the voices of this event are sisters
+  const KeyState& ks = ks_[part];
+  const std::uint8_t vel7 = static_cast<std::uint8_t>(std::clamp(std::lround(value), 0l, 127l));  // the trigger value as the 7-bit velocity (CC 64 = 127 -> 127)
+  bool pseudo_done = false;
+  for (std::uint32_t i = b; i < e; ++i) {
+    const std::uint32_t ri = bank.cct_list[i];
+    const RegionRt& r = bank.regions[ri];
+    if (r.d.trigger != velora::ports::SampleTrigger::kAttack) continue;  // a controller voice is an attack (the importer refuses the other modes)
+    if (!(rnd >= r.d.lorand && rnd < r.d.hirand)) continue;
+    bool in_range = false;
+    for (unsigned k = 0; k < r.d.cc_trigger_count; ++k)
+      if (r.d.cc_triggers[k].cc == cc && value >= r.d.cc_triggers[k].lo && value <= r.d.cc_triggers[k].hi) in_range = true;
+    if (!in_range) continue;
+    bank.seq_switched[ri] = (bank.seq_counter[ri]++ % r.d.seq_length) == r.d.seq_position - 1 ? 1 : 0;
+    if (r.has_keyswitch && !region_switched(r, ks)) continue;
+    if (r.cc_gate && !cc_gate_open(r, part)) continue;
+    if (!bank.seq_switched[ri]) continue;
+    if (!r.playable) {
+      ++skipped_unplayable_;
+      continue;
+    }
+    const std::uint32_t note = r.d.key_center;
+    if (!pseudo_done) {
+      pseudo_.vel = pseudo_.vel_eg = static_cast<float>(vel7) / 127.0f;  // pseudo-CC 131 is the trigger value for a controller voice
+      pseudo_.alt = ks.alt;
+      pseudo_.keydelta = ks.keydelta;
+      pseudo_.uni = pseudo_.bi = 0.0f;
+      if (bank.uses_cc_random) {
+        pseudo_.uni = next_random();
+        pseudo_.bi = next_random() * 2.0f - 1.0f;
+      }
+      pseudo_done = true;
+    }
+    if (bank.uses_voice_groups) apply_voice_limits(bank, ri, part, note, vel7, true);
+    if (start_region(bank, ri, part, note, vel7, false, true)) cc_started_[note >> 6] |= std::uint64_t{1} << (note & 63u);
+  }
 }
 
 bool SampleEngine::key_released(std::uint32_t channel, std::uint32_t note) noexcept {
@@ -854,7 +982,7 @@ void SampleEngine::env_fast_release(Env& e) const noexcept {
 // --- voices ---------------------------------------------------------------------------------------
 
 bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, std::uint32_t channel, std::uint32_t note,
-                                std::uint8_t vel7, bool release_trigger) noexcept {
+                                std::uint8_t vel7, bool release_trigger, bool cc_voice) noexcept {
   const std::uint32_t slot = acquire_slot(channel, note);
   if (slot == VoiceAllocator::kNoSlot || slot >= capacity_) return false;
   Voice* v = &voices_[slot];
@@ -883,8 +1011,9 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
     const float inv = std::fabs(r.amp_veltrack) * (1.0f - g);
     vgain = r.amp_veltrack < 0.0f ? inv : 1.0f - inv;
   }
+  if (cc_voice) vgain = 1.0f;  // Story 13.7: sfizz skips noteGain (velocity law, amp_keytrack) for a controller trigger
   float base = vgain * r.vol_gain;
-  if (r.key_gain_db != 0.0f) {  // amp_keytrack: dB per key from amp_keycenter, the total bounded so the gain stays finite
+  if (r.key_gain_db != 0.0f && !cc_voice) {  // amp_keytrack: dB per key from amp_keycenter, the total bounded so the gain stays finite
     const float db = std::clamp(r.key_gain_db * static_cast<float>(static_cast<int>(note) - static_cast<int>(r.key_center)), -kMaxAmpDb, kMaxAmpDb);
     base *= std::pow(10.0f, db * 0.05f);
   }
@@ -930,6 +1059,7 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   *v = Voice{};
   v->active = true;
   v->release_trigger = release_trigger;
+  v->cc_voice = cc_voice;
   v->channel = channel;
   v->note = note;
   v->region = region;
@@ -943,6 +1073,10 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
   v->gain_l = base * chan_l;
   v->gain_r = base * chan_r;
   v->base_gain = base;
+  if (r.bends) {  // Story 13.7: sfizz resets the bend smoother to the wheel's current position when a voice starts: no ramp
+    v->bend_tgt = v->bend_cur = v->bend_prev = bend_cents(r, bend_[channel & 15u]);
+    v->bend_fac = v->bend_cur == 0.0f ? 1.0f : std::pow(2.0f, v->bend_cur / 1200.0f);
+  }
   init_env(v->env, bank, r, channel, vel7);
   if (r.has_xfade) {  // sfizz resetCrossfades(): the smoother starts at the current gain, so a new note does not ramp
     v->xf_tgt = crossfade_target(r, channel);
@@ -989,7 +1123,7 @@ void SampleEngine::off_sisters(std::uint64_t event) noexcept {
     if (v.active && !v.stolen && !v.offed && v.event == event) off_voice(v);
 }
 
-void SampleEngine::apply_voice_limits(const SampleBank& bank, std::uint32_t ri, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7) noexcept {
+void SampleEngine::apply_voice_limits(const SampleBank& bank, std::uint32_t ri, std::uint32_t channel, std::uint32_t note, std::uint8_t vel7, bool from_cc) noexcept {
   const velora::ports::SampleRegionDesc& d = bank.regions[ri].d;
   // A voice counts for the limits while it is alive on this bank and part and has not been cut already (sfizz offedOrFree). One that was merely released by its
   // note off and is still ringing counts, and can be cut.
@@ -1001,7 +1135,7 @@ void SampleEngine::apply_voice_limits(const SampleBank& bank, std::uint32_t ri, 
     if (!live(v) || v.release_trigger) continue;
     const RegionRt& vr = bank.regions[v.region];
     if (!vr.d.has_off_by || vr.d.off_by != d.group) continue;
-    if (vr.d.group == d.group && v.note == note && (!vr.cc_gate || cc_gate_open(vr, channel))) continue;
+    if (vr.d.group == d.group && !v.cc_voice && !from_cc && v.note == note && (!vr.cc_gate || cc_gate_open(vr, channel))) continue;
     off_voice(v);
   }
 
@@ -1011,7 +1145,7 @@ void SampleEngine::apply_voice_limits(const SampleBank& bank, std::uint32_t ri, 
     unsigned counter = 0;
     for (auto& v : voices_) {
       v.mark = false;
-      if (!live(v) || v.note != note || bank.regions[v.region].d.group != d.group) continue;
+      if (!live(v) || v.cc_voice != from_cc || v.note != note || bank.regions[v.region].d.group != d.group) continue;
       ++counter;
       v.mark = d.note_selfmask ? v.vel7 <= vel7 : true;
     }
@@ -1050,7 +1184,7 @@ void SampleEngine::apply_voice_limits(const SampleBank& bank, std::uint32_t ri, 
 bool SampleEngine::playing_attack_voice(const RegionRt& r, std::uint32_t channel, bool match_velocity) const noexcept {
   // sfizz rule: a release region only fires while an attack voice of a compatible note is alive.
   for (const auto& v : voices_) {
-    if (v.active && !v.stolen && !v.release_trigger && v.channel == channel && v.note >= r.d.key_lo && v.note <= r.d.key_hi &&
+    if (v.active && !v.stolen && !v.release_trigger && !v.cc_voice && v.channel == channel && v.note >= r.d.key_lo && v.note <= r.d.key_hi &&
         (!match_velocity || (v.vel7 >= r.d.vel_lo && v.vel7 <= r.d.vel_hi)))
       return true;
   }
@@ -1124,7 +1258,7 @@ EngineStatus SampleEngine::stop_voice_impl(std::uint32_t channel, std::uint32_t 
   // may be down again.
   bool found = false;
   for (auto& v : voices_) {
-    if (!v.active || v.stolen || v.release_trigger || v.channel != channel || v.note != note || v.key_up) continue;
+    if (!v.active || v.stolen || v.release_trigger || v.cc_voice || v.channel != channel || v.note != note || v.key_up) continue;
     const RegionRt& r = v.bank->regions[v.region];
     if (v.env.s >= EnvState::kRelease) continue;  // already releasing
     found = true;
@@ -1379,6 +1513,35 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
     }
   }
   const float cl = r.chan_l * gain_, cr = r.chan_r * gain_;
+  // Story 13.7: the pitch wheel as it is for this render segment. A new target restarts a linear ramp of max(16, smooth frames) frames (sfizz LinearSmoother); below
+  // 2 smooth frames the voice jumps at once. sfizz reads frame i after stepping its position by the pitch of frame i, so the first smoother output belongs to the step INTO
+  // the first frame of the segment. During the loop below the state is cur = out_f at the start of frame f (the step into f used it) and prev = out_{f-1}: the smoother
+  // moves to out_{f+1} in iteration f and the step into f + 1 uses it. A new target found at the segment start moves the smoother from prev (the previous iteration already
+  // moved cur by the old target's step), and the position, which was stepped with the old rate, is corrected by the difference. A region without bend opcodes skips all of
+  // it, and its position step below is exactly v.ratio.
+  const bool bends = r.bends;
+  if (bends) {
+    const float want = bend_cents(r, bend_[v.channel & 15u]);
+    if (want != v.bend_tgt) {
+      const float old_fac = v.bend_fac;
+      v.bend_tgt = want;
+      if (r.bend_smooth_frames < 2) {
+        v.bend_cur = want;
+        v.bend_step = 0.0f;
+      } else {
+        v.bend_step = (want - v.bend_prev) / static_cast<float>(std::max<std::int32_t>(16, r.bend_smooth_frames));
+        if (v.bend_step == 0.0f || !std::isfinite(v.bend_step)) {  // a step that rounds to nothing would never arrive: snap
+          v.bend_cur = want;
+        } else {
+          const float nxt = want > v.bend_prev ? std::min(want, v.bend_prev + v.bend_step) : std::max(want, v.bend_prev + v.bend_step);
+          v.bend_cur = nxt == v.bend_prev ? want : nxt;
+        }
+      }
+      v.bend_fac = std::pow(2.0f, v.bend_cur / 1200.0f);
+      if (v.bend_live) v.pos += static_cast<double>(v.ratio) * (static_cast<double>(v.bend_fac) - static_cast<double>(old_fac));  // only a voice that has stepped had a step to correct
+    }
+  }
+  const float ratio_hi = bends ? v.ratio * r.bend_fac_max : v.ratio;  // the fastest the voice can read (stream window, integrity look-ahead)
 
   // Story 1.17: this block's view of the stream. The producer's progress is read ONCE (acquire) per block, and the lowest frame the voice can still read is published (release) so
   // the producer never overwrites it: positions only move forward within a segment, and the voice reads at most idx - 1 - ceil(ratio) (the oracle hold) below its start.
@@ -1399,7 +1562,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       const std::uint64_t a = v.ring->avail.load(std::memory_order_acquire);
       sv.hi = static_cast<std::uint32_t>(a >> 48) == v.seg ? (a & velora::ports::kStreamFrameMask) : 0;
       const std::int64_t i0 = static_cast<std::int64_t>(std::floor(v.pos));
-      const std::int64_t lo = std::max<std::int64_t>(static_cast<std::int64_t>(v.seg_start), i0 - 2 - static_cast<std::int64_t>(std::ceil(v.ratio)));
+      const std::int64_t lo = std::max<std::int64_t>(static_cast<std::int64_t>(v.seg_start), i0 - 2 - static_cast<std::int64_t>(std::ceil(ratio_hi)));
       v.lo_pub = static_cast<std::uint64_t>(lo);
       v.ring->consumed_lo.store(v.lo_pub, std::memory_order_release);
     }
@@ -1416,7 +1579,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
 
   const std::uint64_t oracle_n = cfg_.oracle_block_frames;
   // Story 6.5: how far ahead of the playhead (in sample frames) the integrity fade looks, so the fade has finished when a damaged block is reached.
-  const std::int64_t integ_look = r.damage != nullptr ? static_cast<std::int64_t>(std::ceil(static_cast<double>(v.ratio) * kIntegrityFadeFrames)) + 1 : 0;
+  const std::int64_t integ_look = r.damage != nullptr ? static_cast<std::int64_t>(std::ceil(static_cast<double>(ratio_hi) * kIntegrityFadeFrames)) + 1 : 0;
   for (std::uint32_t f = 0; f < frames; ++f) {
     float fade = 1.0f;
     if (v.stolen) {  // steal ramp: gain fade_left/fade_total, strictly falling; 0 frees the voice
@@ -1430,7 +1593,7 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
     if (oracle_n != 0 && !v.stalled) {
       const std::uint64_t abs = clock_ + f;
       if (abs % oracle_n == 0 && abs / oracle_n > v.start_time / oracle_n) {
-        v.pos = std::max(0.0, v.pos - static_cast<double>(v.ratio));  // repeat the previous frame's position once
+        v.pos = std::max(0.0, v.pos - static_cast<double>(v.ratio) * (bends ? static_cast<double>(v.bend_fac) : 1.0));  // repeat the previous frame's position once (Story 13.7: a bent voice's last step)
         v.stalled = true;
       }
     }
@@ -1686,7 +1849,18 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       left[f] += ol;
       right[f] += orr;
     }
-    v.pos += static_cast<double>(v.ratio);
+    if (bends) {  // Story 13.7: advance the ramp one frame, then read at the bent rate
+      v.bend_live = true;
+      v.bend_prev = v.bend_cur;
+      if (v.bend_tgt != v.bend_cur) {
+        const float nxt = v.bend_tgt > v.bend_cur ? std::min(v.bend_tgt, v.bend_cur + v.bend_step) : std::max(v.bend_tgt, v.bend_cur + v.bend_step);
+        v.bend_cur = nxt == v.bend_cur ? v.bend_tgt : nxt;  // a step too small to move the float would never arrive: snap
+        v.bend_fac = std::pow(2.0f, v.bend_cur / 1200.0f);
+      }
+      v.pos += static_cast<double>(v.ratio) * static_cast<double>(v.bend_fac);
+    } else {
+      v.pos += static_cast<double>(v.ratio);
+    }
   }
 }
 
@@ -1695,7 +1869,7 @@ bool SampleEngine::voice_info(std::uint32_t slot, VoiceInfo& out) const noexcept
   const Voice& v = voices_[slot];
   out.start_time = v.start_time;
   out.level = v.env.v * std::max(v.gain_l, v.gain_r) * gain_;
-  if (v.stolen || v.release_trigger || v.env.s >= EnvState::kRelease) out.state = VoiceState::kReleasing;
+  if (v.stolen || v.release_trigger || v.cc_voice || v.env.s >= EnvState::kRelease) out.state = VoiceState::kReleasing;
   else if (v.key_up) out.state = VoiceState::kSustained;
   else out.state = VoiceState::kHeld;
   out.channel = v.channel;

@@ -108,6 +108,23 @@ std::shared_ptr<Instrument> make_instrument(std::uint32_t k) {
     lo.group = 2; lo.has_off_by = true; lo.off_by = 1; lo.off_mode = ports::SampleOffMode::kNormal; lo.polyphony = 4;
     hi.group = 1; hi.polyphony = 8; hi.group_polyphony = 24; hi.note_polyphony = 2; hi.note_selfmask = false;
   }
+  {  // Story 13.7: pitch bend (smoothed, stepped, extreme ranges) and controller-started voices (CC 64 down / up with a polyphony-1 group, CC 20 over a range),
+     // some of them also bending, so the wheel ramp and the controller start run inside the nonblocking scope too.
+    auto& bend = t->region(mono, 0, 127);
+    bend.bend_enabled = true; bend.bend_up = 1200.0f; bend.bend_down = -2400.0f; bend.bend_smooth_ms = 20; bend.volume_db = -12.0f;
+    auto& step = t->region(stereo, 40, 80);
+    step.bend_enabled = true; step.bend_up = 200.0f; step.bend_down = -200.0f; step.bend_step = 50.0f; step.volume_db = -12.0f;
+    auto& down = t->region(t->add(300, false, 51 + k), 1, 1);   // key_center 1..3: a controller voice binds the Live Set generation to its key, so these stay clear of the played keys
+    down.no_note = true; down.loop_mode = ports::SampleLoopMode::kNoLoop; down.group = 7; down.polyphony = 1; down.group_polyphony = 1;
+    down.off_mode = ports::SampleOffMode::kTime; down.off_time = 0.05f; down.cc_trigger_count = 1; down.cc_triggers[0] = {64, 127.0f, 127.0f};
+    auto& up = t->region(t->add(300, false, 61 + k), 2, 2);
+    up.no_note = true; up.loop_mode = ports::SampleLoopMode::kNoLoop; up.group = 7; up.polyphony = 1; up.group_polyphony = 1;
+    up.off_mode = ports::SampleOffMode::kTime; up.off_time = 0.05f; up.cc_trigger_count = 1; up.cc_triggers[0] = {64, 0.0f, std::nextafter(1.0f, 0.0f)};
+    auto& range = t->region(t->add(300, false, 41 + k), 3, 3);
+    range.no_note = true; range.loop_mode = ports::SampleLoopMode::kNoLoop; range.bend_enabled = true; range.bend_up = 700.0f; range.bend_smooth_ms = 5;
+    range.cc_trigger_count = 2; range.cc_triggers[0] = {20, 30.0f, 100.0f}; range.cc_triggers[1] = {21, 0.0f, 127.0f};
+    range.cc_gate_count = 1; range.cc_gates[0] = {74, 0.0f, 100.0f}; range.volume_db = -9.0f;
+  }
   return t;
 }
 
@@ -214,6 +231,13 @@ void run_block(BlockRenderer& br, Player& pl, float* l, float* r, std::uint32_t 
   if (i % 3 == 0) { br.submit({make_control_change(0, channel(), 11, pl.rng() * 2u + (pl.rng() & 1u)), pl.rng() % 64}); ++pl.ccs; }
   if (i % 4 == 1) { br.submit({make_control_change(0, channel(), 74, pl.rng() * 2u), pl.rng() % 64}); ++pl.ccs; }
   if (i % 11 == 0) br.submit({make_control_change(0, channel(), pl.rng() % 128, pl.rng() * 2u), 10});
+  // Story 13.7: the wheel every block (extremes and centre among random positions) and the controllers that start voices.
+  {
+    static constexpr std::uint32_t kWheel[] = {0u, 0x80000000u, 0xFFFFFFFFu};
+    br.submit({make_pitch_bend(0, channel(), i % 4 == 0 ? kWheel[(i / 4) % 3] : pl.rng() * 2u + (pl.rng() & 1u)), pl.rng() % 64});
+    if (i % 23 == 2) br.submit({make_control_change(0, channel(), 20, pl.rng() * 2u), pl.rng() % 64});
+    if (i % 37 == 4) br.submit({make_control_change(0, channel(), 21, pl.rng() * 2u), pl.rng() % 64});
+  }
   if (i % 29 == 0) br.submit({make_control_change(0, channel(), 64, (i / 29) % 2 ? 0xFFFFFFFFu : 0u), 20});  // the pedal
   if (i % 5 == 0)  // a registry-mapped controller (a parameter event) keeps addressing the part by its channel
     br.submit({make_param_event(*params::find(params::kDrawbar8), i % 2, static_cast<double>((i / 5) % 9)), 30});
@@ -298,7 +322,7 @@ bool run_once(bool live, std::uint64_t& hash_out) {
   need(pl.switches > 500 && pl.ccs > 10000, "traffic too light");
   need(distinct >= 3, "the keyswitch of part 0 did not move through at least 3 keys");
   need(sample.undeclared_extended_voices() == 0, "extended voices on an engine that declared them");
-  need(br->ignored_events() < 500, "controllers are being ignored");  // only the ones no engine reads (a part with another engine)
+  need(br->ignored_events() < 500, "controllers or the wheel are being ignored");  // only the ones no engine reads (a part with another engine)
   if (live) need(ctl->published > 1000 && ctl->epoch >= 50, "too few generations / seamless switches");
   if (live) std::printf("  generations %llu, seamless switches %llu\n", (unsigned long long)ctl->published, (unsigned long long)ctl->epoch);
   return ok;

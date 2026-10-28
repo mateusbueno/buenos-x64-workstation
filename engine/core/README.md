@@ -675,6 +675,65 @@ choke or a polyphony cut releases a voice, the arbiter steals one only when the 
   `rtsan_sample_features_test` (10,000 blocks of traffic with cuts and limits inside the nonblocking scope), `sample_bundle_loader_test` and the sfizz null fixtures `choke_groups`,
   `choke_sustain` and `polyphony_limits`.
 
+## Pitch bend and controller-started voices (Story 13.7)
+
+The port (`SampleRegionDesc`) carries, per region, `bend_enabled` with `bend_up`, `bend_down`, `bend_step`, `bend_smooth_ms`, and a list of controller triggers
+(`cc_trigger_count`, `cc_triggers[{cc, lo, hi}]`, at most 4) with `no_note`. Format minor 6 stores them (formatlib README).
+
+**Pitch bend.** `set_part_pitch_bend(part, value32)` (called by the block loop for a MIDI 2.0 pitch bend, centre `0x80000000`) stores the part's wheel as
+`clamp((value32 - 2^31) / (2^31 - 2^18), -1, 1)`: a 14-bit MIDI 1.0 value `v` arrives as `v << 18` (the offline renderer's `.mid` reader does exactly that) and gives sfizz's
+`(v - 8192) / 8191`, so 16383 and 0 are full travel and a full-resolution MIDI 2.0 value reaches full travel 2^18 steps early (the clamp). The call returns true only when the part's bank has a
+bending region, so a part whose instrument has none counts the event as ignored exactly as before this story. A **region follows the wheel only when it set a bend opcode** (the unset
+ones keep sfizz's defaults 200 / -200 / 1 / 0). A region without one is unchanged: bit for bit, no cost (`SampleBankRegion::bends` false skips every line below).
+This differs from sfizz, which bends every region by +-200 cents by default; the story requires a part without the opcodes to keep its behaviour, and 200 cents on a piano library
+that sets nothing would be a new surprise for existing instruments.
+
+- *Cents* (`bend_cents`, sfizz `Region::getBendInCents` then `linearEnvelope(..., bend_step)`): `wheel > 0 ? wheel * bend_up : -wheel * bend_down` (`bend_down` is negative cents; a positive one bends
+  up at the bottom of the wheel, as sfizz), and with `bend_step > 1` `trunc(cents / step) * step`.
+- *Pitch*: the voice reads at `ratio * 2^(cents/1200)` per frame (`Voice::bend_fac`, `std::pow(2.0f, ...)` like sfizz's `centsFactor`), recomputed only while the cents move. A voice starts at the
+  wheel's current position with no ramp (sfizz `bendSmoother_.reset`). A releasing voice keeps following the wheel (tested). The streaming window and the integrity look-ahead use the
+  largest factor the region can reach (`bend_fac_max`).
+- *Smoothing* (sfizz `LinearSmoother`): the wheel is read once per render segment; a new target starts a linear ramp of the cents with a step of `(target - previous) / max(16, smooth_frames)` per
+  frame (`smooth_frames = int(1e-3f * bend_smooth * rate)`; below 2 the voice jumps), clamped at the target. sfizz steps the position by the pitch of frame i *into* frame i, so a new
+  target found at the start of a segment takes effect on the step into its first frame: the engine moves the smoother once from the previous frame's value (`Voice::bend_prev`) and corrects the position, which
+  the previous iteration stepped with the old rate. No allocation, no lock: a few floats in the voice and one `pow` per frame while the cents are moving.
+- *Test-only oracle emulation*: the "repeat the previous frame once" hold of `oracle_block_frames` steps back by the bent rate.
+- **Differs from sfizz.** (1) Region without a bend opcode (above). (2) *Within-block ramp*: sfizz ramps a block's pitch up to the frame of a wheel event (the new value is reached AT the event), then
+  smooths; the engine receives the event between render segments and moves at it. They agree exactly when the event is the first frame of an oracle block (64 frames), which is how the null
+  fixtures place them; an event inside a block makes sfizz move up to one block earlier. With a `bend_smooth` of a few ms or more the audible difference is a time shift of the ramp by under a
+  block. (3) *Float32 ramp*: sfizz adds the step to a float32 cents value in SIMD lanes (`step * (1..4)` then `+ 4 * step` per 4 lanes); when the step is not exactly representable and the cents are
+  beyond 1024 the float grid (1.2e-4) is coarser than the step and its ramp arrives up to a frame early or late - a phase offset of 0.07 frame after a 100 ms ramp to +1200 cents with a step of
+  0.225 cents/frame (measured, null residual -37 dB), 0 with binary-fraction steps. The engine does not copy it. (4) sfizz accumulates a voice's read position in float32 per 64-frame block; a
+  pitch ratio that is not a power of two drifts from the engine's double position by about 1e-6 sample per frame (0.02 to 0.03 frame after 2 s, measured), which is why the
+  long fixtures use octave ratios (see the sample suite README). (5) `lobend` / `hibend` (regions gated by the wheel), `bend_*_oncc` and pitch LFO / EG are not implemented. (6) Not applied to
+  MPE / per-note bend.
+
+**Controller-started voices** (`on_locc<N>` / `on_hicc<N>`, `hikey=-1`). `set_part_cc()` stores the new value and, for a bank that has triggered regions (`SampleBank::uses_cc_triggers`), calls `cc_trigger()`
+when the value **differs from the one before the message** (sfizz `Layer::registerCC`: `ccValue != midiState.getCCValue(cc)`; ccDispatch runs before the value is stored, and the region's gates see the new
+value). For each region listening to that controller (`SampleBank::cct_list`, region order) the order is sfizz's: one random draw per controller event that reaches a triggered region (a bank without
+triggers draws none, so its random sequence is untouched), `lorand`/`hirand`, the trigger range (both ends inclusive), the round-robin counter of that region, the keyswitch, the CC gates, the sequence
+switch, playable. Then `apply_voice_limits()` (Story 13.6) and `start_region(..., cc_voice = true)`. A controller voice:
+- plays at the region's `pitch_keycenter` (`note = key_center`, so tune, transpose and `amp_keycenter`-free pitch are those of a note at the key centre), with **no velocity law and no `amp_keytrack`** (sfizz skips
+  `noteGain` for a controller trigger); its 7-bit "velocity" - used by `ampeg_vel2*`, the envelope and pseudo-CC 131 - is the controller value rounded (CC 64 = 127 -> 127, 0 -> 0);
+- is never released by a note off, key up, the sustain pedal or `stop_voice` (`Voice::cc_voice`; sfizz releases only note-on voices), never counts as the attack voice a `trigger=release` region needs, and ends
+  with its sample (or a loop that never ends: then a choke group, a limit or a steal);
+- is reported by `voice_info` as releasing (the arbiter steals it before held notes), carries `note = key_center` and the part as channel;
+- can be cut by `off_by`, `polyphony` and `group_polyphony` like any voice (Salamander's pedal noises: `group=1 polyphony=1 off_time=0.1`);
+- is bound to the Live Set generation by the block loop: `deliver_cc` asks `take_cc_started()` and calls `bind_generation(part, key_center)`, as for a note on.
+A region with `no_note` is in no note's list (never starts from a key); one without it also starts from its key range. A Live Set switch or a part that begins to listen replays the keyboard's controller
+values (`replay_keyboard_ccs`) through `set_part_cc_replay`: the value is stored but fires no trigger, since no controller moved. `reset_play_state` also clears the stored wheel and any pending started keys.
+Not implemented: `on_lohdcc`/`on_hihdcc`, triggers on pseudo-controllers, `trigger=release` semantics for a controller voice (sfizz also ignores `trigger` there), sfizz's quirk of passing the controller number
+as the note number to the choke exemption (`checkOffGroups(..., ccNumber)`): a controller voice is treated as a note at `pitch_keycenter` there.
+
+- **Tests.** `sample_engine_tests` (`test_pitch_bend`: both extremes and the centre, asymmetric and inverted ranges, the 14-bit extremes, `bend_step` truncation toward zero, per-part wheel, a voice that starts
+  bent, the smoothing ramp and the jump against a closed-form model of sfizz's per-frame order, a mid-ramp retarget, a bend during release against a plain twin, a part without bend opcodes bit for bit and
+  "ignored", mixed banks, ill-formed descriptors unplayable; `test_cc_triggered_voices`: no voice from a note, one per change, range boundaries with the fill-gap, pedal up, gates on the same controller, a
+  region with a key range and a trigger, pitch at the key centre with transpose, random and round-robin selection, the polyphony-1 pedal group, no random draw for a bank without triggers, never released by a
+  key; `test_bend_and_trigger_through_block_renderer`: CC64 through the sustain path of the block loop, "ignored" counting), `parallel_render_tests` (`test_bend_and_cc_voices_in_parallel`: 1 and 3
+  threads bit-identical, identical voice tables, serial within 1e-5), `sample_features_traffic_test` / `rtsan_sample_features_test` (a wheel message every block plus smoothed, stepped and extreme
+  regions, CC 64 / 20 / 21 starting voices with a polyphony-1 group, inside the nonblocking scope), `sample_bundle_loader_test`, and the sfizz null fixtures `pitch_bend`, `pitch_bend_fine`,
+  `pitch_bend_smooth`, `cc_trigger`.
+
 ## Content integrity (Story 6.5)
 
 A *protected* library's blocks are hash-checked and AES-CTR decrypted by non-real-time threads only (the head loader, the I/O edge threads: `engine/host/README.md`,

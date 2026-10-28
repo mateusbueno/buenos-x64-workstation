@@ -70,6 +70,11 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
   const bool sample_render = opt.engine == EngineKind::kSample;
   const bool routing_enabled = opt.routing.enabled;
   auto control = [organ_render, sample_render, routing_enabled, &opt](const NoteEvent& e, Ump& out) {
+    if (e.bend) {  // Story 13.7: the pitch wheel reaches the sample engine only. 14 -> 32 bits by a plain shift (centre 8192 -> 0x80000000): the engine takes 0xFFFC0000 (16383) as full travel
+      if (!sample_render) return false;
+      out = make_pitch_bend(0, e.channel, static_cast<std::uint32_t>(e.bend14 & 0x3FFFu) << 18);
+      return true;
+    }
     const std::uint32_t v32 = static_cast<std::uint32_t>(e.value * 0xFFFFFFFFull / 127);
     if (sample_render && !e.contact) {
       out = make_control_change(0, e.channel, e.note, v32);

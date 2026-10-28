@@ -425,7 +425,51 @@ static void test_voice_groups_reach_the_port() {
   CHECK(held == 1 && releasing == 1);  // the note-60 voice was cut by the note-62 voice
 }
 
+static void test_bend_and_triggers_reach_the_port() {
+  using namespace velora::format;
+  Region r;
+  r.bend.enabled = true; r.bend.up = 700.f; r.bend.down = -300.f; r.bend.step = 50.f; r.bend.smooth_ms = 25;
+  r.trig.no_note = true; r.trig.count = 2; r.trig.t[0] = {20, 10.f, 90.f}; r.trig.t[1] = {64, 127.f, 127.f};
+  const ports::SampleRegionDesc d = host::to_port_region(r);
+  CHECK(d.bend_enabled && d.bend_up == 700.f && d.bend_down == -300.f && d.bend_step == 50.f && d.bend_smooth_ms == 25);
+  CHECK(d.cc_trigger_count == 2 && d.no_note && d.cc_triggers[0].cc == 20 && d.cc_triggers[0].lo == 10.f && d.cc_triggers[0].hi == 90.f && d.cc_triggers[1].cc == 64);
+  const ports::SampleRegionDesc plain = host::to_port_region(Region{});
+  CHECK(!plain.bend_enabled && plain.bend_up == 200.f && plain.bend_down == -200.f && plain.bend_step == 1.f && plain.bend_smooth_ms == 0 && plain.cc_trigger_count == 0 && !plain.no_note);
+  // Through a real bundle (format 2.6): a region started by CC64 (never by a key) plays when the pedal goes down, and a bending region follows the wheel.
+  BundleWriter w;
+  const auto inst = w.add_instrument("Bt", "Bt.sfz");
+  std::vector<std::int32_t> pcm(60000, 1000);
+  (void)w.add_sample(inst.value(), {"a", {1, 16, false, 48000}, 60000, pcm});
+  Region noise;
+  noise.key_center = 60;
+  noise.trig.no_note = true; noise.trig.count = 1; noise.trig.t[0] = {64, 127.f, 127.f};
+  Region keyed;
+  keyed.key_lo = keyed.key_hi = keyed.key_center = 62;
+  keyed.bend.enabled = true;
+  CHECK(w.add_region(inst.value(), noise) == Error::kNone);
+  CHECK(w.add_region(inst.value(), keyed) == Error::kNone);
+  const auto bundle_bytes = w.finalize().take();
+  auto rd = BundleReader::open_memory(bundle_bytes);
+  CHECK(rd.ok() && rd.value().format_minor() == 6);
+  if (!rd.ok()) return;
+  const auto loaded = host::load_instrument_by_index(rd.value(), 0);
+  CHECK(loaded.ok());
+  if (!loaded.ok()) return;
+  const ports::InstrumentView v = loaded.instrument->instrument();
+  CHECK(v.regions[0].no_note && v.regions[0].cc_trigger_count == 1 && v.regions[1].bend_enabled && !v.regions[1].no_note);
+  velora::core::SampleEngine::Config cfg;
+  cfg.max_voices = 4;
+  velora::core::SampleEngine eng(cfg);
+  eng.set_instrument(*loaded.instrument);
+  eng.start_voice(0, 60, 0xFFFF);
+  CHECK(eng.active_voices() == 0);  // no key starts the pedal noise
+  eng.set_part_cc(0, 64, 0xFFFFFFFFu);
+  CHECK(eng.active_voices() == 1);
+  CHECK(eng.set_part_pitch_bend(0, 0xFFFFFFFFu));  // the keyed region bends: the wheel is taken
+}
+
 int main() {
+  test_bend_and_triggers_reach_the_port();
   test_voice_groups_reach_the_port();
   test_cc_map_reaches_the_port();
   test_amp_map_reaches_the_port();

@@ -211,6 +211,36 @@ struct VoiceGroup {
   friend bool operator==(const VoiceGroup&, const VoiceGroup&) = default;
 };
 
+// Story 13.7 (bundle format 2.6): the pitch-bend range of a region and its controller triggers (sfizz bend_up / bend_down / bend_step / bend_smooth and
+// on_locc / on_hicc). `enabled` is false for a region that sets none of the four bend opcodes: the engine then ignores the pitch wheel for it, exactly as it did
+// before this story. With `enabled` the unset opcodes keep sfizz's defaults (200, -200, 1, 0). The wheel at full travel up bends `up` cents, at full travel down
+// `down` cents (negative = down), linearly in between; `step` quantises the cents (trunc(cents / step) * step, `step` > 1 only); `smooth_ms` is the length of the
+// linear ramp the voice makes to a new wheel position (0 or one frame = at once).
+inline constexpr float kMaxBendCents = 12000.f;
+inline constexpr float kMaxBendStep = 12000.f;
+struct PitchBend {
+  bool enabled = false;
+  float up = 200.f, down = -200.f, step = 1.f;
+  std::uint16_t smooth_ms = 0;
+  friend bool operator==(const PitchBend&, const PitchBend&) = default;
+};
+
+// on_locc<N> / on_hicc<N>: the region starts a voice when controller N moves to a value inside [lo, hi] (CC units, a hicc below 127 stored as nextafter(hicc + 1,
+// 0), both ends inclusive) that differs from the value before the message, like sfizz. `no_note`: the region never starts from a note (hikey=-1), only from its
+// triggers; it requires at least one trigger (a region that nothing can start is not stored). Triggers are ascending by cc (unique); unused entries are zero.
+inline constexpr unsigned kMaxCcTriggers = 4;
+struct CcTrigger {
+  std::uint8_t cc = 0;
+  float lo = 0, hi = 127;
+  friend bool operator==(const CcTrigger&, const CcTrigger&) = default;
+};
+struct CcTriggers {
+  std::uint8_t count = 0;
+  bool no_note = false;
+  CcTrigger t[kMaxCcTriggers]{};
+  friend bool operator==(const CcTriggers&, const CcTriggers&) = default;
+};
+
 struct Region {
   std::uint32_t sample = 0;  // index into the owning instrument's samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -241,6 +271,9 @@ struct Region {
   CcMap cc;
   // Story 13.6 extension (bundle format 2.5).
   VoiceGroup vg;
+  // Story 13.7 extension (bundle format 2.6).
+  PitchBend bend;
+  CcTriggers trig;
 
   friend bool operator==(const Region&, const Region&) = default;
 };
@@ -260,6 +293,9 @@ bool has_cc_extension(const Region& r);
 
 // True when the region needs a record in the format 2.5 voice-group table: any VoiceGroup field other than its default.
 bool has_vg_extension(const Region& r);
+
+// True when the region needs a record in the format 2.6 table: a pitch-bend range or any controller trigger.
+bool has_bend_trigger_extension(const Region& r);
 
 // Checks every range invariant of a region against its sample length (`sample_frames`). Returns
 // kNone or kInvalidArgument. Used by the writer, the reader (as kCorruptManifest) and the importer.

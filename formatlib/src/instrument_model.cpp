@@ -18,6 +18,8 @@ bool has_cc_extension(const Region& r) { return r.cc != CcMap{}; }
 
 bool has_vg_extension(const Region& r) { return r.vg != VoiceGroup{}; }
 
+bool has_bend_trigger_extension(const Region& r) { return r.bend != PitchBend{} || r.trig != CcTriggers{}; }
+
 
 namespace {
 // -0.0 == 0.0 as a number but not as bytes: one encoding per value.
@@ -32,6 +34,25 @@ Error validate_vg(const VoiceGroup& g) {
   if (g.off_mode != OffMode::kTime && g.off_time != 0.f) return Error::kInvalidArgument;  // one encoding per behaviour
   if (g.group_polyphony != 0 && g.group == 0) return Error::kInvalidArgument;  // a group limit needs a group
   if (g.polyphony > kMaxVoiceLimit || g.group_polyphony > kMaxVoiceLimit || g.note_polyphony > kMaxVoiceLimit) return Error::kInvalidArgument;
+  return Error::kNone;
+}
+
+Error validate_bend_trigger(const PitchBend& b, const CcTriggers& t) {
+  if (!std::isfinite(b.up) || !std::isfinite(b.down) || !std::isfinite(b.step) || neg_zero(b.up) || neg_zero(b.down)) return Error::kInvalidArgument;
+  if (b.up < -kMaxBendCents || b.up > kMaxBendCents || b.down < -kMaxBendCents || b.down > kMaxBendCents) return Error::kInvalidArgument;
+  if (b.step < 1.f || b.step > kMaxBendStep) return Error::kInvalidArgument;
+  if (!b.enabled && b != PitchBend{}) return Error::kInvalidArgument;  // one encoding per behaviour: no opcode, no values
+  if (t.count > kMaxCcTriggers) return Error::kInvalidArgument;
+  if (t.no_note && t.count == 0) return Error::kInvalidArgument;  // a region nothing can start
+  for (unsigned i = 0; i < kMaxCcTriggers; ++i) {
+    const CcTrigger& e = t.t[i];
+    if (i >= t.count) {
+      if (e != CcTrigger{}) return Error::kInvalidArgument;  // unused entries are the default (cc 0, 0..127)
+      continue;
+    }
+    if (e.cc > 127 || !std::isfinite(e.lo) || !std::isfinite(e.hi) || e.lo < 0.f || e.hi > 127.f || e.lo > e.hi || neg_zero(e.lo) || neg_zero(e.hi)) return Error::kInvalidArgument;
+    if (i > 0 && e.cc <= t.t[i - 1].cc) return Error::kInvalidArgument;  // strictly ascending, so unique
+  }
   return Error::kNone;
 }
 
@@ -181,6 +202,7 @@ Error validate_region(const Region& r, std::uint64_t frames) {
   if (validate_amp(r.amp) != Error::kNone) return Error::kInvalidArgument;
   if (validate_cc(r.cc) != Error::kNone) return Error::kInvalidArgument;
   if (validate_vg(r.vg) != Error::kNone) return Error::kInvalidArgument;
+  if (validate_bend_trigger(r.bend, r.trig) != Error::kNone) return Error::kInvalidArgument;
   if (r.offset >= frames) return Error::kInvalidArgument;
   if (r.has_loop_points) {
     if (r.loop_start > r.loop_end || r.loop_end >= frames) return Error::kInvalidArgument;

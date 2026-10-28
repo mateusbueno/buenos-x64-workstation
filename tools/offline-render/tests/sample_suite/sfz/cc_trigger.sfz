@@ -1,0 +1,13 @@
+<control>
+default_path=samples/
+<global> ampeg_release=0.1
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 loop_mode=loop_continuous loop_start=2400 loop_end=7199
+<master> lokey=-1 hikey=-1 group=1 polyphony=1 off_time=0.05
+<group> volume=-6 on_locc64=127 on_hicc64=127 locc64=127 hicc64=127
+<region> sample=loop2.wav pitch_keycenter=62
+<group> volume=-4 on_locc64=0 on_hicc64=0 locc64=0 hicc64=0
+<region> sample=short.wav pitch_keycenter=67
+<master> hikey=-1 on_locc1=30 on_hicc1=60 ampeg_release=0.05
+<region> sample=loop.wav pitch_keycenter=64 volume=-3
+<global>
+<region> sample=loop2.wav key=62 on_locc2=1 on_hicc2=127 ampeg_release=0.1

@@ -163,6 +163,16 @@ class Engine {
     return false;
   }
 
+  // Story 13.7: the keyboard replay of a Live Set switch delivers controller values that no controller move caused: stores them like set_part_cc() but fires no controller trigger.
+  virtual bool set_part_cc_replay(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept VELORA_NONBLOCKING { return set_part_cc(part, cc, value32); }
+
+  // Story 13.7: a set_part_cc() that just returned true may have started a voice from the controller (the sample engine's on_locc / on_hicc regions). Returns true once
+  // per such voice batch and gives the key the voice is bound to (its note field), so the block loop can bind the snapshot generation like it does for a note on.
+  virtual bool take_cc_started(std::uint32_t& key) noexcept VELORA_NONBLOCKING {
+    (void)key;
+    return false;
+  }
+
   // Pitch bend (Story 3.10): MIDI 2.0 pitch bend addressed to `part`, value32 unsigned with 0x80000000 = centre, delivered at the event's frame between
   // render segments. Returns true when the engine follows it; the block loop counts the event as ignored when no engine did. Default: not followed.
   virtual bool set_part_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING {

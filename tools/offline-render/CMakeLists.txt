@@ -823,6 +823,10 @@ endforeach()
 foreach(_neg choke_groups choke_sustain polyphony_limits)
   add_test(NAME sample_null_neg_strip136_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip136)
 endforeach()
+# Story 13.7: the bend and controller-trigger cases must fail when the same instrument is imported without those opcodes.
+foreach(_neg pitch_bend pitch_bend_fine pitch_bend_smooth cc_trigger)
+  add_test(NAME sample_null_neg_strip137_${_neg} COMMAND sample_suite_test ${_neg} hermite --negative strip137)
+endforeach()
 add_test(NAME sample_render_cli_errors COMMAND sample_suite_test cli-errors)
 # Story 1.18: --voice-threads 3 equals --voice-threads 1 bit for bit; 2 and a non-sample engine exit 2.
 add_test(NAME sample_render_voice_threads COMMAND sample_suite_test voice-threads)

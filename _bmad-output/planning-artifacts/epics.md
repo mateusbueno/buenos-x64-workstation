@@ -7236,6 +7236,8 @@ So that the pedal-action noises of Salamander and the pitch-bend range of other 
 **Then** the region starts as a voice from the controller and never from a note, and Salamander's pedal-action region imports
 **And** Salamander from the corpus imports and passes the null test within its recorded tolerance
 
+> **Status note (Story 13.7 run): the last AC ("Salamander imports and passes the null test") is NOT met.** Salamander still fails import: `rt_decay`, `amp_veltrack_oncc99`/`amp_veltrack_curvecc99`, and its samples are FLAC (the importer reads WAV only). Scarypiano's bend opcodes import now, but every sample path is `..\Samples\...` (outside the SFZ directory). The pedal-action regions themselves import and are null-tested against sfizz (`cc_trigger`).
+
 ### Story 13.8: Per-voice filter
 
 As a keyboardist,

@@ -67,6 +67,12 @@ inline constexpr std::size_t kCcPointSize = 4 + 4;
 //     u32 region_index, i32 group, i32 off_by (0 without off_by), u8 flags (bit 0 has_off_by, bit 1 note_selfmask off, others 0), u8 off_mode (0 fast, 1 normal, 2 time),
 //     u16 0, f32 off_time (0 unless off_mode is time), u16 polyphony, u16 group_polyphony, u16 note_polyphony (each 0..255, 0 = none), u16 0
 inline constexpr std::size_t kVgRecordSize = 4 + 4 + 4 + 1 + 1 + 2 + 4 + 2 + 2 + 2 + 2;
+// Format 2.6 (Story 13.7) pitch-bend / controller-trigger table, per instrument, after the minor 5 table:
+//   u32 n_bt_regions, then per region (ascending by region index; a record exists only for a region with a non-default PitchBend or CcTriggers):
+//     u32 region_index, u8 flags (bit 0 bend enabled, bit 1 no_note, others 0), u8 trig_count (0..4), u16 smooth_ms (0 unless bend enabled),
+//     f32 bend_up, f32 bend_down, f32 bend_step (200, -200, 1 unless bend enabled), then trig_count x { u8 cc, u8 0, u8 0, u8 0, f32 lo, f32 hi }
+inline constexpr std::size_t kBtRecordSize = 4 + 1 + 1 + 2 + 4 + 4 + 4;
+inline constexpr std::size_t kBtTriggerSize = 4 + 4 + 4;
 inline constexpr unsigned kMinorShift = 16;
 
 inline void put_u8(std::vector<std::uint8_t>& v, std::uint8_t x) { v.push_back(x); }

@@ -141,6 +141,32 @@ Instrument& group_instrument() {
   return ins;
 }
 
+// Story 13.7: bending regions (smoothed, stepped, big range) and controller-triggered regions (CC 64 down / up polyphony-1 group, CC 20 over a range, one of them
+// bending), on top of plain notes.
+Instrument& bend_instrument() {
+  static Instrument ins = [] {
+    Instrument i;
+    const auto mono = i.add(6000, false, 48000, 0.05f);
+    const auto stereo = i.add(5000, true, 44100, 0.04f);
+    const auto lp = i.add(9000, false, 48000, 0.05f);
+    const auto small = i.add(900, false, 48000, 0.03f);
+    auto& a = i.region(mono, 24, 60);
+    a.ampeg_release = 0.03f; a.bend_enabled = true; a.bend_up = 1200.0f; a.bend_down = -1200.0f; a.bend_smooth_ms = 10;
+    auto& b = i.region(stereo, 40, 96);
+    b.pan = -30.0f; b.bend_enabled = true; b.bend_up = 700.0f; b.bend_down = -500.0f; b.bend_step = 100.0f;
+    auto& c = i.region(lp, 24, 96);
+    c.loop_mode = ports::SampleLoopMode::kLoopContinuous; c.has_loop_points = true; c.loop_start = 1000; c.loop_end = 8000; c.ampeg_release = 0.05f;
+    c.bend_enabled = true; c.bend_smooth_ms = 40;
+    auto& d = i.region(small, 1, 1);
+    d.no_note = true; d.group = 7; d.polyphony = 1; d.group_polyphony = 1; d.off_mode = ports::SampleOffMode::kTime; d.off_time = 0.02f;
+    d.cc_trigger_count = 1; d.cc_triggers[0] = {64, 127.0f, 127.0f};
+    auto& e = i.region(mono, 3, 3);
+    e.no_note = true; e.bend_enabled = true; e.bend_smooth_ms = 3; e.cc_trigger_count = 1; e.cc_triggers[0] = {20, 20.0f, 100.0f};
+    return i;
+  }();
+  return ins;
+}
+
 SampleEngine::Config engine_config(bool big = true) {
   SampleEngine::Config cfg;
   cfg.max_voices = big ? 320 : 16;
@@ -164,7 +190,7 @@ enum class Mode { kSerial, kPool1, kPool3 };
 // Runs `blocks` blocks of churn on one engine; every block's output is appended to `out` (split: 16 buses, else 1). Identical operations for
 // every Mode (the operations depend only on the LCG), so the outputs can be compared across modes.
 void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float>& out, std::uint32_t& peak, const Instrument& ins = instrument(),
-                  std::vector<std::uint8_t>* states = nullptr) {
+                  std::vector<std::uint8_t>* states = nullptr, bool wheel_and_cc = false) {
   WorkerPool pool;
   SampleEngine se(engine_config());
   se.set_instrument(ins);
@@ -184,6 +210,13 @@ void drive_engine(Mode mode, bool split, std::uint32_t blocks, std::vector<float
     }
     const std::uint32_t offs = (rng.next() >> 29);
     for (std::uint32_t k = 0; k < offs; ++k) se.stop_voice((rng.next() >> 8) % 16, 24 + (rng.next() >> 8) % 73);
+    if (wheel_and_cc) {  // Story 13.7: wheel positions (extremes included) and controller moves, on random parts
+      static constexpr std::uint32_t kWheel[] = {0u, 0x80000000u, 0xFFFFFFFFu};
+      const std::uint32_t pw = (rng.next() >> 8) % 16, wv = rng.next();
+      se.set_part_pitch_bend(pw, blk % 5 == 0 ? kWheel[(blk / 5) % 3] : wv);
+      if (blk % 3 == 0) se.set_part_cc((rng.next() >> 8) % 16, 64, (rng.next() >> 9) & 1u ? 0xFFFFFFFFu : 0u);
+      if (blk % 4 == 1) se.set_part_cc((rng.next() >> 8) % 16, 20, rng.next());
+    }
     const std::uint32_t steals = (rng.next() >> 30);
     for (std::uint32_t k = 0; k < steals; ++k) se.begin_steal_fade((rng.next() >> 8) % se.voice_capacity(), 40 + (rng.next() >> 8) % 300);
     if (blk % 97 == 0) se.set_param(SampleEngine::kParamGain, 0.4f + 0.01f * static_cast<float>(blk % 13));
@@ -326,6 +359,27 @@ void test_choke_one_vs_three_threads_bit_identical_serial_within_1e7() {
   double energy = 0.0;
   for (float x : ser) energy += static_cast<double>(x) * x;
   CHECK(energy > 0.01);
+}
+
+// Story 13.7: bending voices and controller-started voices. 1 and 3 threads are bit-identical, the voice table is identical in all three modes (controller voices start
+// in the serial control phase), the audio equals the serial render within the repository tolerance, and the wheel and the controllers changed the sound.
+void test_bend_and_cc_voices_in_parallel(bool split) {
+  std::vector<float> ser, p1, p3, still;
+  std::vector<std::uint8_t> st_s, st_1, st_3, st_n;
+  std::uint32_t pk_s = 0, pk_1 = 0, pk_3 = 0, pk_n = 0;
+  drive_engine(Mode::kSerial, split, 400, ser, pk_s, bend_instrument(), &st_s, true);
+  drive_engine(Mode::kPool1, split, 400, p1, pk_1, bend_instrument(), &st_1, true);
+  drive_engine(Mode::kPool3, split, 400, p3, pk_3, bend_instrument(), &st_3, true);
+  std::size_t at = 0;
+  const bool same = bit_identical(p1, p3, at);
+  if (!same) std::printf("  bend %s: 1 vs 3 threads differ at index %zu\n", split ? "split" : "mono", at);
+  CHECK(same);
+  CHECK(st_s == st_1 && st_1 == st_3 && !st_s.empty());
+  const double d = max_abs_diff(ser, p3);
+  std::printf("parallel_render_tests: bend   %s peak_voices=%u serial-vs-parallel max |diff| = %.3g (tolerance %.0e)\n", split ? "split" : "mono ", pk_3, d, kSerialTolerance);
+  CHECK(d <= kSerialTolerance);
+  drive_engine(Mode::kPool3, split, 400, still, pk_n, bend_instrument(), &st_n, false);  // the same notes without any wheel or controller traffic
+  CHECK(still != p3);
 }
 
 void test_inert_group_fields_change_nothing() {
@@ -582,6 +636,8 @@ int main() {
   test_groups_in_parallel(true);
   test_choke_one_vs_three_threads_bit_identical_serial_within_1e7();
   test_inert_group_fields_change_nothing();
+  test_bend_and_cc_voices_in_parallel(false);
+  test_bend_and_cc_voices_in_parallel(true);
   test_split_isolation();
   test_few_voices();
   test_block_loop();

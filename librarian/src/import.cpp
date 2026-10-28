@@ -638,14 +638,14 @@ ImportResult import_sfz(const ImportOptions& opt) {
     res.reason_code = damaged ? ReasonCode::kDamaged : ReasonCode::kUnsupportedFeatures;
     return res;
   }
-  // Story 13.2: regions that never trigger from a note (hikey=-1) are not written until Story 13.7 (controller-triggered voices).
+  // Story 13.2 / 13.7: a hikey=-1 region without an on_locc/on_hicc trigger can never start a voice and is not written; one with a trigger is kept.
   const std::size_t never_note = fmt::drop_never_note_triggered(parsed);
   if (parsed.regions.empty()) {
     res.status = Status::kSkipped;
     res.reason_code = ReasonCode::kDamaged;
     res.failing_path = opt.sfz_path;
     res.reasons.push_back(opt.sfz_path + ": no regions in SFZ file" +
-                          (never_note ? " that a note can trigger (hikey=-1 regions are not imported yet)" : ""));
+                          (never_note ? " that a note can trigger (hikey=-1 regions without an on_locc/on_hicc trigger are never played)" : ""));
     return res;
   }
 

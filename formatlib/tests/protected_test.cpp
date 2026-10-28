@@ -538,6 +538,25 @@ void test_roundtrip_and_seeks(const std::string& fixture_dir) {
       CHECK(!got.empty() && got.back() == a);
     }
   }
+  // Story 13.7: the bend / controller-trigger table (format minor 6) round-trips through the protected format.
+  {
+    Source s8;
+    BundleWriter wb = make_writer(s8, true);
+    Region a;
+    a.bend.enabled = true; a.bend.up = 700.f; a.bend.down = -2400.f; a.bend.step = 50.f; a.bend.smooth_ms = 40;
+    Region b;
+    b.trig.no_note = true; b.trig.count = 2; b.trig.t[0] = {20, 0.f, 127.f}; b.trig.t[1] = {64, 127.f, 127.f};
+    CHECK_ERR(wb.add_region(0, a), Error::kNone);
+    CHECK_ERR(wb.add_region(0, b), Error::kNone);
+    const Bytes bb = protect(wb, nonce1());
+    CHECK(L::get_u32(bb.data() + 4) == (kProtectedFormatVersion | (6u << 16)));
+    auto rb = ProtectedBundleReader::open_memory(bb, tk, test_key());
+    CHECK(rb.ok() && rb.value().info().format_minor == 6 && rb.value().verify_all() == Error::kNone);
+    if (rb.ok()) {
+      const auto& got = rb.value().instruments()[0].regions;
+      CHECK(got.size() >= 2 && got[got.size() - 2] == a && got.back() == b);
+    }
+  }
   // An empty writer is a valid (zero block) protected bundle.
   {
     BundleWriter we;
@@ -743,7 +762,7 @@ void test_tamper() {
   {
     struct V { std::uint32_t word; Error want; };
     for (const V& v : {V{4u, Error::kUnsupportedVersion}, V{2u, Error::kNotProtected}, V{1u, Error::kNotProtected}, V{0u, Error::kUnsupportedVersion},
-                       V{3u | (6u << 16), Error::kUnsupportedVersion}, V{3u | (5u << 16), Error::kCorruptManifest}, V{3u | (4u << 16), Error::kCorruptManifest}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest},
+                       V{3u | (7u << 16), Error::kUnsupportedVersion}, V{3u | (6u << 16), Error::kCorruptManifest}, V{3u | (5u << 16), Error::kCorruptManifest}, V{3u | (4u << 16), Error::kCorruptManifest}, V{3u | (1u << 16), Error::kCorruptManifest}, V{3u | (2u << 16), Error::kCorruptManifest},
                        V{3u | (3u << 16), Error::kCorruptManifest}}) {
       Bytes b = good;
       for (int i = 0; i < 4; ++i) {

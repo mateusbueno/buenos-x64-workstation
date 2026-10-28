@@ -363,7 +363,32 @@ void test_never_note() {  // Story 13.2: hikey=-1 regions are logged and not wri
   write_file(e.src / "O.sfz", "<region> sample=samples/a.wav key=60 hikey=-1\n");
   const ImportResult o = import_sfz(e.opts("O.sfz"));
   CHECK(o.status == Status::kSkipped && o.reason_code == ReasonCode::kDamaged);
-  CHECK(mentions(o, "hikey=-1 regions are not imported yet"));
+  CHECK(mentions(o, "hikey=-1 regions without an on_locc/on_hicc trigger are never played"));
+}
+
+void test_cc_triggered_regions() {  // Story 13.7: hikey=-1 regions with an on_locc/on_hicc trigger are written; bend opcodes travel
+  Env e("cctrigger");
+  write_file(e.src / "P.sfz",
+             "<region> sample=samples/a.wav key=60 bend_up=300 bend_down=-100 bend_smooth=20\n"
+             "<master> lokey=-1 hikey=-1 group=1 polyphony=1\n"
+             "<group> on_locc64=127 on_hicc64=127 locc64=127 hicc64=127\n<region> sample=samples/b.wav\n"
+             "<group> on_locc64=0 on_hicc64=0 locc64=0 hicc64=0\n<region> sample=samples/a.wav\n"
+             "<group> hikey=-1\n<region> sample=samples/b.wav\n");  // nothing can start this one: dropped
+  const ImportResult r = import_sfz(e.opts("P.sfz"));
+  CHECK(r.ok() && r.region_count == 3);
+  CHECK(r.ignored_values.size() >= 1 && r.ignored_values.back().opcode == "hikey");
+  auto b = fmt::BundleReader::open_file(r.bundle_dir + "/bundle.vlb");
+  CHECK(b.ok() && b.value().format_minor() == 6 && b.value().instruments()[0].regions.size() == 3);
+  if (b.ok() && b.value().instruments()[0].regions.size() == 3) {
+    const auto& regs = b.value().instruments()[0].regions;
+    CHECK(regs[0].bend.enabled && regs[0].bend.up == 300.f && regs[0].bend.down == -100.f && regs[0].bend.smooth_ms == 20 && regs[0].trig.count == 0);
+    CHECK(!regs[1].bend.enabled && regs[1].trig.no_note && regs[1].trig.count == 1 && regs[1].trig.t[0].cc == 64 && regs[1].trig.t[0].lo == 127.f);
+    CHECK(regs[2].trig.no_note && regs[2].trig.t[0].hi == std::nextafter(1.0f, 0.0f));
+  }
+  // A file whose only regions can never be started is still skipped, with the new wording.
+  write_file(e.src / "Q.sfz", "<region> sample=samples/a.wav hikey=-1 locc64=1\n");
+  const ImportResult q = import_sfz(e.opts("Q.sfz"));
+  CHECK(q.status == Status::kSkipped && mentions(q, "without an on_locc/on_hicc trigger"));
 }
 
 void test_damaged() {
@@ -711,6 +736,7 @@ int main() {
   test_unsupported_features();
   test_allowlist();
   test_never_note();
+  test_cc_triggered_regions();
   test_damaged();
   test_warnings_and_misc();
   test_walk_and_dedupe();

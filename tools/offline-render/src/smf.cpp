@@ -144,6 +144,14 @@ SmfResult parse_smf(const std::uint8_t* data, std::size_t size, std::uint32_t sa
           e.on = (hi == 0x90 && d2 != 0);
           e.velocity16 = static_cast<std::uint16_t>((d2 * 65535u + 63u) / 127u);
           raws.push_back({tick, track, seq++, e});
+        } else if (hi == 0xE0) {  // pitch bend: data1 = LSB, data2 = MSB (Story 13.7)
+          NoteEvent e;
+          e.tick = tick;
+          e.channel = static_cast<std::uint8_t>(status & 0x0F);
+          e.cc = true;
+          e.bend = true;
+          e.bend14 = static_cast<std::uint16_t>(d1 | (d2 << 7));
+          raws.push_back({tick, track, seq++, e});
         } else if (hi == 0xB0) {
           NoteEvent e;
           e.tick = tick;

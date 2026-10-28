@@ -115,6 +115,16 @@ struct SampleCcDefault {
 enum class SampleOffMode : std::uint8_t { kFast = 0, kNormal = 1, kTime = 2 };
 inline constexpr unsigned kSampleMaxVoiceLimit = 255;
 
+// Story 13.7: pitch bend and controller triggers (see formatlib PitchBend / CcTriggers). A region with bend_enabled false ignores the pitch wheel (the behaviour of
+// every region before this story); with it the voice follows the part's wheel: cents = wheel x bend_up (wheel > 0) or -wheel x bend_down (wheel < 0), quantised to
+// bend_step when that is above 1, reached through a linear ramp of bend_smooth_ms. A region with cc_trigger_count starts a voice when one of its controllers moves into
+// [lo, hi] (CC units, inclusive); no_note: it never starts from a note.
+inline constexpr unsigned kSampleMaxCcTriggers = 4;
+struct SampleCcTrigger {
+  std::uint8_t cc = 0;
+  float lo = 0.0f, hi = 127.0f;
+};
+
 struct SampleRegionDesc {
   std::uint32_t sample_index = 0;  // into InstrumentView::samples
   std::uint8_t key_lo = 0, key_hi = 127, key_center = 60;
@@ -165,6 +175,13 @@ struct SampleRegionDesc {
   float off_time = 0.0f;
   std::uint16_t polyphony = 0, group_polyphony = 0, note_polyphony = 0;
   bool note_selfmask = true;
+  // Story 13.7: pitch bend range and controller triggers; the defaults mean the region ignores the wheel and starts from notes only.
+  bool bend_enabled = false;
+  float bend_up = 200.0f, bend_down = -200.0f, bend_step = 1.0f;
+  std::uint16_t bend_smooth_ms = 0;
+  std::uint8_t cc_trigger_count = 0;
+  bool no_note = false;
+  SampleCcTrigger cc_triggers[kSampleMaxCcTriggers]{};
 };
 
 // Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.

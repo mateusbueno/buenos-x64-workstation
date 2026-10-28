@@ -16,6 +16,7 @@
 //                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N]
 //                         [--assign-mode] [--encoder-at SECONDS:ENC:DELTA]... [--seed N] [--tail-seconds S]]
 //                         (Live Set mode, Story 4.3: --midi, --out; no other engine option; --switch-at is Story 4.5; --assign-mode / --encoder-at Story 4.10)
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -691,6 +692,7 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "error: %s: %s\n", midi.c_str(), lsmf.error.c_str());
       return 1;
     }
+    lsmf.events.erase(std::remove_if(lsmf.events.begin(), lsmf.events.end(), [](const NoteEvent& e) { return e.bend; }), lsmf.events.end());  // Story 13.7: not rendered here
     LiveSetRenderOptions lo;
     lo.live_set_path = live_set_path;
     lo.library_root = library_root;
@@ -926,6 +928,8 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "error: %s: %s\n", midi.c_str(), smf.error.c_str());
       return 1;
     }
+    if (engine != "sample")  // Story 13.7: the pitch wheel is rendered by the sample engine only
+      smf.events.erase(std::remove_if(smf.events.begin(), smf.events.end(), [](const NoteEvent& e) { return e.bend; }), smf.events.end());
   } else {
     smf.ok = true;
   }

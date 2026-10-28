@@ -50,7 +50,11 @@ inline constexpr std::uint32_t kFormatVersion = 2;
 // choke group, off_by, off_mode / off_time and the region, group and note polyphony limits. The writer stamps minor 5 only when a region has any of them; every
 // other bundle keeps the bytes it had (minor 0..4). Minor 5 requires at least one voice-group record (kCorruptManifest otherwise). The reader accepts minor 0..5
 // and rejects a newer one with kUnsupportedVersion.
-inline constexpr std::uint32_t kFormatMinor = 5;
+// Minor 6 (Story 13.7) appends, after the minor 5 table of each instrument (present, possibly empty, in a minor 6 bundle), the pitch-bend / controller-trigger table:
+// per region the bend_up / bend_down / bend_step / bend_smooth values and the on_locc / on_hicc triggers (with the flag that the region never starts from a note).
+// The writer stamps minor 6 only when a region has a PitchBend or CcTriggers; every other bundle keeps the bytes it had (minor 0..5). Minor 6 requires at least one
+// record (kCorruptManifest otherwise). The reader accepts minor 0..6 and rejects a newer one with kUnsupportedVersion.
+inline constexpr std::uint32_t kFormatMinor = 6;
 inline constexpr std::uint32_t kMinReadableVersion = kFormatVersion - 1;
 // Frames per block for every sample (last block of a sample may be shorter). Fixed by format v1.
 inline constexpr std::uint32_t kBlockFrames = 4096;
@@ -93,7 +97,7 @@ struct WriterOptions {
   std::uint32_t format_version = kFormatVersion;
   // Test hook for the minor policy: 0 makes the writer refuse regions that need the extension
   // table (kInvalidArgument at finalize); 1 refuses regions that need the minor 2 trigger/end table; 2 refuses regions that need the minor 3 amp table; 3 refuses
-  // the minor 4 cc table; 4 refuses the minor 5 voice-group table; 5 (default) stamps minor 1, 2, 3, 4 or 5 only when one is needed.
+  // the minor 4 cc table; 4 refuses the minor 5 voice-group table; 5 refuses the minor 6 bend / trigger table; 6 (default) stamps minor 1 to 6 only when one is needed.
   std::uint32_t format_minor = kFormatMinor;
 };
 

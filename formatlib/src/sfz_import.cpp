@@ -179,6 +179,17 @@ const std::vector<SfzOpcodeEntry>& sfz_opcode_table() {
       {"note_polyphony", C::kSupported, "1..255 voices of the group for one note (Story 13.6)"},
       {"note_selfmask", C::kSupported, "on or mask (default: a quieter retrigger does not cut a louder voice) or off (Story 13.6)"},
       {"ampeg_dynamic", C::kSupported, "flag; rejected together with ampeg_*_oncc<N> (continuous envelope modulation is not implemented), otherwise no effect (Story 13.5)"},
+      // Story 13.7: pitch bend and controller-triggered voices (see the importer comment in sfz_import.hpp).
+      {"bend_up", C::kSupported, "cents -12000..12000 at full wheel travel up (default 200); setting any bend opcode makes the region follow the pitch wheel (Story 13.7)"},
+      {"bendup", C::kSupported, "alias of bend_up (Story 13.7)"},
+      {"bend_down", C::kSupported, "cents -12000..12000 at full wheel travel down (default -200; a positive value bends up at the bottom of the wheel) (Story 13.7)"},
+      {"benddown", C::kSupported, "alias of bend_down (Story 13.7)"},
+      {"bend_step", C::kSupported, "cents 1..12000: the bend is quantised to multiples of this (default 1 = none) (Story 13.7)"},
+      {"bend_smooth", C::kSupported, "ms 0..65535: length of the linear ramp to a new wheel position (default 0) (Story 13.7)"},
+      {"on_locc<N>", C::kSupported, "N = controller 0..127, CC units: the region starts a voice when the controller moves into [on_locc, on_hicc] (Story 13.7)"},
+      {"on_hicc<N>", C::kSupported, "on_hicc below 127 covers values up to on_hicc + 1, exclusive (sfizz fill-gap) (Story 13.7)"},
+      {"start_locc<N>", C::kSupported, "alias of on_locc<N> (Story 13.7)"},
+      {"start_hicc<N>", C::kSupported, "alias of on_hicc<N> (Story 13.7)"},
   };
   return t;
 }
@@ -230,6 +241,7 @@ struct Acc {
   FilterType type = FilterType::kLpf2p;
   std::map<int, XfPart> in, out;  // by controller number, ascending
   bool never_note = false;        // hikey=-1 (the last hikey wins, so a later valid hikey clears it)
+  const Op* never_op = nullptr;   // the hikey=-1 opcode (for the ignored_values line of a region that is dropped)
   const Op* type_op = nullptr;  // fil_type / resonance as given (for ignored_opcode warnings)
   const Op* res_op = nullptr;
   // Story 13.4. amp_velcurve_N points (last wins, ascending by N); group/master/global volume and amplitude, folded into the region at the end.
@@ -249,6 +261,7 @@ struct Acc {
     int curve = 0;
   };
   std::map<int, GateAcc> gates;
+  std::map<int, GateAcc> trigs;  // Story 13.7: on_locc / on_hicc by controller
   std::map<std::pair<int, int>, ModAcc> mods;
   bool dynamic = false;
   // Story 13.6. group / polyphony and the header level (0 global, 1 master, 2 group, 3 region) they were last given at; off_time defaults to sfizz's 6 ms.
@@ -262,7 +275,7 @@ struct Acc {
 // Story 13.5: a recognised CC opcode split into its parts. gate: locc/hicc/lohdcc/hihdcc (lo = true for the low end, hd = normalized value); def: set_cc/set_hdcc;
 // mod: <target>_oncc (curve = false) or <target>_curvecc (curve = true).
 struct CcOp {
-  enum class Kind { kNone, kGate, kDefault, kMod } kind = Kind::kNone;
+  enum class Kind { kNone, kGate, kTrigger, kDefault, kMod } kind = Kind::kNone;
   bool lo = false, hd = false, curve = false, canonical = true;
   int target = 0, cc = 0;
 };
@@ -280,6 +293,9 @@ CcOp split_cc_opcode(const std::string& k) {
                                {"hihdcc", false, true}, {"lorealcc", true, true}, {"hirealcc", false, true}};
   for (const Gate& g : gates)
     if (p == g.name) { o.kind = CcOp::Kind::kGate; o.lo = g.lo; o.hd = g.hd; return o; }
+  static const Gate triggers[] = {{"on_locc", true, false}, {"on_hicc", false, false}, {"start_locc", true, false}, {"start_hicc", false, false}};
+  for (const Gate& g : triggers)  // Story 13.7: a hdcc form is not accepted (see the opcode table)
+    if (p == g.name) { o.kind = CcOp::Kind::kTrigger; o.lo = g.lo; o.hd = g.hd; return o; }
   if (p == "set_cc" || p == "set_hdcc" || p == "set_realcc") { o.kind = CcOp::Kind::kDefault; o.hd = p != "set_cc"; return o; }
   auto ends = [&](const char* suf) {
     const std::size_t n = std::strlen(suf);
@@ -604,6 +620,15 @@ class Importer final : public sfz::ParserListener {
     return true;
   }
 
+  // A finite number (any magnitude); the caller applies the range rule of its opcode.
+  bool as_float_any(const Op& op, double& out) {
+    if (!parse_double(op.value, out) || !std::isfinite(out)) {
+      bad(op, "expected a number");
+      return false;
+    }
+    return true;
+  }
+
   void unsupported_cc(const Op& op, const std::string& why) {
     if (!report_) return;
     add(SfzIssueKind::kUnsupportedValue, op.file, op.line, "unsupported controller for opcode '" + op.name + "' (" + why + ")", op.name);
@@ -638,6 +663,22 @@ class Importer final : public sfz::ParserListener {
         g.hi_set = true;
         // sfizz hicc (not hdcc) fills the gap up to the next whole CC step: hicc=N accepts every value below N + 1.
         g.hi = (!o.hd && d <= 126.0) ? std::nextafter(float(d) + 1.0f, 0.0f) : float(d);
+      }
+      return true;
+    }
+    if (o.kind == CcOp::Kind::kTrigger) {  // Story 13.7: same value rules as a gate (CC units, hicc fill-gap)
+      if (o.cc > 127) {
+        unsupported_cc(op, "only controllers 0..127 can start a voice");
+        return false;
+      }
+      if (!as_clamped(op, 0, 127, d)) return false;
+      Acc::GateAcc& g = acc.trigs[o.cc];
+      if (o.lo) {
+        g.lo_set = true;
+        g.lo = float(d);
+      } else {
+        g.hi_set = true;
+        g.hi = d <= 126.0 ? std::nextafter(float(d) + 1.0f, 0.0f) : float(d);
       }
       return true;
     }
@@ -720,7 +761,7 @@ class Importer final : public sfz::ParserListener {
       std::int64_t raw = 0;
       if (parse_int(op.value, raw) && raw == -1) {  // sfizz: no note triggers this region
         acc.never_note = true;
-        ignore(op, "hikey=-1: the region never triggers from a note and is not imported yet", false);
+        acc.never_op = &op;  // reported when the region is flushed, and only if no on_locc / on_hicc trigger keeps it
         return true;
       }
       acc.never_note = false;
@@ -804,6 +845,25 @@ class Importer final : public sfz::ParserListener {
       if (v == "on" || v == "mask") r.vg.note_selfmask = true;
       else if (v == "off") r.vg.note_selfmask = false;
       else { unsupported_value(op); return false; }
+    }
+    else if (k == "bend_up" || k == "bendup" || k == "bend_down" || k == "benddown") {  // Story 13.7
+      if (!as_float_any(op, d)) return false;
+      if (d < -double(kMaxBendCents) || d > double(kMaxBendCents)) { unsupported_value(op); return false; }  // sfizz keeps values beyond +-12000 (permissive bounds)
+      if (d == 0) d = 0;
+      r.bend.enabled = true;
+      (k == "bend_up" || k == "bendup" ? r.bend.up : r.bend.down) = float(d);
+    }
+    else if (k == "bend_step") {
+      if (!as_float_any(op, d)) return false;
+      if (d < 1.0 || d > double(kMaxBendStep)) { ignore(op, "outside 1..12000, clamped", false); d = d < 1.0 ? 1.0 : double(kMaxBendStep); }
+      r.bend.enabled = true;
+      r.bend.step = float(d);
+    }
+    else if (k == "bend_smooth") {
+      if (!as_float_any(op, d)) return false;
+      if (d < 0.0 || d > 65535.0) { ignore(op, "outside 0..65535 ms, clamped", false); d = d < 0.0 ? 0.0 : 65535.0; }
+      r.bend.enabled = true;
+      r.bend.smooth_ms = std::uint16_t(std::trunc(d));
     }
     else if (k == "amp_veltrack") { if (!as_clamped(op, -100, 100, d)) return false; r.amp.veltrack = float(d); }
     else if (k == "amplitude") { if (!as_clamped(op, 0, 10000, d)) return false; r.amp.amplitude = float(d); }
@@ -965,6 +1025,32 @@ class Importer final : public sfz::ParserListener {
       }
       r.cc = m;
     }
+    {  // Story 13.7: controller triggers and the pitch-bend range
+      CcTriggers t;
+      for (const auto& [cc, g] : acc.trigs) {
+        const float lo = g.lo_set ? g.lo : 0.0f, hi = g.hi_set ? g.hi : 127.0f;  // an entry exists as soon as either opcode is given (sfizz ccTriggers)
+        if (t.count >= kMaxCcTriggers) {
+          issue(SfzIssueKind::kUnsupportedValue, region_loc_, "more than " + std::to_string(kMaxCcTriggers) + " controller triggers (on_locc/on_hicc) in one region", "on_locc<N>");
+          return;
+        }
+        if (lo > hi) {
+          issue(SfzIssueKind::kInvalidValue, region_loc_, "inverted controller trigger (on_locc" + std::to_string(cc) + " > on_hicc" + std::to_string(cc) + ")");
+          return;
+        }
+        t.t[t.count++] = {std::uint8_t(cc), lo, hi};
+      }
+      if (t.count > 0 && r.trigger != TriggerMode::kAttack) {
+        issue(SfzIssueKind::kUnsupportedValue, region_loc_, "on_locc/on_hicc together with trigger=release/first/legato/release_key: a controller voice always starts as an attack", "trigger");
+        return;
+      }
+      t.no_note = acc.never_note && t.count > 0;
+      r.trig = t;
+      if (acc.never_note && t.count == 0 && acc.never_op &&
+          warned_.insert(acc.never_op->file + ":" + std::to_string(acc.never_op->line) + ":hikey-1").second)
+        result.ignored_values.push_back({acc.never_op->name, acc.never_op->value, acc.never_op->file, acc.never_op->line,
+                                         "ignored value '" + acc.never_op->value + "' for opcode '" + acc.never_op->name +
+                                             "' (hikey=-1 and no on_locc/on_hicc trigger: nothing can start the region, it is not imported)"});
+    }
     {  // Story 13.6: choke groups and polyphony limits
       VoiceGroup& g = r.vg;
       g.group = std::int32_t(acc.group);
@@ -1078,7 +1164,7 @@ class Importer final : public sfz::ParserListener {
     }
     r.sample = static_cast<std::uint32_t>(idx);
     result.regions.push_back(r);
-    result.never_note_triggered.push_back(acc.never_note);
+    result.never_note_triggered.push_back(acc.never_note && r.trig.count == 0);  // Story 13.7: a controller trigger keeps the region
     result.loops.push_back(ls);
     result.region_sources.push_back({region_loc_.file, region_loc_.line});
   }
@@ -1135,6 +1221,7 @@ void build_cc_setup(SfzParseResult& r, bool report) {
   std::set<int> used_cc, used_curve;
   for (const Region& g : r.regions) {
     for (unsigned i = 0; i < g.cc.gate_count; ++i) used_cc.insert(g.cc.gates[i].cc);
+    for (unsigned i = 0; i < g.trig.count; ++i) used_cc.insert(g.trig.t[i].cc);  // Story 13.7
     for (unsigned i = 0; i < g.cc.mod_count; ++i) {
       if (g.cc.mods[i].cc <= 127) used_cc.insert(g.cc.mods[i].cc);
       used_curve.insert(g.cc.mods[i].curve);
@@ -1148,7 +1235,7 @@ void build_cc_setup(SfzParseResult& r, bool report) {
       out.defaults.push_back({static_cast<std::uint8_t>(d.cc), d.value});  // kept even when equal to the engine's value: binding this bank then restores it
     } else if (report) {
       r.ignored_values.push_back({"set_cc" + std::to_string(d.cc), std::to_string(d.value), d.file, d.line,
-                                  "set_cc" + std::to_string(d.cc) + " seeds a controller no region reads (no gate, modulation or crossfade); it is not stored"});
+                                  "set_cc" + std::to_string(d.cc) + " seeds a controller no region reads (no gate, trigger, modulation or crossfade); it is not stored"});
     }
   }
   for (CurveDef& c : resolve_curves(r.curves))

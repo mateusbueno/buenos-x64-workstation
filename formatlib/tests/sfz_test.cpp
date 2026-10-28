@@ -652,6 +652,109 @@ int main() {
     // determinism
     CHECK(parse(R + "group=1 off_by=2 polyphony=3\n").regions == parse(R + "polyphony=3 off_by=2 group=1\n").regions);
   }
+  {  // Story 13.7: bend_up/bend_down/bend_step/bend_smooth and on_locc/on_hicc controller triggers
+    const std::string R = "<region> sample=a.wav key=60 ";
+    {  // no bend opcode: no bend and no trigger; the region is exactly what it was
+      auto r = parse(R + "pan=10\n");
+      Region want; want.key_lo = want.key_hi = want.key_center = 60; want.pan = 10.f;
+      CHECK(r.ok() && r.regions[0] == want && !r.regions[0].bend.enabled && r.regions[0].trig == CcTriggers{} && !has_bend_trigger_extension(r.regions[0]));
+    }
+    {  // any one bend opcode enables the bend; the others keep sfizz's defaults; aliases
+      auto r = parse(R + "bend_up=400\n<region> sample=a.wav key=61 benddown=-300 bend_step=25 bend_smooth=40\n<region> sample=a.wav key=62 bendup=1200 bend_down=-1200\n"
+                         "<region> sample=a.wav key=63 bend_smooth=0\n");
+      CHECK(r.ok() && r.regions.size() == 4);
+      if (r.regions.size() == 4) {
+        const PitchBend a = r.regions[0].bend, b = r.regions[1].bend, c = r.regions[2].bend, d = r.regions[3].bend;
+        CHECK(a.enabled && a.up == 400.f && a.down == -200.f && a.step == 1.f && a.smooth_ms == 0);
+        CHECK(b.enabled && b.up == 200.f && b.down == -300.f && b.step == 25.f && b.smooth_ms == 40);
+        CHECK(c.enabled && c.up == 1200.f && c.down == -1200.f);
+        CHECK(d.enabled && d.smooth_ms == 0 && d.up == 200.f);  // given, even at its default: the region follows the wheel
+        CHECK(has_bend_trigger_extension(r.regions[0]) && has_bend_trigger_extension(r.regions[3]));
+      }
+      // inherited from a header, like any opcode
+      auto g = parse("<group>\nbend_up=700 bend_down=-500\n<region> sample=a.wav key=60\n<region> sample=a.wav key=61 bend_up=100\n");
+      CHECK(g.ok() && g.regions[0].bend.up == 700.f && g.regions[0].bend.down == -500.f && g.regions[1].bend.up == 100.f && g.regions[1].bend.down == -500.f);
+    }
+    {  // value rules
+      auto lo = parse(R + "bend_step=0.2\n");  // below 1: sfizz enforces the lower bound, logged
+      CHECK(lo.ok() && lo.regions[0].bend.step == 1.f && lo.ignored_values.size() == 1 && lo.ignored_values[0].opcode == "bend_step");
+      auto hi = parse(R + "bend_step=99999 bend_smooth=70000\n");
+      CHECK(hi.ok() && hi.regions[0].bend.step == kMaxBendStep && hi.regions[0].bend.smooth_ms == 65535 && hi.ignored_values.size() == 2);
+      auto ok = parse(R + "bend_up=12000 bend_down=-12000\n");
+      CHECK(ok.ok() && ok.regions[0].bend.up == 12000.f && ok.regions[0].bend.down == -12000.f);
+      auto nz = parse(R + "bend_up=-0\n");
+      CHECK(nz.ok() && !std::signbit(nz.regions[0].bend.up));
+      CHECK(has(parse(R + "bend_up=12001\n"), SfzIssueKind::kUnsupportedValue, "bend_up"));   // sfizz keeps these; the importer does not
+      CHECK(has(parse(R + "bend_down=-24000\n"), SfzIssueKind::kUnsupportedValue, "bend_down"));
+      CHECK(has(parse(R + "bend_up=abc\n"), SfzIssueKind::kInvalidValue, "bend_up"));
+      CHECK(has(parse(R + "bend_smooth=x\n"), SfzIssueKind::kInvalidValue, "bend_smooth"));
+      CHECK(has(parse(R + "lobend=0\n"), SfzIssueKind::kUnsupportedOpcode, "lobend"));
+      CHECK(has(parse(R + "hibend=0\n"), SfzIssueKind::kUnsupportedOpcode, "hibend"));
+    }
+    {  // controller triggers: a hikey=-1 region with on_locc/on_hicc is kept and never starts from a note
+      auto r = parse("<master>\nlokey=-1 hikey=-1 group=1 polyphony=1 off_time=0.1\n<group>\nvolume=-20 on_locc64=127 on_hicc64=127 locc64=127 hicc64=127\n"
+                     "<region> sample=a.wav lorand=0 hirand=0.5\n<region> sample=a.wav lorand=0.5 hirand=1\n<group>\non_locc64=0 on_hicc64=0 locc64=0 hicc64=0\n<region> sample=a.wav\n");
+      CHECK(r.ok() && r.regions.size() == 3 && r.never_note_triggered.size() == 3);
+      if (r.regions.size() == 3) {
+        for (std::size_t i = 0; i < 3; ++i) CHECK(!r.never_note_triggered[i] && r.regions[i].trig.no_note && r.regions[i].trig.count == 1 && r.regions[i].trig.t[0].cc == 64);
+        CHECK(r.regions[0].trig.t[0].lo == 127.f && r.regions[0].trig.t[0].hi == 127.f);       // on_hicc=127 is not widened
+        CHECK(r.regions[2].trig.t[0].lo == 0.f && r.regions[2].trig.t[0].hi == std::nextafter(1.0f, 0.0f));  // on_hicc=0 covers [0, 1)
+        CHECK(r.regions[0].cc.gate_count == 1 && r.regions[2].cc.gate_count == 1);              // the locc/hicc gates of the same controller stay gates
+        for (const auto& iv : r.ignored_values) CHECK(iv.opcode == "lokey");                     // hikey=-1 is not logged: nothing is dropped (lokey=-1 is the 13.2 default fallback)
+        CHECK(has_bend_trigger_extension(r.regions[0]));
+      }
+      CHECK(drop_never_note_triggered(r) == 0 && r.regions.size() == 3);
+    }
+    {  // hikey=-1 without a trigger is still dropped (one log line per opcode); with a trigger on one region only that region stays
+      auto r = parse("<group>\nhikey=-1\n<region> sample=a.wav\n<region> sample=a.wav on_locc1=10\n<region> sample=a.wav key=60\n");
+      CHECK(r.ok() && r.regions.size() == 3);
+      if (r.regions.size() == 3) {
+        CHECK(r.never_note_triggered[0] && !r.never_note_triggered[1] && !r.never_note_triggered[2]);
+        CHECK(r.regions[1].trig.no_note && r.regions[1].trig.count == 1 && !r.regions[2].trig.no_note && r.regions[2].trig.count == 0);
+        CHECK(r.ignored_values.size() == 1 && r.ignored_values[0].opcode == "hikey");  // the group's hikey=-1, once, for the region that is dropped
+      }
+      CHECK(drop_never_note_triggered(r) == 1 && r.regions.size() == 2 && r.regions[0].trig.count == 1);
+    }
+    {  // a trigger on a region that also plays from a key range keeps both ways; a lone on_hicc / on_locc fills the other end; start_* aliases
+      auto r = parse(R + "on_locc1=30 on_hicc1=60\n<region> sample=a.wav key=61 on_hicc2=50\n<region> sample=a.wav key=62 start_locc3=100 start_hicc3=100\n");
+      CHECK(r.ok() && r.regions.size() == 3);
+      if (r.regions.size() == 3) {
+        CHECK(!r.regions[0].trig.no_note && r.regions[0].trig.count == 1 && r.regions[0].trig.t[0].lo == 30.f && r.regions[0].trig.t[0].hi == std::nextafter(61.0f, 0.0f));
+        CHECK(r.regions[1].trig.t[0].cc == 2 && r.regions[1].trig.t[0].lo == 0.f && r.regions[1].trig.t[0].hi == std::nextafter(51.0f, 0.0f));
+        CHECK(r.regions[2].trig.t[0].cc == 3 && r.regions[2].trig.t[0].lo == 100.f && r.regions[2].trig.t[0].hi == std::nextafter(101.0f, 0.0f));
+      }
+      // several controllers, ascending by number whatever the order in the file
+      auto m = parse(R + "on_locc20=1 on_locc5=2 on_hicc5=9 on_locc127=0\n");
+      CHECK(m.ok() && m.regions[0].trig.count == 3 && m.regions[0].trig.t[0].cc == 5 && m.regions[0].trig.t[1].cc == 20 && m.regions[0].trig.t[2].cc == 127);
+      // a trigger controller feeds the set_cc seed (a controller some region reads)
+      auto sd = parse("<control>\nset_cc20=90\n<region> sample=a.wav key=60 on_locc20=1\n");
+      CHECK(sd.ok() && sd.cc_setup.defaults.size() == 1 && sd.cc_setup.defaults[0].cc == 20 && sd.cc_setup.defaults[0].value == 90.f);
+    }
+    {  // rejected forms, with the opcode named
+      CHECK(has(parse(R + "on_locc131=1\n"), SfzIssueKind::kUnsupportedValue, "on_locc131"));      // a pseudo-controller cannot start a voice
+      CHECK(has(parse(R + "on_hicc200=1\n"), SfzIssueKind::kUnsupportedValue, "on_hicc200"));
+      CHECK(has(parse(R + "on_lohdcc64=0.5\n"), SfzIssueKind::kUnsupportedOpcode, "on_lohdcc64"));
+      CHECK(has(parse(R + "on_hihdcc64=0.5\n"), SfzIssueKind::kUnsupportedOpcode, "on_hihdcc64"));
+      CHECK(has(parse(R + "on_locc1=1 on_locc2=1 on_locc3=1 on_locc4=1 on_locc5=1\n"), SfzIssueKind::kUnsupportedValue, "more than 4 controller triggers"));
+      CHECK(has(parse(R + "on_locc1=90 on_hicc1=10\n"), SfzIssueKind::kInvalidValue, "inverted controller trigger"));
+      CHECK(has(parse(R + "on_locc064=1\n"), SfzIssueKind::kInvalidValue, "non-canonical"));
+      auto clamped = parse(R + "on_locc1=200\n");  // out of range: clamped to 127 like locc, logged
+      CHECK(clamped.ok() && clamped.regions[0].trig.t[0].lo == 127.f && clamped.ignored_values.size() == 1);
+    }
+    {  // a controller voice is an attack: any other trigger mode is refused; -0 values are stored as +0 so the bundle writer accepts them
+      for (const char* t : {"release", "first", "legato", "release_key"})
+        CHECK(has(parse(R + "on_locc1=10 trigger=" + t + "\n"), SfzIssueKind::kUnsupportedValue, "controller voice always starts as an attack"));
+      CHECK(parse(R + "on_locc1=10 trigger=attack\n").ok());
+      auto z = parse(R + "on_locc1=-0 on_hicc1=-0 bend_down=-0 bend_up=-0.0\n");
+      CHECK(z.ok() && z.regions[0].trig.count == 1 && !std::signbit(z.regions[0].trig.t[0].lo) && !std::signbit(z.regions[0].trig.t[0].hi) &&
+            !std::signbit(z.regions[0].bend.down) && !std::signbit(z.regions[0].bend.up));
+      CHECK(validate_region(z.regions[0], 1000) == Error::kNone);
+    }
+    {  // a dropped region's trigger controller or curve does not keep a default alive; a kept one does
+      auto r = parse("<control>\nset_cc64=90\n<region> sample=a.wav hikey=-1\n<region> sample=a.wav key=62\n");
+      CHECK(r.ok() && drop_never_note_triggered(r) == 1);
+    }
+  }
   {  // opcodes outside the subset are listed with file:line and the opcode name; none are allow-listed
     const char* bad[] = {"script", "lfo01_freq", "eg01_time1", "cutoff_oncc1", "width_oncc1", "volume_stepcc1", "pan_smoothcc2",
                          "effect1", "output", "note_offset", "octave_offset",

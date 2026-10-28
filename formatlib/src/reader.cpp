@@ -280,7 +280,7 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   r.samples.reserve(n_samples);
   std::uint64_t next_block = 0;
   std::set<std::string> seen_keys;
-  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0, total_vg = 0;
+  std::uint64_t total_ext = 0, total_trig = 0, total_amp = 0, total_cc = 0, total_cc_setup = 0, total_vg = 0, total_bt = 0;
   for (std::uint32_t i = 0; i < n_instr; ++i) {
     InstrumentInfo ins;
     ins.key = c.str();
@@ -534,6 +534,42 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
             return Error::kCorruptManifest;
         }
       }
+      if (minor >= 6) {  // the pitch-bend / controller-trigger table (Story 13.7) follows the minor 5 table
+        const std::uint32_t n_bt = c.u32();
+        if (!c.ok() || n_bt > n_regions || n_bt > c.remaining() / kBtRecordSize) return Error::kCorruptManifest;
+        total_bt += n_bt;
+        std::int64_t prev = -1;
+        for (std::uint32_t k = 0; k < n_bt; ++k) {
+          const std::uint32_t idx = c.u32();
+          if (!c.ok() || idx >= n_regions || std::int64_t(idx) <= prev) return Error::kCorruptManifest;
+          prev = idx;
+          Region& rg = ins.regions[idx];
+          const std::uint8_t flags = c.u8(), ntrig = c.u8();
+          const std::uint16_t smooth = c.u16();
+          PitchBend& b = rg.bend;
+          b.up = c.f32();
+          b.down = c.f32();
+          b.step = c.f32();
+          if (!c.ok() || (flags & ~3u) || ntrig > kMaxCcTriggers || std::size_t(ntrig) * kBtTriggerSize > c.remaining()) return Error::kCorruptManifest;
+          b.enabled = (flags & 1u) != 0;
+          b.smooth_ms = smooth;
+          CcTriggers& t = rg.trig;
+          t.count = ntrig;
+          t.no_note = (flags & 2u) != 0;
+          for (unsigned i = 0; i < ntrig; ++i) {
+            CcTrigger& e = t.t[i];
+            e.cc = c.u8();
+            const std::uint8_t q0 = c.u8(), q1 = c.u8(), q2 = c.u8();
+            e.lo = c.f32();
+            e.hi = c.f32();
+            if (!c.ok() || q0 || q1 || q2) return Error::kCorruptManifest;
+          }
+          // Canonical: a record exists only for a region that really needs it.
+          if (!has_bend_trigger_extension(rg) ||
+              validate_region(rg, r.samples[ins.first_sample + rg.sample].frame_count) != Error::kNone)
+            return Error::kCorruptManifest;
+        }
+      }
     }
     r.instruments.push_back(std::move(ins));
   }
@@ -545,7 +581,8 @@ Result<ParsedBundle> parse_bundle(ByteSource& srcref, bool want_protected, const
   if (minor == 2 && total_trig == 0) return Error::kCorruptManifest;
   if (minor == 3 && total_amp == 0) return Error::kCorruptManifest;
   if (minor == 4 && total_cc == 0 && total_cc_setup == 0) return Error::kCorruptManifest;
-  if (minor >= 5 && total_vg == 0) return Error::kCorruptManifest;
+  if (minor == 5 && total_vg == 0) return Error::kCorruptManifest;
+  if (minor >= 6 && total_bt == 0) return Error::kCorruptManifest;
 
   // Index: contiguous blocks tiling [data_off, total_size), sizes/frames consistent with samples.
   r.index.resize(n_blocks);

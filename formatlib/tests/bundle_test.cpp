@@ -789,7 +789,7 @@ void test_extensions() {
     CHECK_ERR(w.add_region(i0, ext_region(0)), Error::kNone);
     const Bytes good = w.finalize().take();
     CHECK(BundleReader::open_memory(good).ok());
-    { Bytes b = good; wr32(b, 4, 2u | (6u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
+    { Bytes b = good; wr32(b, 4, 2u | (7u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 3u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 1u | (1u << 16)); CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion); }
     { Bytes b = good; wr32(b, 4, 2u); CHECK(!BundleReader::open_memory(b).ok()); }  // word differs from the manifest's
@@ -1381,7 +1381,7 @@ void test_cc_table() {
     wr32(b, mo, 2u | (4u << 16));
     rehash(b);
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
-    wr32(b, 4, 2u | (6u << 16));
+    wr32(b, 4, 2u | (7u << 16));
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
   }
 }
@@ -1524,7 +1524,167 @@ void test_vg_table() {
     wr32(b, mo, 2u | (5u << 16));
     rehash(b);
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    wr32(b, 4, 2u | (7u << 16));
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
+  }
+}
+
+// Story 13.7: format 2.6, the pitch-bend / controller-trigger table.
+void test_bt_table() {
+  const PcmFormat f{2, 16, false, 48000};
+  const auto pcm = vt::make_int(f, 1000, Kind::kMixed);
+  auto version_word = [](const Bytes& b) { return layout::get_u32(b.data() + 4); };
+  Region plain;
+  Region bend = plain;
+  bend.bend.enabled = true; bend.bend.up = 1200.f; bend.bend.down = -300.5f; bend.bend.step = 25.f; bend.bend.smooth_ms = 40;
+  Region only_up = plain;
+  only_up.bend.enabled = true;  // every value at the sfizz default: still a record (the region follows the wheel)
+  Region trig = sample_region(0);
+  trig.trig.no_note = true; trig.trig.count = 2;
+  trig.trig.t[0] = {20, 0.f, 127.f};
+  trig.trig.t[1] = {64, 127.f, 127.f};
+  Region note_and_cc = plain;  // a region with a key range that a controller also starts
+  note_and_cc.trig.count = 1; note_and_cc.trig.t[0] = {1, 30.f, std::nextafter(61.f, 0.f)};
+  Region all = ext_region(0);  // minors 1..5 content in one region
+  all.trigger = TriggerMode::kLegato; all.has_end = true; all.end = 900; all.amp.veltrack = 40.f;
+  all.cc.gate_count = 1; all.cc.gates[0] = {1, 10.f, 20.f};
+  all.vg.group = 4; all.vg.polyphony = 1; all.vg.group_polyphony = 1;
+  all.bend = bend.bend; all.trig = trig.trig;
+  const std::vector<Region> regs = {plain, bend, only_up, trig, note_and_cc, all};
+  {  // round trip: two instruments, only the first has records; the second still carries the empty table
+    BundleWriter w;
+    const std::size_t i0 = w.add_instrument("A", "a.sfz").value(), i1 = w.add_instrument("B", "b.sfz").value();
+    CHECK_ERR(w.add_sample(i0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w.add_sample(i1, {"s0", f, 1000, pcm}), Error::kNone);
+    for (const auto& r : regs) CHECK_ERR(w.add_region(i0, r), Error::kNone);
+    CHECK_ERR(w.add_region(i1, plain), Error::kNone);
+    const Bytes b = w.finalize().take();
+    CHECK(version_word(b) == (2u | (6u << 16)));
+    auto r = BundleReader::open_memory(b);
+    CHECK(r.ok() && r.value().format_minor() == 6);
+    if (r.ok()) {
+      CHECK(r.value().instruments()[0].regions == regs);
+      CHECK(r.value().instruments()[1].regions.size() == 1 && r.value().instruments()[1].regions[0] == plain);
+      CHECK(r.value().verify_all() == Error::kNone);
+    }
+    CHECK(w.finalize().take() == b);  // deterministic
+    // The N-1 writer (minor ceiling 5) refuses bend / trigger regions.
+    BundleWriter w5(WriterOptions{kFormatVersion, 5});
+    const std::size_t j0 = w5.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(w5.add_sample(j0, {"s0", f, 1000, pcm}), Error::kNone);
+    CHECK_ERR(w5.add_region(j0, bend), Error::kNone);
+    CHECK_ERR(w5.finalize().error(), Error::kInvalidArgument);
+  }
+  {  // bundles without bend or triggers keep their exact bytes whatever the writer's ceiling (minor 0..5 content)
+    Region trg = plain; trg.trigger = TriggerMode::kReleaseKey;
+    Region amp = plain; amp.amp.veltrack = 10.f;
+    Region ccr = plain; ccr.cc.gate_count = 1; ccr.cc.gates[0] = {64, 64.f, 100.f};
+    Region vgr = plain; vgr.vg.polyphony = 2;
+    for (const Region& rg : {plain, sample_region(0), ext_region(0), trg, amp, ccr, vgr}) {
+      Bytes by[7];
+      for (std::uint32_t m = 0; m < 7; ++m) {
+        if ((m == 0 && has_extension(rg)) || (m < 2 && has_trigger_extension(rg)) || (m < 3 && has_amp_extension(rg)) || (m < 4 && has_cc_extension(rg)) || (m < 5 && has_vg_extension(rg))) continue;
+        BundleWriter x(WriterOptions{kFormatVersion, m});
+        const std::size_t k = x.add_instrument("A", "a.sfz").value();
+        CHECK_ERR(x.add_sample(k, {"s0", f, 1000, pcm}), Error::kNone);
+        CHECK_ERR(x.add_region(k, rg), Error::kNone);
+        by[m] = x.finalize().take();
+      }
+      for (std::uint32_t m = 0; m < 6; ++m) CHECK(by[6] == by[m] || by[m].empty());
+      const std::uint32_t want = has_vg_extension(rg) ? 5u : has_cc_extension(rg) ? 4u : has_amp_extension(rg) ? 3u : has_trigger_extension(rg) ? 2u : has_extension(rg) ? 1u : 0u;
+      CHECK(version_word(by[6]) == (2u | (want << 16)));
+    }
+  }
+  // Writer-side validation.
+  {
+    BundleWriter v;
+    const std::size_t vi = v.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(v.add_sample(vi, {"s", f, 1000, pcm}), Error::kNone);
+    auto bad = [&](auto mutate) { Region x = all; mutate(x); return v.add_region(vi, x); };
+    CHECK_ERR(bad([](Region&) {}), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.bend.up = 12001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.bend.down = -12001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.bend.up = 12000.f; x.bend.down = -12000.f; }), Error::kNone);
+    CHECK_ERR(bad([](Region& x) { x.bend.up = std::nanf(""); }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.bend.up = -0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.bend.step = 0.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.bend.step = 12001.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.bend.enabled = false; }), Error::kInvalidArgument);  // values without the flag: two encodings
+    CHECK_ERR(bad([](Region& x) { x.trig.count = 5; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.trig.t[0].cc = 128; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.trig.t[1].cc = 20; }), Error::kInvalidArgument);  // not ascending
+    CHECK_ERR(bad([](Region& x) { x.trig.t[0].lo = 100.f; x.trig.t[0].hi = 50.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.trig.t[0].hi = 127.5f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.trig.t[0].lo = -0.f; }), Error::kInvalidArgument);
+    CHECK_ERR(bad([](Region& x) { x.trig.t[2].cc = 9; }), Error::kInvalidArgument);  // an unused entry must be zero
+    CHECK_ERR(bad([](Region& x) { x.trig.count = 0; x.trig.t[0] = {}; x.trig.t[1] = {}; }), Error::kInvalidArgument);  // no_note without a trigger: nothing can start it
+    CHECK_ERR(bad([](Region& x) { x.trig.count = 0; x.trig.t[0] = {}; x.trig.t[1] = {}; x.trig.no_note = false; }), Error::kNone);
+  }
+  // Corruption of the table (the tail of the manifest: one record of a region with 2 triggers).
+  BundleWriter u;
+  const std::size_t ui = u.add_instrument("A", "a.sfz").value();
+  CHECK_ERR(u.add_sample(ui, {"s", f, 1000, pcm}), Error::kNone);
+  CHECK_ERR(u.add_region(ui, plain), Error::kNone);
+  CHECK_ERR(u.add_region(ui, trig), Error::kNone);
+  const Bytes good = u.finalize().take();
+  const std::size_t end = rd64(good, 8) + rd64(good, 16);
+  CHECK(layout::kBtRecordSize == 20 && layout::kBtTriggerSize == 12);
+  const std::size_t rec = end - layout::kBtRecordSize - 2 * layout::kBtTriggerSize;
+  CHECK(layout::get_u32(good.data() + rec - 4) == 1u && layout::get_u32(good.data() + rec) == 1u);  // n_bt, region index 1
+  CHECK(good[rec + 4] == 2 && good[rec + 5] == 2);                                                    // flags: no_note only, 2 triggers
+  auto put_f32 = [](Bytes& by, std::size_t at, float v) { std::uint32_t u32; std::memcpy(&u32, &v, 4); wr32(by, at, u32); };
+  auto expect_bad = [&](Bytes bad_bytes, const char* what) {
+    rehash(bad_bytes);
+    auto rb = BundleReader::open_memory(bad_bytes);
+    if (rb.ok() || rb.error() != Error::kCorruptManifest) { std::printf("FAIL bend/trigger table corruption not rejected: %s\n", what); ++g_fail; }
+  };
+  { Bytes b = good; b[rec + 4] = 4; expect_bad(b, "unknown flag bit"); }
+  {  // clearing the no_note flag leaves a valid record: the region then starts from notes as well
+    Bytes b = good; b[rec + 4] = 0; rehash(b);
+    auto rb = BundleReader::open_memory(b);
+    CHECK(rb.ok());
+    if (rb.ok()) CHECK(!rb.value().instruments()[0].regions[1].trig.no_note && rb.value().instruments()[0].regions[1].trig.count == 2);
+  }
+  { Bytes b = good; b[rec + 5] = 5; expect_bad(b, "trigger count above 4"); }
+  { Bytes b = good; b[rec + 5] = 0; expect_bad(b, "no_note without a trigger (and trailing bytes)"); }
+  { Bytes b = good; b[rec + 6] = 5; expect_bad(b, "smooth without the bend flag"); }
+  { Bytes b = good; put_f32(b, rec + 8, 5.f); expect_bad(b, "bend values without the flag"); }
+  { Bytes b = good; b[rec + 20 + 1] = 1; expect_bad(b, "trigger padding"); }
+  { Bytes b = good; b[rec + 20] = 130; expect_bad(b, "trigger controller above 127"); }
+  { Bytes b = good; b[rec + 20 + 12] = 10; expect_bad(b, "triggers not ascending"); }
+  { Bytes b = good; put_f32(b, rec + 20 + 4, 200.f); expect_bad(b, "trigger lo above 127"); }
+  { Bytes b = good; put_f32(b, rec + 20 + 8, std::nanf("")); expect_bad(b, "NaN trigger hi"); }
+  { Bytes b = good; wr32(b, rec, 5); expect_bad(b, "region index out of range"); }
+  { Bytes b = good; wr32(b, rec - 4, 3); expect_bad(b, "n_bt larger than regions"); }
+  for (std::size_t n = 0; n < good.size(); n += (n < 500 ? 1 : 17))
+    CHECK(!BundleReader::open_memory(std::span<const std::uint8_t>(good.data(), n)).ok());
+  for (std::size_t off = rec - 4; off < end; ++off)
+    for (int bit = 0; bit < 8; ++bit) {
+      Bytes bad_bytes = good;
+      bad_bytes[off] ^= std::uint8_t(1 << bit);
+      rehash(bad_bytes);
+      auto r3 = BundleReader::open_memory(bad_bytes);
+      if (!r3.ok() && r3.error() != Error::kCorruptManifest) { std::printf("FAIL bt flip at %zu bit %d -> %s\n", off, bit, to_string(r3.error())); ++g_fail; }
+    }
+  // A record that holds the default bend and no trigger is non-canonical.
+  { Bytes b = good; for (std::size_t i = rec + 4; i < rec + 20; ++i) b[i] = 0; put_f32(b, rec + 8, 200.f); put_f32(b, rec + 12, -200.f); put_f32(b, rec + 16, 1.f); expect_bad(b, "record with the default values"); }
+  // A minor 6 stamp on a bundle with no record is non-canonical; so is a newer minor.
+  {
+    BundleWriter x;
+    const std::size_t k = x.add_instrument("A", "a.sfz").value();
+    CHECK_ERR(x.add_sample(k, {"s", f, 1000, pcm}), Error::kNone);
+    Region a = plain; a.vg.polyphony = 2;
+    CHECK_ERR(x.add_region(k, a), Error::kNone);
+    Bytes b = x.finalize().take();  // minor 5
+    const std::size_t mo = rd64(b, 8), ms = rd64(b, 16), io = rd64(b, 24), is = rd64(b, 32);
+    b.insert(b.begin() + mo + ms, 4, std::uint8_t(0));  // n_bt = 0
+    wr64(b, 16, ms + 4); wr64(b, 24, io + 4); wr64(b, 40, rd64(b, 40) + 4); wr64(b, 56, rd64(b, 56) + 4);
+    for (std::size_t e = 0; e < is / 48; ++e) wr64(b, io + 4 + e * 48, rd64(b, io + 4 + e * 48) + 4);
     wr32(b, 4, 2u | (6u << 16));
+    wr32(b, mo, 2u | (6u << 16));
+    rehash(b);
+    CHECK_ERR(BundleReader::open_memory(b).error(), Error::kCorruptManifest);
+    wr32(b, 4, 2u | (7u << 16));
     CHECK_ERR(BundleReader::open_memory(b).error(), Error::kUnsupportedVersion);
   }
 }
@@ -1792,6 +1952,7 @@ int main() {
   test_extensions();
   test_cc_table();
   test_vg_table();
+  test_bt_table();
   test_float_goldens();
   test_identity();
   test_file_io();

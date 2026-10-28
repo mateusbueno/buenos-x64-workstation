@@ -101,6 +101,23 @@ void put_vg(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) 
   }
 }
 
+void put_bt(std::vector<std::uint8_t>& v, std::uint32_t index, const Region& r) {
+  const PitchBend& b = r.bend;
+  const CcTriggers& t = r.trig;
+  put_u32(v, index);
+  put_u8(v, static_cast<std::uint8_t>((b.enabled ? 1u : 0u) | (t.no_note ? 2u : 0u)));
+  put_u8(v, t.count);
+  put_u8(v, static_cast<std::uint8_t>(b.smooth_ms & 0xFF)); put_u8(v, static_cast<std::uint8_t>(b.smooth_ms >> 8));
+  put_f32(v, b.up);
+  put_f32(v, b.down);
+  put_f32(v, b.step);
+  for (unsigned i = 0; i < t.count; ++i) {
+    put_u8(v, t.t[i].cc); put_u8(v, 0); put_u8(v, 0); put_u8(v, 0);
+    put_f32(v, t.t[i].lo);
+    put_f32(v, t.t[i].hi);
+  }
+}
+
 void put_cc_setup(std::vector<std::uint8_t>& v, const InstrumentCcSetup& s) {
   put_u32(v, static_cast<std::uint32_t>(s.defaults.size()));
   for (const auto& d : s.defaults) {
@@ -290,6 +307,10 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   bool needs_vg = false;
   for (const auto& ins : instruments_)
     for (const auto& r : ins.regions) needs_vg = needs_vg || has_vg_extension(r);
+  bool needs_bt = false;
+  for (const auto& ins : instruments_)
+    for (const auto& r : ins.regions) needs_bt = needs_bt || has_bend_trigger_extension(r);
+  if (needs_bt && opt_.format_minor < 6) return Error::kInvalidArgument;
   if (needs_vg && opt_.format_minor < 5) return Error::kInvalidArgument;
   if (needs_cc && opt_.format_minor < 4) return Error::kInvalidArgument;
   if (needs_amp && opt_.format_minor < 3) return Error::kInvalidArgument;
@@ -297,7 +318,7 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
   if (needs_ext && opt_.format_minor < 1) return Error::kInvalidArgument;
   if (opt_.format_minor > kFormatMinor) return Error::kInvalidArgument;
   // a minor N bundle carries the tables of every lower minor too (possibly empty)
-  const std::uint32_t minor = needs_vg ? 5u : needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
+  const std::uint32_t minor = needs_bt ? 6u : needs_vg ? 5u : needs_cc ? 4u : needs_amp ? 3u : needs_trig ? 2u : needs_ext ? 1u : 0u;
   const std::uint32_t version_word =
       (protect ? kProtectedFormatVersion : opt_.format_version) | (minor << kMinorShift);
   Uuid library_id = library_id_;
@@ -432,6 +453,13 @@ Result<std::vector<std::uint8_t>> BundleWriter::finalize_impl(const ProtectParam
         put_u32(manifest, n_vg);
         for (std::size_t k = 0; k < ins.regions.size(); ++k)
           if (has_vg_extension(ins.regions[k])) put_vg(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
+      }
+      if (minor >= 6) {
+        std::uint32_t n_bt = 0;
+        for (const auto& r : ins.regions) n_bt += has_bend_trigger_extension(r) ? 1u : 0u;
+        put_u32(manifest, n_bt);
+        for (std::size_t k = 0; k < ins.regions.size(); ++k)
+          if (has_bend_trigger_extension(ins.regions[k])) put_bt(manifest, static_cast<std::uint32_t>(k), ins.regions[k]);
       }
     }
   }

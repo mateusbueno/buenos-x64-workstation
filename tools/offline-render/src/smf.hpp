@@ -23,6 +23,10 @@ struct NoteEvent {
   bool contact = false;
   bool closed = false;
   std::uint8_t contact_index = 0;
+  // Pitch bend (Story 13.7): `bend` true means a pitch wheel event (`bend14` = the 14-bit value, 8192 = centre); `cc` is also true so the control paths see it
+  // (and `note` is 0). Only the sample engine renders consume it (render_main drops it for every other render); `on` is false.
+  bool bend = false;
+  std::uint16_t bend14 = 8192;
 };
 
 struct SmfResult {
@@ -33,7 +37,7 @@ struct SmfResult {
   std::vector<NoteEvent> events;  // time ordered (tick, then track, then file order)
 };
 
-// Parses a Standard MIDI File (format 0/1, PPQ division). Only note on/off, control change and tempo meta events
+// Parses a Standard MIDI File (format 0/1, PPQ division). Only note on/off, control change, pitch bend and tempo meta events
 // are kept. Frames use integer arithmetic only: frames = floor(sum(dticks*tempo_us) * 48000 /
 // (ppq * 1e6)), so results are exact and identical on every platform.
 SmfResult parse_smf(const std::uint8_t* data, std::size_t size, std::uint32_t sample_rate = 48000);

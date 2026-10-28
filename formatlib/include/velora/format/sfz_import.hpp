@@ -20,6 +20,10 @@
 //   Story 13.6: group (polyphony_group), off_by (offby), off_mode (offmode: fast|normal|time), off_time, polyphony, note_polyphony, note_selfmask, evaluated when a
 //             voice starts. polyphony is a region limit and, next to a non-zero group number, the group's limit; a polyphony in a header without a non-zero group set at that
 //             header or a broader one would limit the header's whole region set and is rejected as unsupported_value. `output` stays unsupported.
+//   Story 13.7: bend_up (bendup), bend_down (benddown), bend_step, bend_smooth (a region that sets any of them follows the pitch wheel), on_locc<N> / on_hicc<N>
+//             (alias start_locc / start_hicc, N = 0..127, up to 4 per region): a region triggered by a controller, which with hikey=-1 never starts from a note.
+//             hikey=-1 without an on_locc/on_hicc trigger stays flagged (never_note_triggered) and is dropped before the bundle. on_lohdcc/on_hihdcc, bend_* beyond
+//             +-12000 cents and triggers on the pseudo-controllers stay rejected.
 //   Allow-listed non-sounding opcodes (label_*, image, hint_*, ...) are accepted, not stored,
 //   and reported in SfzParseResult::allowlisted. The authoritative list is sfz_opcode_table().
 // Sample paths must stay inside the SFZ's directory ("..", absolute paths elsewhere and an
@@ -155,15 +159,15 @@ struct SfzParseResult {
   std::vector<SfzCurve> curves;            // Story 13.2: <curve> blocks, stored inert
   std::vector<SfzCcDefault> cc_defaults;   // Story 13.5: every set_cc/set_hdcc, ascending by controller
   InstrumentCcSetup cc_setup;              // Story 13.5: what the bundle stores: the defaults and curves some region uses (see build_cc_setup)
-  std::vector<bool> never_note_triggered;  // Story 13.2: parallel to regions; hikey=-1 (no note ever triggers it)
+  std::vector<bool> never_note_triggered;  // Story 13.2: parallel to regions; hikey=-1 and no on_locc/on_hicc trigger (nothing can start the region, Story 13.7)
   std::vector<std::string> included_files; // every file the parser read (main file included)
   std::size_t source_region_count = 0;     // number of <region> headers seen
   bool ok() const { return issues.empty(); }
 };
 
-// Story 13.2: removes the regions flagged never_note_triggered (and their parallel entries) so a bundle is built
-// without them, until controller-triggered voices exist (Story 13.7). Returns how many were removed. Samples used
-// only by removed regions stay in `samples`.
+// Story 13.2: removes the regions flagged never_note_triggered (hikey=-1 with no on_locc/on_hicc trigger, so nothing can start them; a
+// hikey=-1 region WITH a trigger is kept since Story 13.7) and their parallel entries, so a bundle is built without them. Returns how many
+// were removed. Samples used only by removed regions stay in `samples`.
 std::size_t drop_never_note_triggered(SfzParseResult& r);
 
 // Parses and maps `sfz_path`. Never throws; failures are listed in `issues` (the other fields

@@ -9,6 +9,7 @@ which is why the outputs are committed and the goldens are rendered from the com
     python3 generate_suite.py story134   # only the Story 13.4 cases (no existing file is touched)
     python3 generate_suite.py story135   # only the Story 13.5 cases (no existing file is touched)
     python3 generate_suite.py story136   # only the Story 13.6 cases (no existing file is touched)
+    python3 generate_suite.py story137   # only the Story 13.7 cases (no existing file is touched)
 
 MIDI timing: the files use 32000 PPQ at 500000 us per quarter, i.e. 0.75 audio frames per tick at
 48 kHz. A frame is mapped to a tick that puts the event at a quarter-frame fraction (never on an
@@ -99,6 +100,7 @@ def make_samples(root):
 # --- midi ------------------------------------------------------------------------------------------
 START_OFFSET = 4800  # frames
 PPQ = 32000
+PITCH_BEND = 256  # pseudo controller number of a pitch wheel event in the `ccs` lists (Story 13.7)
 TEMPO = 500000  # us per quarter: 1 tick = 0.75 frames at 48 kHz
 
 
@@ -139,7 +141,9 @@ def write_midi(path, events, ccs=(), setup=()):
         tick = frame_to_tick(frame)
         assert tick >= last, (frame, tick, last)
         track += vlq(tick - last)
-        if on < 0:
+        if on < 0 and key == PITCH_BEND:  # Story 13.7: `vel` is the 14-bit wheel value (8192 = centre)
+            track += bytes([0xE0, vel & 0x7F, vel >> 7])
+        elif on < 0:
             track += bytes([0xB0, key, vel])
         else:
             track += bytes([0x90 if on else 0x80, key, vel if on else 0])
@@ -652,6 +656,75 @@ def build_story136_cases():
 """, ev, ())
 
 
+def build_story137_cases():
+    """Story 13.7: pitch bend (bend_up, bend_down, bend_step, bend_smooth) and regions started by a controller (on_locc / on_hicc, hikey=-1).
+    Every wheel event sits on a 64-frame block boundary (blk): sfizz ramps the pitch of the block that holds an event up to the event's frame, the engine jumps at the
+    event, and the two agree exactly only when the event is the first frame of a block (see the README, "Pitch bend and controller-started voices").
+    sfizz accumulates a voice's read position in float32 per 64-frame block (cumsum), so a pitch ratio that is not a power of two drifts from the engine's double
+    position by about 1e-6 of a sample per frame (a phase offset of 0.02 to 0.03 frame after 2 s, measured). The fixtures that hold a bent note for a long time therefore
+    use ratios that float32 adds exactly (2, 1, 0.5, 0.25: cents that are multiples of 1200); `pitch_bend_fine` visits arbitrary cents and is short."""
+    loop = "loop_mode=loop_continuous loop_start=2400 loop_end=7199"
+
+    # The wheel at the extremes (16383, 0), at positions that bend_step quantises to whole octaves, and at the centre; it moves while the notes are released (release 0.5 s).
+    # 60: +-1200 cents. 62: bend_up=2400 bend_down=-2400 bend_step=1200 (the wheel at 0.5 and 0.7 gives +1200, at -0.5 and -0.76 gives -1200: trunc towards zero).
+    # 64: asymmetric, bend_up=1200 bend_down=-2400. 66 starts with the wheel held at full travel up (the voice starts bent, no ramp).
+    ev = notes([
+        (secs(0.05), secs(2.20), 60, 100), (secs(0.05), secs(2.00), 62, 100), (secs(0.05), secs(2.40), 64, 100), (secs(2.90), secs(3.60), 66, 100),
+    ])
+    ev.sort(key=lambda e: (e[0], e[1]))
+    wheel = [(blk(secs(0.30)), PITCH_BEND, 16383), (blk(secs(0.60)), PITCH_BEND, 0), (blk(secs(0.90)), PITCH_BEND, 12288), (blk(secs(1.20)), PITCH_BEND, 4096),
+             (blk(secs(1.50)), PITCH_BEND, 8192), (blk(secs(1.80)), PITCH_BEND, 14000), (blk(secs(2.10)), PITCH_BEND, 0), (blk(secs(2.60)), PITCH_BEND, 16383)]
+    case("pitch_bend", HEADER + f"""<global> ampeg_release=0.5
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 {loop} bend_up=1200 bend_down=-1200
+<region> sample=loop2.wav lokey=62 hikey=62 pitch_keycenter=62 {loop} bend_up=2400 bend_down=-2400 bend_step=1200
+<region> sample=loop.wav lokey=64 hikey=64 pitch_keycenter=64 {loop} bend_up=1200 bend_down=-2400
+<region> sample=loop2.wav lokey=66 hikey=66 pitch_keycenter=66 {loop} bend_up=1200 bend_down=-1200
+""", ev, wheel)
+
+    # Arbitrary cents (irrational pitch ratios), short notes: asymmetric ranges, a quantiser of 100 cents, the 14-bit mapping at intermediate positions.
+    ev = notes([(secs(0.05), secs(0.55), 60, 100), (secs(0.05), secs(0.55), 62, 100), (secs(0.05), secs(0.55), 64, 100)])
+    ev.sort(key=lambda e: (e[0], e[1]))
+    wheel = [(blk(secs(0.15)), PITCH_BEND, 12288), (blk(secs(0.30)), PITCH_BEND, 5000), (blk(secs(0.45)), PITCH_BEND, 15000)]
+    case("pitch_bend_fine", HEADER + f"""<global> ampeg_release=0.2
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 {loop} bend_up=700 bend_down=-500
+<region> sample=loop2.wav lokey=62 hikey=62 pitch_keycenter=62 {loop} bend_up=400 bend_down=-800 bend_step=100
+<region> sample=loop.wav lokey=64 hikey=64 pitch_keycenter=64 {loop} bend_up=300 bend_down=-300
+""", ev, wheel)
+
+    # Smoothed wheel: bend_smooth=40 ms (1920 frames) on 60 (+-1200) and on 64 (+1200 / -2400). The wheel jumps every 0.5 s, retargets before the first ramp has ended
+    # (0.80 then 0.83 s) and moves while the notes are released. Targets are octaves and every ramp step (0.625, 1.25, 1.875, 1.40625 ... cents per frame) is a binary
+    # fraction: sfizz adds the step to a float32 cents value in SIMD lanes, which only equals a sequential sum when the step is exactly representable (README).
+    ev = notes([(secs(0.05), secs(2.60), 60, 100), (secs(0.05), secs(2.60), 64, 100)])
+    ev.sort(key=lambda e: (e[0], e[1]))
+    wheel = [(blk(secs(0.40)), PITCH_BEND, 16383), (blk(secs(0.80)), PITCH_BEND, 0), (blk(secs(0.83)), PITCH_BEND, 16383), (blk(secs(1.40)), PITCH_BEND, 8192),
+             (blk(secs(1.90)), PITCH_BEND, 0), (blk(secs(2.80)), PITCH_BEND, 8192)]
+    case("pitch_bend_smooth", HEADER + f"""<global> ampeg_release=0.3
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 {loop} bend_up=1200 bend_down=-1200 bend_smooth=40
+<region> sample=loop2.wav lokey=64 hikey=64 pitch_keycenter=64 {loop} bend_up=1200 bend_down=-2400 bend_smooth=40
+""", ev, wheel)
+
+    # Controller-started voices. Salamander's pedal pattern: a master with lokey=-1 hikey=-1 group=1 polyphony=1 holds two groups of regions, one started by the pedal
+    # going down (on_locc64=127), one by it coming up (on_locc64=0 is [0, 1) after the fill-gap). A note region rings under the pedal. CC1 over 30..60 starts a
+    # voice on every change inside the range (a repeat of the same value starts nothing). key=62 with on_locc2 starts from the note and from the controller.
+    ev = notes([(secs(0.10), secs(0.50), 60, 100), (secs(2.40), secs(2.70), 62, 100), (secs(2.95), secs(3.10), 60, 100)])
+    ev.sort(key=lambda e: (e[0], e[1]))
+    ccs = [(secs(0.30), 64, 127), (secs(0.90), 64, 0), (secs(1.00), 64, 127), (secs(1.04), 64, 0), (secs(1.10), 64, 127),
+           (secs(1.60), 1, 20), (secs(1.70), 1, 45), (secs(1.80), 1, 50), (secs(1.90), 1, 50), (secs(2.00), 1, 70), (secs(2.10), 1, 40), (secs(2.20), 1, 61),
+           (secs(2.30), 2, 10), (secs(2.80), 2, 10), (secs(2.85), 2, 90), (secs(3.40), 64, 0)]
+    case("cc_trigger", HEADER + f"""<global> ampeg_release=0.1
+<region> sample=loop.wav lokey=60 hikey=60 pitch_keycenter=60 {loop}
+<master> lokey=-1 hikey=-1 group=1 polyphony=1 off_time=0.05
+<group> volume=-6 on_locc64=127 on_hicc64=127 locc64=127 hicc64=127
+<region> sample=loop2.wav pitch_keycenter=62
+<group> volume=-4 on_locc64=0 on_hicc64=0 locc64=0 hicc64=0
+<region> sample=short.wav pitch_keycenter=67
+<master> hikey=-1 on_locc1=30 on_hicc1=60 ampeg_release=0.05
+<region> sample=loop.wav pitch_keycenter=64 volume=-3
+<global>
+<region> sample=loop2.wav key=62 on_locc2=1 on_hicc2=127 ampeg_release=0.1
+""", ev, ccs)
+
+
 def make_demo_probe():
     """midi/demo_probe.mid: a short phrase over the keyboard range for the env-gated real-library null test."""
     keys = [28, 40, 52, 64, 76, 88, 100]
@@ -684,9 +757,9 @@ def make_demo_features():
 
 
 def main():
-    stories = {"story134": build_story134_cases, "story135": build_story135_cases, "story136": build_story136_cases}
+    stories = {"story134": build_story134_cases, "story135": build_story135_cases, "story136": build_story136_cases, "story137": build_story137_cases}
     if sys.argv[1:] != [] and not (len(sys.argv) == 2 and sys.argv[1] in stories):
-        sys.exit("usage: generate_suite.py [story134|story135|story136]")
+        sys.exit("usage: generate_suite.py [story134|story135|story136|story137]")
     if len(sys.argv) == 2:  # only that story's cases (leaves every older file untouched)
         stories[sys.argv[1]]()
         for name, (sfz, events, ccs, setup) in CASES.items():
@@ -703,6 +776,7 @@ def main():
     build_story134_cases()
     build_story135_cases()
     build_story136_cases()
+    build_story137_cases()
     for name, (sfz, events, ccs, setup) in CASES.items():
         with open(os.path.join(HERE, "sfz", name + ".sfz"), "w") as f:
             f.write(sfz)

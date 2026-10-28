@@ -565,10 +565,16 @@ void BlockRenderer::apply_keyboard_sustain(bool down, std::uint32_t value32) noe
   }
 }
 
-bool BlockRenderer::deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32) noexcept {
+bool BlockRenderer::deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32, bool replay) noexcept {
   Engine* engine = nullptr;
   if (part >= 16 || registry_.resolve(channel_engine_[part], engine) != EngineStatus::kOk) return false;
-  return engine->set_part_cc(part, cc, value32);
+  const bool consumed = replay ? engine->set_part_cc_replay(part, cc, value32) : engine->set_part_cc(part, cc, value32);
+  std::uint32_t key = 0;
+  // Story 13.7: every controller-started voice (on_locc / on_hicc) holds its bank by raw pointer like any voice: bind the generation to each key it started.
+  while (consumed && engine->take_cc_started(key)) {
+    if (router_.active()) bind_generation(part, key);
+  }
+  return consumed;
 }
 
 void BlockRenderer::apply_controller(const Ump& ump) noexcept {
@@ -619,7 +625,7 @@ void BlockRenderer::replay_keyboard_ccs(const Snapshot& s, bool all, const std::
     replay_bank_[p] = bank;
     if (!needs) continue;
     for (std::uint32_t cc = 0; cc < 128; ++cc)
-      if (keyboard_cc_seen_[cc]) deliver_cc(p, cc, keyboard_cc_[cc]);
+      if (keyboard_cc_seen_[cc]) deliver_cc(p, cc, keyboard_cc_[cc], true);  // replay: no controller moved, no trigger fires
     if (keyboard_pitch_seen_) deliver_pitch_bend(p, keyboard_pitch_bend_);
   }
 }

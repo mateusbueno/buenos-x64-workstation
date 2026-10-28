@@ -176,6 +176,15 @@ ports::SampleRegionDesc to_port_region(const fmt::Region& r) {
   d.group_polyphony = r.vg.group_polyphony;
   d.note_polyphony = r.vg.note_polyphony;
   d.note_selfmask = r.vg.note_selfmask;
+  d.bend_enabled = r.bend.enabled;
+  d.bend_up = r.bend.up;
+  d.bend_down = r.bend.down;
+  d.bend_step = r.bend.step;
+  d.bend_smooth_ms = r.bend.smooth_ms;
+  d.cc_trigger_count = r.trig.count;
+  d.no_note = r.trig.no_note;
+  static_assert(ports::kSampleMaxCcTriggers == fmt::kMaxCcTriggers, "trigger table sizes must agree");
+  for (unsigned i = 0; i < r.trig.count && i < ports::kSampleMaxCcTriggers; ++i) d.cc_triggers[i] = {r.trig.t[i].cc, r.trig.t[i].lo, r.trig.t[i].hi};
   return d;
 }
 
