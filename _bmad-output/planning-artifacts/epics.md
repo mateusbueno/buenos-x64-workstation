@@ -7340,3 +7340,65 @@ So that a Pianobook or other pack delivered as SoundFont can count toward the co
 **Given** the report
 **When** it is written
 **Then** it lists SF2 and SFZ entries together and fails the job on any import or null-test failure
+
+### Story 13.12: Allow relative sample paths within the library root
+
+As a keyboardist,
+I want libraries whose SFZ files use relative paths such as `../Samples/...` to import,
+So that libraries with standard subfolder layouts (Sonatina, Karoryfer, Scarypiano, Osiris) import without escaping the library boundary.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.1
+
+**Acceptance Criteria:**
+
+**Given** an SFZ file in a subfolder of a library
+**When** a `sample` or `default_path` opcode uses `..`
+**Then** the path is resolved and accepted if it stays inside the library root (base directory), and rejected with `path leaves the library root` if it escapes above the root
+**And** `parse_sfz_file`, preflight, and librarian import accept the base/root directory and enforce the boundary
+
+**Given** Scarypiano, Osiris, and Sonatina SFZ files
+**When** imported
+**Then** sample paths pointing to `../Samples` resolve successfully and no longer fail with 'leaves the SFZ directory'
+
+### Story 13.13: FLAC sample support in the importer
+
+As a keyboardist,
+I want libraries whose audio samples are stored in FLAC format to import,
+So that modern compressed SFZ libraries (Salamander Grand Piano, Headroom Piano) import and play.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Story 13.1
+
+**Acceptance Criteria:**
+
+**Given** an SFZ library with FLAC sample files (.flac)
+**When** preflight and import run
+**Then** the importer decodes FLAC audio into the bundle PCM representation identically to WAV samples
+**And** Salamander Grand Piano and Headroom Piano sample files are recognized and decoded without rejection
+
+### Story 13.14: Remaining corpus opcodes
+
+As a keyboardist,
+I want the remaining corpus opcodes (delay, offset_random, sustain_cc, ampeg_release_shape, xfin/xfout_lovel, width_oncc, rt_decay, amp_veltrack_oncc) to be handled,
+So that the reference corpus libraries pass import.
+
+**Covers:** FR18, FR20
+
+**Runs on:** Mac
+
+**Blocked by:** Stories 13.12, 13.13
+
+**Acceptance Criteria:**
+
+**Given** regions with `delay`, `offset_random`, `sustain_cc`, `ampeg_release_shape`, `xfin_lovel`/`xfout_lovel`, `width_oncc`, `rt_decay`, and `amp_veltrack_oncc`
+**When** imported
+**Then** supported opcodes are mapped into the engine or safely handled according to the ratified scope decision
+**And** the corpus import failure rate drops accordingly
+

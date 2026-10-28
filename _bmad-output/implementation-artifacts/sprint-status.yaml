@@ -310,7 +310,10 @@ development_status:
   13-9-region-eq-and-lfo-eg-modulation-conditional: done
   13-10-random-layer-parity-with-the-null-oracle: done
   13-11-sf2-libraries-in-the-reference-corpus: done
-  epic-13-retrospective: done
+  13-12-allow-relative-sample-paths-within-library-root: done
+  13-13-flac-sample-support-in-the-importer: ready-for-dev
+  13-14-remaining-corpus-opcodes: backlog
+  epic-13-retrospective: optional
 action_items:
   - id: "epic-13-retro-item-1-story-allow-or-rewrite-sample-paths-that"
     epic: 13

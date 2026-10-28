@@ -613,10 +613,20 @@ ImportResult import_sfz(const ImportOptions& opt) {
       return fail(Status::kInvalidArgument, "the data root " + opt.root + " is not an existing directory");
   }
 
+  std::error_code ec;
+  const fs::path sfz_abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
+  if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
+  const fs::path base = opt.base_dir.empty() ? sfz_abs.parent_path()
+                                              : fs::weakly_canonical(fs::absolute(opt.base_dir, ec), ec);
+  const fs::path rel = sfz_abs.lexically_relative(base);
+  if (rel.empty() || *rel.begin() == "..")
+    return fail(Status::kInvalidArgument, "the SFZ file is not inside the base directory");
+
   // 1. Parse (no audio, no filesystem writes).
   res.timbres_total = 1;  // an SFZ file is one timbre
   if (timbre_hook(opt, "timbre-start", 0)) return fail(Status::kAborted, "stopped at timbre-start");
-  fmt::SfzParseResult parsed = fmt::parse_sfz_file(opt.sfz_path);
+  const std::string lib_root = opt.base_dir.empty() ? std::string{} : base.string();
+  fmt::SfzParseResult parsed = fmt::parse_sfz_file(opt.sfz_path, lib_root);
   res.source_region_count = parsed.source_region_count;
   for (const auto& a : parsed.allowlisted) res.allowlisted.push_back({a.opcode, a.file, a.line});
   for (const auto& w : parsed.warnings) res.warnings.push_back({"ignored_opcode", w.opcode, w.file, w.line, w.message, {}});
@@ -649,18 +659,10 @@ ImportResult import_sfz(const ImportOptions& opt) {
     return res;
   }
 
-  std::error_code ec;
-  const fs::path sfz_abs = fs::weakly_canonical(fs::absolute(opt.sfz_path, ec), ec);
-  if (ec) return fail(Status::kIo, "cannot resolve " + opt.sfz_path);
   // Story 6.4: refused early, before any sample is read or encoded.
   if (!opt.bundle_sink && !opt.root.empty() &&
       factory_library_installed(opt.root, fmt::uuid_to_string(has_vendor_id ? vendor_id : fmt::library_id_from_source(sfz_abs.generic_string()))))
     return fail(Status::kFactoryProtected, "the library of " + opt.sfz_path + " is a factory library installed from a protected bundle; a user import cannot replace it");
-  const fs::path base = opt.base_dir.empty() ? sfz_abs.parent_path()
-                                              : fs::weakly_canonical(fs::absolute(opt.base_dir, ec), ec);
-  const fs::path rel = sfz_abs.lexically_relative(base);
-  if (rel.empty() || *rel.begin() == "..")
-    return fail(Status::kInvalidArgument, "the SFZ file is not inside the base directory");
 
   // An override for an instrument this file does not have is refused before anything is written.
   for (const auto& o : opt.instrument_meta)

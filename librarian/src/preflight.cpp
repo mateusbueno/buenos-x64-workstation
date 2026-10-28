@@ -310,7 +310,7 @@ Analysis analyze_sfz(const fs::path& file, const fs::path* root, Counter& cnt) {
     return a;
   };
 
-  fmt::SfzParseResult parsed = fmt::parse_sfz_file(path);
+  fmt::SfzParseResult parsed = fmt::parse_sfz_file(path, root ? root->string() : std::string{});
   for (const std::string& inc : parsed.included_files) {
     cnt.bytes += file_size_of(inc);
     if (inc != path) add_dep(a, inc);

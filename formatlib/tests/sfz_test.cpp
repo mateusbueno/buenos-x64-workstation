@@ -982,6 +982,31 @@ int main() {
                            SfzIssueKind::kMissingSampleOpcode})
       CHECK(!is_unsupported_feature(k));
   }
+  // ---- Story 13.12 ---------------------------------------------------------------------------
+  {  // relative sample paths and default_path with '..' within library root
+    fs::path root = g_dir / "lib_root";
+    fs::create_directories(root / "Programs");
+    fs::create_directories(root / "Samples");
+    std::ofstream(root / "Samples/s.wav", std::ios::binary) << "x";
+    std::ofstream(root / "Programs/p.sfz", std::ios::binary) << "<region> sample=../Samples/s.wav key=60\n";
+    // Without library_root: strictly rejected as leaving SFZ directory
+    auto no_root = parse_sfz_file((root / "Programs/p.sfz").string());
+    CHECK(!no_root.ok() && has(no_root, SfzIssueKind::kInvalidValue, "leaves the SFZ directory"));
+    // With library_root: accepted, sample stored relative to library root
+    auto with_root = parse_sfz_file((root / "Programs/p.sfz").string(), root.string());
+    CHECK(with_root.ok() && with_root.samples.size() == 1);
+    if (!with_root.samples.empty()) {
+      CHECK(with_root.samples[0].name == "Samples/s.wav");
+    }
+    // Escaping above library root: rejected as leaving library root
+    std::ofstream(root / "Programs/escape.sfz", std::ios::binary) << "<region> sample=../../outside.wav key=60\n";
+    auto esc = parse_sfz_file((root / "Programs/escape.sfz").string(), root.string());
+    CHECK(!esc.ok() && has(esc, SfzIssueKind::kInvalidValue, "leaves the library root"));
+    // default_path with '..' within library root
+    std::ofstream(root / "Programs/dp.sfz", std::ios::binary) << "<control>\ndefault_path=../Samples/\n<region> sample=s.wav key=60\n";
+    auto dp = parse_sfz_file((root / "Programs/dp.sfz").string(), root.string());
+    CHECK(dp.ok() && dp.samples.size() == 1 && dp.samples[0].name == "Samples/s.wav");
+  }
   {  // the opcode table classifies concrete names the way the patterns say
     const auto& t = sfz_opcode_table();
     std::set<std::string> patterns;

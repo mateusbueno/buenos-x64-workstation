@@ -650,7 +650,10 @@ std::string norm_slashes(std::string s) {
 
 class Importer final : public sfz::ParserListener {
  public:
-  explicit Importer(const fs::path& main) : main_(main), dir_(main.parent_path().lexically_normal()) {}
+  explicit Importer(const fs::path& main, const fs::path& root = {})
+      : main_(main),
+        dir_(main.parent_path().lexically_normal()),
+        root_(!root.empty() ? root.lexically_normal() : dir_) {}
 
   SfzParseResult result;
 
@@ -783,14 +786,17 @@ class Importer final : public sfz::ParserListener {
     add(k, l.file, l.line, std::move(msg), std::move(opcode));
   }
 
-  // A path (sample or default_path) must stay inside the SFZ's directory.
+  // A path (sample or default_path) must stay inside the library root (or SFZ directory if no root given).
   bool check_path(const std::string& p, const Op& op) {
     if (p.empty()) return true;
-    const fs::path full = (fs::path(p).is_absolute() ? fs::path(p) : dir_ / p).lexically_normal();
-    const fs::path rel = full.lexically_relative(dir_);
+    std::error_code ec;
+    const fs::path full = fs::path(p).is_absolute() ? fs::weakly_canonical(fs::path(p), ec)
+                                                     : (dir_ / p).lexically_normal();
+    const fs::path rel = full.lexically_relative(root_);
     if (rel.empty() || *rel.begin() == "..") {
       add(SfzIssueKind::kInvalidValue, op.file, op.line,
-          "path '" + p + "' leaves the SFZ directory (no '..' escapes or absolute paths outside it)");
+          root_ == dir_ ? "path '" + p + "' leaves the SFZ directory (no '..' escapes or absolute paths outside it)"
+                        : "path '" + p + "' leaves the library root (no '..' escapes or absolute paths outside it)");
       return false;
     }
     return true;
@@ -1652,7 +1658,9 @@ class Importer final : public sfz::ParserListener {
           "unsupported sample '" + sample_value + "' (generators and empty samples are not supported)");
       return;
     }
-    const fs::path p = (fs::path(sample_value).is_absolute() ? fs::path(sample_value) : dir_ / sample_value).lexically_normal();
+    std::error_code ec_p;
+    const fs::path p = (fs::path(sample_value).is_absolute() ? fs::weakly_canonical(fs::path(sample_value), ec_p)
+                                                             : (dir_ / sample_value).lexically_normal());
     std::size_t idx = samples_.size();
     auto it = samples_.find(p.string());
     if (it != samples_.end()) {
@@ -1665,7 +1673,7 @@ class Importer final : public sfz::ParserListener {
         return;
       }
       SfzSample s;
-      s.name = p.lexically_relative(dir_).generic_string();
+      s.name = p.lexically_relative(root_).generic_string();
       if (s.name.size() > layout::kMaxStringLen) {
         issue(SfzIssueKind::kInvalidValue, region_loc_, "sample path too long");
         return;
@@ -1683,7 +1691,7 @@ class Importer final : public sfz::ParserListener {
     result.region_sources.push_back({region_loc_.file, region_loc_.line});
   }
 
-  fs::path main_, dir_;
+  fs::path main_, dir_, root_;
   Cur cur_ = Cur::kNone;
   Level global_, master_, group_, region_;
   Loc region_loc_;
@@ -1829,16 +1837,21 @@ bool resolve_loop_points(Region& r, const SfzLoopSpec& spec, std::uint64_t frame
   return true;
 }
 
-SfzParseResult parse_sfz_file(const std::string& sfz_path) {
+SfzParseResult parse_sfz_file(const std::string& sfz_path, const std::string& library_root) {
   SfzParseResult none;
   std::error_code ec;
-  fs::path abs = fs::absolute(sfz_path, ec);
+  fs::path abs = fs::weakly_canonical(fs::absolute(sfz_path, ec), ec);
   if (ec || !fs::is_regular_file(abs, ec)) {
     none.issues.push_back({SfzIssueKind::kParse, sfz_path, 0, "cannot open SFZ file", sfz_path, {}});
     return none;
   }
   abs = abs.lexically_normal();
-  Importer imp(abs);
+  fs::path root;
+  if (!library_root.empty()) {
+    root = fs::weakly_canonical(fs::absolute(library_root, ec), ec);
+    if (!ec) root = root.lexically_normal();
+  }
+  Importer imp(abs, root);
   try {
     sfz::Parser parser;
     parser.setListener(&imp);

@@ -700,6 +700,16 @@ void test_base_dir_and_root() {
   ImportOptions bad = e.opts();
   bad.root = (e.dir / "typo").string();
   CHECK(import_sfz(bad).status == Status::kInvalidArgument && !fs::exists(e.dir / "typo"));
+
+  // Story 13.12: SFZ in sub/ refers to ../samples/a.wav with base_dir = e.src
+  write_file(e.src / "sub/Relative.sfz",
+             "<control>\ndefault_path=../samples/\n<region> sample=a.wav key=60\n");
+  ImportOptions o_rel = e.opts("sub/Relative.sfz");
+  o_rel.base_dir = e.src.string();
+  const auto r_rel = import_sfz(o_rel);
+  CHECK(r_rel.ok());
+  auto b_rel = fmt::BundleReader::open_file(r_rel.bundle_dir + "/bundle.vlb");
+  CHECK(b_rel.ok() && b_rel.value().samples()[0].name == "samples/a.wav");
 }
 
 void test_salamander_like_fixture() {

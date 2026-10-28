@@ -181,7 +181,8 @@ struct SfzParseResult {
 std::size_t drop_never_note_triggered(SfzParseResult& r);
 
 // Parses and maps `sfz_path`. Never throws; failures are listed in `issues` (the other fields
-// are then incomplete and must not be used to build a bundle).
-SfzParseResult parse_sfz_file(const std::string& sfz_path);
+// are then incomplete and must not be used to build a bundle). When `library_root` is given,
+// sample paths and default_path using `..` are allowed as long as they stay inside `library_root`.
+SfzParseResult parse_sfz_file(const std::string& sfz_path, const std::string& library_root = {});
 
 }  // namespace velora::format
