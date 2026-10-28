@@ -217,6 +217,69 @@ void test_reservation() {
   CHECK(!a.reserved() && a.reservation().budget == 0);
 }
 
+// Story 13.12: a floor entry's cost_features change the cost per voice an engine has FOR THAT RESERVATION (floor cost, budget arithmetic, the engine's own declaration), installed
+// together with the reservation by reserve() and commit_prepared() (the RT half) and undone by the next reservation or clear_reservation(). Engines that do not follow the Live Set
+// are untouched; the static declaration is still what "changed since bind()" is judged against.
+void test_cost_features() {
+  SampleEngine::Config sc;
+  sc.max_voices = 320;
+  sc.extended_voices = true;
+  SampleEngine se(sc);
+  FakeEngine fm(EngineTypeId::kFm, 4, 80);
+  auto br = std::make_unique<BlockRenderer>(4);
+  CHECK(br->bind_engine(se) && br->bind_engine(fm));
+  auto& a = br->arbiter();
+  a.set_min_fm_floor_for_tests(0);
+  const std::uint32_t base = se.cost_units_for_features(0), with = se.cost_units_for_features(kCostFeatureSecondFilter);
+  CHECK(base != 0 && with == base + kSampleFilter2CostUnits && se.cost_units_per_voice() == base);
+  auto make = [&](std::uint32_t features, std::uint64_t budget) {
+    auto c = cfg(budget);
+    c.floors[c.floor_count++] = {kSampleId, 256, features};
+    c.floors[c.floor_count++] = {kFmId, 3, 0};
+    return c;
+  };
+  // Base declaration: the floor costs 256 x base; the engine keeps its figure.
+  CHECK(a.reserve(make(0, 100000)) == RS::kOk);
+  CHECK(a.floor_cost(kSampleId) == 256ull * base && se.cost_units_per_voice() == base && a.floor_cost(kFmId) == 12);
+  // The feature raises the floor cost and the engine's declaration; the FM engine (no cost features) keeps its own.
+  CHECK(a.reserve(make(kCostFeatureSecondFilter, 100000)) == RS::kOk);
+  CHECK(a.floor_cost(kSampleId) == 256ull * with && se.cost_units_per_voice() == with && a.floor_cost(kFmId) == 12 && fm.cost_units_per_voice() == 4);
+  // The budget is judged with the raised cost: exact fit at the base cost, refused with the feature, and a refusal changes nothing.
+  const std::uint64_t exact = 256ull * base + 12;
+  CHECK(a.reserve(make(0, exact)) == RS::kOk && se.cost_units_per_voice() == base);
+  CHECK(a.reserve(make(kCostFeatureSecondFilter, exact)) == RS::kFloorsExceedBudget && se.cost_units_per_voice() == base && a.floor_cost(kSampleId) == 256ull * base);
+  // prepare_reservation changes nothing (any thread, while RT renders); commit_prepared installs the cost and the declaration (the RT half), and a later commit without the
+  // feature takes it away: no stale declaration.
+  VoiceArbiter::PreparedReservation up, down;
+  CHECK(a.prepare_reservation(make(kCostFeatureSecondFilter, 100000), up) == RS::kOk && a.prepare_reservation(make(0, 100000), down) == RS::kOk);
+  constexpr std::size_t kSi = 1;  // bind order: the block renderer binds its test tone first
+  CHECK(up.cost[kSi] == with && up.features[kSi] == kCostFeatureSecondFilter && up.floor_cost[kSi] == 256ull * with && down.cost[kSi] == base && down.features[kSi] == 0);
+  CHECK(se.cost_units_per_voice() == base && a.floor_cost(kSampleId) == 256ull * base);
+  a.commit_prepared(up);
+  CHECK(se.cost_units_per_voice() == with && a.floor_cost(kSampleId) == 256ull * with && se.second_filter_declared());
+  a.commit_prepared(down);
+  CHECK(se.cost_units_per_voice() == base && a.floor_cost(kSampleId) == 256ull * base && !se.second_filter_declared());
+  // The accounting of sounding voices follows the installed cost (a voice is a voice of its engine at that engine's cost).
+  a.commit_prepared(up);
+  CHECK(a.usage(kSampleId).used() == 0);
+  // clear_reservation goes back to the static declaration.
+  a.clear_reservation();
+  CHECK(se.cost_units_per_voice() == base && !a.reserved());
+  CHECK(a.reserve(make(kCostFeatureSecondFilter, 100000)) == RS::kOk && se.cost_units_per_voice() == with);
+  a.clear_reservation();
+  CHECK(se.cost_units_per_voice() == base);
+  // The engine-wide flag is a static declaration: the feature changes nothing on top of it, and every reservation judges with it.
+  SampleEngine::Config sc2 = sc;
+  sc2.second_filter_voices = true;
+  SampleEngine st(sc2);
+  auto br2 = std::make_unique<BlockRenderer>(4);
+  CHECK(br2->bind_engine(st));
+  CHECK(st.cost_units_per_voice() == with);
+  auto c2 = cfg(100000);
+  c2.floors[c2.floor_count++] = {kSampleId, 256, 0};
+  CHECK(br2->arbiter().reserve(c2) == RS::kOk && br2->arbiter().floor_cost(kSampleId) == 256ull * with && st.cost_units_per_voice() == with);
+}
+
 void test_sample_floor_minimum() {
   ports::SampleRegionDesc d;
   struct Src final : ports::SampleSource {
@@ -1509,6 +1572,7 @@ void test_prepare_commit_handover() {
 int main() {
   test_reservation();
   test_sample_floor_minimum();
+  test_cost_features();
   test_full_pool_held_bass();
   test_mixed_velocities();
   test_sustain_pedal();

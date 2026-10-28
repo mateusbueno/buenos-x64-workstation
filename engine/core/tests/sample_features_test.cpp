@@ -805,6 +805,33 @@ void test_cost_declaration() {
     press(*e, 60);
   }
   CHECK(two.undeclared_second_filter_voices() == 0 && one.undeclared_second_filter_voices() == 1 && plain.undeclared_second_filter_voices() == 0);
+  // Story 13.12: the second filter can be declared per Live Set instead of engine-wide. The base declaration of an extended engine has none; the cost feature the arbiter
+  // installs adds it (cost_units_per_voice(), the "undeclared" judgement) and lowering it again leaves nothing behind. A bank says whether it needs it.
+  SampleEngine dyn(cfg(8, true));
+  const std::uint32_t base = sample_voice_cost_units(I::kHermite3, true), with = sample_voice_cost_units(I::kHermite3, true, true);
+  CHECK(base != with && dyn.cost_units_per_voice() == base && dyn.cost_units_for_features(0) == base && dyn.cost_units_for_features(kCostFeatureSecondFilter) == with);
+  CHECK(!dyn.prepare(ins)->uses_second_filter && dyn.prepare(tw)->uses_second_filter);
+  Instrument unplayable_two;  // a second filter on a region that cannot play does not raise the declaration
+  { auto& r = unplayable_two.sine(440.0, 60); r.filter_type = ports::SampleFilterType::kLpf2p; r.filter_cutoff_hz = 1000.0f; r.filter2_type = ports::SampleFilterType::kHpf2p;
+    r.filter2_cutoff_hz = 100.0f; r.has_end = true; r.end = 0; }
+  CHECK(!dyn.prepare(unplayable_two)->uses_second_filter);
+  dyn.set_instrument(tw);
+  press(dyn, 60);
+  CHECK(dyn.undeclared_second_filter_voices() == 1);  // base declaration: counted
+  dyn.apply_cost_features(kCostFeatureSecondFilter);
+  CHECK(dyn.cost_units_per_voice() == with && dyn.second_filter_declared());
+  press(dyn, 60);
+  CHECK(dyn.undeclared_second_filter_voices() == 1);  // declared now: not counted again
+  dyn.apply_cost_features(0);
+  CHECK(dyn.cost_units_per_voice() == base && !dyn.second_filter_declared());
+  press(dyn, 60);
+  CHECK(dyn.undeclared_second_filter_voices() == 2);
+  SampleEngine not_ext(cfg(8, false));  // the feature needs extended voices, like the flag
+  not_ext.apply_cost_features(kCostFeatureSecondFilter);
+  CHECK(not_ext.cost_units_per_voice() == 5 && !not_ext.second_filter_declared());
+  SampleEngine static_two(c2);  // the engine-wide flag still declares it whatever the Live Set says
+  static_two.apply_cost_features(0);
+  CHECK(static_two.cost_units_per_voice() == with && static_two.second_filter_declared());
 }
 
 // --- through the block loop -----------------------------------------------------------------------------------------------------------

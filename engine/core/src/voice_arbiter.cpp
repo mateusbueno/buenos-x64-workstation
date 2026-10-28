@@ -30,6 +30,8 @@ bool VoiceArbiter::bind(Engine& engine) {
   engines_[i] = &engine;
   type_[i] = id;
   cost_[i] = engine.cost_units_per_voice();
+  base_cost_[i] = engine.cost_units_for_features(0);
+  features_[i] = 0;
   protected_[i] = engine.steal_protected();
   capacity_[i] = engine.voice_capacity();
   slots_[i].assign(capacity_[i], Slot{});
@@ -50,6 +52,12 @@ void VoiceArbiter::unbind_last() noexcept {
   steals_[i].store(0, std::memory_order_relaxed);
 }
 
+void VoiceArbiter::install_costs(const std::array<std::uint32_t, kMaxEngines>& cost, const std::array<std::uint32_t, kMaxEngines>& features) noexcept {
+  cost_ = cost;
+  features_ = features;
+  for (std::size_t i = 0; i < count_; ++i) engines_[i]->apply_cost_features(features_[i]);
+}
+
 VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noexcept {
   PreparedReservation prep;
   const ReserveStatus st = prepare_reservation(cfg, prep);
@@ -59,6 +67,7 @@ VoiceArbiter::ReserveStatus VoiceArbiter::reserve(const LiveSetConfig& cfg) noex
   ramp_ = prep.ramp;
   cfg_ = prep.cfg;
   reserved_ = true;
+  install_costs(prep.cost, prep.features);
   reset_state();
   return ReserveStatus::kOk;
 }
@@ -69,6 +78,7 @@ void VoiceArbiter::commit_prepared(const PreparedReservation& prep) noexcept {
   floor_cost_ = prep.floor_cost;
   ramp_ = prep.ramp;
   cfg_ = prep.cfg;
+  install_costs(prep.cost, prep.features);
   reserved_ = true;  // event state (keys, pedal, deferred releases, serial, counters) is deliberately left alone
 }
 
@@ -84,8 +94,15 @@ VoiceArbiter::ReserveStatus VoiceArbiter::prepare_reservation(const LiveSetConfi
     fx_total += cfg.fx_instance_costs[i];
   }
   for (std::size_t i = 0; i < count_; ++i)  // an engine must not have changed since bind()
-    if (engines_[i]->voice_capacity() != capacity_[i] || engines_[i]->cost_units_per_voice() != cost_[i])
+    if (engines_[i]->voice_capacity() != capacity_[i] || engines_[i]->cost_units_for_features(0) != base_cost_[i])
       return ReserveStatus::kInvalidConfig;
+  // Story 13.12: the cost per voice each engine declares under this reservation's cost features (an engine without a floor entry: its static declaration).
+  std::array<std::uint32_t, kMaxEngines> nc{}, nf{};
+  for (std::uint32_t i = 0; i < cfg.floor_count; ++i) {
+    const int idx = index_of_type(cfg.floors[i].engine_type_id);
+    if (idx >= 0) nf[static_cast<std::size_t>(idx)] = cfg.floors[i].cost_features;
+  }
+  for (std::size_t i = 0; i < count_; ++i) nc[i] = engines_[i]->cost_units_for_features(nf[i]);
   std::array<std::uint64_t, kMaxEngines> fc{};
   std::array<bool, kMaxEngines> seen{};
   std::array<std::uint32_t, kMaxEngines> fv{};
@@ -95,17 +112,17 @@ VoiceArbiter::ReserveStatus VoiceArbiter::prepare_reservation(const LiveSetConfi
     const int idx = index_of_type(f.engine_type_id);
     if (idx < 0) return ReserveStatus::kUnknownEngine;
     const auto k = static_cast<std::size_t>(idx);
-    if (seen[k] || cost_[k] == 0 || protected_[k]) return ReserveStatus::kInvalidConfig;
+    if (seen[k] || nc[k] == 0 || protected_[k]) return ReserveStatus::kInvalidConfig;
     if (static_cast<std::uint64_t>(f.voices) + kFadeHeadroomVoices > capacity_[k])
       return ReserveStatus::kFloorExceedsCapacity;
     seen[k] = true;
     fv[k] = f.voices;
-    fc[k] = static_cast<std::uint64_t>(f.voices) * cost_[k];  // u32 * u32 cannot overflow u64
+    fc[k] = static_cast<std::uint64_t>(f.voices) * nc[k];  // u32 * u32 cannot overflow u64
     if (fc[k] > kMax64 - floors) return ReserveStatus::kFloorsExceedBudget;
     floors += fc[k];
   }
   for (std::size_t i = 0; i < count_; ++i)  // a bound protected engine needs its real cost reserved
-    if (protected_[i] && cfg.organ_rotary_cost < static_cast<std::uint64_t>(cost_[i]) * kMinProtectedVoices &&
+    if (protected_[i] && cfg.organ_rotary_cost < static_cast<std::uint64_t>(nc[i]) * kMinProtectedVoices &&
         !(cfg.waive_organ_reservation && cfg.organ_rotary_cost == 0))
       return ReserveStatus::kInvalidConfig;
   const int sample = index_of_type(static_cast<std::uint32_t>(EngineTypeId::kSample));
@@ -140,6 +157,8 @@ VoiceArbiter::ReserveStatus VoiceArbiter::prepare_reservation(const LiveSetConfi
   for (std::size_t i = 0; i < count_; ++i)  // protected engines draw on the organ reservation first
     if (protected_[i]) fc[i] = cfg.organ_rotary_cost;
   out.floor_cost = fc;
+  out.cost = nc;
+  out.features = nf;
   out.ramp = cfg.steal_ramp_frames;
   out.cfg = cfg;
   out.valid = true;
@@ -165,6 +184,7 @@ void VoiceArbiter::clear_reservation() noexcept {
   res_ = Reservation{};
   floor_cost_.fill(0);
   ramp_ = kStealRampFrames;
+  install_costs(base_cost_, std::array<std::uint32_t, kMaxEngines>{});  // Story 13.12: back to the static declarations
 }
 
 std::uint64_t VoiceArbiter::floor_cost(std::uint32_t id) const noexcept {

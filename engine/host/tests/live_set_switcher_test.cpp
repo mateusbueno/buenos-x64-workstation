@@ -91,7 +91,7 @@ struct TmpDir {
 
 // One library with one instrument: a looping constant (`frames` frames, mono float) with a release of `release_s`.
 std::string install_library(const std::string& root, std::uint32_t index, const char* key, float level, std::uint32_t frames = 4800,
-                            float release_s = 0.4f) {
+                            float release_s = 0.4f, bool second_filter = false) {
   const std::string fp = "velora-switch-test/" + std::to_string(index);
   const format::Uuid lib = format::library_id_from_fingerprint({reinterpret_cast<const std::uint8_t*>(fp.data()), fp.size()});
   format::BundleWriter w;
@@ -107,6 +107,12 @@ std::string install_library(const std::string& root, std::uint32_t index, const 
   r.key_center = 60;
   r.loop_mode = format::LoopMode::kLoopContinuous;
   r.ampeg.release = release_s;
+  if (second_filter) {  // Story 13.12: a first filter and a second one in series (wide open: the level stays what it is)
+    r.filter = {format::FilterType::kLpf2p, 18000.f, 0.f};
+    r.fmap.f2.type = format::FilterType::kLpf2p;
+    r.fmap.f2.cutoff_hz = 18000.f;
+    r.fmap.f2.resonance_db = 0.f;
+  }
   CHECK(w.add_region(ins.value(), r) == format::Error::kNone);
   auto bytes = w.finalize();
   CHECK(bytes.ok());
@@ -281,9 +287,10 @@ struct Rig {
   float l[core::kBlockFrames], r[core::kBlockFrames];
   std::vector<std::vector<float>> blocks;
 
-  static core::SampleEngine::Config cfg() {
+  static core::SampleEngine::Config cfg(bool extended = false) {
     core::SampleEngine::Config c;
     c.max_voices = 340;
+    c.extended_voices = extended;  // Story 13.12: the engine of the cost-declaration test declares extended voices (no engine-wide second filter)
     return c;
   }
   static host::LiveSetLoaderOptions opts(host::SceneController* s) {
@@ -291,8 +298,8 @@ struct Rig {
     o.scenes = s;
     return o;
   }
-  explicit Rig(const std::string& root)
-      : sample(cfg()),
+  explicit Rig(const std::string& root, bool extended = false)
+      : sample(cfg(extended)),
         plane(br->snapshots(), br->last_values(), rt_events, [] { return std::uint64_t{0}; }),
         scenes(plane),
         resolver(host::make_posix_fs(), root),
@@ -1100,6 +1107,49 @@ void test_reservation_applied_on_rt_at_the_swap() {
   CHECK(!rig.br->arbiter().reserved());
   // The quiesced API still works as before.
   CHECK(rig.loader.load(w.C).ok() && rig.br->arbiter().reserved());
+}
+
+// Story 13.12: the sample engine declares the second filter's cost only while the Live Set in force can run one. A Live Set whose instruments have no second filter runs
+// on the base declaration; one with a second filter declares the extra cost (budget, floor cost and the engine's own figure move together, at the swap, on RT); switching
+// back (seamless or quiesced) leaves no stale declaration behind; the "undeclared" counter stays 0 for a voice that starts under the declaration.
+void test_second_filter_cost_follows_the_live_set() {
+  TmpDir tmp;
+  const std::string dir = tmp.path + "/sets";
+  fs::create_directories(dir);
+  const std::string lp = install_library(tmp.path, 1, "p.sfz", 0.1f), lf = install_library(tmp.path, 2, "f.sfz", 0.1f, 4800, 0.1f, true);
+  const lsp::LiveSet P1 = simple_set(81, "Plain 1", lp, "p.sfz"), F = simple_set(82, "Filtered", lf, "f.sfz"), P2 = simple_set(83, "Plain 2", lp, "p.sfz");
+  for (const lsp::LiveSet* s : {&P1, &F, &P2}) write_set(dir, *s);
+  Rig rig(tmp.path, true);
+  const std::uint32_t base = rig.sample.cost_units_for_features(0), with = rig.sample.cost_units_for_features(core::kCostFeatureSecondFilter);
+  const std::uint64_t floor_voices = host::LiveSetLoaderOptions{}.sample_floor_voices;
+  constexpr auto kSample = static_cast<std::uint32_t>(core::EngineTypeId::kSample);
+  CHECK(with == base + core::kSampleFilter2CostUnits && rig.sample.cost_units_per_voice() == base);
+  CHECK(rig.load_initial(P1));  // quiesced: the base declaration
+  CHECK(rig.sample.cost_units_per_voice() == base && rig.br->arbiter().floor_cost(kSample) == floor_voices * base);
+  rig.make_switcher(inline_opts(0), dir);
+  rig.run(2);
+  // Seamless to the Live Set with a second filter: prepared on the control thread, declared when RT adopts the generation.
+  CHECK(rig.sw->jump_to(F.id()).result == host::SwitchOutcome::Result::kAccepted);
+  CHECK(rig.sw->tick() && rig.sw->switches_published() == 1);
+  CHECK(rig.sample.cost_units_per_voice() == base && rig.br->arbiter().floor_cost(kSample) == floor_voices * base);  // not yet: no block has run
+  rig.run(1);
+  CHECK(rig.sample.cost_units_per_voice() == with && rig.br->arbiter().floor_cost(kSample) == floor_voices * with);
+  rig.note_on(60);
+  rig.run(4);
+  CHECK(rig.sample.active_voices() >= 1 && rig.sample.undeclared_second_filter_voices() == 0 && rig.sample.undeclared_extended_voices() == 0);
+  rig.note_off(60);
+  rig.run(100);
+  // Seamless back to a Live Set without one: no stale declaration.
+  CHECK(rig.sw->jump_to(P2.id()).result == host::SwitchOutcome::Result::kAccepted);
+  CHECK(rig.sw->tick() && rig.sw->switches_published() == 2);
+  rig.run(1);
+  CHECK(rig.sample.cost_units_per_voice() == base && rig.br->arbiter().floor_cost(kSample) == floor_voices * base);
+  // The quiesced API follows the same rule, both ways, and clearing the reservation returns to the static declaration.
+  CHECK(rig.loader.load(F).ok() && rig.sample.cost_units_per_voice() == with && rig.br->arbiter().floor_cost(kSample) == floor_voices * with);
+  CHECK(rig.loader.load(P1).ok() && rig.sample.cost_units_per_voice() == base && rig.br->arbiter().floor_cost(kSample) == floor_voices * base);
+  CHECK(rig.loader.load(F).ok() && rig.sample.cost_units_per_voice() == with);
+  rig.br->arbiter().clear_reservation();
+  CHECK(rig.sample.cost_units_per_voice() == base);
 }
 
 // The pedal state is kept in step on every path: a pedal pressed and released before the switch must not hold the new Live Set's notes.
@@ -2406,6 +2456,7 @@ int main(int argc, char** argv) {
   RUN(test_loading_status_cadence);
   RUN(test_full_ledger_is_retried_then_busy);
   RUN(test_reservation_applied_on_rt_at_the_swap);
+  RUN(test_second_filter_cost_follows_the_live_set);
   RUN(test_ws_v1_switch_commands);
   RUN(test_ws_v1_without_switcher);
   RUN(test_pedal_released_before_the_switch);

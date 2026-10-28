@@ -57,6 +57,9 @@ class VoiceAllocator {
       VELORA_NONBLOCKING = 0;
 };
 
+// Story 13.12: bits of the Live Set cost features (Engine::cost_units_for_features).
+inline constexpr std::uint32_t kCostFeatureSecondFilter = 1u;  // the sample engine: a loaded instrument has a region with a second filter
+
 // The single static engine contract for Sample, Organ, FM and VA. Engines are compiled in (no
 // plugin loading). All voice start/stop calls are made by the core, on the render thread, between
 // render segments; render() accumulates (adds) into the stereo buffers.
@@ -67,6 +70,16 @@ class Engine {
   virtual EngineTypeId type_id() const noexcept = 0;
   // Cost units one active voice consumes (used by the pool arbiter's budget).
   virtual std::uint32_t cost_units_per_voice() const noexcept = 0;
+  // Story 13.12: cost declarations that follow the loaded Live Set. `features` (kCostFeature* bits, carried by VoiceArbiter::EngineFloor::cost_features) names what the
+  // instruments of the Live Set need beyond the engine's static declaration. cost_units_for_features() is the cost per voice an engine declares under them (a pure function of
+  // the engine's construction and `features`: control thread, any thread); apply_cost_features() makes it the engine's current declaration (what cost_units_per_voice() answers
+  // and what the engine's "undeclared" counters judge). The arbiter calls the second when it installs a reservation (reserve(), commit_prepared(): quiesced or on the render
+  // thread, bounded, no allocation). Defaults: the declaration never depends on the Live Set.
+  virtual std::uint32_t cost_units_for_features(std::uint32_t features) const noexcept {
+    (void)features;
+    return cost_units_per_voice();
+  }
+  virtual void apply_cost_features(std::uint32_t features) noexcept VELORA_NONBLOCKING { (void)features; }
   virtual std::uint32_t voice_capacity() const noexcept = 0;
 
   virtual EngineStatus start_voice(std::uint32_t channel, std::uint32_t note,

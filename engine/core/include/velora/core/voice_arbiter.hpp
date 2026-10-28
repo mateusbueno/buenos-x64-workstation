@@ -57,6 +57,9 @@ class VoiceArbiter final : public VoiceAllocator {
   struct EngineFloor {
     std::uint32_t engine_type_id = 0;
     std::uint32_t voices = 0;  // guaranteed voices, in that engine's own voices
+    // Story 13.12: what the Live Set needs beyond the engine's static cost declaration (kCostFeature* bits, Engine::cost_units_for_features). The engine's cost per voice for
+    // this reservation (floor cost, budget arithmetic, the slot scan) is the one it declares under them; 0 = the static declaration. Only meaningful on an engine's floor entry.
+    std::uint32_t cost_features = 0;
   };
 
   // Everything the arbiter needs when a Live Set loads. Plain data, no allocation.
@@ -119,7 +122,8 @@ class VoiceArbiter final : public VoiceAllocator {
 #endif
 
   // Applies a Live Set configuration atomically: either everything is reserved or nothing changes.
-  // A bound engine whose voice_capacity() or cost changed since bind() is kInvalidConfig. On success
+  // A bound engine whose voice_capacity() or static cost declaration changed since bind() is kInvalidConfig. Story 13.12: the cost per voice an engine has during a
+  // reservation is its declaration under the floor entry's cost_features, installed (Engine::apply_cost_features) together with the budget and the floors. On success
   // (and in clear_reservation()) the event state (key/pedal/deferred note offs), the serial and all
   // counters are reset; voices that are already sounding keep sounding and are simply no longer tracked
   // as held/pedal-sustained until new events arrive.
@@ -147,6 +151,8 @@ class VoiceArbiter final : public VoiceAllocator {
     LiveSetConfig cfg{};
     Reservation res{};
     std::array<std::uint64_t, kMaxEngines> floor_cost{};
+    std::array<std::uint32_t, kMaxEngines> cost{};      // Story 13.12: each bound engine's cost per voice under this reservation (by bind order)
+    std::array<std::uint32_t, kMaxEngines> features{};  // and the cost features it was computed with
     std::uint32_t ramp = kStealRampFrames;
   };
   ReserveStatus prepare_reservation(const LiveSetConfig& cfg, PreparedReservation& out) const noexcept;
@@ -220,6 +226,7 @@ class VoiceArbiter final : public VoiceAllocator {
   };
 
   void reset_state() noexcept;
+  void install_costs(const std::array<std::uint32_t, kMaxEngines>& cost, const std::array<std::uint32_t, kMaxEngines>& features) noexcept VELORA_NONBLOCKING;
   int index_of(const Engine& e) const noexcept;
   int index_of_type(std::uint32_t id) const noexcept;
   void scan() noexcept;
@@ -230,6 +237,7 @@ class VoiceArbiter final : public VoiceAllocator {
 
   std::array<Engine*, kMaxEngines> engines_{};
   std::array<std::uint32_t, kMaxEngines> type_{}, cost_{}, capacity_{};
+  std::array<std::uint32_t, kMaxEngines> base_cost_{}, features_{};  // Story 13.12: the static declaration at bind(); the cost features installed now
   std::array<std::vector<Slot>, kMaxEngines> slots_{};
   std::array<std::uint64_t, kMaxEngines> floor_cost_{};
   // A bound protected engine needs at least this many of its voices' cost in organ_rotary_cost (73 keys).

@@ -45,12 +45,14 @@ inline constexpr std::uint32_t kSampleFilterCostUnits = 2;
 inline constexpr std::uint32_t kSampleCrossfadeCostUnits = 1;
 // Story 13.8: an engine that also declares `Config::second_filter_voices` budgets every voice for a second filter in series (a stereo biquad pair: measured at about the
 // cost of the first one, `sample_bench`) on top of the extended worst case. Fixed per engine like the rest; the default engine and the extended-only engine keep their
-// figures, so no existing floor or budget changes.
+// figures, so no existing floor or budget changes. Story 13.12: the declaration can also follow the Live Set (Engine::cost_units_for_features, kCostFeatureSecondFilter).
 inline constexpr std::uint32_t kSampleFilter2CostUnits = 3;
 // Story 13.9: an engine that also declares `Config::modulated_voices` budgets every voice for the worst case of the region EQ and the dedicated LFO / EG modulation (three LFOs,
 // a pitch and a filter EG, a cutoff that follows them with per-frame coefficient smoothing, three EQ bands: measured with `sample_bench`, see engine/core/README.md "Region EQ
 // and LFO / EG modulation (Story 13.9)") on top of the extended worst case. Fixed per engine like the rest; no existing engine changes its figure.
-inline constexpr std::uint32_t kSampleModCostUnits = 18;
+// Story 13.12: raised from 18 to 25 so the worst-case voice (5 + 2 + 1 + 3 + 25 = 36 units) covers the dearest measured toolchain (Linux gcc: 31.3 to 35.7 units for the voice
+// that used to be declared 29, because gcc's plain voice is faster, so the unit baseline shrinks and every ratio inflates; clang and macOS measure 27.9 to 32.7).
+inline constexpr std::uint32_t kSampleModCostUnits = 25;
 // Story 6.5: the length, in frames of engine output, of the fade to silence a voice makes before it reaches a damaged block of a protected library (and of the
 // fade back in after it). It is a straight gain ramp; the voice reads the block-damage flags that non-real-time threads set (ports::SamplePcm::damaged_blocks).
 inline constexpr std::uint32_t kIntegrityFadeFrames = 64;
@@ -189,7 +191,15 @@ class SampleEngine final : public Engine {
   void set_seed(std::uint64_t seed) noexcept;
 
   EngineTypeId type_id() const noexcept override { return EngineTypeId::kSample; }
-  std::uint32_t cost_units_per_voice() const noexcept override { return sample_voice_cost_units(cfg_.interpolation, cfg_.extended_voices, cfg_.second_filter_voices, cfg_.modulated_voices); }
+  std::uint32_t cost_units_per_voice() const noexcept override { return cost_units_for_features(cost_features_.load(std::memory_order_relaxed)); }
+  // Story 13.12: the second filter is declared when Config::second_filter_voices says so (engine-wide) OR when the reservation in force names it (kCostFeatureSecondFilter, raised
+  // by the Live Set loader when a loaded bank has a region with a second filter: SampleBank::uses_second_filter). Same arithmetic as sample_voice_cost_units().
+  std::uint32_t cost_units_for_features(std::uint32_t features) const noexcept override {
+    return sample_voice_cost_units(cfg_.interpolation, cfg_.extended_voices, cfg_.second_filter_voices || (features & kCostFeatureSecondFilter) != 0, cfg_.modulated_voices);
+  }
+  void apply_cost_features(std::uint32_t features) noexcept override { cost_features_.store(features, std::memory_order_relaxed); }
+  // Whether the second filter is part of the current declaration (what undeclared_second_filter_voices() judges).
+  bool second_filter_declared() const noexcept { return cfg_.extended_voices && (cfg_.second_filter_voices || (cost_features_.load(std::memory_order_relaxed) & kCostFeatureSecondFilter) != 0); }
   std::uint32_t voice_capacity() const noexcept override { return capacity_; }
 
   // Starts a voice per matching region. Voice slots come from the pool arbiter when one is attached
@@ -216,7 +226,7 @@ class SampleEngine final : public Engine {
   std::uint64_t skipped_unplayable_starts() const noexcept { return skipped_unplayable_; }
   // Voices that started with a filter or a CC crossfade on an engine that did not declare Config::extended_voices (budgeted at the plain cost).
   std::uint64_t undeclared_extended_voices() const noexcept { return undeclared_extended_; }
-  // Story 13.8: voices that started with a second filter on an engine that did not declare Config::second_filter_voices (budgeted without it).
+  // Story 13.8: voices that started with a second filter on an engine that did not declare it (Config::second_filter_voices, or the reservation in force: Story 13.12) (budgeted without it).
   std::uint64_t undeclared_second_filter_voices() const noexcept { return undeclared_second_; }
   // Story 13.9: voices that started with a region EQ band or an LFO / EG on an engine that did not declare Config::modulated_voices (budgeted without it).
   std::uint64_t undeclared_modulated_voices() const noexcept { return undeclared_mod_; }
@@ -461,6 +471,7 @@ class SampleEngine final : public Engine {
   std::uint32_t unplayable_regions_ = 0;
   std::uint64_t skipped_unplayable_ = 0;
   std::uint64_t undeclared_extended_ = 0, undeclared_second_ = 0, undeclared_mod_ = 0;
+  std::atomic<std::uint32_t> cost_features_{0};  // Story 13.12: the Live Set cost features of the reservation in force (written by the arbiter at install, read by RT and diagnostics)
   float inv_sr_ = 0.0f;  // Story 13.9: sfizz LFO samplePeriod
   double filt_smooth_step_ = 0.0;  // Story 13.9: 1 - exp(-1000 / sample_rate), the per-frame move of a modulated filter's coefficients
   std::atomic<std::uint64_t> integrity_events_{0};

@@ -125,6 +125,9 @@ struct SampleBank {
   std::array<std::uint8_t, 128> switch_key{};
   std::int16_t default_switch = -1;
   bool uses_keyswitches = false, uses_filters = false, uses_crossfades = false;
+  // Story 13.12: some playable region has a second filter. The Live Set loader raises kCostFeatureSecondFilter in the reservation when a loaded bank has it, so the sample
+  // engine declares (and the arbiter budgets) the second filter's cost only for Live Sets that can run one.
+  bool uses_second_filter = false;
   std::shared_ptr<const void> owner;            // keeps the PCM source alive
 };
 

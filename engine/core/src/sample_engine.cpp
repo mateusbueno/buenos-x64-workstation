@@ -617,6 +617,7 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
     }
     bank->uses_keyswitches = bank->uses_keyswitches || r.has_keyswitch;
     bank->uses_filters = bank->uses_filters || r.filtered;
+    bank->uses_second_filter = bank->uses_second_filter || (r.filter2_on && r.playable && !r.disabled);  // Story 13.12
     bank->uses_crossfades = bank->uses_crossfades || r.has_xfade;
     regions.push_back(r);
   }
@@ -1394,7 +1395,7 @@ bool SampleEngine::start_region(const SampleBank& bank, std::uint32_t region, st
     if (!(cfg_.extended_voices && cfg_.modulated_voices)) ++undeclared_mod_;
   }
   if ((r.filtered || r.has_xfade || r.modded || r.eq_on) && !cfg_.extended_voices) ++undeclared_extended_;  // the modulation declaration sits on top of the extended one
-  if (r.filter2_on && !(cfg_.extended_voices && cfg_.second_filter_voices)) ++undeclared_second_;
+  if (r.filter2_on && !second_filter_declared()) ++undeclared_second_;
   if (stream_ != nullptr && r.has_tail && r.tail_source != nullptr) {
     // Story 1.17: register the stream (non-blocking). The ring starts at the head end: frames below it are read from the head. No ring = the Story 1.16 placeholder.
     velora::ports::StreamOpen req;

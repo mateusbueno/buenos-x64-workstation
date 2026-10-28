@@ -385,7 +385,11 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   if (organ_parts > 0) cfg.organ_rotary_cost = core::OrganEngine::reservation_cost_units(organ_parts);
   cfg.waive_organ_reservation = organ_parts == 0;
   if (sample_parts > 0 && available(static_cast<std::uint32_t>(EngineTypeId::kSample))) {
-    cfg.floors[cfg.floor_count++] = {static_cast<std::uint32_t>(EngineTypeId::kSample), options_.sample_floor_voices};
+    // Story 13.12: the sample engine declares the second filter's cost only when a loaded instrument has a region with one.
+    std::uint32_t sample_features = 0;
+    for (const core::PartCfg& pc : snap.parts)
+      if (pc.state == core::PartState::kReady && pc.sample_bank && pc.sample_bank->uses_second_filter) sample_features |= core::kCostFeatureSecondFilter;
+    cfg.floors[cfg.floor_count++] = {static_cast<std::uint32_t>(EngineTypeId::kSample), options_.sample_floor_voices, sample_features};
   }
   cfg.waive_sample_floor = sample_parts == 0;  // no sample part: the floor is zero
   if (fm_parts > 0 && available(static_cast<std::uint32_t>(EngineTypeId::kFm))) {

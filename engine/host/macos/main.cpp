@@ -461,7 +461,7 @@ int main(int argc, char** argv) {
   core::SampleEngine::Config sample_cfg;
   sample_cfg.max_voices = profile.sample_voice_capacity;  // the profile's sample floor plus the 64 voice fade headroom, with slack
   sample_cfg.extended_voices = true;  // Story 5.2: any imported instrument may use filters and CC crossfades, so every voice is budgeted for them
-  sample_cfg.second_filter_voices = true;  // Story 13.8: and a second filter in series
+  // Story 13.12: no engine-wide second_filter_voices. The Live Set loader raises the second filter's cost in the reservation only when a loaded instrument has a region with one.
   sample_cfg.modulated_voices = true;      // Story 13.9: and region EQ / LFO / EG modulation
   sample_cfg.release_velocity_triggers = true;  // Story 3.6: release-trigger samples follow the key's release velocity (the Note Off the keybed reader sends)
   core::SampleEngine sample(sample_cfg);

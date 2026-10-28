@@ -195,18 +195,33 @@ int main() {
               sample_voice_cost_units(SampleInterpolation::kHermite3, true), kSampleModCostUnits);
   const double st_mod = us_per_start(true, true, true, kModAll), st_eq = us_per_start(false, false, false, kModEq3);
   std::printf("  voice start with everything %.3f us, with three EQ bands %.3f us (coefficients: pow, sin, cos, sinh per band, once per note)\n", st_mod, st_eq);
-  // Story 13.9: kSampleModCostUnits is a literal taken from these figures. The one timing check of this program: the worst-case voice must not exceed the declared voice by more
-  // than 10 % (run-to-run noise is about 3 %), so a change that makes the modulation clearly dearer fails here instead of silently under-budgeting.
+  // The one timing check of this program: the worst-case voice must not exceed the DECLARED worst-case voice (the single source, sample_voice_cost_units with every feature
+  // on: no literal here) by more than 10 % (run-to-run noise is about 3 %), so a change that makes a voice clearly dearer fails here instead of silently under-budgeting.
+  // Story 13.12: the declaration covers the dearest measured toolchain (gcc), see engine/core/README.md "Voice cost per toolchain".
+  constexpr double kLimit = 1.10;
   const double worst_units = extra(m_all) + sample_voice_cost_units(SampleInterpolation::kHermite3);
   const double declared_units = sample_voice_cost_units(SampleInterpolation::kHermite3, true, true, true);
-  const bool within = worst_units <= 1.10 * declared_units;
-  std::printf("  worst-case voice %.2f units against %.0f declared (limit 110 %%): %s\n", worst_units, declared_units, within ? "ok" : "EXCEEDED");
+  const bool within = worst_units <= kLimit * declared_units;
+  std::printf("  worst-case voice %.2f units against %.0f declared (limit %.0f %%): %s\n", worst_units, declared_units, kLimit * 100.0, within ? "ok" : "EXCEEDED");
   // Deterministic checks only (no timing assertion): the extended declaration costs more than the plain one, for both interpolations.
   bool ok = within;
   for (auto q : {SampleInterpolation::kHermite3, SampleInterpolation::kLinear})
     ok = ok && sample_voice_cost_units(q, true) == sample_voice_cost_units(q) + kSampleFilterCostUnits + kSampleCrossfadeCostUnits &&
          sample_voice_cost_units(q, true, true) == sample_voice_cost_units(q, true) + kSampleFilter2CostUnits &&
          sample_voice_cost_units(q, true, true, true) == sample_voice_cost_units(q, true, true) + kSampleModCostUnits && sample_voice_cost_units(q, false, false, true) == sample_voice_cost_units(q);
+  {  // Story 13.12: the Live Set cost features declare the same figures as the static flags (the single source), and the base declaration carries no second filter.
+    SampleEngine::Config c;
+    c.extended_voices = true;
+    c.modulated_voices = true;
+    SampleEngine e(c);
+    SampleEngine::Config c2 = c;
+    c2.second_filter_voices = true;
+    SampleEngine e2(c2);
+    ok = ok && e.cost_units_per_voice() == sample_voice_cost_units(SampleInterpolation::kHermite3, true, false, true) &&
+         e.cost_units_for_features(kCostFeatureSecondFilter) == declared_units && e2.cost_units_per_voice() == declared_units;
+    e.apply_cost_features(kCostFeatureSecondFilter);
+    ok = ok && e.cost_units_per_voice() == declared_units;
+  }
   if (!ok) std::printf("sample_bench: FAILED declared cost\n");
   return ok ? 0 : 1;
 }
