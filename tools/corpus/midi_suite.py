@@ -132,6 +132,13 @@ def last_event_seconds(name):
     return t.last_tick() / TICKS_PER_SECOND
 
 
+def uses_pedal(name):
+    """True when the probe sends sustain (CC64), sostenuto (CC66) or soft pedal (CC67): the engine then defers some note offs to the pedal."""
+    t = _new()
+    _build_into(t, name)
+    return any(b[0] & 0xF0 == 0xB0 and b[1] in (64, 66, 67) for _t, _o, b in t.events)
+
+
 def write_all(directory):
     import os
     os.makedirs(directory, exist_ok=True)

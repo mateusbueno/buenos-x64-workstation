@@ -74,6 +74,11 @@ struct RenderOptions {
   const velora::ports::SampleSource* instrument = nullptr;
   std::uint64_t seed = 1;
   std::uint32_t oracle_block_frames = 0;  // test only: emulate sfizz's per-voice block-boundary stall (see SampleEngine::Config)
+  // test only (Story 13.10): replay the sfizz oracle's random numbers for the layer choice of lorand/hirand regions (see sfizz_random_replay.hpp). Just before each
+  // note event the engine is re-seeded (public SampleEngine::set_seed) so that its first draw is the number sfizz uses for that event; `seed` is ignored. The
+  // production generator is unchanged. Not combinable with routing or with `emitted_notes`. `sfizz_replay_skip_draws` discards that many oracle draws first.
+  bool sfizz_random_replay = false;
+  std::uint32_t sfizz_replay_skip_draws = 0;
   float gain_db = 0.0f;  // sample engine output gain (the sfizz null tests use sfizz's -7.35 dB default master volume)
   velora::core::SampleInterpolation interpolation = velora::core::SampleInterpolation::kHermite3;
   std::uint32_t voices = 32;

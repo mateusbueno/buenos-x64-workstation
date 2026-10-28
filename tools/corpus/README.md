@@ -122,10 +122,13 @@ handled in the harness, not by loosening the tolerance:
   `"null_exclude": [{"path": "...", "reason": "..."}]` (the reason must name the controller, the target and the probe; the report prints it; a stale entry fails the job; an
   instrument cannot be in `null_files` and `null_exclude` at once). `null_files` still forces a pick when the divergence itself is what is being measured.
 - **The engine tail follows the oracle.** `sfizz_render` renders until silence (VSCO `ampeg_release` is up to 15 s); the runner measures the oracle file and gives the engine the same tail, otherwise the comparison covers a truncated tail.
-- **Random layers cannot be null-tested.** Instruments that choose a layer with `lorand`/`hirand` (19 of the 75 VSCO files) play different layers in the two renderers: sfizz draws from a fixed-seed
-  LCG (`Random::randomGenerator`, one draw per note-on, note-off and controller, and its own seed cannot be set) and the engine from a seeded xorshift (one draw per note-on and note-off). Removing the second
-  layer from FluteStac makes it null at -50 .. -59 dB. Such files are imported (and counted in `SFZ imported`) but left out of the null picks while a deterministic instrument exists; the report lists them.
-  The engine's random layers are covered by the synthetic `random_layers` case of the sample suite (paired regions with identical audio).
+- **Random layers are null-tested with the sfizz random replay (Story 13.10).** An instrument that chooses a layer with `lorand`/`hirand` (19 of the 75 VSCO files) cannot agree with sfizz by seeding:
+  sfizz draws from a fixed-seed Numerical Recipes LCG (`Random::randomGenerator`, seed 0, no setter) once per note-on, note-off and controller, the engine from its own seeded xorshift64*. The
+  corpus render of such an instrument therefore passes `--sfizz-random-replay` to `velora-offline-render` (test only, off everywhere else): the renderer computes from the MIDI events the number sfizz
+  uses for each note event and, just before the event, re-seeds the engine through the public `SampleEngine::set_seed` so that the engine's first draw is that number. The production generator is not
+  changed. The replay is exact for the layer choice only; an instrument whose SFZ also uses `off_by` (choke groups: an extra draw per choke) or any `*_random` opcode (per-voice draws) is not
+  aligned, is still imported, and is left out of the automatic picks while another instrument exists (the report lists it with the opcode); `null_files` can still force it. The manifest of VSCO 2 CE lists
+  `FluteStac.sfz` and `TrumpetStac.sfz` in `null_files`. Details: `_bmad-output/implementation-artifacts/spec-13-10-random-layer-parity-with-the-null-oracle.md`.
 - **16-bit oracle floor, and why the candidate is quantised.** sfizz's output is 16-bit, a rounding noise of about -101 dBFS per sample. Relative to a quiet instrument that alone is the whole residual:
   the VSCO oboe `round_robin` probe (mean level about -47 dBFS) shows -54.4 dB with every real difference below 0.3 LSB, the GM percussion about -38 dB. `--candidate-quantize sfizz-s16` runs the engine's float
   output through the same dr_wav conversion before the comparison (a deterministic model of the oracle's output stage, nothing statistical): the integers are then identical wherever the two float renders agree

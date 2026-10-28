@@ -3,6 +3,7 @@ add_library(velora_offline STATIC
   src/events_file.cpp
   src/wav.cpp
   src/render.cpp
+  src/sfizz_random_replay.cpp
   src/render_live_set.cpp
   src/nulltest.cpp
   src/gap_detector.cpp)
@@ -63,6 +64,11 @@ target_compile_definitions(offline_render_tests PRIVATE
   OFFLINE_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_dependencies(offline_render_tests velora-offline-render)
 add_test(NAME offline_render_tests COMMAND offline_render_tests)
+
+# --- Story 13.10: sfizz random-number replay (seed inverse, draw sequence, layer parity with the engine) ---
+add_executable(sfizz_random_replay_test tests/sfizz_random_replay_test.cpp)
+target_link_libraries(sfizz_random_replay_test PRIVATE velora_offline)
+add_test(NAME sfizz_random_replay_test COMMAND sfizz_random_replay_test)
 
 # --- Live Set renderer: raw controller pass-through to the sample parts (Story 5.2) ---
 add_executable(live_set_cc_test tests/live_set_cc_test.cpp)

@@ -31,13 +31,54 @@ DEFAULT_CACHE = os.path.expanduser("~/.cache/velora-corpus")
 ORACLE_BLOCK_FRAMES = 1
 
 
+def sfz_text(path, _seen=None, _depth=0):
+    """Text of an SFZ for the opcode scans: comments removed identically for every scan (`/* ... */`, and `//` to the end of the line only where it starts a
+    comment: at the start of a line or after whitespace, so `sample=a//b.wav` keeps its path), `#include "file"` followed (relative to the including file,
+    no absolute or `..` paths, depth 8, each file once). Raises OSError for an unreadable top file."""
+    seen = set() if _seen is None else _seen
+    real = os.path.realpath(path)
+    if real in seen or _depth > 8:
+        return ""
+    seen.add(real)
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    text = re.sub(r"(?m)(^|(?<=\s))//[^\n]*", "", text)
+    out = [text]
+    for m in re.finditer(r'#include[ \t]+"([^"\n]+)"', text):
+        inc = m.group(1).replace("\\", "/")
+        if inc.startswith("/") or ".." in inc.split("/"):
+            continue
+        try:
+            out.append(sfz_text(os.path.join(os.path.dirname(path), *inc.split("/")), seen, _depth + 1))
+        except OSError:
+            pass
+    return "\n".join(out)
+
+
 def has_random_layers(path):
-    """True when the SFZ selects layers with lorand/hirand (a plain text scan; an unreadable file counts as not random)."""
+    """True when the SFZ (with its includes, comments removed) selects layers with lorand/hirand; an unreadable file counts as not random."""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            return re.search(r"(?<![A-Za-z0-9_])(lorand|hirand)[ \t]*=", fh.read()) is not None
+        return re.search(r"(?<![A-Za-z0-9_])(lorand|hirand)[ \t]*=", sfz_text(path)) is not None
     except OSError:
         return False
+
+
+# Story 13.10: opcodes whose presence stops the sfizz random replay from being exact. The replay gives the engine the number sfizz uses for the layer
+# choice of each note event (one draw per note on, note off and controller from Synth.cpp's generator). What else changes that count or draws from the
+# same generator breaks the correspondence: `off_by` (a choke group makes sfizz run an extra note-off dispatch, which draws once more) and the
+# `*_random` opcodes (`pitch_random`, `amp_random`, `offset_random`, ... draw per voice in sfizz from other generators, with other counts than the engine's).
+# `sw_last` is NOT a blocker: sfizz then skips only its MidiState draws, which come from a different generator copy (every translation unit has its own `static`).
+REPLAY_BLOCKERS = re.compile(r"(?<![A-Za-z0-9_])(off_by|[a-z_0-9]*random)[ \t]*=")
+
+
+def replay_blockers(path):
+    """Opcodes of the SFZ (same text as has_random_layers) that the sfizz random replay cannot align; empty list = no such opcode."""
+    try:
+        text = sfz_text(path)
+    except OSError:
+        return ["unreadable"]
+    return sorted({m.group(1) for m in REPLAY_BLOCKERS.finditer(text)})
 
 
 def wav_seconds(path, rate=48000):
@@ -249,13 +290,19 @@ class Runner:
                 ok = kept
             else:  # nothing else to test: the listed ones stay in (the failure, if any, stays honest)
                 res.pop("null_excluded_listed", None)
-        # An instrument that picks its layer with lorand/hirand cannot be null-tested: sfizz draws from a fixed-seed LCG that it also
-        # advances on every note-off and controller (and the engine from its own xorshift RNG), so the two play different layers. Such
-        # instruments are still imported; they are only left out of the null picks while a deterministic instrument exists (listed in the report).
-        det = [kv for kv in ok if not has_random_layers(os.path.join(tree, *kv[0].split("/")))]
-        random_only = [kv[0] for kv in ok if kv not in det]
-        if det and random_only:
-            res["null_excluded_random_layers"] = random_only
+        # Story 13.10: an instrument that picks its layer with lorand/hirand is null-tested with the sfizz random replay (the engine is given the numbers
+        # sfizz draws, see tools/offline-render/src/sfizz_random_replay.hpp). Only an instrument whose SFZ uses an opcode the replay cannot align
+        # (replay_blockers) stays out of the automatic picks while another instrument exists; the report lists it with the opcodes.
+        blocked = {}
+        for rel, _ in ok:
+            full = os.path.join(tree, *rel.split("/"))
+            if has_random_layers(full):
+                b = replay_blockers(full)
+                if b:
+                    blocked[rel] = b
+        det = [kv for kv in ok if kv[0] not in blocked]
+        if det and blocked:
+            res["null_excluded_random_layers"] = [{"path": rel, "blockers": b} for rel, b in sorted(blocked.items())]
             ok = det
         ordered = sorted(ok, key=lambda kv: (kv[1].get("regions", 0), kv[0]))
         if len(ordered) <= n:
@@ -280,8 +327,19 @@ class Runner:
         # engine's decay beyond the point where sfizz stopped, at block size 1 the first near-zero frame, as excess energy).
         t = max(0.01, min(600.0, wav_seconds(ref) - midi_suite.last_event_seconds(suite)))
         r["tail_seconds"] = round(t, 2)
-        rc, text, sec = self.sh([self.tools["render"], "--midi", midi, "--out", cand, "--engine", "sample", "--bundle", bundle, "--instrument", key,
-                                 "--gain-db", "-7.35", "--oracle-block-frames", str(ORACLE_BLOCK_FRAMES), "--tail-seconds", str(t)], os.path.join(work, tag + ".render.log"))
+        argv = [self.tools["render"], "--midi", midi, "--out", cand, "--engine", "sample", "--bundle", bundle, "--instrument", key,
+                "--gain-db", "-7.35", "--oracle-block-frames", str(ORACLE_BLOCK_FRAMES), "--tail-seconds", str(t)]
+        # Story 13.10: a lorand/hirand instrument is rendered with the sfizz random replay (test only); every other render is the unchanged command line.
+        sfz_path = os.path.join(tree, *rel.split("/"))
+        if has_random_layers(sfz_path):
+            argv.append("--sfizz-random-replay")
+            r["random_replay"] = True
+            r["replay_blockers"] = replay_blockers(sfz_path)
+            if midi_suite.uses_pedal(suite):
+                # the probe holds notes with the sustain pedal: the engine draws a deferred note off's number when the pedal lifts, sfizz at the key up
+                # (and sfizz makes extra dispatches for the delayed releases), so a note-off number (release-trigger regions) is NOT aligned. Recorded, no exactness claimed.
+                r["replay_blockers"] = r["replay_blockers"] + ["sustain pedal (CC64) deferred releases"]
+        rc, text, sec = self.sh(argv, os.path.join(work, tag + ".render.log"))
         r["render_seconds"] = round(sec, 1)
         r["render_report"] = text.strip().splitlines()[-1][:300] if text.strip() else ""
         if rc != 0 or not os.path.isfile(cand):
@@ -375,13 +433,15 @@ def render_markdown(rep):
         for x in r.get("null_excluded_listed", []):
             L.append("- imported but not null-tested (listed in the manifest): `%s`: %s" % (x["path"], x["reason"]))
         if r.get("null_excluded_random_layers"):
-            L.append("- imported but not null-tested (layers chosen with lorand/hirand: sfizz and the engine draw different random numbers, see the README): %s" % ", ".join("`%s`" % f for f in r["null_excluded_random_layers"]))
+            L.append("- imported but not null-tested (layers chosen with lorand/hirand, and an opcode the sfizz random replay cannot align, see the README): %s" %
+                     ", ".join("`%s` (%s)" % (x["path"], ", ".join(x["blockers"])) for x in r["null_excluded_random_layers"]))
         if r.get("unsupported_histogram"):
             L.append("- import rejections by cause (count of lines): " + ", ".join("`%s` x%d" % kv for kv in r["unsupported_histogram"].items()))
         for i in r["instruments"]:
             L.append("- `%s` (%s regions)%s" % (i["file"], i["regions"], (" [recorded tolerance %s dB: %s]" % (i["tolerance_db"], i["tolerance_reason"])) if "tolerance_db" in i else ""))
             for s in i["suites"]:
-                L.append("    - %s: %s, residual %s dB, worst window %s dB" % (s["suite"], s["status"], s.get("residual_db"), s.get("worst_window_db")))
+                L.append("    - %s: %s, residual %s dB, worst window %s dB%s" % (s["suite"], s["status"], s.get("residual_db"), s.get("worst_window_db"),
+                         (" [sfizz random replay%s]" % ("; not aligned: " + ", ".join(s["replay_blockers"]) if s.get("replay_blockers") else "")) if s.get("random_replay") else ""))
         L.append("")
     L += ["## Excluded entries", ""]
     for e in rep["excluded"]:

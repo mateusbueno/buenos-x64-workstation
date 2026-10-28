@@ -22,6 +22,9 @@ Dependency rule: may depend on `engine/core`, `engine/ports`, `engine/host` (the
   (`<root>/lib/<library_id>/<bundle_id>/bundle.vlb`, made by `librarian import`). All samples are decoded to RAM first; voices default to
   64; the report line counts unplayable regions and pool exhaustion. `--seed` seeds `lorand/hirand`; `--gain-db` scales the
   output; `--oracle-block-frames N` (test only) emulates sfizz's per-voice block-boundary hold (see `engine/core/README.md`).
+  `--sfizz-random-replay` (test only, Story 13.10) replays the sfizz oracle's `lorand`/`hirand` draws: before every note event the engine is re-seeded (public `set_seed`) so that
+  its first draw is the number sfizz uses for that event (`src/sfizz_random_replay.*`; `--sfizz-replay-skip-draws N` discards oracle draws first, calibration only). The production
+  generator is untouched; `--seed` is ignored; not combinable with routing.
   `--bundle/--instrument` are errors without `--engine sample`; an unknown instrument or an unreadable bundle exits 1 and writes nothing.
   Control changes in the MIDI file (Story 5.2): the sample engine takes EVERY controller as the UMP control change itself (the SMF 7-bit
   value scaled to 32 bits), channel = part, delivered at its frame to the part's controller state, which the CC crossfades read; CC 64 is the

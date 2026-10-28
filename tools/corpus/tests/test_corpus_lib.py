@@ -580,23 +580,90 @@ class GuardAndSuiteTests(unittest.TestCase):
     def test_random_layer_detection_and_null_pick(self):
         with tempfile.TemporaryDirectory() as d:
             for name, body in (("a.sfz", "<group> lorand=0.0 hirand=0.5\n<region> sample=x.wav\n"), ("b.sfz", "<region> sample=x.wav seq_length=2\n"),
-                               ("c.sfz", "<region> sample=x.wav xlorand=1\n")):
+                               ("c.sfz", "<region> sample=x.wav xlorand=1\n"),
+                               ("d.sfz", "<group> lorand=0.0 hirand=0.5 pitch_random=20 // comment\n<region> sample=x.wav\n"),
+                               ("e.sfz", "<group> lorand=0.5 hirand=1 off_by=3\n<region> sample=x.wav\n"),
+                               ("f.sfz", "<group> lorand=0.5 hirand=1 sw_last=3 // amp_random=1\n<region> sample=x.wav\n")):
                 with open(os.path.join(d, name), "w") as fh:
                     fh.write(body)
             self.assertTrue(corpus.has_random_layers(os.path.join(d, "a.sfz")))
             self.assertFalse(corpus.has_random_layers(os.path.join(d, "b.sfz")))
             self.assertFalse(corpus.has_random_layers(os.path.join(d, "c.sfz")))
             self.assertFalse(corpus.has_random_layers(os.path.join(d, "missing.sfz")))
+            # Story 13.10: what the sfizz random replay cannot align (a comment does not count, sw_last does not block)
+            self.assertEqual(corpus.replay_blockers(os.path.join(d, "a.sfz")), [])
+            self.assertEqual(corpus.replay_blockers(os.path.join(d, "d.sfz")), ["pitch_random"])
+            self.assertEqual(corpus.replay_blockers(os.path.join(d, "e.sfz")), ["off_by"])
+            self.assertEqual(corpus.replay_blockers(os.path.join(d, "f.sfz")), [])
+            self.assertEqual(corpus.replay_blockers(os.path.join(d, "missing.sfz")), ["unreadable"])
             runner = corpus.Runner.__new__(corpus.Runner)
             runner.m = {"max_null_instruments": 3}
-            ok = [("a.sfz", {"regions": 1}), ("b.sfz", {"regions": 2}), ("c.sfz", {"regions": 3})]
+            # a plain random-layer instrument is a normal null pick now (rendered with the replay); only a blocked one is left out
+            ok = [("a.sfz", {"regions": 1}), ("b.sfz", {"regions": 2}), ("d.sfz", {"regions": 3})]
             res = {"failures": []}
             picked = runner.pick_null({}, ok, res, d)
-            self.assertEqual([p[0] for p in picked], ["b.sfz", "c.sfz"])
-            self.assertEqual(res["null_excluded_random_layers"], ["a.sfz"])
-            res = {"failures": []}  # nothing deterministic: the random ones are kept (the failure stays honest)
+            self.assertEqual([p[0] for p in picked], ["a.sfz", "b.sfz"])
+            self.assertEqual(res["null_excluded_random_layers"], [{"path": "d.sfz", "blockers": ["pitch_random"]}])
+            res = {"failures": []}  # nothing else to test: the blocked one is kept (the failure stays honest)
+            self.assertEqual([p[0] for p in runner.pick_null({}, [ok[2]], res, d)], ["d.sfz"])
+            self.assertNotIn("null_excluded_random_layers", res)
+            res = {"failures": []}
             self.assertEqual([p[0] for p in runner.pick_null({}, [ok[0]], res, d)], ["a.sfz"])
             self.assertNotIn("null_excluded_random_layers", res)
+
+    def test_sfz_text_comments_and_includes_are_shared_by_both_scans(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {
+                "a.sfz": '/* lorand=0.5 */ <region> sample=dir//x.wav\n#include "inc/b.sfz"\n',
+                "inc/b.sfz": "<group> lorand=0.0 hirand=0.5 pitch_random=3\n",
+                "c.sfz": "<region> sample=a//b.wav // hirand=1 off_by=2\n/* off_by=3\n amp_random=1 */\n",
+                "d.sfz": '#include "../a.sfz"\n#include "/etc/passwd"\n<region> sample=x.wav\n',
+            }
+            for name, body in files.items():
+                full = os.path.join(d, *name.split("/"))
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, "w") as fh:
+                    fh.write(body)
+            a, c, dd = (os.path.join(d, n) for n in ("a.sfz", "c.sfz", "d.sfz"))
+            self.assertIn("sample=dir//x.wav", corpus.sfz_text(a))  # // inside a path is not a comment
+            self.assertTrue(corpus.has_random_layers(a))  # lorand comes from the include only (the commented one does not count)
+            self.assertEqual(corpus.replay_blockers(a), ["pitch_random"])  # also from the include
+            self.assertFalse(corpus.has_random_layers(c))  # hirand sits after a // comment start
+            self.assertEqual(corpus.replay_blockers(c), [])  # off_by and amp_random are inside comments
+            self.assertFalse(corpus.has_random_layers(dd))  # '..' and absolute includes are not followed
+
+    def test_replay_flag_is_appended_only_for_random_layer_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, body in (("rand.sfz", "<group> lorand=0 hirand=0.5\n<region> sample=x.wav\n"), ("plain.sfz", "<region> sample=x.wav\n")):
+                with open(os.path.join(d, name), "w") as fh:
+                    fh.write(body)
+            runner = corpus.Runner.__new__(corpus.Runner)
+            runner.tools = {"render": "R", "nulltest": "N", "oracle_sh": "O", "sfizz": "S"}
+            calls = []
+
+            def fake_sh(argv, log, env=None):
+                calls.append(list(argv))
+                if argv[0] == "O":
+                    with open(argv[3], "wb") as fh:
+                        fh.write(b"\0" * (44 + 4 * 48000))
+                elif argv[0] == "R":
+                    with open(argv[argv.index("--out") + 1], "wb") as fh:
+                        fh.write(b"\0")
+                return 0, "residual: -80.00 dB (tolerance -60.00 dB)\nresult: PASS\n", 0.0
+
+            runner.sh = fake_sh
+            work = os.path.join(d, "work")
+            os.makedirs(work)
+            for rel, expect in (("rand.sfz", True), ("plain.sfz", False)):
+                for suite in ("range", "releases"):
+                    calls.clear()
+                    res = {"failures": []}
+                    r = runner.null_one({}, d, rel, "bundle", suite, "x.mid", work, -60, res)
+                    render = [c for c in calls if c[0] == "R"][0]
+                    self.assertEqual("--sfizz-random-replay" in render, expect)
+                    self.assertEqual(bool(r.get("random_replay")), expect)
+                    if expect:  # a probe with the sustain pedal records the unaligned deferred releases
+                        self.assertEqual(any("pedal" in b for b in r["replay_blockers"]), suite == "releases")
 
     def test_null_exclude_needs_a_reason_and_keeps_the_instrument_out_of_the_picks(self):
         base = {"id": "x", "name": "X", "kind": "required", "source_url": "https://codeload.github.com/a/b/tar.gz/c", "version": "1", "commit": "c",

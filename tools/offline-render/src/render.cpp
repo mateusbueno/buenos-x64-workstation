@@ -1,4 +1,5 @@
 #include "render.hpp"
+#include "sfizz_random_replay.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -117,6 +118,32 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     error = "block renderer failed to initialise";
     return false;
   }
+  // Story 13.10 (test only): before every note event of the block loop the sample engine is re-seeded so that its first draw is the number the sfizz oracle uses
+  // for that event. The observer runs synchronously in apply_part_note, before the engine's start_voice / key_released.
+  struct ReplayCtx {
+    SampleEngine* engine = nullptr;
+    std::vector<float> draws;
+    std::size_t next = 0;
+    bool overrun = false;  // the block loop applied more note events than the oracle sequence has
+  } replay;
+  if (opt.sfizz_random_replay) {
+    if (opt.engine != EngineKind::kSample || opt.routing.enabled || opt.emitted_notes) {
+      error = "the sfizz random replay needs the sample engine, no routing and no emitted-note trace";
+      return false;
+    }
+    replay.draws = sfizz_note_draws(events, opt.sfizz_replay_skip_draws);
+    br->set_note_observer(
+        [](void* ctx, const EmittedNoteEvent&) noexcept {
+          auto* r = static_cast<ReplayCtx*>(ctx);
+          if (r->next >= r->draws.size()) {
+            r->overrun = true;  // never keep the previous seed silently: the render fails after the loop
+            return;
+          }
+          if (r->engine) r->engine->set_seed(engine_seed_for_first_draw(r->draws[r->next]));
+          ++r->next;
+        },
+        &replay);
+  }
   if (opt.emitted_notes) {
     opt.emitted_notes->clear();
     br->set_note_observer(
@@ -203,6 +230,7 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     cfg.seed = opt.seed;
     cfg.oracle_block_frames = opt.oracle_block_frames;
     sample = std::make_unique<SampleEngine>(cfg);
+    replay.engine = sample.get();
     sample->set_param(SampleEngine::kParamGain, std::pow(10.0f, opt.gain_db * 0.05f));
     if (!sample->set_instrument(*opt.instrument) || !br->bind_engine(*sample)) {
       error = "cannot bind the sample engine";
@@ -386,6 +414,11 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
         adst[2 * i + 1] = ar[i];
       }
     }
+  }
+  if (opt.sfizz_random_replay && (replay.overrun || replay.next != replay.draws.size())) {
+    error = "sfizz random replay out of step: the block loop applied " + std::to_string(replay.next + (replay.overrun ? 1 : 0)) +
+            " note events (or more), the oracle sequence has " + std::to_string(replay.draws.size());
+    return false;
   }
   if (stats && organ) {
     stats->pool_exhausted = br->status_count(EngineStatus::kPoolExhausted);

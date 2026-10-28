@@ -10,7 +10,7 @@
 //                       [--arp P:MODE:RATE:OCTAVES:GATE[:SWING[:LATCH]]]   (arpeggiator, Stories 7.2 / 7.3)
 //                       [--line-in in.wav [--line-in-level 0..1]] [--aux-out aux.wav]   (routing, Story 2.7; parts are MIDI channels 0..7)
 //                       [--events file.contacts]   (test only; organ engine: contact_k event list, may replace or add to --midi)
-//                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]]
+//                       [--bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear] [--sfizz-random-replay [--sfizz-replay-skip-draws N]]]
 //                         [--dev-device-key KEYFILE --wrapped-key BLOB --trust-list FILE]   (Story 6.5, dev builds only: B is a PROTECTED bundle (bundle.vlrp); the content key
 //                                                                                              is unwrapped with the dev device key, decrypted on this thread, nothing is written to disk)
 //                       [--live-set FILE --library-root DIR [--scene-at SECONDS:INDEX]... [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N]
@@ -100,6 +100,7 @@ static int usage() {
                "                     [--arp P:MODE:RATE:OCTAVES:GATE] (MODE = up|down|updown|random|as-played, RATE = 1/4|1/8|1/16|1/32|1/4t|1/8t|1/16t|1/32t, OCTAVES = 1..4, GATE = 1..200)\n"
                "                     [--line-in in.wav] [--line-in-level 0..1] [--aux-out aux.wav]\n"
                "       sample engine: --bundle B --instrument KEY [--seed N] [--gain-db G] [--oracle-block-frames N] [--interpolation hermite|linear]\n"
+               "                      [--sfizz-random-replay [--sfizz-replay-skip-draws N]]   (test only: replay the sfizz oracle's lorand/hirand draws, Story 13.10)\n"
                "       Live Set: --live-set FILE --library-root DIR --midi in.mid --out out.wav [--scene-at SECONDS:INDEX]... [--seed N] [--tail-seconds S]\n"
                "                 [--switch-at SECONDS:LIVESET_FILE]... [--switch-load-blocks N]   (seamless switch to another Live Set; the background load is simulated as N blocks)\n"
                "                 [--assign-mode] [--encoder-at SECONDS:ENC:DELTA]...   (ASSIGN encoder mode from the start; encoder ENC 1..8 = K1..K8 turned by DELTA relative steps, -32768..32767)\n"
@@ -122,6 +123,7 @@ int main(int argc, char** argv) {
   std::string line_in_path, aux_out_path, live_set_path, library_root;
   std::string dev_device_key, wrapped_key_path, trust_list_path;  // Story 6.5 (dev builds)
   bool seed_given = false;
+  bool replay_skip_given = false;
   std::vector<SceneRecallAt> scene_recalls;
   std::vector<SwitchAt> switches;
   std::vector<EncoderAt> encoder_turns;
@@ -579,6 +581,15 @@ int main(int argc, char** argv) {
       std::uint64_t n = 0;
       if (!parse_uint(v, 8192, n)) { std::fprintf(stderr, "error: invalid --oracle-block-frames\n"); return 2; }
       opt.oracle_block_frames = static_cast<std::uint32_t>(n);
+    } else if (a == "--sfizz-random-replay") {  // Story 13.10, test only
+      sample_opts = true;
+      opt.sfizz_random_replay = true;
+    } else if (a == "--sfizz-replay-skip-draws" && val(v)) {
+      sample_opts = true;
+      std::uint64_t n = 0;
+      if (!parse_uint(v, 1000000, n)) { std::fprintf(stderr, "error: invalid --sfizz-replay-skip-draws\n"); return 2; }
+      opt.sfizz_replay_skip_draws = static_cast<std::uint32_t>(n);
+      replay_skip_given = true;
     } else if (a == "--gain-db" && val(v)) {
       sample_opts = true;
       double g = 0;
@@ -677,12 +688,17 @@ int main(int argc, char** argv) {
     protected_heads = std::make_unique<velora::host::ProtectedHeadProvider>(velora::host::make_posix_fs(), *dev_keys, &damage);
   }
 #endif
+  if (replay_skip_given && !opt.sfizz_random_replay) {
+    std::fprintf(stderr, "error: --sfizz-replay-skip-draws needs --sfizz-random-replay\n");
+    return 2;
+  }
+  if (opt.sfizz_random_replay && seed_given) std::fprintf(stderr, "warning: --seed is ignored with --sfizz-random-replay (the replay seeds the engine before every note event)\n");
   if (!live_set_path.empty() || !library_root.empty()) {
     // Live Set mode (Story 4.3): the Live Set decides the engines, the routing and the instruments.
     if (live_set_path.empty() || library_root.empty() || midi.empty() || out.empty()) return usage();
     if (engine != "test-tone" || !events_path.empty() || !bundle_path.empty() || !instrument_key.empty() || drawbars_given || percussion_given ||
         key_click_given || vibrato_given || leakage_given || rotary_given || voices_given || opt.routing.enabled ||
-        interp != "hermite" || opt.gain_db != 0.0f || opt.oracle_block_frames != 0 ||
+        interp != "hermite" || opt.gain_db != 0.0f || opt.oracle_block_frames != 0 || opt.sfizz_random_replay ||
         opt.detune_cents != 0.0f) {
       std::fprintf(stderr, "error: --live-set cannot be combined with engine, instrument, routing or organ options (only --seed and --tail-seconds)\n");
       return 2;
