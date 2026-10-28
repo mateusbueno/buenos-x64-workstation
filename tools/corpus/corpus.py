@@ -344,6 +344,7 @@ class Runner:
             k = ("%s %s" % (m.group(1), m.group(2))) if m.group(1) else ("invalid value for %s" % m.group(4))
             hist[k] = hist.get(k, 0) + 1
         res["unsupported_histogram"] = dict(sorted(hist.items(), key=lambda kv: (-kv[1], kv[0]))[:25])
+        res["import_failure_reasons"] = cl.summarize_reasons([(rel, cl.classify_file_report(files[rel], tree)) for rel in todo if rel in files and files[rel]["status"] not in ("imported", "unchanged")])
         res["import_warning_files"] = sum(1 for o in files.values() if o.get("warning_count"))
         res["regions_total"] = sum(o.get("regions", 0) for o in files.values())
         ok = [(rel, files[rel]) for rel in todo if rel in files and files[rel]["status"] in ("imported", "unchanged")]
@@ -436,6 +437,7 @@ class Runner:
             else:
                 res["import_failed"] += 1
                 res["failures"].append("import %s: %s (%s) %s" % (rel, o["status"], o.get("reason"), "; ".join(str(m).replace(tree + os.sep, "")[:200] for m in o.get("messages", [])[:2]) or o.get("failing_path") or o.get("detail") or ""))
+        res["import_failure_reasons"] = cl.summarize_reasons([(rel, cl.classify_file_report(info[rel], tree)) for rel in todo if rel in info and info[rel]["status"] not in ("imported", "unchanged")])
         res["import_warning_files"] = sum(1 for o in info.values() if o.get("warning_count"))
         res["regions_total"] = sum(o.get("regions", 0) for o in info.values())
         res["presets_total"] = sum(o.get("presets", 0) for o in info.values())
@@ -718,6 +720,17 @@ def cmd_run(args):
     return 1 if failures else 0
 
 
+def render_reasons(ir):
+    """Markdown lines of the per-library 'why files do not import' table (empty when every file imported)."""
+    if not ir or not ir.get("rows"):
+        return []
+    L = ["", "  Why %d file(s) did not import:" % ir["files_failed"], "", "  | Reason | Detail | Issues | Files | Example (file:line) |", "  |---|---|---|---|---|"]
+    for x in ir["rows"]:
+        L.append("  | %s | `%s` | %d | %d | `%s` |" % (x["title"], str(x["detail"]).replace("|", "\\|"), x["count"], x["files"], x["example"]))
+    L.append("")
+    return L
+
+
 def render_markdown(rep):
     L = ["# Reference corpus report", "", "Generated %s from `%s`." % (rep["generated"], rep["manifest"]), "",
          "| Library | Format | Status | Imported | Null-tested renders | Worst residual (dB) | Tolerance (dB) |", "|---|---|---|---|---|---|---|"]
@@ -743,8 +756,7 @@ def render_markdown(rep):
         if r.get("null_excluded_random_layers"):
             L.append("- imported but not null-tested (layers chosen with lorand/hirand, and an opcode the sfizz random replay cannot align, see the README): %s" %
                      ", ".join("`%s` (%s)" % (x["path"], ", ".join(x["blockers"])) for x in r["null_excluded_random_layers"]))
-        if r.get("unsupported_histogram"):
-            L.append("- import rejections by cause (count of lines): " + ", ".join("`%s` x%d" % kv for kv in r["unsupported_histogram"].items()))
+        L += render_reasons(r.get("import_failure_reasons"))
         for i in r["instruments"]:
             L.append("- `%s`%s (%s regions)%s" % (i["file"], (" preset %s `%s`" % (i["preset"], i.get("preset_name", ""))) if "preset" in i else "", i["regions"], (" [recorded tolerance %s dB: %s]" % (i["tolerance_db"], i["tolerance_reason"])) if "tolerance_db" in i else ""))
             for s in i["suites"]:

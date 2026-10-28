@@ -35,6 +35,27 @@ only files that need an SFZ tier marked **out of scope** in that record, and the
 `unsupported_features` (FR22). A file that fails import for any other reason (an opcode of a supported or deferred tier that is not implemented yet, a damaged file)
 is not listed: it fails the job, so the gap stays visible. The corpus requirement reads "imports and plays with mapping intact for every file in a supported tier".
 
+## Why a library does not import (import-failure reasons)
+
+For every file that does not import, the report classifies each importer message (the librarian's per-file `messages`, falling back to `offenders`) and shows, per
+library, a table of counts by reason with an example `file:line` (relative to the library; an include file is named as such). `report.json` carries the same data as
+`import_failure_reasons: {files_failed, rows: [{category, title, detail, count, files, example}]}` (`count` = issues, `files` = distinct instrument files).
+Categories, in table order:
+
+| Category | Detail column | Derived from |
+|---|---|---|
+| unsupported opcode | the opcode (or `header <name>`) | `unsupported opcode` / `unsupported header` issues |
+| unsupported value | the opcode whose value is outside the subset (e.g. `ampeg_dynamic`, `polyphony`, `on_locc64`) | `unsupported value 'v' for opcode 'o'` |
+| sample path escapes the SFZ directory | `..` relative (slash or backslash separators) or absolute path | `path '...' leaves the SFZ directory` (the importer files it under *damaged*) |
+| sample format not supported | the extension of the referenced sample (`.flac`, `.ogg`, ...), or `.wav (format outside the subset)` | `unsupported audio` messages, or a missing sample whose extension is not `.wav` (only WAV is read) |
+| missing sample file | `sample= file does not exist` | `sample file not found` with a `.wav` extension |
+| include fragment | `no <region>` | `no regions in SFZ file`: the file is not a standalone instrument (e.g. `includes/*.sfz`) |
+| damaged / parse | the importer's wording (syntax, invalid value, region without `sample=`, damaged WAV) | the remaining *damaged* kinds |
+| other | the raw message | anything not recognised, so a new importer message is visible instead of hidden |
+
+The table replaces the old opcode histogram line (`unsupported_histogram` stays in `report.json`, built from the log text). SF2 libraries use the same table
+(their messages mostly land in *damaged / other*). Tests: `tests/test_import_reasons.py` (synthetic report lines).
+
 ## Local sources (`source_kind: "local_dir"`)
 
 Some libraries are supplied by the founder from local disk (the Pianobook packs: no scripted download, no licence statement to rely on). Such an entry

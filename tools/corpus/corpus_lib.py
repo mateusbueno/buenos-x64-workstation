@@ -843,3 +843,104 @@ def find_audio_in_tree(root, skip_dirs=()):
             if f.lower().endswith(AUDIO_EXTS):
                 hits.append(os.path.join(dirpath, f))
     return hits
+
+
+# ---------------------------------------------------------------------------------------------
+# Import failure reasons: why a file did not import, from the librarian's per-file report line
+# (its `messages` are the importer's "file:line: message" strings, see SfzIssue::to_string in
+# formatlib/include/velora/format/sfz_import.hpp and audio_problem in librarian/src/import.cpp).
+
+REASON_ORDER = ["unsupported_opcode", "unsupported_value", "path_escapes_sfz_dir", "sample_format_not_supported", "missing_sample", "include_fragment", "damaged_parse", "other"]
+REASON_TITLES = {
+    "unsupported_opcode": "unsupported opcode", "unsupported_value": "unsupported value", "path_escapes_sfz_dir": "sample path escapes the SFZ directory",
+    "sample_format_not_supported": "sample format not supported", "missing_sample": "missing sample file",
+    "include_fragment": "include fragment (no <region> of its own)", "damaged_parse": "damaged / parse", "other": "other",
+}
+_LOC = re.compile(r"^(.+?):(\d+): (.*)$", re.S)
+
+
+def _ext(path):
+    base = path.replace("\\", "/").rsplit("/", 1)[-1]
+    return ("." + base.rsplit(".", 1)[1].lower()) if "." in base else "(none)"
+
+
+def classify_message(msg):
+    """One importer message -> (category, detail, file, line). file/line are None when the message carries no location."""
+    m = _LOC.match(msg)
+    file, line, body = (m.group(1), int(m.group(2)), m.group(3)) if m else (None, None, msg)
+    mm = re.match(r"unsupported header (<[^>]*>)", body)
+    if mm:
+        return "unsupported_opcode", "header " + mm.group(1), file, line
+    mm = re.match(r"unsupported opcode '([^']*)'", body)
+    if mm:
+        return "unsupported_opcode", mm.group(1), file, line
+    mm = re.match(r"unsupported value '([^']*)' for opcode '([^']*)'", body)
+    if mm:
+        return "unsupported_value", mm.group(2), file, line
+    mm = re.match(r"path '([^']*)' leaves the SFZ directory", body)
+    if mm:
+        pth = mm.group(1).replace("\\", "/")
+        return "path_escapes_sfz_dir", ("absolute path outside the SFZ directory" if pth.startswith("/") or re.match(r"^[A-Za-z]:", pth) else "relative path with '..' (%s)" % ("backslash separators" if "\\" in mm.group(1) else "slash separators")), file, line
+    mm = re.match(r"sample file not found: (.*)$", body, re.S)
+    if mm:
+        ext = _ext(mm.group(1))
+        return ("sample_format_not_supported", ext + " (file not found; only .wav is read)", file, line) if ext != ".wav" else ("missing_sample", "sample= file does not exist", file, line)
+    if "no regions in SFZ file" in body:
+        return "include_fragment", "no <region>", file, line
+    mm = re.match(r"(.*?): (unsupported audio.*|unsupported audio format.*|cannot read sample file.*|damaged WAV file.*)$", body, re.S)
+    if mm and file is not None:
+        ext = _ext(mm.group(1))
+        if mm.group(2).startswith("unsupported audio") and ext != ".wav":
+            return "sample_format_not_supported", ext, file, line
+        if mm.group(2).startswith("unsupported audio format"):
+            return "sample_format_not_supported", ".wav (format outside the subset)", file, line
+        return "damaged_parse", mm.group(2)[:60], file, line
+    mm = re.match(r"invalid value '([^']*)' for opcode '([^']*)'", body)
+    if mm:
+        return "damaged_parse", "invalid value for " + mm.group(2), file, line
+    if body.startswith("region without a sample opcode"):
+        return "damaged_parse", "region without sample=", file, line
+    if file is not None and ("syntax" in body or "#include" in body or "outside any header" in body or "unreadable" in body):
+        return "damaged_parse", body[:60], file, line
+    return "other", body[:80], file, line
+
+
+def classify_file_report(o, tree=None):
+    """The reason entries of one failed/skipped per-file report line: [{category, detail, file, line}]. Falls back to `offenders` and `failing_path` when `messages` is empty."""
+    def rel(p):
+        if p is None:
+            return None
+        p = p.replace("\\", "/")
+        if tree:
+            t = tree.replace("\\", "/").rstrip("/") + "/"
+            if p.startswith(t):
+                return p[len(t):]
+        return p
+    out = []
+    msgs = [str(x) for x in o.get("messages", [])]
+    if not msgs:
+        msgs = ["%s:%s: %s" % (x.get("file"), x.get("line"), x.get("message")) for x in o.get("offenders", [])]
+    for msg in msgs:
+        cat, detail, file, line = classify_message(msg)
+        out.append({"category": cat, "detail": detail, "file": rel(file), "line": line})
+    if not out:
+        out.append({"category": "other", "detail": ("%s (%s) %s" % (o.get("status"), o.get("reason"), o.get("detail") or o.get("failing_path") or "")).strip(), "file": rel(o.get("file")), "line": None})
+    return out
+
+
+def summarize_reasons(failed):
+    """failed: [(rel_path_of_sfz, [reason entries])]. Returns {files_failed, rows:[{category, title, detail, count, files, example}]} sorted by category order, then count.
+    An entry whose file is the SFZ itself or one of its includes is an example 'file:line'; a file counts once per (category, detail)."""
+    agg = {}
+    for rel, entries in failed:
+        for e in entries:
+            key = (e["category"], e["detail"])
+            a = agg.setdefault(key, {"count": 0, "files": set(), "example": None})
+            a["count"] += 1
+            a["files"].add(rel)
+            if a["example"] is None:
+                f = e.get("file") or rel
+                a["example"] = "%s:%s" % (f, e["line"]) if e.get("line") else f
+    rows = [{"category": c, "title": REASON_TITLES[c], "detail": d, "count": a["count"], "files": len(a["files"]), "example": a["example"]} for (c, d), a in agg.items()]
+    rows.sort(key=lambda r: (REASON_ORDER.index(r["category"]), -r["count"], r["detail"]))
+    return {"files_failed": len(failed), "rows": rows}
