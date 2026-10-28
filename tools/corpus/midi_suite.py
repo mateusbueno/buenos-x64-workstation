@@ -149,3 +149,64 @@ def write_all(directory):
             fh.write(build(n))
         paths[n] = p
     return paths
+
+
+# ---------------------------------------------------------------------------------------------
+# Story 13.11: the same six probes for the FluidSynth oracle (SoundFont libraries)
+#
+# FluidSynth's file player works in whole milliseconds and applies an event at the start of a 64-frame block, one or two blocks late depending on the
+# tick (tools/offline-render/tests/sf2_suite/README.md, "MIDI timing"). The suite of Story 5.3 therefore uses 375 PPQ at 500000 us per quarter (one tick = 64
+# frames), puts every event on a multiple of 3 ticks (4 ms = 192 frames) and gives the engine the oracle's MIDI delayed by one tick. This does the same with
+# the probes above: every event time is rounded to the nearest multiple of 3 ticks. The preset is selected on channel 0 with MMA bank select (the oracle's
+# `synth.midi-bank-select=mma`: bank = CC0 * 128 + CC32), a program change and CC7 = 127 at tick 0.
+FLUID_PPQ = 375
+FLUID_FRAMES_PER_TICK = 64
+FLUID_GRID_TICKS = 3
+FLUID_LAG_TICKS = 1  # FluidSynth applies events one block late: the engine's MIDI is the oracle's shifted by this
+
+
+def _fluid_events(name, bank, program):
+    t = _new()
+    _build_into(t, name)
+    ev = [(0, 0, bytes([0xB0, 0, (bank >> 7) & 127])), (0, 0, bytes([0xB0, 32, bank & 127])), (0, 0, bytes([0xC0, program & 127])), (0, 0, bytes([0xB0, 7, 127]))]
+    for frames, order, data in t.events:
+        if frames == 0 and data[0] == 0xB0 and data[1] == 7:
+            continue  # replaced by the setup above
+        tick = int(frames / (FLUID_FRAMES_PER_TICK * FLUID_GRID_TICKS) + 0.5) * FLUID_GRID_TICKS
+        ev.append((max(tick, FLUID_GRID_TICKS), order, data))
+    return ev
+
+
+def build_fluid(name, bank, program, engine=False):
+    """SMF of probe `name` for preset bank:program on the FluidSynth grid; `engine=True` delays every event after tick 0 by one tick."""
+    shift = FLUID_LAG_TICKS if engine else 0
+    data = bytearray(b"\x00\xff\x51\x03\x07\xa1\x20")
+    last = 0
+    for tick, _o, ev in sorted(_fluid_events(name, bank, program), key=lambda e: (e[0], e[1])):
+        tk = tick + (shift if tick > 0 else 0)
+        data += _vlq(tk - last) + ev
+        last = tk
+    data += b"\x00\xff\x2f\x00"
+    return b"MThd" + struct.pack(">IHHH", 6, 0, 1, FLUID_PPQ) + b"MTrk" + struct.pack(">I", len(data)) + bytes(data)
+
+
+def last_event_seconds_fluid(name, bank=0, program=0, engine=False):
+    """Time of the last event of the oracle's MIDI (or of the engine's, one block later)."""
+    last = max(tick for tick, _o, _b in _fluid_events(name, bank, program))
+    return (last + (FLUID_LAG_TICKS if engine else 0)) * FLUID_FRAMES_PER_TICK / 48000.0
+
+
+def write_fluid(directory, bank, program):
+    """Writes the six probes for bank:program; returns {suite: (oracle midi path, engine midi path)}."""
+    import os
+    os.makedirs(directory, exist_ok=True)
+    out = {}
+    for n in SUITES:
+        pair = []
+        for eng in (False, True):
+            p = os.path.join(directory, "%s_%d_%d_%s.mid" % (n, bank, program, "engine" if eng else "oracle"))
+            with open(p, "wb") as fh:
+                fh.write(build_fluid(n, bank, program, eng))
+            pair.append(p)
+        out[n] = tuple(pair)
+    return out

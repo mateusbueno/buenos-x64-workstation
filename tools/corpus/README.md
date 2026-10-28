@@ -1,6 +1,6 @@
 # tools/corpus
 
-Role: Story 5.4, the reference corpus job. It fetches (or reuses a verified cached copy of) each real SFZ library named in
+Role: Story 5.4, the reference corpus job (SoundFont libraries since Story 13.11, see "SF2 libraries"). It fetches (or reuses a verified cached copy of) each real SFZ library named in
 `manifest.json`, imports it with the host importer (`librarian import`), renders a per-library MIDI test suite through the sample engine
 and through the sfizz oracle, null-tests the two renders within the library's recorded tolerance and writes a report. It reuses the existing
 tools (`build/librarian/librarian`, `velora-offline-render --engine sample`, `velora-null-test`, `tools/oracle/render-oracle.sh`); there is no
@@ -57,6 +57,37 @@ has `source_kind: "local_dir"`, `local_hint` (a machine-independent description,
   its bytes are already proven equal to the pin.
 - **Licence field**: records what the package states (nothing, for the two current entries), where the work comes from, and that distribution needs a licence
   the founder must confirm from the pack page. No licence is invented. These libraries are for local internal testing, never redistributed or committed.
+
+## SF2 libraries (`"format": "sf2"`, Story 13.11)
+
+An entry with `"format": "sf2"` (default `sfz`) is a library of SoundFont 2 files. Everything about getting the files is unchanged: the same `source_url` (allow-listed https
+hosts) with an archive hash, or `source_kind: "local_dir"` with a tree digest, the same trust-on-first-use pin, the same hardened extraction and local copy (`.sf2` is copied
+like audio, never committed; `corpus.py guard` and `.gitignore` treat it as audio). What differs is the runner (`Runner.library_sf2`):
+
+- **Import**: every `.sf2` of the library (except `skip_files`) goes through `librarian import`, i.e. the SF2 reader of Story 5.3, in one run. A file that is skipped or fails fails the
+  job, with the importer's own message in the report (for example `sample rate 35135 Hz (the importer never resamples ...)`); a stale `skip_files`, `null_exclude` or
+  `tolerance_overrides` path fails too.
+- **What is null-tested**: presets, not files. The instrument key of an SF2 preset is `bank:program`; the runner lists them from the file's `phdr` chunk (`sf2_presets`) and tests up to
+  `max_null_instruments` of them, spread evenly over the sorted (file, bank, program) list of `null_files` (default: all imported files), or exactly the ones named in
+  `null_presets: ["dir/file.sf2#bank:program", ...]` (a name that is not an imported preset fails the job). All six probes run per preset.
+- **Oracle**: the existing FluidSynth oracle of Story 5.3 (`tools/oracle/render-fluidsynth.sh`, FluidSynth 2.6.1 built by `build-fluidsynth.sh`, or `VELORA_FLUIDSYNTH`); no other
+  fluidsynth is used, no second oracle exists. A preset needs at least one probe that FluidSynth does not render as silence (all six silent = the stimulus does not reach the preset = failure), duplicate `bank:program` keys, a bank above 16383
+  or a program above 127 fail, and a run that null-tests no preset at all fails. A run that selects an SF2 entry needs the oracle (missing = failure); a run of only SF2 entries does not need sfizz and the reverse.
+- **MIDI**: the same six probes as for SFZ, written for FluidSynth's player (`midi_suite.build_fluid`): 375 PPQ (1 tick = 64 frames), every event rounded to a multiple of 3 ticks (4 ms),
+  the preset selected on channel 0 with MMA bank select (CC0 = bank / 128, CC32 = bank % 128), a program change and CC7 = 127; the engine gets the same MIDI one tick later, because FluidSynth
+  applies events one block late (`tools/offline-render/tests/sf2_suite/README.md`, "MIDI timing"). The sfizz half-frame offsets do not apply.
+- **Comparison**: engine `--gain-db 0` (the oracle's `-g 0.8409` already undoes its filter gain), the oracle render trimmed after its last non-zero frame plus 100 ms (the player appends 2 s of
+  silence; the engine gets the matching `--tail-seconds`), `velora-null-test --max-offset-frames 1 --check-excess`, no `--candidate-quantize` (FluidSynth dithers its 16-bit output; sfizz does not).
+  A probe that FluidSynth renders as digital silence for a preset (its zones do not cover the probe's keys) is marked `oracle silent` and passes only if the null test passes on it.
+- **Tolerance**: `tolerance_db` is **mandatory** on an SF2 entry (the -60 dB default of the SFZ entries does not apply) and is recorded with the measurement in `notes`; per-file values go in
+  `tolerance_overrides` with a reason. What the measurement is up against: the Story 5.3 suite reaches -40 dB only because its fixtures are written for FluidSynth (zones with attacks of at least
+  15 ms, `for_oracle` rewrites of the oracle's copy). A real library is not rewritten, so FluidSynth's departures from the SoundFont specification (attenuation x0.4, sustain depth, decay and release
+  time on a 96 dB range, a 0.2-frame filter delay that grows with frequency, a 64-frame amplitude ramp at the start of a voice) are in the residual. Trial runs on three small packs
+  from the founder's disk (not in the manifest, no pin, no licence statement) measured -26 to -33 dB on the six probes (a generated sine SoundFont: -28 to -41 dB), high-register `range` and `sustained_loops` being the worst.
+- **Report**: `report.md` / `report.json` list SF2 and SFZ entries in one table with a Format column; an SF2 instrument line names the file, `bank:program` and the preset name. The exit code is 1
+  when any entry, of either format, fails to fetch, import or null-test.
+- **No entry yet**: the manifest has no SF2 entry, because none can be pinned yet (no SF2 pack with a licence statement and a scripted source exists, and the founder's local packs are not
+  pinned). Add one with `fetch --pin` / `run --pin` exactly as for a Pianobook pack (`source_kind: "local_dir"`).
 
 ## Hash pinning is trust-on-first-use
 
@@ -149,4 +180,7 @@ tests) fails when git would add an audio file outside the small test-fixture dir
 `.github/workflows/corpus-nightly.yml` is `workflow_dispatch` only (CI is manual-only for this project). `local_dir` entries cannot run on a hosted runner (the founder's
 files are not there): the workflow runs only the entries printed by `corpus.py ids --no-local`, says so with a `::notice::` listing the local entries it did not run, and
 the `only` input can name entries explicitly (a named local entry then fails with "local source not available"). Run those entries on the founder's Mac with the commands above. The nightly `schedule:` is present as a comment to enable when decided.
-Local equivalent: the commands above.
+
+The workflow builds only the sfizz oracle, so `corpus.py ids --no-local` also leaves out every `format: "sf2"` entry and prints a `::notice::` naming it on stderr; naming one in the `only` input fails
+its preflight (no FluidSynth) until a build step for `tools/oracle/build-fluidsynth.sh` is added to the workflow. None exists yet (not changed in Story 13.11; CI is not triggered).
+The local equivalent is the commands above.

@@ -13,7 +13,9 @@ import re
 import shutil
 import subprocess
 import sys
+import struct
 import time
+import wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -86,6 +88,90 @@ def wav_seconds(path, rate=48000):
     return max(0, os.path.getsize(path) - 44) / 4.0 / rate
 
 
+def sf2_presets(path):
+    """[(bank, program, name)] of a SoundFont, sorted, read from its `phdr` chunk (RIFF `sfbk` > LIST `pdta` > `phdr`, 38 bytes per header, the last one is the
+    terminal record). Pure parsing with bounds checks; raises CorpusError for a file that is not a SoundFont. The importer is the judge of validity: this only names
+    the presets the runner renders (their instrument key is `bank:program`)."""
+    with open(path, "rb") as fh:
+        head = fh.read(12)
+        if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != b"sfbk":
+            raise cl.CorpusError("%s is not a SoundFont (no RIFF sfbk header)" % path)
+        end = min(8 + struct.unpack("<I", head[4:8])[0], os.fstat(fh.fileno()).st_size)
+        pos = 12
+        while pos + 12 <= end:
+            fh.seek(pos)
+            ck = fh.read(12)
+            cid, size = ck[:4], struct.unpack("<I", ck[4:8])[0]
+            if cid == b"LIST" and ck[8:12] == b"pdta":
+                p, stop = pos + 12, min(pos + 8 + size, end)
+                while p + 8 <= stop:
+                    fh.seek(p)
+                    sub = fh.read(8)
+                    sid, ssize = sub[:4], struct.unpack("<I", sub[4:8])[0]
+                    if sid == b"phdr":
+                        if ssize % 38 or p + 8 + ssize > stop:
+                            raise cl.CorpusError("%s: damaged phdr chunk" % path)
+                        data = fh.read(ssize)
+                        out = []
+                        for i in range(0, ssize - 38, 38):  # the last record is the terminal one
+                            name = data[i:i + 20].split(b"\0")[0].decode("latin-1")
+                            program, bank = struct.unpack("<HH", data[i + 20:i + 24])
+                            out.append((bank, program, name))
+                        return sorted(out)
+                    p += 8 + ssize + (ssize & 1)
+                raise cl.CorpusError("%s: no phdr chunk" % path)
+            pos += 8 + size + (size & 1)
+    raise cl.CorpusError("%s: no pdta list" % path)
+
+
+def write_silence(path, seconds):
+    """Replaces `path` with 16-bit stereo 48 kHz digital silence of `seconds`."""
+    with wave.open(path, "wb") as o:
+        o.setnchannels(2)
+        o.setsampwidth(2)
+        o.setframerate(48000)
+        o.writeframes(b"\0\0\0\0" * int(round(seconds * 48000)))
+
+
+def pad_silence(path, seconds):
+    """Appends digital silence to the oracle render (16-bit stereo 48 kHz) until it is `seconds` long."""
+    with wave.open(path, "rb") as w:
+        n, data = w.getnframes(), w.readframes(w.getnframes())
+    want = int(round(seconds * 48000))
+    with wave.open(path + ".trim", "wb") as o:
+        o.setnchannels(2)
+        o.setsampwidth(2)
+        o.setframerate(48000)
+        o.writeframes(data + b"\0\0\0\0" * max(0, want - n))
+    os.replace(path + ".trim", path)
+
+
+def trim_oracle_wav(path, keep_frames=4800):
+    """FluidSynth's player appends 2 s of silence after the last voice: cut the render after its last non-zero frame plus `keep_frames` (100 ms), as
+    tools/offline-render/tests/sf2_suite/regenerate_goldens.sh does for the Story 5.3 goldens. Returns the length in seconds, or None for a render
+    that is entirely silent (left untouched). 16-bit PCM only (the oracle's own format)."""
+    with wave.open(path, "rb") as w:
+        ch, sw, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        data = w.readframes(n)
+    if sw != 2 or ch != 2 or rate != 48000:
+        raise cl.CorpusError("oracle render %s is not 16-bit stereo 48 kHz (%s ch, %s bytes, %s Hz)" % (path, ch, sw, rate))
+    frame = ch * sw
+    last = n
+    zero = b"\0" * frame
+    while last > 0 and data[(last - 1) * frame:last * frame] == zero:
+        last -= 1
+    if last == 0:
+        return None
+    keep = min(n, last + keep_frames)
+    with wave.open(path + ".trim", "wb") as o:
+        o.setnchannels(ch)
+        o.setsampwidth(sw)
+        o.setframerate(rate)
+        o.writeframes(data[:keep * frame])
+    os.replace(path + ".trim", path)
+    return keep / float(rate)
+
+
 def tool_paths(build_dir):
     b = os.path.abspath(build_dir)
     return {
@@ -94,6 +180,9 @@ def tool_paths(build_dir):
         "nulltest": os.path.join(b, "tools", "offline-render", "velora-null-test"),
         "oracle_sh": os.path.join(REPO, "tools", "oracle", "render-oracle.sh"),
         "sfizz": os.environ.get("VELORA_SFIZZ_RENDER") or os.path.join(REPO, "tools", "oracle", ".work", "build", "library", "bin", "sfizz_render"),
+        # Story 13.11: the FluidSynth oracle of Story 5.3 (2.6.1, tools/oracle/build-fluidsynth.sh); no fallback to another fluidsynth on the PATH
+        "fluid_sh": os.path.join(REPO, "tools", "oracle", "render-fluidsynth.sh"),
+        "fluidsynth": os.environ.get("VELORA_FLUIDSYNTH") or os.path.join(REPO, "tools", "oracle", ".work", "fluidsynth-build", "src", "fluidsynth"),
     }
 
 
@@ -127,9 +216,14 @@ def selected(m, only):
 
 
 def cmd_ids(args):
+    skipped = []
     for e in cl.included(cl.load_manifest(args.manifest)):
-        if not (args.no_local and cl.is_local(e)):
+        if args.no_local and e.get("format", "sfz") == "sf2":
+            skipped.append(e["id"])  # the nightly workflow builds only the sfizz oracle (no FluidSynth step), so an SF2 entry cannot run there
+        elif not (args.no_local and cl.is_local(e)):
             print(e["id"])
+    if skipped:
+        print("::notice::SF2 entries not listed (the workflow has no FluidSynth oracle step): " + ", ".join(skipped), file=sys.stderr)
     return 0
 
 
@@ -174,12 +268,19 @@ class Runner:
             text = fh.read()
         return rc, text, time.time() - t0
 
-    def preflight(self):
-        missing = [k for k in ("librarian", "render", "nulltest", "oracle_sh", "sfizz") if not os.path.isfile(self.tools[k])]
+    def preflight(self, entries=None):
+        """Every tool the selected entries need must exist (a missing tool is a failure, never a skip). The sfizz oracle is needed by SFZ entries, FluidSynth by
+        SF2 entries (Story 13.11); with no selection given both are required."""
+        formats = {e.get("format", "sfz") for e in entries} if entries is not None else {"sfz", "sf2"}
+        need = ["librarian", "render", "nulltest"] + (["oracle_sh", "sfizz"] if "sfz" in formats else []) + (["fluid_sh", "fluidsynth"] if "sf2" in formats else [])
+        missing = [k for k in need if not os.path.isfile(self.tools[k])]
         if missing:
-            raise cl.CorpusError("missing tool(s): %s. Build with cmake (target librarian, velora-offline-render, velora-null-test) and tools/oracle/build-sfizz-render.sh" % ", ".join("%s=%s" % (k, self.tools[k]) for k in missing))
+            raise cl.CorpusError("missing tool(s): %s. Build with cmake (target librarian, velora-offline-render, velora-null-test), tools/oracle/build-sfizz-render.sh (SFZ) "
+                                 "and tools/oracle/build-fluidsynth.sh (SF2, or VELORA_FLUIDSYNTH)" % ", ".join("%s=%s" % (k, self.tools[k]) for k in missing))
 
     def library(self, entry, tree, work):
+        if entry.get("format", "sfz") == "sf2":
+            return self.library_sf2(entry, tree, work)
         res = {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "version": entry["version"], "license": entry["license"],
                "license_url": entry["license_url"], "source_url": entry.get("source_url") or ("local_dir: " + entry["local_hint"]), "sha256": cl.pin_of(entry),
                "status": "pass", "failures": [], "imported": 0, "import_failed": 0, "skipped_listed": [], "instruments": []}
@@ -194,7 +295,8 @@ class Runner:
                 if f.lower().endswith(".sfz"):
                     sfz.append(os.path.relpath(os.path.join(dirpath, f), tree).replace(os.sep, "/"))
         sfz.sort()
-        res["sfz_found"] = len(sfz)
+        res["sfz_found"] = res["files_found"] = len(sfz)
+        res["format"] = "sfz"
         if not sfz:
             res["failures"].append("no .sfz file found in the library")
             res["status"] = "fail"
@@ -265,6 +367,210 @@ class Runner:
         if res["failures"]:
             res["status"] = "fail"
         return res
+
+    # -----------------------------------------------------------------------------------------
+    # Story 13.11: SoundFont libraries (format sf2)
+
+    def library_sf2(self, entry, tree, work):
+        """Imports every `.sf2` of the library with `librarian import` (the SF2 reader of Story 5.3) and null-tests up to `max_null_instruments` presets against the
+        FluidSynth oracle with the six probes of midi_suite (FluidSynth grid). Same failure rules as the SFZ path: an `.sf2` that does not import fails the
+        entry unless it is listed in `skip_files`, a stale manifest entry fails, a missing tool fails."""
+        res = {"id": entry["id"], "name": entry["name"], "kind": entry["kind"], "format": "sf2", "version": entry["version"], "license": entry["license"],
+               "license_url": entry["license_url"], "source_url": entry.get("source_url") or ("local_dir: " + entry["local_hint"]), "sha256": cl.pin_of(entry),
+               "status": "pass", "failures": [], "imported": 0, "import_failed": 0, "skipped_listed": [], "instruments": [], "notes": []}
+        tree = os.path.abspath(tree)
+        tol = entry["tolerance_db"]
+        res["tolerance_db"] = tol
+        skip = {x["path"]: x["reason"] for x in entry.get("skip_files", [])}
+        found = []
+        for dirpath, dirnames, files in os.walk(tree):
+            dirnames.sort()
+            for f in sorted(files):
+                if f.lower().endswith(".sf2"):
+                    found.append(os.path.relpath(os.path.join(dirpath, f), tree).replace(os.sep, "/"))
+        found.sort()
+        res["files_found"] = len(found)
+        if not found:
+            res["failures"].append("no .sf2 file found in the library")
+            res["status"] = "fail"
+            return res
+        todo = []
+        for rel in found:
+            if rel in skip:
+                res["skipped_listed"].append({"path": rel, "reason": skip[rel]})
+            else:
+                todo.append(rel)
+        for key in ("skip_files", "tolerance_overrides", "null_exclude"):
+            for item in entry.get(key, []):
+                if item["path"] not in found:
+                    res["failures"].append("%s lists %r, which is not in the library (stale manifest)" % (key, item["path"]))
+        if not todo:
+            res["failures"].append("every .sf2 of the library is listed in skip_files: nothing is imported or null-tested")
+            res["status"] = "fail"
+            return res
+        root = os.path.join(work, "root")
+        os.makedirs(root)
+        report = os.path.join(work, "import.jsonl")
+        t0 = time.time()
+        rc, text, _ = self.sh([self.tools["librarian"], "import"] + [os.path.join(tree, *r.split("/")) for r in todo] + ["--root", root, "--base", tree, "--report", report],
+                              os.path.join(work, "import.log"))
+        res["import_seconds"] = round(time.time() - t0, 1)
+        info = {}
+        if os.path.isfile(report):
+            with open(report, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    o = json.loads(line)
+                    if o.get("type") == "file":
+                        info[os.path.relpath(os.path.abspath(o["file"]), tree).replace(os.sep, "/")] = o
+        if rc == -999:
+            res["failures"].append("import timed out")
+        elif not info:
+            res["failures"].append("import: the librarian wrote no report line (exit code %s)" % rc)
+        for rel in todo:
+            o = info.get(rel)
+            if o is None:
+                res["import_failed"] += 1
+                res["failures"].append("import: no report line for %s" % rel)
+            elif o["status"] in ("imported", "unchanged"):
+                res["imported"] += 1
+            else:
+                res["import_failed"] += 1
+                res["failures"].append("import %s: %s (%s) %s" % (rel, o["status"], o.get("reason"), "; ".join(str(m).replace(tree + os.sep, "")[:200] for m in o.get("messages", [])[:2]) or o.get("failing_path") or o.get("detail") or ""))
+        res["import_warning_files"] = sum(1 for o in info.values() if o.get("warning_count"))
+        res["regions_total"] = sum(o.get("regions", 0) for o in info.values())
+        res["presets_total"] = sum(o.get("presets", 0) for o in info.values())
+        res["ignored_generators"] = sum(o.get("ignored_generators", 0) for o in info.values())
+        ok = [(rel, info[rel]) for rel in todo if rel in info and info[rel]["status"] in ("imported", "unchanged")]
+        if not ok:
+            res["status"] = "fail"
+            return res
+        picks = self.pick_presets(entry, ok, res, tree)
+        for rel, o, bank, program, pname in picks:
+            bundle = os.path.join(root, "lib", o["library_id"], o["bundle_id"], "bundle.vlb")
+            inst = {"file": rel, "preset": "%d:%d" % (bank, program), "preset_name": pname, "regions": o.get("regions"), "samples": o.get("samples"), "suites": []}
+            res["instruments"].append(inst)
+            itol = tol
+            for ov in entry.get("tolerance_overrides", []):
+                if ov["path"] == rel:
+                    itol = ov["tolerance_db"]
+                    inst["tolerance_db"] = itol
+                    inst["tolerance_reason"] = ov["reason"]
+            midis = midi_suite.write_fluid(os.path.join(work, "midi"), bank, program)
+            for name in midi_suite.SUITES:
+                inst["suites"].append(self.null_one_sf2(tree, rel, bundle, bank, program, name, midis[name], work, itol, res))
+            if all(x.get("oracle_silent") for x in inst["suites"]):
+                res["failures"].append("%s %s: the oracle rendered silence for every probe (the stimulus does not reach the preset's zones); nothing was compared" % (rel, inst["preset"]))
+        if not res["instruments"]:
+            res["failures"].append("no preset was null-tested (no preset to pick, or every candidate was filtered out)")
+        if res["failures"]:
+            res["status"] = "fail"
+        return res
+
+    def pick_presets(self, entry, ok, res, tree):
+        """[(file, import report line, bank, program, name)] to null-test. `null_presets` ('file.sf2#bank:program') names them exactly; otherwise up to
+        `max_null_instruments` presets spread evenly over the sorted (file, bank, program) list of `null_files` (default: every imported file)."""
+        by_rel = dict(ok)
+        allp = {}
+        for rel, _o in ok:
+            try:
+                allp[rel] = sf2_presets(os.path.join(tree, *rel.split("/")))
+            except (cl.CorpusError, OSError) as exc:
+                res["failures"].append("%s: cannot list the presets: %s" % (rel, exc))
+        for rel in list(allp):
+            keys = [(b, p) for b, p, _n in allp[rel]]
+            for b, p in sorted({k for k in keys if keys.count(k) > 1}):
+                res["failures"].append("%s: preset key %d:%d appears more than once (an instrument key must be unique)" % (rel, b, p))
+            for b, p, n in allp[rel]:
+                if b > 16383 or p > 127:
+                    res["failures"].append("%s: preset %r has bank %d / program %d outside 0..16383 / 0..127" % (rel, n, b, p))
+            allp[rel] = [x for x in allp[rel] if x[0] <= 16383 and x[1] <= 127]
+        for rel, o in ok:
+            if rel in allp and o.get("presets") is not None and o["presets"] != len(allp[rel]):
+                res["notes"].append("%s: the importer reports %s presets, the file header lists %d (a preset the importer drops fails its render)" % (rel, o["presets"], len(allp[rel])))
+        wanted = entry.get("null_presets")
+        if wanted:
+            out = []
+            for item in sorted(set(wanted)):
+                m = cl.PRESET_RE.match(item)
+                rel, bank, program = m.group(1), int(m.group(2)), int(m.group(3))
+                names = {(b, p): n for b, p, n in allp.get(rel, [])}
+                if rel not in by_rel or (bank, program) not in names:
+                    res["failures"].append("null_presets lists %r, which is not an imported preset" % item)
+                else:
+                    out.append((rel, by_rel[rel], bank, program, names[(bank, program)]))
+            return out
+        files = entry.get("null_files") or [rel for rel, _o in ok]
+        for rel in files:
+            if rel not in by_rel:
+                res["failures"].append("null_files lists %r, which did not import" % rel)
+        listed = {x["path"]: x["reason"] for x in entry.get("null_exclude", [])}
+        if listed:
+            res["null_excluded_listed"] = [{"path": rel, "reason": why} for rel, why in listed.items() if rel in by_rel]
+        cand = [(rel, by_rel[rel], b, p, n) for rel in sorted(files) if rel in by_rel and rel in allp and rel not in listed for b, p, n in allp[rel]]
+        if not cand:  # nothing else to test: the listed ones stay in
+            cand = [(rel, by_rel[rel], b, p, n) for rel in sorted(files) if rel in by_rel and rel in allp for b, p, n in allp[rel]]
+            res.pop("null_excluded_listed", None)
+        n = int(self.m.get("max_null_instruments", 3))
+        if len(cand) <= n:
+            return cand
+        idx = sorted({round(i * (len(cand) - 1) / max(1, n - 1)) for i in range(n)})
+        return [cand[i] for i in idx]
+
+    def null_one_sf2(self, tree, rel, bundle, bank, program, suite, midis, work, tol, res):
+        key = "%d:%d" % (bank, program)  # the instrument key of an SF2 preset
+        tag = "%s__%s__%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", rel), key.replace(":", "_"), suite)
+        mid_oracle, mid_engine = midis
+        ref, cand = os.path.join(work, tag + ".oracle.wav"), os.path.join(work, tag + ".engine.wav")
+        r = {"suite": suite, "file": rel, "preset": key, "status": "fail"}
+
+        def fail(msg):
+            r["error"] = msg
+            res["failures"].append("%s %s %s: %s" % (rel, key, suite, msg))
+            return r
+
+        try:
+            rc, text, sec = self.sh([self.tools["fluid_sh"], os.path.join(tree, *rel.split("/")), mid_oracle, ref], os.path.join(work, tag + ".oracle.log"),
+                                    env={"VELORA_FLUIDSYNTH": self.tools["fluidsynth"]})
+            r["oracle_seconds"] = round(sec, 1)
+            if rc != 0 or not os.path.isfile(ref):
+                return fail("oracle render failed (rc %s): %s" % (rc, text[-300:].strip()))
+            last_engine = midi_suite.last_event_seconds_fluid(suite, bank, program, engine=True)
+            try:
+                ref_seconds = trim_oracle_wav(ref)
+                if ref_seconds is None:
+                    # Digital silence: nothing to compare, but the engine must be silent too. The player's 2 s of grace would make the reference longer than the
+                    # engine render, so the reference is rewritten as silence of the engine's length. A preset needs at least one probe that is not silent (checked by the caller).
+                    r["oracle_silent"] = True
+                    ref_seconds = last_engine + 0.1
+                    write_silence(ref, ref_seconds)
+                elif ref_seconds < last_engine + 0.01:
+                    # the sound died before the last event (a note off after the decay): pad with silence so both files end at the engine's last event + 10 ms
+                    pad_silence(ref, last_engine + 0.01)
+                    ref_seconds = last_engine + 0.01
+            except (cl.CorpusError, wave.Error, OSError, EOFError) as exc:
+                return fail("oracle output unusable: %s" % exc)
+            t = max(0.01, min(600.0, ref_seconds - last_engine))
+            r["tail_seconds"] = round(t, 2)
+            rc, text, sec = self.sh([self.tools["render"], "--midi", mid_engine, "--out", cand, "--engine", "sample", "--bundle", bundle, "--instrument", key,
+                                     "--gain-db", "0", "--tail-seconds", str(t)], os.path.join(work, tag + ".render.log"))
+            r["render_seconds"] = round(sec, 1)
+            r["render_report"] = text.strip().splitlines()[-1][:300] if text.strip() else ""
+            if rc != 0 or not os.path.isfile(cand):
+                return fail("engine render failed (rc %s): %s" % (rc, text[-300:].strip()))
+            rc, text, _ = self.sh([self.tools["nulltest"], "--reference", ref, "--candidate", cand, "--tolerance-db", str(tol), "--max-offset-frames", "1", "--check-excess"],
+                                  os.path.join(work, tag + ".null.log"))
+            r.update(parse_null(text))
+            r["status"] = "pass" if rc == 0 else "fail"
+            if rc != 0:
+                r["error"] = "null test failed: " + " | ".join(l.strip() for l in text.strip().splitlines()[-4:])
+                res["failures"].append("%s %s %s: residual %s dB vs tolerance %s dB%s" % (rel, key, suite, r.get("residual_db"), tol, " (oracle silent)" if r.get("oracle_silent") else ""))
+            return r
+        finally:  # the renders are large: they go away on every exit path (the logs stay)
+            for p in (ref, cand, ref + ".trim"):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
     def pick_null(self, entry, ok, res, tree=None):
         wanted = entry.get("null_files")
@@ -377,7 +683,7 @@ def cmd_run(args):
     if args.max_null:
         m["max_null_instruments"] = args.max_null
     runner = Runner(args, m)
-    runner.preflight()
+    runner.preflight(selected(m, args.only))
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
     results, failures = [], 0
@@ -414,16 +720,18 @@ def cmd_run(args):
 
 def render_markdown(rep):
     L = ["# Reference corpus report", "", "Generated %s from `%s`." % (rep["generated"], rep["manifest"]), "",
-         "| Library | Status | SFZ imported | Null-tested renders | Worst residual (dB) | Tolerance (dB) |", "|---|---|---|---|---|---|"]
+         "| Library | Format | Status | Imported | Null-tested renders | Worst residual (dB) | Tolerance (dB) |", "|---|---|---|---|---|---|---|"]
     for r in rep["libraries"]:
         suites = [s for i in r["instruments"] for s in i["suites"]]
         resid = [s["residual_db"] for s in suites if s.get("residual_db") is not None]
-        L.append("| %s | %s | %s/%s | %d (%d passed) | %s | %s |" % (r["id"], r["status"].upper(), r.get("imported", 0), r.get("sfz_found", "?"), len(suites),
+        L.append("| %s | %s | %s | %s/%s | %d (%d passed) | %s | %s |" % (r["id"], r.get("format", "sfz").upper(), r["status"].upper(), r.get("imported", 0), r.get("files_found", r.get("sfz_found", "?")), len(suites),
                  sum(s["status"] == "pass" for s in suites), "%.1f" % max(resid) if resid else "n/a", r.get("tolerance_db", "n/a")))
     L += ["", "## Per library", ""]
     for r in rep["libraries"]:
-        L += ["### %s" % r["name"], "", "- source `%s`, version %s, sha256 `%s`" % (r.get("source_url"), r.get("version"), r.get("sha256")),
+        L += ["### %s (%s)" % (r["name"], r.get("format", "sfz").upper()), "", "- source `%s`, version %s, sha256 `%s`" % (r.get("source_url"), r.get("version"), r.get("sha256")),
               "- licence: %s (%s)" % (r.get("license"), r.get("license_url"))]
+        for note in r.get("notes", []):
+            L.append("- note: %s" % note)
         for s in r.get("skipped_listed", []):
             L.append("- skipped (listed in the manifest): `%s`: %s" % (s["path"], s["reason"]))
         for f in r["failures"][:40]:
@@ -438,9 +746,10 @@ def render_markdown(rep):
         if r.get("unsupported_histogram"):
             L.append("- import rejections by cause (count of lines): " + ", ".join("`%s` x%d" % kv for kv in r["unsupported_histogram"].items()))
         for i in r["instruments"]:
-            L.append("- `%s` (%s regions)%s" % (i["file"], i["regions"], (" [recorded tolerance %s dB: %s]" % (i["tolerance_db"], i["tolerance_reason"])) if "tolerance_db" in i else ""))
+            L.append("- `%s`%s (%s regions)%s" % (i["file"], (" preset %s `%s`" % (i["preset"], i.get("preset_name", ""))) if "preset" in i else "", i["regions"], (" [recorded tolerance %s dB: %s]" % (i["tolerance_db"], i["tolerance_reason"])) if "tolerance_db" in i else ""))
             for s in i["suites"]:
-                L.append("    - %s: %s, residual %s dB, worst window %s dB%s" % (s["suite"], s["status"], s.get("residual_db"), s.get("worst_window_db"),
+                L.append("    - %s: %s, residual %s dB, worst window %s dB%s%s" % (s["suite"], s["status"], s.get("residual_db"), s.get("worst_window_db"),
+                         " [oracle silent for this probe]" if s.get("oracle_silent") else "",
                          (" [sfizz random replay%s]" % ("; not aligned: " + ", ".join(s["replay_blockers"]) if s.get("replay_blockers") else "")) if s.get("random_replay") else ""))
         L.append("")
     L += ["## Excluded entries", ""]

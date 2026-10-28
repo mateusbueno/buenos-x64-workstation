@@ -22,7 +22,8 @@ SCHEMA = 1
 ALLOWED_HOSTS = ("codeload.github.com", "github.com", "raw.githubusercontent.com", "objects.githubusercontent.com")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-AUDIO_EXTS = (".wav", ".flac", ".aif", ".aiff", ".ogg", ".opus", ".mp3", ".wv", ".w64")
+# Story 13.11: a SoundFont carries its samples, so it counts as corpus audio (repository guard, local copy set).
+AUDIO_EXTS = (".wav", ".flac", ".aif", ".aiff", ".ogg", ".opus", ".mp3", ".wv", ".w64", ".sf2")
 
 # Limits applied while extracting an archive (all overridable per entry as `limits`).
 DEFAULT_LIMITS = {
@@ -33,6 +34,10 @@ DEFAULT_LIMITS = {
     "max_ratio": 1000,  # uncompressed bytes / archive bytes, a zip-bomb guard on top of the absolute limits
     "max_path_len": 400,
 }
+
+
+FORMATS = ("sfz", "sf2")
+PRESET_RE = re.compile(r"^(.+\.[sS][fF]2)#(\d{1,5}):(\d{1,3})$")
 
 
 class CorpusError(Exception):
@@ -108,6 +113,30 @@ def validate_entry(e):
         sha = e.get(key)
         if sha is not None and not (isinstance(sha, str) and SHA256_RE.match(sha)):
             raise CorpusError("%s: %s must be 64 lowercase hex characters" % (where, key))
+    fmt_kind = e.get("format", "sfz")
+    if fmt_kind not in FORMATS:
+        raise CorpusError("%s: format must be %s" % (where, " or ".join(FORMATS)))
+    if fmt_kind == "sf2" and "tolerance_db" not in e:
+        raise CorpusError(where + ": an sf2 entry needs a recorded tolerance_db (FluidSynth is not sample-exact on real SoundFonts; the default of the SFZ entries does not apply)")
+    presets = e.get("null_presets")
+    if presets is not None:
+        if fmt_kind != "sf2" or not isinstance(presets, list) or not presets:
+            raise CorpusError(where + ": null_presets is a non-empty list and belongs to format sf2")
+        for item in presets:
+            m = PRESET_RE.match(item) if isinstance(item, str) else None
+            if not m or int(m.group(2)) > 16383 or int(m.group(3)) > 127:
+                raise CorpusError(where + ": null_presets items look like 'dir/file.sf2#bank:program', got %r" % (item,))
+            check_rel(m.group(1), where + ".null_presets")
+        if len(set(presets)) != len(presets):
+            raise CorpusError(where + ": null_presets lists a preset twice")
+    if fmt_kind == "sf2":
+        for key in ("skip_files", "null_files", "null_exclude", "tolerance_overrides"):
+            if not isinstance(e.get(key, []), list):
+                raise CorpusError("%s: %s must be a list" % (where, key))
+            for item in e.get(key, []):
+                path = item.get("path") if isinstance(item, dict) else item
+                if isinstance(path, str) and not path.lower().endswith(".sf2"):
+                    raise CorpusError("%s: %s lists %r, which is not an .sf2 file" % (where, key, path))
     tol = e.get("tolerance_db")
     if tol is not None and not (isinstance(tol, (int, float)) and -400 <= tol < 0):
         raise CorpusError(where + ": tolerance_db must be a negative number of dB")
@@ -606,7 +635,7 @@ def _read_stamp(final):
 # ---------------------------------------------------------------------------------------------
 # local_dir sources (supplied by the founder from local disk; see README "Local sources")
 
-LOCAL_EXTS = (".sfz",) + AUDIO_EXTS  # the only files copied into the cache: SFZ text and audio, nothing else (no images, dspreset, .DS_Store, readmes)
+LOCAL_EXTS = (".sfz",) + AUDIO_EXTS  # the only files copied into the cache: SFZ text, SoundFonts and audio, nothing else (no images, dspreset, .DS_Store, readmes)
 
 
 def local_env_name(entry_id):

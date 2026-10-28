@@ -28,3 +28,4 @@ node_modules/
 /tools/corpus/**/*.aiff
 /tools/corpus/**/*.mp3
 /tools/corpus/**/*.wv
+/tools/corpus/**/*.sf2
