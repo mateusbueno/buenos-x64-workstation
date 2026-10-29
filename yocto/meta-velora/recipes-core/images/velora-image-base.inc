@@ -77,6 +77,9 @@ velora_assert_root_locked() {
     if [ ! -f "$shadow" ]; then
         bbfatal "cannot check the root account: $shadow does not exist"
     fi
+    if type zap_empty_root_password >/dev/null 2>&1; then
+        zap_empty_root_password
+    fi
     pw=$(sed -n 's/^root:\([^:]*\):.*/\1/p' "$shadow")
     case "$pw" in
         '*'|'!'*) ;;
