@@ -103,6 +103,8 @@ struct LibraryServiceOptions {
   velora::format::TrustedKeys trusted_keys;
   // Test hook like import_options_hook, for the item of an InstallProtectedRequest.
   std::function<void(std::uint64_t job_id, std::size_t item, InstallOptions&)> install_options_hook;
+  // Story 9.15: Notice callback when a library transfer completes and activates on the unit.
+  std::function<void(const std::string& notice_msg)> on_notice;
 };
 
 class LibraryService {
@@ -188,6 +190,28 @@ class LibraryService {
   void push_job_event(detail::ImportJob& job, const ws::v1::ImportItemResult* item);
   void finish_job(detail::ImportJob& job, bool all_items_processed);
   void trim_finished_jobs();
+  // Story 9.15: Library transfer over USB
+  void handle_free_space_request(Client& c, std::uint64_t rid, const ws::v1::FreeSpaceRequest& req);
+  void handle_stage_chunk_request(Client& c, std::uint64_t rid, const ws::v1::StageChunkRequest& req);
+  void handle_get_transfer_status(Client& c, std::uint64_t rid, const ws::v1::GetTransferStatusRequest& req);
+  void handle_abort_transfer(Client& c, std::uint64_t rid, const ws::v1::AbortTransferRequest& req);
+  struct ActiveTransfer {
+    std::string transfer_id;
+    std::string library_id;
+    std::string library_name;
+    std::uint32_t category_id = 1;
+    std::uint64_t total_bytes = 0;
+    std::uint64_t bytes_written = 0;
+    std::string staging_dir;
+    std::string bundle_path;
+    int fd = -1;
+    std::uint64_t client_id = 0;
+    std::chrono::steady_clock::time_point last_activity{};
+  };
+  void cleanup_transfer(ActiveTransfer& tr);
+  void abort_transfers_of(std::uint64_t client_id);
+  std::map<std::string, ActiveTransfer> transfers_;
+
   void point(const char* name, std::uint64_t job, std::size_t item) {
     if (opts_.import_point_hook) opts_.import_point_hook(name, job, item);
   }

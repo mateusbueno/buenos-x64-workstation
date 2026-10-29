@@ -896,6 +896,150 @@ void test_crash_mid_flush() {
   }
 }
 
+void test_story_9_15_library_transfer() {
+  std::string last_notice;
+  Svc s(5000, [&](LibraryServiceOptions& o) {
+    o.free_bytes_fn = [](const std::string&, std::uint64_t& out) {
+      out = 500ull << 20;  // 500 MB free
+      return true;
+    };
+    o.on_notice = [&](const std::string& msg) {
+      last_notice = msg;
+    };
+  });
+  Client c;
+  CHECK(s.connect(c));
+
+  // 1. FreeSpaceRequest: fits
+  {
+    ws::v1::LibraryClientMessage m;
+    m.mutable_free_space_request()->set_required_bytes(100ull << 20); // 100 MB required + 256 MB reserve <= 500 MB free
+    auto rep = c.call(m);
+    CHECK(rep && rep->has_free_space_reply());
+    if (rep && rep->has_free_space_reply()) {
+      const auto& fs = rep->free_space_reply();
+      CHECK(fs.fits());
+      CHECK(fs.free_known());
+      CHECK(fs.free_bytes() == (500ull << 20));
+      CHECK(fs.required_bytes() == (100ull << 20));
+    }
+  }
+
+  // 2. FreeSpaceRequest: does not fit
+  {
+    ws::v1::LibraryClientMessage m;
+    m.mutable_free_space_request()->set_required_bytes(400ull << 20); // 400 MB + 256 MB reserve > 500 MB free
+    auto rep = c.call(m);
+    CHECK(rep && rep->has_free_space_reply());
+    if (rep && rep->has_free_space_reply()) {
+      const auto& fs = rep->free_space_reply();
+      CHECK(!fs.fits());
+      CHECK(fs.free_known());
+      CHECK(fs.free_bytes() == (500ull << 20));
+    }
+  }
+
+  // 3. StageChunkRequest: chunk streaming & checksum check
+  const std::string tid = "test-transfer-uuid-123";
+  {
+    std::string chunk1 = "VELORA_CHUNK_PART_1_AUDIO_DATA_STAGED";
+    auto digest = velora::format::Sha256::hash({reinterpret_cast<const std::uint8_t*>(chunk1.data()), chunk1.size()});
+    std::string hex = velora::format::to_hex(digest);
+
+    // Bad checksum refusal
+    ws::v1::LibraryClientMessage m_bad;
+    auto* req_bad = m_bad.mutable_stage_chunk_request();
+    req_bad->set_transfer_id(tid);
+    req_bad->set_library_id("viola-caipira-id");
+    req_bad->set_library_name("Viola Caipira");
+    req_bad->set_total_bytes(1000);
+    req_bad->set_chunk_offset(0);
+    req_bad->set_chunk_data(chunk1);
+    req_bad->set_chunk_sha256("0000000000000000000000000000000000000000000000000000000000000000");
+    req_bad->set_is_last_chunk(false);
+
+    auto rep_bad = c.call(m_bad);
+    CHECK(rep_bad && rep_bad->has_error());
+    if (rep_bad && rep_bad->has_error()) {
+      CHECK(rep_bad->error().code() == ws::v1::LIBRARY_ERROR_CODE_CHECKSUM_MISMATCH);
+    }
+
+    // Good chunk 1
+    ws::v1::LibraryClientMessage m_good;
+    auto* req_good = m_good.mutable_stage_chunk_request();
+    req_good->set_transfer_id(tid);
+    req_good->set_library_id("viola-caipira-id");
+    req_good->set_library_name("Viola Caipira");
+    req_good->set_total_bytes(chunk1.size() * 2);
+    req_good->set_chunk_offset(0);
+    req_good->set_chunk_data(chunk1);
+    req_good->set_chunk_sha256(hex);
+    req_good->set_is_last_chunk(false);
+
+    auto rep_good = c.call(m_good);
+    CHECK(rep_good && rep_good->has_stage_chunk_reply());
+    if (rep_good && rep_good->has_stage_chunk_reply()) {
+      CHECK(rep_good->stage_chunk_reply().transfer_id() == tid);
+      CHECK(rep_good->stage_chunk_reply().bytes_received() == chunk1.size());
+      CHECK(rep_good->stage_chunk_reply().next_offset() == chunk1.size());
+      CHECK(!rep_good->stage_chunk_reply().completed());
+    }
+
+    // 4. Query transfer status / resume
+    ws::v1::LibraryClientMessage m_stat;
+    m_stat.mutable_get_transfer_status()->set_transfer_id(tid);
+    auto rep_stat = c.call(m_stat);
+    CHECK(rep_stat && rep_stat->has_stage_chunk_reply());
+    if (rep_stat && rep_stat->has_stage_chunk_reply()) {
+      CHECK(rep_stat->stage_chunk_reply().next_offset() == chunk1.size());
+      CHECK(rep_stat->stage_chunk_reply().bytes_received() == chunk1.size());
+    }
+
+    // 5. Abort transfer: staging is cleaned up
+    ws::v1::LibraryClientMessage m_abort;
+    m_abort.mutable_abort_transfer()->set_transfer_id(tid);
+    auto rep_abort = c.call(m_abort);
+    CHECK(is_ack(rep_abort, true));
+
+    // After abort, transfer status is 0
+    auto rep_stat2 = c.call(m_stat);
+    CHECK(rep_stat2 && rep_stat2->has_stage_chunk_reply());
+    if (rep_stat2 && rep_stat2->has_stage_chunk_reply()) {
+      CHECK(rep_stat2->stage_chunk_reply().next_offset() == 0);
+    }
+
+    // 6. Client disconnect triggers abort_transfers_of and cleans up
+    const std::string tid_disc = "transfer-abort-on-disconnect";
+    {
+      Client c_temp;
+      CHECK(s.connect(c_temp));
+      std::string chunk_temp = "DISCONNECT_TEST_PAYLOAD";
+      auto digest_temp = velora::format::Sha256::hash({reinterpret_cast<const std::uint8_t*>(chunk_temp.data()), chunk_temp.size()});
+      ws::v1::LibraryClientMessage m_init;
+      auto* req_init = m_init.mutable_stage_chunk_request();
+      req_init->set_transfer_id(tid_disc);
+      req_init->set_library_id("disc-lib-id");
+      req_init->set_library_name("Disconnect Lib");
+      req_init->set_total_bytes(50000);
+      req_init->set_chunk_offset(0);
+      req_init->set_chunk_data(chunk_temp);
+      req_init->set_chunk_sha256(velora::format::to_hex(digest_temp));
+      req_init->set_is_last_chunk(false);
+      auto rep = c_temp.call(m_init);
+      CHECK(rep && rep->has_stage_chunk_reply());
+    }
+    // Give service loop time to process dead client and abort transfers
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ws::v1::LibraryClientMessage m_stat_disc;
+    m_stat_disc.mutable_get_transfer_status()->set_transfer_id(tid_disc);
+    auto rep_stat_disc = c.call(m_stat_disc);
+    CHECK(rep_stat_disc && rep_stat_disc->has_stage_chunk_reply());
+    if (rep_stat_disc && rep_stat_disc->has_stage_chunk_reply()) {
+      CHECK(rep_stat_disc->stage_chunk_reply().next_offset() == 0);
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -916,6 +1060,7 @@ int main() {
   test_deletion_reconcile();
   test_persistence_and_single_writer();
   test_catalog_refusals_at_start();
+  test_story_9_15_library_transfer();
   if (g_fail) {
     std::printf("librarian_service_test: %d failure(s)\n", g_fail);
     return 1;

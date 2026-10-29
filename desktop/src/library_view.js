@@ -1,5 +1,11 @@
-// Story 9.14: Library View Controller & Conversion Management
+// Story 9.14 / 9.15: Library View Controller & Conversion & Transfer Management
 import { formatBytes } from "./export_dialog.js";
+
+export function formatTransferLine(name, bytes, total) {
+  const curGb = (Number(bytes || 0) / (1024 * 1024 * 1024)).toFixed(1);
+  const totGb = (Number(total || 0) / (1024 * 1024 * 1024)).toFixed(1);
+  return `Transferring ${name} · ${curGb} of ${totGb} GB`;
+}
 
 export const CANONICAL_CATEGORIES = [
   { id: 1, slug: "piano", key: "category.piano", name: "Piano" },
@@ -47,6 +53,33 @@ export class LibraryViewController {
     this.isConverting = false;
     this.conversionProgress = null; // { taskIndex, totalTasks, currentFile, status, reason, messages }
     this.conversionError = null;
+
+    // Story 9.15: Library Transfer state
+    this.isPaired = false;
+    this.transferState = null; // { transferId, libraryId, libraryName, bytesTransferred, totalBytes, isTransferring }
+    this.transferError = null;
+  }
+
+  setPaired(paired) {
+    this.onConnectionChange(Boolean(paired));
+  }
+
+  onConnectionChange(paired) {
+    const wasTransferring = this.transferState?.isTransferring;
+    this.isPaired = Boolean(paired);
+    if (!this.isPaired && wasTransferring) {
+      const errMsg = this.tr("studio.library.err_connection_lost");
+      this.transferState = null;
+      this.transferError = errMsg;
+      if (this.onError) this.onError(errMsg);
+      if (this.onAnnounce) this.onAnnounce(errMsg);
+    }
+    if (this.onChange) this.onChange();
+  }
+
+  dismissTransferError() {
+    this.transferError = null;
+    if (this.onChange) this.onChange();
   }
 
   setDeviceLibraries(libs = []) {
@@ -217,6 +250,118 @@ export class LibraryViewController {
       await this.loadComputerLibraries();
     } catch (e) {
       if (this.onError) this.onError(e.message || String(e));
+    } finally {
+      if (this.onChange) this.onChange();
+    }
+  }
+
+  // --- Story 9.15: Library Transfer to the unit ---
+
+  async sendToVelora(library) {
+    if (!library || this.transferState?.isTransferring) return;
+    this.transferError = null;
+
+    if (!this.isPaired) {
+      const errMsg = this.tr("studio.library.err_connection_lost");
+      this.transferError = errMsg;
+      if (this.onError) this.onError(errMsg);
+      if (this.onAnnounce) this.onAnnounce(errMsg);
+      if (this.onChange) this.onChange();
+      return;
+    }
+
+    const libName = library.name || library.library_id || "Sound Library";
+    const totalBytes = Number(library.size_bytes ?? library.sizeBytes ?? 0);
+
+    // 1. Space check preflight via ws.v1
+    try {
+      const space = await this.invoke("device_check_library_space", { requiredBytes: totalBytes });
+      if (space && !space.fits) {
+        const reqStr = formatBytes((space.required_bytes || totalBytes) + (space.reserve_bytes || 268435456));
+        const freeStr = formatBytes(space.free_bytes || 0);
+        const errMsg = this.tr("studio.library.err_insufficient_space", reqStr, freeStr);
+        this.transferError = errMsg;
+        if (this.onError) this.onError(errMsg);
+        if (this.onAnnounce) this.onAnnounce(errMsg);
+        if (this.onChange) this.onChange();
+        return;
+      }
+    } catch (e) {
+      const isConnLost = !this.isPaired || String(e).toLowerCase().includes("connection") || String(e).toLowerCase().includes("disconnected");
+      const errMsg = isConnLost ? this.tr("studio.library.err_connection_lost") : (e.message || String(e));
+      this.transferError = errMsg;
+      if (this.onError) this.onError(errMsg);
+      if (this.onAnnounce) this.onAnnounce(errMsg);
+      if (this.onChange) this.onChange();
+      return;
+    }
+
+    // 2. Start transfer state
+    const transferId = `xfer-${library.library_id}`;
+    this.transferState = {
+      transferId,
+      libraryId: library.library_id,
+      libraryName: libName,
+      bytesTransferred: 0,
+      totalBytes,
+      isTransferring: true,
+    };
+    if (this.onAnnounce) {
+      this.onAnnounce(formatTransferLine(libName, 0, totalBytes));
+    }
+    if (this.onChange) this.onChange();
+
+    // 3. Execute transfer streaming
+    try {
+      const res = await this.invoke("device_start_library_transfer", {
+        libraryId: library.library_id,
+        libraryName: libName,
+        bundlePath: library.file_path,
+        categoryId: library.category_id || 1,
+      });
+
+      this.transferState = null;
+      const readyMsg = this.tr("studio.library.ready_notice", libName);
+      if (this.onAnnounce) {
+        this.onAnnounce(readyMsg);
+      }
+    } catch (e) {
+      const isConnLost = !this.isPaired || String(e).toLowerCase().includes("connection") || String(e).toLowerCase().includes("disconnected");
+      const errMsg = isConnLost ? this.tr("studio.library.err_connection_lost") : (e.message || String(e));
+      this.transferState = null;
+      this.transferError = errMsg;
+      if (this.onError) this.onError(errMsg);
+      if (this.onAnnounce) this.onAnnounce(errMsg);
+    } finally {
+      if (this.onChange) this.onChange();
+    }
+  }
+
+  onTransferProgress(prog) {
+    if (!prog || !this.transferState) return;
+    if (prog.transfer_id && this.transferState.transferId && prog.transfer_id !== this.transferState.transferId) return;
+
+    this.transferState.bytesTransferred = Number(prog.bytes_transferred || 0);
+    if (prog.total_bytes) this.transferState.totalBytes = Number(prog.total_bytes);
+
+    if (prog.completed || prog.status === "completed") {
+      const name = this.transferState.libraryName;
+      this.transferState = null;
+      if (this.onAnnounce) {
+        this.onAnnounce(this.tr("studio.library.ready_notice", name));
+      }
+    }
+    if (this.onChange) this.onChange();
+  }
+
+  async cancelTransfer() {
+    if (!this.transferState) return;
+    const tid = this.transferState.transferId;
+    this.transferState = null;
+    try {
+      await this.invoke("device_cancel_library_transfer", { transferId: tid });
+    } catch (e) {
+      // ignore
     } finally {
       if (this.onChange) this.onChange();
     }

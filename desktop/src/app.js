@@ -32,7 +32,7 @@ import { ImportController, COLLISION_ACTION } from "./import_dialog.js";
 import { ImportDialogView } from "./import_dialog_dom.js";
 import { DeviceViewController } from "./device_view.js";
 import { DeviceView } from "./device_view_dom.js";
-import { LibraryViewController } from "./library_view.js";
+import { formatTransferLine, LibraryViewController } from "./library_view.js";
 import { LibraryView } from "./library_view_dom.js";
 import { PairDialogController } from "./pair_dialog.js";
 import { PairDialogView } from "./pair_dialog_dom.js";
@@ -418,6 +418,19 @@ window.addEventListener("DOMContentLoaded", () => {
     const footerStatus = document.getElementById("footer-live-edit-status");
     const unsaved = document.getElementById("footer-unsaved-scope");
     if (!footerStatus) return;
+    if (typeof libraryCtl !== "undefined" && libraryCtl?.transferState?.isTransferring) {
+      footerStatus.classList.remove("foot-writing");
+      footerStatus.textContent = formatTransferLine(
+        libraryCtl.transferState.libraryName,
+        libraryCtl.transferState.bytesTransferred,
+        libraryCtl.transferState.totalBytes
+      );
+      if (unsaved) {
+        unsaved.hidden = true;
+        unsaved.textContent = "";
+      }
+      return;
+    }
     const st = deviceStore.state;
     const sounding = !!st && !!liveCtl.liveSetId && st.live_set_id === liveCtl.liveSetId;
     const f = liveEditFooter(sounding ? st : null);
@@ -1637,6 +1650,7 @@ window.addEventListener("DOMContentLoaded", () => {
         libraryUi.view.render();
         libraryUi.view.renderDialog();
       }
+      paintLiveEditFooter();
     },
     onError: (err) => quietAnnounce(err),
   });
@@ -1715,6 +1729,9 @@ window.addEventListener("DOMContentLoaded", () => {
   if (typeof window !== "undefined" && window.__TAURI__?.event?.listen) {
     window.__TAURI__.event.listen("converter://progress", (event) => {
       libraryCtl.onProgressEvent(event.payload);
+    });
+    window.__TAURI__.event.listen("library_transfer://progress", (event) => {
+      libraryCtl.onTransferProgress(event.payload);
     });
   }
 
@@ -1919,6 +1936,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const wasPaired = deviceLinkPaired;
     isConnected = paired;
     deviceLinkPaired = paired;
+    libraryCtl.setPaired(pairedReal());
     if (paired) {
       if (st.firmware_version) deviceFirmwareVersion = st.firmware_version;
       // Story 9.8: the main area is the real Live Set view. The setlists are read again on every (re)pairing, and the Live Set that was shown is read again too
@@ -1945,6 +1963,7 @@ window.addEventListener("DOMContentLoaded", () => {
       hideSetlistsView(); // the Setlists view is disabled without a paired device
       setlistsCtl.reset();
       libraryCtl.setDeviceLibraries([]);
+      libraryCtl.setPaired(false);
       sidebar.setlists = [];
       sidebar.all = [];
       sidebar.entries.clear();

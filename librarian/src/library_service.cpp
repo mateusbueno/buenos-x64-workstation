@@ -15,13 +15,16 @@
 #include <algorithm>
 #include <cerrno>
 #include <exception>
+#include <fstream>
 #include <cstring>
 #include <filesystem>
 #include <optional>
 #include <set>
 
 #include "import_worker.hpp"
+#include "velora/format/bundle.hpp"
 #include "velora/format/category.hpp"
+#include "velora/format/hash.hpp"
 #include "velora/host/library_resolver.hpp"
 #include "velora/librarian/import.hpp"
 #include "velora/librarian/library_index.hpp"
@@ -287,6 +290,8 @@ void LibraryService::stop() {
   pending_preflights_.clear();
   preflights_.clear();
   estimates_.clear();
+  for (auto& kv : transfers_) cleanup_transfer(kv.second);
+  transfers_.clear();
   for (Client& c : clients_) ::close(c.fd);
   clients_.clear();
   if (recent_dirty_) flush_recent(nullptr);  // orderly shutdown: the last chance to persist Recent, playing or not
@@ -344,6 +349,7 @@ void LibraryService::run() {
           idle_flush();
         }
         cancel_preflights_of(it->id);
+        abort_transfers_of(it->id);
         ::close(it->fd);
         it = clients_.erase(it);
       } else {
@@ -750,6 +756,15 @@ void LibraryService::handle(Client& c, const ws::v1::LibraryClientMessage& msg) 
       return handle_list_preflight_rows(c, rid, msg.list_preflight_rows());
     case M::kCancelPreflight:
       return handle_cancel_preflight(c, rid, msg.cancel_preflight().request_id());
+    // Story 9.15: Library transfer over USB
+    case M::kFreeSpaceRequest:
+      return handle_free_space_request(c, rid, msg.free_space_request());
+    case M::kStageChunkRequest:
+      return handle_stage_chunk_request(c, rid, msg.stage_chunk_request());
+    case M::kGetTransferStatus:
+      return handle_get_transfer_status(c, rid, msg.get_transfer_status());
+    case M::kAbortTransfer:
+      return handle_abort_transfer(c, rid, msg.abort_transfer());
     case M::kImportStatus: {
       const auto it = jobs_.find(msg.import_status().job_id());
       if (it == jobs_.end()) return reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_UNKNOWN_JOB, "no such import job");
@@ -1852,6 +1867,274 @@ void LibraryService::handle_list_preflight_rows(Client& c, std::uint64_t rid, co
   }
   l->set_more(static_cast<std::uint64_t>(req.offset()) + used < count);
   send(c, m);
+}
+
+// --- Story 9.15: Library transfer over USB -------------------------------------------------------------
+
+void LibraryService::handle_free_space_request(Client& c, std::uint64_t rid, const ws::v1::FreeSpaceRequest& req) {
+  std::uint64_t free_now = 0;
+  const bool free_known = free_bytes(free_now);
+  const std::uint64_t reserve = kImportReserveBytes;
+  const std::uint64_t required = req.required_bytes();
+  const bool fits = free_known && (required + reserve <= free_now);
+
+  ws::v1::LibraryServerMessage m;
+  m.set_request_id(rid);
+  auto* rep = m.mutable_free_space_reply();
+  rep->set_free_bytes(free_known ? free_now : 0);
+  rep->set_reserve_bytes(reserve);
+  rep->set_free_known(free_known);
+  rep->set_fits(fits);
+  rep->set_required_bytes(required);
+  send(c, m);
+}
+
+void LibraryService::handle_stage_chunk_request(Client& c, std::uint64_t rid, const ws::v1::StageChunkRequest& req) {
+  const std::string& tid = req.transfer_id();
+  if (tid.empty()) {
+    reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_INVALID_COMMAND, "missing transfer_id");
+    return;
+  }
+  auto it = transfers_.find(tid);
+  if (it == transfers_.end()) {
+    std::uint64_t free_now = 0;
+    const bool free_known = free_bytes(free_now);
+    if (free_known && req.total_bytes() + kImportReserveBytes > free_now) {
+      auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_INSUFFICIENT_SPACE, "insufficient space for library transfer");
+      (*e.mutable_error()->mutable_details())["required_bytes"] = std::to_string(req.total_bytes() + kImportReserveBytes);
+      (*e.mutable_error()->mutable_details())["free_bytes"] = std::to_string(free_now);
+      send(c, e);
+      return;
+    }
+
+    ActiveTransfer tr;
+    tr.transfer_id = tid;
+    tr.library_id = req.library_id();
+    tr.library_name = req.library_name().empty() ? req.library_id() : req.library_name();
+    tr.category_id = req.category_id() == 0 ? 1 : req.category_id();
+    tr.total_bytes = req.total_bytes();
+    tr.bytes_written = 0;
+    tr.client_id = c.id;
+    tr.last_activity = std::chrono::steady_clock::now();
+
+    const std::string staging_root = opts_.data_dir + "/lib/" + kStagingDirName;
+    std::error_code ec;
+    fs::create_directories(staging_root, ec);
+    tr.staging_dir = staging_root + "/transfer-" + tid;
+    fs::create_directories(tr.staging_dir, ec);
+    tr.bundle_path = tr.staging_dir + "/" + host::kBundleFileName;
+    tr.fd = ::open(tr.bundle_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (tr.fd < 0) {
+      reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_STORAGE_FAILED, "cannot create staging bundle file");
+      return;
+    }
+    it = transfers_.emplace(tid, std::move(tr)).first;
+  }
+
+  ActiveTransfer& tr = it->second;
+  tr.client_id = c.id;
+  tr.last_activity = std::chrono::steady_clock::now();
+
+  if (req.chunk_offset() != tr.bytes_written) {
+    ws::v1::LibraryServerMessage rep;
+    rep.set_request_id(rid);
+    auto* sc = rep.mutable_stage_chunk_reply();
+    sc->set_transfer_id(tid);
+    sc->set_next_offset(tr.bytes_written);
+    sc->set_bytes_received(tr.bytes_written);
+    sc->set_completed(false);
+    send(c, rep);
+    return;
+  }
+
+  if (!req.chunk_sha256().empty() && !req.chunk_data().empty()) {
+    const std::string& chunk_bytes = req.chunk_data();
+    auto computed_digest = format::Sha256::hash({reinterpret_cast<const std::uint8_t*>(chunk_bytes.data()), chunk_bytes.size()});
+    std::string computed_hex = format::to_hex(computed_digest);
+    if (computed_hex != req.chunk_sha256()) {
+      auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_CHECKSUM_MISMATCH, "chunk sha256 checksum mismatch");
+      (*e.mutable_error()->mutable_details())["expected"] = req.chunk_sha256();
+      (*e.mutable_error()->mutable_details())["actual"] = computed_hex;
+      send(c, e);
+      return;
+    }
+  }
+
+  const std::string& chunk = req.chunk_data();
+  if (!chunk.empty()) {
+    std::size_t written = 0;
+    while (written < chunk.size()) {
+      ssize_t w = ::write(tr.fd, chunk.data() + written, chunk.size() - written);
+      if (w < 0 && errno == EINTR) continue;
+      if (w <= 0) {
+        reply_error(c, rid, ws::v1::LIBRARY_ERROR_CODE_STORAGE_FAILED, "cannot write chunk data");
+        return;
+      }
+      written += static_cast<std::size_t>(w);
+    }
+    tr.bytes_written += written;
+  }
+
+  bool completed = false;
+  std::string error_msg;
+  if (req.is_last_chunk()) {
+    if (tr.fd >= 0) {
+      ::fsync(tr.fd);
+      ::close(tr.fd);
+      tr.fd = -1;
+    }
+
+    auto br = format::BundleReader::open_file(tr.bundle_path);
+    if (!br) {
+      error_msg = std::string("failed to open bundle: ") + format::to_string(br.error());
+    } else {
+      format::Error ve = br.value().verify_all();
+      if (ve != format::Error::kNone) {
+        error_msg = std::string("bundle verification failed: ") + format::to_string(ve);
+      } else {
+        std::string lib_id = tr.library_id.empty() ? format::uuid_to_string(br.value().library_id()) : tr.library_id;
+        std::string bundle_id = format::to_hex(br.value().bundle_id());
+        std::string lib_dir = opts_.data_dir + "/lib/" + lib_id;
+        std::string bundle_dir = lib_dir + "/" + bundle_id;
+
+        // Write catalog.meta into staging directory prior to atomic rename
+        CatalogMeta cm;
+        cm.format_version = kCatalogMetaFormatVersion;
+        cm.library_name = tr.library_name;
+        cm.source_kind = "converted";
+        for (const auto& inst : br.value().instruments()) {
+          CatalogMetaInstrument mi;
+          mi.key = inst.key;
+          mi.name = inst.name.empty() ? tr.library_name : inst.name;
+          mi.category = static_cast<format::Category>(tr.category_id);
+          cm.instruments.push_back(std::move(mi));
+        }
+        {
+          std::ofstream mf(tr.staging_dir + "/" + kCatalogMetaFileName);
+          mf << catalog_meta_text(cm);
+        }
+
+        std::error_code ec;
+        fs::create_directories(lib_dir, ec);
+        fs::remove_all(bundle_dir, ec);
+
+        if (::rename(tr.staging_dir.c_str(), bundle_dir.c_str()) != 0) {
+          fs::remove_all(tr.staging_dir, ec);
+          error_msg = "failed to rename staged bundle";
+        } else {
+          std::string tmp_link = lib_dir + "/.current.tmp." + std::to_string(::getpid()) + "." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+          ::unlink(tmp_link.c_str());
+          if (::symlink(bundle_id.c_str(), tmp_link.c_str()) == 0) {
+            ::rename(tmp_link.c_str(), (lib_dir + "/current").c_str());
+          }
+
+          LibraryRecord rec;
+          rec.library_id = lib_id;
+          rec.name = tr.library_name;
+          rec.source_kind = "converted";
+          rec.bundle_id = bundle_id;
+          rec.kind = LibraryKind::kUser;
+          for (const auto& inst : br.value().instruments()) {
+            InstrumentRecord ir;
+            ir.key = inst.key;
+            ir.name = inst.name.empty() ? tr.library_name : inst.name;
+            ir.category = tr.category_id;
+            ir.sample_count = static_cast<std::uint32_t>(inst.sample_count);
+            ir.region_count = static_cast<std::uint32_t>(inst.regions.size());
+            ir.bytes = 0;
+            for (std::size_t si = 0; si < inst.sample_count && (inst.first_sample + si) < br.value().samples().size(); ++si) {
+              ir.bytes += br.value().samples()[inst.first_sample + si].frame_count * 4;
+            }
+            rec.instruments.push_back(std::move(ir));
+          }
+
+          bool changed = false;
+          if (catalog_) {
+            catalog_->publish_library(rec, changed);
+            sync_counters();
+          }
+
+          std::string notice_msg = tr.library_name + " ready in Library";
+          if (opts_.on_notice) {
+            opts_.on_notice(notice_msg);
+          }
+
+          completed = true;
+        }
+      }
+    }
+
+    if (!completed) {
+      cleanup_transfer(tr);
+      transfers_.erase(it);
+      auto e = make_error(rid, ws::v1::LIBRARY_ERROR_CODE_TRANSFER_FAILED, error_msg);
+      (*e.mutable_error()->mutable_details())["reason"] = error_msg;
+      send(c, e);
+      return;
+    }
+  }
+
+  ws::v1::LibraryServerMessage rep;
+  rep.set_request_id(rid);
+  auto* sc = rep.mutable_stage_chunk_reply();
+  sc->set_transfer_id(tid);
+  sc->set_next_offset(tr.bytes_written);
+  sc->set_bytes_received(tr.bytes_written);
+  sc->set_completed(completed);
+  send(c, rep);
+
+  if (completed) {
+    transfers_.erase(it);
+  }
+}
+
+void LibraryService::handle_get_transfer_status(Client& c, std::uint64_t rid, const ws::v1::GetTransferStatusRequest& req) {
+  ws::v1::LibraryServerMessage rep;
+  rep.set_request_id(rid);
+  auto* sc = rep.mutable_stage_chunk_reply();
+  sc->set_transfer_id(req.transfer_id());
+  auto it = transfers_.find(req.transfer_id());
+  if (it != transfers_.end()) {
+    sc->set_next_offset(it->second.bytes_written);
+    sc->set_bytes_received(it->second.bytes_written);
+    sc->set_completed(false);
+  } else {
+    sc->set_next_offset(0);
+    sc->set_bytes_received(0);
+    sc->set_completed(false);
+  }
+  send(c, rep);
+}
+
+void LibraryService::handle_abort_transfer(Client& c, std::uint64_t rid, const ws::v1::AbortTransferRequest& req) {
+  auto it = transfers_.find(req.transfer_id());
+  if (it != transfers_.end()) {
+    cleanup_transfer(it->second);
+    transfers_.erase(it);
+  }
+  reply_ack(c, rid, true);
+}
+
+void LibraryService::cleanup_transfer(ActiveTransfer& tr) {
+  if (tr.fd >= 0) {
+    ::close(tr.fd);
+    tr.fd = -1;
+  }
+  if (!tr.staging_dir.empty()) {
+    std::error_code ec;
+    fs::remove_all(tr.staging_dir, ec);
+  }
+}
+
+void LibraryService::abort_transfers_of(std::uint64_t client_id) {
+  for (auto it = transfers_.begin(); it != transfers_.end();) {
+    if (it->second.client_id == client_id) {
+      cleanup_transfer(it->second);
+      it = transfers_.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 }  // namespace velora::librarian

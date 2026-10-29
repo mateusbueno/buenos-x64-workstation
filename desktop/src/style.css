@@ -2737,4 +2737,42 @@ nav.jump a:hover {
   color: var(--muted);
 }
 
+/* Story 9.15: Library Transfer banners and actions */
+.transfer-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-2) var(--spacing-3);
+  background-color: color-mix(in srgb, var(--accent) 15%, var(--card-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-desktop-md);
+  color: var(--text);
+  font-size: var(--font-desktop-body);
+}
+
+.transfer-banner-text {
+  font-weight: 600;
+}
+
+.transfer-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-2) var(--spacing-3);
+  background-color: color-mix(in srgb, var(--danger) 15%, var(--card-bg));
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: var(--radius-desktop-md);
+  color: var(--text);
+  font-size: var(--font-desktop-body);
+}
+
+.transfer-error-text {
+  font-weight: 500;
+}
+
+.library-actions-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
 

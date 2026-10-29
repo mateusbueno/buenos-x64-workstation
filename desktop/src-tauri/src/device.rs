@@ -363,6 +363,55 @@ impl DeviceClient {
         Ok(serde_json::json!({ "timbres": timbres, "libraries": libraries.len(), "total": total, "truncated": truncated }))
     }
 
+    /// Story 9.15: checks free space on device via librarian ws.v1 before starting transfer.
+    pub fn check_library_space(&self, required_bytes: u64) -> Result<crate::ws_v1::FreeSpaceReply, String> {
+        match self.library_call(LBody::FreeSpaceRequest(crate::ws_v1::FreeSpaceRequest { required_bytes })) {
+            Ok(LSBody::FreeSpaceReply(r)) => Ok(r),
+            Ok(_) => Err("unexpected reply to FreeSpaceRequest".to_string()),
+            Err(LibFail::Other(e)) => Err(e),
+            Err(LibFail::Gone) => Err("library service unavailable".to_string()),
+            Err(LibFail::TooLarge) => Err("free space reply too large".to_string()),
+        }
+    }
+
+    /// Story 9.15: stages one bundle chunk with SHA-256 verification.
+    pub fn stage_chunk(&self, req: crate::ws_v1::StageChunkRequest) -> Result<crate::ws_v1::StageChunkReply, String> {
+        match self.library_call(LBody::StageChunkRequest(req)) {
+            Ok(LSBody::StageChunkReply(r)) => Ok(r),
+            Ok(_) => Err("unexpected reply to StageChunkRequest".to_string()),
+            Err(LibFail::Other(e)) => Err(e),
+            Err(LibFail::Gone) => Err("library service unavailable".to_string()),
+            Err(LibFail::TooLarge) => Err("stage chunk reply too large".to_string()),
+        }
+    }
+
+    /// Story 9.15: retrieves transfer status for resuming.
+    pub fn get_transfer_status(&self, transfer_id: &str, library_id: &str) -> Result<crate::ws_v1::StageChunkReply, String> {
+        match self.library_call(LBody::GetTransferStatus(crate::ws_v1::GetTransferStatusRequest {
+            transfer_id: transfer_id.to_string(),
+            library_id: library_id.to_string(),
+        })) {
+            Ok(LSBody::StageChunkReply(r)) => Ok(r),
+            Ok(_) => Err("unexpected reply to GetTransferStatus".to_string()),
+            Err(LibFail::Other(e)) => Err(e),
+            Err(LibFail::Gone) => Err("library service unavailable".to_string()),
+            Err(LibFail::TooLarge) => Err("transfer status reply too large".to_string()),
+        }
+    }
+
+    /// Story 9.15: aborts transfer and cleans staging on device.
+    pub fn abort_transfer(&self, transfer_id: &str) -> Result<(), String> {
+        match self.library_call(LBody::AbortTransfer(crate::ws_v1::AbortTransferRequest {
+            transfer_id: transfer_id.to_string(),
+        })) {
+            Ok(LSBody::Ack(_)) => Ok(()),
+            Ok(_) => Err("unexpected reply to AbortTransfer".to_string()),
+            Err(LibFail::Other(e)) => Err(e),
+            Err(LibFail::Gone) => Err("library service unavailable".to_string()),
+            Err(LibFail::TooLarge) => Err("abort reply too large".to_string()),
+        }
+    }
+
     /// PairRequest with the code the unit shows. Ok when paired (the client then subscribes by itself); Err with the typed code otherwise
     /// ("PAIRING_CODE_INVALID (4 attempts left)", "PAIRING_CLOSED (expired)", ...).
     pub fn pair(&self, code: &str, computer_name: &str) -> Result<(), String> {
@@ -1221,6 +1270,40 @@ mod tests {
                 let rows: Vec<InstrumentInfo> = (l.offset..end).map(|k| InstrumentInfo { instrument_key: format!("{}-k{}", lid, k), name: format!("{} {}", lid, k), category: 1 + (k % 17), ..Default::default() }).collect();
                 wrap(LSBody::InstrumentList(InstrumentList { library_id: l.library_id.clone(), instruments: rows, total: *count, offset: l.offset, more: end < *count }))
             }
+            Some(LBody::FreeSpaceRequest(req)) => {
+                let free = 500 * 1024 * 1024; // 500 MB
+                let reserve = 256 * 1024 * 1024;
+                let fits = req.required_bytes + reserve <= free;
+                wrap(LSBody::FreeSpaceReply(crate::ws_v1::FreeSpaceReply {
+                    free_bytes: free,
+                    reserve_bytes: reserve,
+                    free_known: true,
+                    fits,
+                    required_bytes: req.required_bytes,
+                }))
+            }
+            Some(LBody::StageChunkRequest(req)) => {
+                let next_offset = req.chunk_offset + req.chunk_data.len() as u64;
+                wrap(LSBody::StageChunkReply(crate::ws_v1::StageChunkReply {
+                    transfer_id: req.transfer_id,
+                    next_offset,
+                    bytes_received: next_offset,
+                    completed: req.is_last_chunk,
+                    error_message: String::new(),
+                }))
+            }
+            Some(LBody::GetTransferStatus(req)) => {
+                wrap(LSBody::StageChunkReply(crate::ws_v1::StageChunkReply {
+                    transfer_id: req.transfer_id,
+                    next_offset: 0,
+                    bytes_received: 0,
+                    completed: false,
+                    error_message: String::new(),
+                }))
+            }
+            Some(LBody::AbortTransfer(_)) => {
+                wrap(LSBody::Ack(crate::ws_v1::LibraryAck { changed: true }))
+            }
             _ => wrap(LSBody::Error(LibraryError { code: LibraryErrorCode::InvalidCommand as i32, message: "not on the allow-list".into(), ..Default::default() })),
         }
     }
@@ -1518,6 +1601,53 @@ mod tests {
         drop(b);
         c.disconnect();
         assert!(c.list_timbres(10).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_library_transfer_protocol_flow() {
+        let b = FakeBridge::start(0, &["studio-transfer"], Mode::Normal);
+        let (c, _ev) = client_with_events("studio-transfer");
+        let dir = tmpdir("xfer");
+        with_token(&c, &dir, "velora-test", "studio-transfer");
+        c.connect("127.0.0.1", b.port);
+        assert!(wait_for(|| c.status().status == LinkStatus::Paired));
+
+        // 1. Space check
+        let sp_ok = c.check_library_space(100 * 1024 * 1024).unwrap();
+        assert!(sp_ok.fits);
+        assert_eq!(sp_ok.free_bytes, 500 * 1024 * 1024);
+
+        let sp_fail = c.check_library_space(400 * 1024 * 1024).unwrap();
+        assert!(!sp_fail.fits);
+
+        // 2. Stage chunk
+        let tid = "test-xfer-1";
+        let req = crate::ws_v1::StageChunkRequest {
+            transfer_id: tid.to_string(),
+            library_id: "viola-caipira".to_string(),
+            library_name: "Viola Caipira".to_string(),
+            total_bytes: 1000,
+            chunk_offset: 0,
+            chunk_data: b"CHUNK_1_DATA".to_vec(),
+            chunk_sha256: "somehash".to_string(),
+            is_last_chunk: false,
+            category_id: 1,
+        };
+        let sc = c.stage_chunk(req).unwrap();
+        assert_eq!(sc.transfer_id, tid);
+        assert_eq!(sc.next_offset, 12);
+        assert!(!sc.completed);
+
+        // 3. Status
+        let st = c.get_transfer_status(tid, "viola-caipira").unwrap();
+        assert_eq!(st.transfer_id, tid);
+
+        // 4. Abort
+        assert!(c.abort_transfer(tid).is_ok());
+
+        drop(b);
+        c.disconnect();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

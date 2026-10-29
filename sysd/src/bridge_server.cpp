@@ -156,6 +156,11 @@ const std::vector<BridgeServer::LibraryRule>& BridgeServer::library_rules() {
       {L::kListPreflightRows, "list_preflight_rows", false},
       {L::kCancelPreflight, "cancel_preflight", true},  // harmless without a PreflightRequest; its inner request_id is translated anyway
       {L::kInstallProtected, "install_protected", false},
+      // Story 9.15: library transfer over USB
+      {L::kFreeSpaceRequest, "free_space_request", true},
+      {L::kStageChunkRequest, "stage_chunk_request", true},
+      {L::kGetTransferStatus, "get_transfer_status", true},
+      {L::kAbortTransfer, "abort_transfer", true},
   };
   return t;
 }

@@ -38,6 +38,9 @@ enum LibraryErrorCode {
   LIBRARY_ERROR_CODE_FACTORY_LIBRARY_PROTECTED = 18;  // an import (user import path) whose library_id is an installed Factory library: refused before anything is queued or written (details: path, library_id, reason=factory_library_protected). The same refusal found by the importer itself, after the request was accepted, ends the item FAILED with detail starting `factory_library_protected`
   // Story 8.12 (additive).
   LIBRARY_ERROR_CODE_RECONCILING = 19;         // the startup reconcile pass has not finished: no command is served yet (retry shortly; the handshake itself is answered). Nothing was changed
+  // Story 9.15 (additive).
+  LIBRARY_ERROR_CODE_TRANSFER_FAILED = 20;     // library transfer, staging, or publish failed
+  LIBRARY_ERROR_CODE_CHECKSUM_MISMATCH = 21;   // per-chunk sha256 checksum mismatch
   // INVALID_COMMAND with details.reason=empty_reconcile: a Reconcile whose list is empty while the catalog is not (see Reconcile).
 }
 
@@ -412,6 +415,48 @@ message PreflightRowList {
   bool more = 5;
 }
 
+// --- Story 9.15: library transfer over USB (ws.v1 / mediated sysd bridge) ---------------------------
+message FreeSpaceRequest {
+  uint64 required_bytes = 1;
+}
+
+message FreeSpaceReply {
+  uint64 free_bytes = 1;
+  uint64 reserve_bytes = 2;
+  bool free_known = 3;
+  bool fits = 4;
+  uint64 required_bytes = 5;
+}
+
+message StageChunkRequest {
+  string transfer_id = 1;
+  string library_id = 2;
+  string library_name = 3;
+  uint64 total_bytes = 4;
+  uint64 chunk_offset = 5;
+  bytes chunk_data = 6;
+  string chunk_sha256 = 7;
+  bool is_last_chunk = 8;
+  uint32 category_id = 9;
+}
+
+message StageChunkReply {
+  string transfer_id = 1;
+  uint64 next_offset = 2;
+  uint64 bytes_received = 3;
+  bool completed = 4;
+  string error_message = 5;
+}
+
+message GetTransferStatusRequest {
+  string transfer_id = 1;
+  string library_id = 2;
+}
+
+message AbortTransferRequest {
+  string transfer_id = 1;
+}
+
 message LibraryClientMessage {
   uint64 request_id = 1;
   oneof body {
@@ -434,6 +479,10 @@ message LibraryClientMessage {
     ListPreflightRows list_preflight_rows = 18;
     CancelPreflight cancel_preflight = 19;
     InstallProtectedRequest install_protected = 20;  // Story 6.4
+    FreeSpaceRequest free_space_request = 21;        // Story 9.15
+    StageChunkRequest stage_chunk_request = 22;
+    GetTransferStatusRequest get_transfer_status = 23;
+    AbortTransferRequest abort_transfer = 24;
   }
 }
 
@@ -453,5 +502,7 @@ message LibraryServerMessage {
     ImportProgress import_progress = 12;        // a push (request_id 0) or the answer to ImportStatusRequest
     PreflightDone preflight_done = 13;          // Story 5.7
     PreflightRowList preflight_rows = 14;
+    FreeSpaceReply free_space_reply = 15;       // Story 9.15
+    StageChunkReply stage_chunk_reply = 16;
   }
 }

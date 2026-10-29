@@ -1,6 +1,6 @@
-// Story 9.14: Accessible DOM layout and view for Library Management and SFZ/SF2 conversion
+// Story 9.14 / 9.15: Accessible DOM layout and view for Library Management and SFZ/SF2 conversion & USB transfer
 import { formatBytes } from "./export_dialog.js";
-import { CANONICAL_CATEGORIES } from "./library_view.js";
+import { CANONICAL_CATEGORIES, formatTransferLine } from "./library_view.js";
 
 export class LibraryView {
   constructor({
@@ -104,6 +104,58 @@ export class LibraryView {
     header.appendChild(titleGroup);
     header.appendChild(actions);
     this.host.appendChild(header);
+
+    // Story 9.15: Transfer progress banner
+    if (ctl.transferState) {
+      const banner = this.doc.createElement("div");
+      banner.className = "transfer-banner";
+      banner.setAttribute("role", "status");
+      banner.setAttribute("aria-live", "polite");
+
+      const text = this.doc.createElement("span");
+      text.className = "transfer-banner-text";
+      text.textContent = formatTransferLine(
+        ctl.transferState.libraryName,
+        ctl.transferState.bytesTransferred,
+        ctl.transferState.totalBytes
+      );
+
+      const cancelBtn = this.doc.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn btn-sm btn-cancel-transfer";
+      cancelBtn.textContent = this.tr("studio.library.btn_cancel_transfer");
+      cancelBtn.addEventListener("click", () => {
+        ctl.cancelTransfer();
+      });
+
+      banner.appendChild(text);
+      banner.appendChild(cancelBtn);
+      this.host.appendChild(banner);
+    }
+
+    // Story 9.15: Transfer error banner
+    if (ctl.transferError) {
+      const errBanner = this.doc.createElement("div");
+      errBanner.className = "transfer-error-banner";
+      errBanner.setAttribute("role", "alert");
+
+      const errText = this.doc.createElement("span");
+      errText.className = "transfer-error-text";
+      errText.textContent = ctl.transferError;
+
+      const dismissBtn = this.doc.createElement("button");
+      dismissBtn.type = "button";
+      dismissBtn.className = "btn btn-sm btn-dismiss-error";
+      dismissBtn.textContent = "✕";
+      dismissBtn.setAttribute("aria-label", "Dismiss error");
+      dismissBtn.addEventListener("click", () => {
+        ctl.dismissTransferError();
+      });
+
+      errBanner.appendChild(errText);
+      errBanner.appendChild(dismissBtn);
+      this.host.appendChild(errBanner);
+    }
 
     // Tab switcher (On Computer vs On Velora)
     const tabNav = this.doc.createElement("nav");
@@ -243,12 +295,24 @@ export class LibraryView {
 
         // Actions
         const tdAct = this.doc.createElement("td");
+        tdAct.className = "library-actions-cell";
         if (ctl.activeTab === "computer") {
+          const sendBtn = this.doc.createElement("button");
+          sendBtn.type = "button";
+          sendBtn.className = "btn btn-primary btn-sm btn-send-to-velora";
+          sendBtn.textContent = this.tr("studio.library.btn_send_to_velora");
+          sendBtn.setAttribute("aria-label", `${this.tr("studio.library.btn_send_to_velora")} ${lib.name || lib.library_id}`);
+          sendBtn.disabled = !ctl.isPaired || Boolean(ctl.transferState?.isTransferring);
+          sendBtn.addEventListener("click", () => {
+            ctl.sendToVelora(lib);
+          });
+
           const delBtn = this.doc.createElement("button");
           delBtn.type = "button";
-          delBtn.className = "btn btn-danger btn-sm";
+          delBtn.className = "btn btn-danger btn-sm btn-delete-library";
           delBtn.textContent = this.tr("studio.library.delete_btn");
           delBtn.setAttribute("aria-label", `${this.tr("studio.library.delete_btn")} ${lib.name || lib.library_id}`);
+          delBtn.disabled = Boolean(ctl.transferState?.isTransferring);
           delBtn.addEventListener("click", async () => {
             if (typeof window !== "undefined" && window.confirm) {
               const ok = window.confirm(this.tr("studio.library.delete_confirm", lib.name || lib.library_id));
@@ -257,6 +321,8 @@ export class LibraryView {
             await ctl.deleteComputerLibrary(lib.library_id);
             this.render();
           });
+
+          tdAct.appendChild(sendBtn);
           tdAct.appendChild(delBtn);
         } else {
           tdAct.textContent = "—";

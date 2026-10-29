@@ -718,6 +718,203 @@ async fn converter_start_conversion(
     .map_err(|e| e.to_string())?
 }
 
+// Story 9.15: Library transfer over USB
+static TRANSFER_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+async fn device_check_library_space(
+    required_bytes: u64,
+    dev: State<'_, DeviceHandle>,
+) -> Result<serde_json::Value, String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let reply = client.check_library_space(required_bytes)?;
+        serde_json::to_value(&reply).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn device_get_transfer_status(
+    transfer_id: String,
+    library_id: String,
+    dev: State<'_, DeviceHandle>,
+) -> Result<serde_json::Value, String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let reply = client.get_transfer_status(&transfer_id, &library_id)?;
+        serde_json::to_value(&reply).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn device_cancel_library_transfer(
+    transfer_id: String,
+    dev: State<'_, DeviceHandle>,
+) -> Result<(), String> {
+    TRANSFER_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = client.abort_transfer(&transfer_id);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn device_start_library_transfer(
+    library_id: String,
+    library_name: String,
+    bundle_path: Option<String>,
+    category_id: Option<u32>,
+    cache_dir: Option<String>,
+    dev: State<'_, DeviceHandle>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    TRANSFER_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+    let client = dev.client.clone();
+    let app_clone = app.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // 1. Locate bundle file
+        let path = if let Some(ref p) = bundle_path {
+            std::path::PathBuf::from(p)
+        } else {
+            let root = cache_dir.map(std::path::PathBuf::from).unwrap_or_else(|| {
+                let app_data = app_clone.path().app_data_dir().ok();
+                converter::get_converted_libraries_root(app_data.as_deref())
+            });
+            let lib_dir = root.join("lib").join(&library_id);
+            let current = lib_dir.join("current");
+            let target = if current.exists() {
+                std::fs::read_link(&current).map(|p| lib_dir.join(p)).unwrap_or_else(|_| lib_dir.clone())
+            } else {
+                lib_dir.clone()
+            };
+            if target.join("bundle.vlb").exists() {
+                target.join("bundle.vlb")
+            } else if target.join("bundle.vlrp").exists() {
+                target.join("bundle.vlrp")
+            } else {
+                target
+            }
+        };
+
+        let file_exists = path.exists() && path.is_file();
+        let total_bytes = if file_exists {
+            std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
+        } else {
+            0
+        };
+
+        if !file_exists || total_bytes == 0 {
+            return Err(format!("bundle file not found or empty: {}", path.display()));
+        }
+
+        // 2. Space check preflight via ws.v1
+        let space = client.check_library_space(total_bytes)?;
+        if space.free_known && !space.fits {
+            return Err(format!(
+                "insufficient space: required {} B, free {} B",
+                space.required_bytes + space.reserve_bytes,
+                space.free_bytes
+            ));
+        }
+
+        // 3. Transfer ID
+        let transfer_id = format!("xfer-{}", library_id);
+        const CHUNK_SIZE: usize = 65536; // 64 KB
+
+        let mut offset: u64 = 0;
+        if let Ok(st) = client.get_transfer_status(&transfer_id, &library_id) {
+            if st.next_offset > 0 && st.next_offset < total_bytes {
+                offset = st.next_offset;
+            }
+        }
+
+        let mut bytes_transferred = offset;
+        use sha2::Digest;
+        use std::io::{Read, Seek, SeekFrom};
+
+        let mut file = std::fs::File::open(&path).map_err(|e| format!("failed to open bundle: {}", e))?;
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
+        }
+
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_millis(200);
+
+        while bytes_transferred < total_bytes {
+            if TRANSFER_CANCEL.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = client.abort_transfer(&transfer_id);
+                return Err("transfer cancelled".to_string());
+            }
+
+            let to_read = std::cmp::min(CHUNK_SIZE as u64, total_bytes - bytes_transferred) as usize;
+            let n = file.read(&mut buffer[..to_read]).map_err(|e| format!("read error: {}", e))?;
+            if n == 0 {
+                break;
+            }
+
+            let chunk_data = &buffer[..n];
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(chunk_data);
+            let sha256_hex = format!("{:x}", hasher.finalize());
+
+            let is_last_chunk = (bytes_transferred + n as u64) >= total_bytes;
+
+            let req = crate::ws_v1::StageChunkRequest {
+                transfer_id: transfer_id.clone(),
+                library_id: library_id.clone(),
+                library_name: library_name.clone(),
+                total_bytes,
+                chunk_offset: bytes_transferred,
+                chunk_data: chunk_data.to_vec(),
+                chunk_sha256: sha256_hex,
+                is_last_chunk,
+                category_id: category_id.unwrap_or(1),
+            };
+
+            let reply = client.stage_chunk(req)?;
+            bytes_transferred = reply.next_offset;
+
+            let now = std::time::Instant::now();
+            if reply.completed || is_last_chunk || now.duration_since(last_emit).as_millis() >= 100 {
+                last_emit = now;
+                let prog = serde_json::json!({
+                    "transfer_id": transfer_id,
+                    "library_id": library_id,
+                    "library_name": library_name,
+                    "bytes_transferred": bytes_transferred,
+                    "total_bytes": total_bytes,
+                    "completed": reply.completed,
+                    "status": if reply.completed { "completed" } else { "transferring" },
+                });
+                let _ = app_clone.emit("library_transfer://progress", &prog);
+            }
+
+            if reply.completed {
+                break;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "transfer_id": transfer_id,
+            "library_id": library_id,
+            "library_name": library_name,
+            "bytes_transferred": bytes_transferred,
+            "total_bytes": total_bytes,
+            "status": "completed",
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn make_device_handle() -> DeviceHandle {
     let app: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let app2 = app.clone();
@@ -820,6 +1017,10 @@ fn main() {
             converter_start_conversion,
             converter_cancel_conversion,
             converter_delete_library,
+            device_check_library_space,
+            device_start_library_transfer,
+            device_cancel_library_transfer,
+            device_get_transfer_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");
