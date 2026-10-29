@@ -30,6 +30,8 @@ import { ExportController, EXPORT_SCOPE } from "./export_dialog.js";
 import { ExportDialogView } from "./export_dialog_dom.js";
 import { ImportController, COLLISION_ACTION } from "./import_dialog.js";
 import { ImportDialogView } from "./import_dialog_dom.js";
+import { DeviceViewController } from "./device_view.js";
+import { DeviceView } from "./device_view_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -261,6 +263,7 @@ window.addEventListener("DOMContentLoaded", () => {
       updateManageButton();
       if (setlistsUi.view) { setlistsUi.view.setLabels(); setlistsUi.view.render(); } // Story 9.13: the Setlists view follows the language
       if (writeUi.banner) writeUi.banner.setLabels(); // Story 9.12
+      if (deviceUi.view) { deviceUi.view.setLabels(); } // Story 9.21: Device view follows the language
     });
   }
 
@@ -286,9 +289,22 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-cancel-restore")?.addEventListener("click", closeModals);
   backdrop?.addEventListener("click", closeModals);
 
+  const isAnyModalOpen = () => {
+    return Boolean(
+      (modal && modal.classList.contains("active")) ||
+      (restoreModal && restoreModal.classList.contains("active")) ||
+      (backdrop && backdrop.classList.contains("active")) ||
+      document.querySelector(".modal-dialog-container")
+    );
+  };
+
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      closeModals();
+      if (isAnyModalOpen()) {
+        closeModals();
+      } else if (deviceUi.open) {
+        closeDeviceView(true);
+      }
     }
   });
 
@@ -621,6 +637,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Render Full Studio Part Editor
   function renderEditor() {
+    if (setlistsUi.open || deviceUi.open) return;
     if (pairedReal()) {
       renderPairedEditor(); // Story 9.8 / 9.9: the real Live Set view and the real Part Editor (the simulated editor stays for offline)
       return;
@@ -921,7 +938,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderPairedEditor() {
-    if (setlistsUi.open) return; // the Setlists view (Story 9.13) owns the main area until a Live Set is chosen or it is closed
+    if (setlistsUi.open || deviceUi.open) return; // the Setlists view (Story 9.13) or Device view (Story 9.21) owns the main area until a Live Set is chosen or it is closed
     buildLiveGrids();
     setGridLabels(liveEls.scenes, liveEls.parts, tr); // follows a language change
     document.getElementById("offline-empty-card").style.display = "none";
@@ -1356,6 +1373,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   function selectLiveSet(id) {
     closeSetlistsView(false); // choosing a Live Set in the sidebar goes back to the Live Set view
+    closeDeviceView(false); // choosing a Live Set also closes the Device view
     liveCtl.select(id).then(() => updateSidebarMarkers());
     updateSidebarMarkers();
   }
@@ -1396,6 +1414,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   function openSetlistsView() {
     if (!pairedReal()) return;
+    if (deviceUi.open) hideDeviceView();
     ensureSetlistsView();
     setlistsUi.open = true;
     document.getElementById("offline-empty-card").style.display = "none";
@@ -1421,10 +1440,83 @@ window.addEventListener("DOMContentLoaded", () => {
   manageBtn?.addEventListener("click", openSetlistsView);
   updateManageButton();
 
+  // ---- Device view (Story 9.21) -------------------------------------------------------------------------------------------------------------------------
+  // Left sidebar > DEVICE (Storage, Firmware, Backups) opens the Device view in the main area: hardware overview (Model, Tier, Firmware, Variant), storage breakdown
+  // (meter, total/used/free, installed sound libraries table), firmware status, backup & restore actions, and diagnostics export.
+  const deviceUi = { open: false, previousView: "editor", view: null };
+  const deviceCtl = new DeviceViewController({
+    invoke: (cmd, args) => {
+      if (window.__TAURI__?.core?.invoke) {
+        return window.__TAURI__.core.invoke(cmd, args);
+      }
+      return Promise.reject(new Error("Tauri not available"));
+    },
+    onAnnounce: (msg) => quietAnnounce(typeof msg === "object" ? tr(msg.key, ...msg.args) : msg),
+    tr: (key, ...args) => tr(key, ...args),
+    onChange: () => { if (deviceUi.view) deviceUi.view.render(); },
+  });
+  if (cachedBackupTime) {
+    deviceCtl.setBackupTime(cachedBackupTime);
+  }
+
+  function ensureDeviceView() {
+    if (deviceUi.view) return;
+    deviceUi.view = new DeviceView({
+      doc: document,
+      host: document.getElementById("device-view"),
+      tr: (key, ...args) => tr(key, ...args),
+      controller: deviceCtl,
+      announce: quietAnnounce,
+      onBack: () => closeDeviceView(true),
+      onBackup: () => document.getElementById("btn-backup")?.click(),
+      onRestore: () => document.getElementById("btn-restore")?.click(),
+    });
+  }
+
+  function openDeviceView(section = "overview") {
+    ensureDeviceView();
+    if (!deviceUi.open) {
+      deviceUi.previousView = setlistsUi.open ? "setlists" : "editor";
+    }
+    if (setlistsUi.open) hideSetlistsView();
+    deviceUi.open = true;
+    document.getElementById("offline-empty-card").style.display = "none";
+    liveEls.container.style.display = "none";
+    deviceCtl.open(section);
+    deviceUi.view.show();
+    if (pairedReal()) {
+      deviceCtl.loadStorage().catch(() => {});
+    }
+  }
+
+  function hideDeviceView() {
+    if (!deviceUi.open) return;
+    deviceUi.open = false;
+    if (deviceUi.view) deviceUi.view.hide();
+  }
+
+  function closeDeviceView(focusSidebar) {
+    if (!deviceUi.open) return;
+    hideDeviceView();
+    if (deviceUi.previousView === "setlists") {
+      openSetlistsView();
+    } else {
+      renderEditor();
+    }
+    if (focusSidebar) {
+      document.getElementById("side-storage")?.focus();
+    }
+  }
+
+  document.getElementById("side-storage")?.addEventListener("click", () => openDeviceView("storage"));
+  document.getElementById("side-firmware")?.addEventListener("click", () => openDeviceView("firmware"));
+  document.getElementById("side-backups")?.addEventListener("click", () => openDeviceView("backups"));
+
   // What every State push does for the view: the model follows it at once; the sidebar follows the setlists' revision (throttled) and the sounding Live Set; and the
   // first time a Live Set sounds with nothing selected, that one is shown.
   function onDeviceState(st) {
     if (!st || !pairedReal()) return;
+    deviceCtl.setDeviceState(st);
     liveCtl.onState(st);
     partEditorCtl.onState(st);
     writeUi.ctl.onState(st); // Story 9.12: an open Write dialog follows it; an unconfirmed Write is judged by it after a reconnect
@@ -1543,6 +1635,7 @@ window.addEventListener("DOMContentLoaded", () => {
   let pairPromptedFor = null;
   function applyDeviceStatus(st) {
     if (!st || !st.configured) return; // no real device configured: the simulation stays
+    deviceCtl.setDeviceStatus(st);
     const wasLinked = deviceLinkActive;
     deviceLinkActive = true;
     deviceStore.status = st;
@@ -1860,6 +1953,7 @@ window.addEventListener("DOMContentLoaded", () => {
         .then((b) => {
           const nowStr = new Date().toLocaleString();
           localStorage.setItem("velora_last_backup_" + currentDeviceId, nowStr);
+          deviceCtl.setBackupTime(nowStr);
           announce(localeMgr.tr("studio.backup.success"));
         })
         .catch((err) => {

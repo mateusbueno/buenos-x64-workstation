@@ -564,6 +564,88 @@ async fn device_library_timbres(dev: State<'_, DeviceHandle>) -> Result<serde_js
     tauri::async_runtime::spawn_blocking(move || client.list_timbres(device::MAX_PICKER_TIMBRES)).await.map_err(|e| e.to_string())?
 }
 
+/// Story 9.21: fetches device diagnostics (in-RAM health counters and latency/render histograms).
+#[tauri::command]
+async fn get_device_diagnostics(dev: State<'_, DeviceHandle>) -> Result<device::DiagnosticReport, String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let diag = client.fetch_diagnostics()?;
+        let st = client.status();
+        let state = client.latest_state();
+        let tier = state.as_ref()
+            .and_then(|s| s.get("tier"))
+            .and_then(|t| t.get("name"))
+            .and_then(|n| n.as_str())
+            .map(|n| if n.eq_ignore_ascii_case("pro") { "Pro" } else { "Stage" })
+            .unwrap_or("Stage");
+        let image_variant = if st.model.as_deref().map(|m| m.contains("DEV")).unwrap_or(false) {
+            "Development"
+        } else {
+            "Production"
+        };
+        let now = chrono_now();
+        let json_str = device::create_diagnostics_export(&st, tier, image_variant, &diag, &now)?;
+        serde_json::from_str(&json_str).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn get_diagnostics(dev: State<'_, DeviceHandle>) -> Result<device::DiagnosticReport, String> {
+    get_device_diagnostics(dev).await
+}
+
+/// Story 9.21: saves formatted, sanitized diagnostics JSON to file_path.
+#[tauri::command]
+async fn save_diagnostics_export(
+    file_path: String,
+    content: Option<String>,
+    dev: State<'_, DeviceHandle>,
+) -> Result<String, String> {
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::Path::new(&file_path);
+        let final_content = match content {
+            Some(c) => {
+                device::sanitize_diagnostics_json(&c)?;
+                c
+            }
+            None => {
+                let diag = client.fetch_diagnostics()?;
+                let st = client.status();
+                let state = client.latest_state();
+                let tier = state.as_ref()
+                    .and_then(|s| s.get("tier"))
+                    .and_then(|t| t.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|n| if n.eq_ignore_ascii_case("pro") { "Pro" } else { "Stage" })
+                    .unwrap_or("Stage");
+                let image_variant = if st.model.as_deref().map(|m| m.contains("DEV")).unwrap_or(false) {
+                    "Development"
+                } else {
+                    "Production"
+                };
+                let now = chrono_now();
+                device::create_diagnostics_export(&st, tier, image_variant, &diag, &now)?
+            }
+        };
+        device::save_diagnostics_file(path, &final_content)?;
+        Ok(file_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn export_diagnostics(
+    file_path: String,
+    content: Option<String>,
+    dev: State<'_, DeviceHandle>,
+) -> Result<String, String> {
+    save_diagnostics_export(file_path, content, dev).await
+}
+
 fn make_device_handle() -> DeviceHandle {
     let app: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let app2 = app.clone();
@@ -651,6 +733,10 @@ fn main() {
             device_state,
             device_request,
             device_library_timbres,
+            get_device_diagnostics,
+            get_diagnostics,
+            save_diagnostics_export,
+            export_diagnostics,
             estimate_export_size,
             export_selection,
             cancel_export,

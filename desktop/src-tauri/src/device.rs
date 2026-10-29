@@ -17,7 +17,7 @@
 // "version-mismatch". The latest engine State is kept (`latest_state()`) and every State message (reply or push) is emitted as `device://state`.
 // The physical USB link is the trust boundary (no TLS): the pairing code is a physical-presence check, not cryptography.
 use crate::ws_v1::{
-    client_message::Body as CBody, library_client_message::Body as LBody, library_server_message::Body as LSBody, server_message::Body as SBody, ClientMessage, ErrorCode, Hello,
+    client_message::Body as CBody, library_client_message::Body as LBody, library_server_message::Body as LSBody, server_message::Body as SBody, ClientMessage, DiagnosticsReply, ErrorCode, GetDiagnostics, Hello,
     LibraryClientMessage, LibraryRequest, LibraryServerMessage, ListInstruments, ListLibraries, ServerMessage,
 };
 use prost::Message;
@@ -378,6 +378,152 @@ impl DeviceClient {
             _ => Err("unexpected reply to PairRequest".to_string()),
         }
     }
+
+    /// Story 9.21: queries in-RAM health counters and histograms from the engine control thread via ws.v1 GetDiagnostics.
+    pub fn fetch_diagnostics(&self) -> Result<DiagnosticsReply, String> {
+        let msg = ClientMessage {
+            request_id: 0,
+            body: Some(CBody::GetDiagnostics(GetDiagnostics {})),
+            ..Default::default()
+        };
+        let reply = self.request(msg, Duration::from_secs(5))?;
+        match reply.body {
+            Some(SBody::DiagnosticsReply(d)) => Ok(d),
+            Some(SBody::Error(e)) => Err(describe_error(&e)),
+            _ => Err("unexpected reply to GetDiagnostics".to_string()),
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct DiagnosticHistogram {
+    pub edges_us: Vec<u32>,
+    pub counts: Vec<u64>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct DiagnosticCounters {
+    pub xrun: u64,
+    pub voice_steal: u64,
+    pub voice_exhausted: u64,
+    pub stream_underrun: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct DiagnosticReport {
+    pub device_id: String,
+    pub model: String,
+    pub firmware_version: String,
+    pub tier: String,
+    pub image_variant: String,
+    pub uptime_ms: u64,
+    pub export_timestamp: String,
+    pub counters: DiagnosticCounters,
+    pub render_time_histogram: DiagnosticHistogram,
+    pub latency_histogram: DiagnosticHistogram,
+}
+
+/// Sanitization check: verifies the diagnostics JSON export contains ONLY metadata, counters,
+/// and latency/render histograms, and NEVER any Live Set definitions, audio samples, or encryption keys (FR120, AR44).
+pub fn sanitize_diagnostics_json(json_str: &str) -> Result<(), String> {
+    let val: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| format!("invalid diagnostics JSON: {}", e))?;
+    if !val.is_object() {
+        return Err("diagnostics report must be a JSON object".to_string());
+    }
+
+    let forbidden_keys = [
+        "live_set", "liveset", "live_sets", "timbre", "timbres", "samples", "sample_data", "pcm_bytes",
+        "audio_payload", "audio", "private_key", "secret", "token", "pairing_token", "encryption_key"
+    ];
+
+    fn check_value(v: &serde_json::Value, forbidden_keys: &[&str]) -> Result<(), String> {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, sub_val) in map {
+                    let k_lower = k.to_lowercase();
+                    for forbidden in forbidden_keys {
+                        if k_lower.contains(forbidden) {
+                            return Err(format!("sanitization failed: forbidden field '{}' present in diagnostics", k));
+                        }
+                    }
+                    check_value(sub_val, forbidden_keys)?;
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    check_value(item, forbidden_keys)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    check_value(&val, &forbidden_keys)?;
+
+    let raw_lower = json_str.to_lowercase();
+    for forbidden in &["pairing_token", "private_key", "audio_samples", "wav_data", "seed_token", "\"live_sets\""] {
+        if raw_lower.contains(forbidden) {
+            return Err(format!("sanitization failed: forbidden payload '{}' detected", forbidden));
+        }
+    }
+
+    Ok(())
+}
+
+/// Generates a sanitized JSON export of diagnostic counters, histograms, and metadata.
+pub fn create_diagnostics_export(
+    status: &DeviceStatus,
+    tier: &str,
+    image_variant: &str,
+    diag: &DiagnosticsReply,
+    timestamp: &str,
+) -> Result<String, String> {
+    let report = DiagnosticReport {
+        device_id: status.device_id.clone().unwrap_or_else(|| "unknown".to_string()),
+        model: status.model.clone().unwrap_or_else(|| "Velora 73".to_string()),
+        firmware_version: status.firmware_version.clone().unwrap_or_else(|| "1.4.0".to_string()),
+        tier: tier.to_string(),
+        image_variant: image_variant.to_string(),
+        uptime_ms: diag.uptime_ms,
+        export_timestamp: timestamp.to_string(),
+        counters: DiagnosticCounters {
+            xrun: diag.xrun,
+            voice_steal: diag.voice_steal,
+            voice_exhausted: diag.voice_exhausted,
+            stream_underrun: diag.stream_underrun,
+        },
+        render_time_histogram: DiagnosticHistogram {
+            edges_us: diag.render_time.as_ref().map(|h| h.edges_us.clone()).unwrap_or_default(),
+            counts: diag.render_time.as_ref().map(|h| h.counts.clone()).unwrap_or_default(),
+        },
+        latency_histogram: DiagnosticHistogram {
+            edges_us: diag.latency.as_ref().map(|h| h.edges_us.clone()).unwrap_or_default(),
+            counts: diag.latency.as_ref().map(|h| h.counts.clone()).unwrap_or_default(),
+        },
+    };
+
+    let json_str = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    sanitize_diagnostics_json(&json_str)?;
+    Ok(json_str)
+}
+
+/// Saves the sanitized diagnostics JSON to destination path.
+/// Refuses writing to `/var/lib/velora` on device storage.
+pub fn save_diagnostics_file(path: &Path, json_content: &str) -> Result<(), String> {
+    let path_str = path.to_string_lossy();
+    if path_str.starts_with("/var/lib/velora") || path_str.contains("/var/lib/velora") {
+        return Err("forbidden path: diagnostic dumps must never be written to /var/lib/velora".to_string());
+    }
+    sanitize_diagnostics_json(json_content)?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+    std::fs::write(path, json_content.as_bytes()).map_err(|e| format!("failed to save diagnostics file: {}", e))?;
+    Ok(())
 }
 
 impl Drop for DeviceClient {
@@ -1014,6 +1160,24 @@ mod tests {
                     send_server(&mut s, &state_msg(7, 3));
                 }
                 Some(CBody::Library(r)) if is_paired => send_server(&mut s, &fake_library_reply(id, &r.payload)),
+                Some(CBody::GetDiagnostics(_)) if is_paired => {
+                    send_server(
+                        &mut s,
+                        &ServerMessage {
+                            request_id: id,
+                            revision: 0,
+                            body: Some(SBody::DiagnosticsReply(DiagnosticsReply {
+                                xrun: 1,
+                                voice_steal: 2,
+                                voice_exhausted: 0,
+                                stream_underrun: 0,
+                                uptime_ms: 123456,
+                                render_time: Some(crate::ws_v1::Histogram { edges_us: vec![100, 200, 500], counts: vec![10, 50, 5, 0] }),
+                                latency: Some(crate::ws_v1::Histogram { edges_us: vec![1000, 2000], counts: vec![20, 80, 1] }),
+                            })),
+                        },
+                    );
+                }
                 Some(_) if is_paired => send_server(&mut s, &ServerMessage { request_id: id, revision: 0, body: Some(SBody::Ack(Ack { not_durable: false })) }),
                 _ => send_server(&mut s, &err(ErrorCode::NotPaired, &[])),
             }
@@ -2013,5 +2177,135 @@ mod tests {
         // the Live Sets are still there after the removals (a removal never deletes a Live Set)
         assert!(r["all_live_sets"].as_array().unwrap().iter().any(|l| l["name"] == "Studio Smoke A"));
         eprintln!("real_bridge_setlists_round_trip: ok, {} setlists", r["setlists"].as_array().unwrap().len());
+    }
+
+    #[test]
+    fn test_diagnostics_query_and_export_roundtrip() {
+        let b = FakeBridge::start(0, &["studio-diag-1"], Mode::Normal);
+        let (c, _ev) = client_with_events("studio-diag-1");
+        let dir = tmpdir("diag1");
+        with_token(&c, &dir, "velora-test", "studio-diag-1");
+        c.connect("127.0.0.1", b.port);
+        assert!(wait_for(|| c.status().status == LinkStatus::Paired));
+
+        let diag = c.fetch_diagnostics().expect("fetch diagnostics succeeds");
+        assert_eq!(diag.xrun, 1);
+        assert_eq!(diag.voice_steal, 2);
+        assert_eq!(diag.uptime_ms, 123456);
+        let render = diag.render_time.as_ref().unwrap();
+        assert_eq!(render.edges_us, vec![100, 200, 500]);
+        assert_eq!(render.counts, vec![10, 50, 5, 0]);
+
+        let status = c.status();
+        let export_json = create_diagnostics_export(&status, "Stage", "Production", &diag, "2026-10-29T00:00:00Z").unwrap();
+        assert!(sanitize_diagnostics_json(&export_json).is_ok());
+
+        let report: DiagnosticReport = serde_json::from_str(&export_json).unwrap();
+        assert_eq!(report.device_id, "velora-test");
+        assert_eq!(report.model, "Velora Test");
+        assert_eq!(report.firmware_version, "9.9.9");
+        assert_eq!(report.tier, "Stage");
+        assert_eq!(report.image_variant, "Production");
+        assert_eq!(report.uptime_ms, 123456);
+        assert_eq!(report.counters.xrun, 1);
+        assert_eq!(report.counters.voice_steal, 2);
+        assert_eq!(report.counters.stream_underrun, 0);
+        assert_eq!(report.render_time_histogram.counts, vec![10, 50, 5, 0]);
+
+        // Verify save_diagnostics_file works
+        let save_path = dir.join("diagnostics.json");
+        save_diagnostics_file(&save_path, &export_json).unwrap();
+        assert!(save_path.exists());
+
+        // Verify save_diagnostics_file prevents writing to /var/lib/velora
+        let forbidden_path = std::path::Path::new("/var/lib/velora/diagnostics.json");
+        let err = save_diagnostics_file(forbidden_path, &export_json).unwrap_err();
+        assert!(err.contains("forbidden path"), "expected forbidden path, got {}", err);
+
+        c.disconnect();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_diagnostics_sanitization_detects_forbidden_content() {
+        let clean = serde_json::json!({
+            "device_id": "velora-01",
+            "model": "Velora 73",
+            "firmware_version": "1.4.0",
+            "tier": "Stage",
+            "image_variant": "Production",
+            "uptime_ms": 5000,
+            "export_timestamp": "2026-10-29T00:00:00Z",
+            "counters": {
+                "xrun": 0,
+                "voice_steal": 0,
+                "voice_exhausted": 0,
+                "stream_underrun": 0
+            },
+            "render_time_histogram": { "edges_us": [], "counts": [] },
+            "latency_histogram": { "edges_us": [], "counts": [] }
+        });
+        assert!(sanitize_diagnostics_json(&serde_json::to_string(&clean).unwrap()).is_ok());
+
+        // Injected Live Set definitions
+        let mut with_liveset = clean.clone();
+        with_liveset["live_sets"] = serde_json::json!([{"id": "ls-secret"}]);
+        assert!(sanitize_diagnostics_json(&serde_json::to_string(&with_liveset).unwrap()).is_err());
+
+        // Injected audio samples or keys
+        let mut with_audio = clean.clone();
+        with_audio["sample_data"] = serde_json::json!("RIFF....WAVE");
+        assert!(sanitize_diagnostics_json(&serde_json::to_string(&with_audio).unwrap()).is_err());
+
+        let mut with_secret = clean.clone();
+        with_secret["private_key"] = serde_json::json!("abc123secret");
+        assert!(sanitize_diagnostics_json(&serde_json::to_string(&with_secret).unwrap()).is_err());
+
+        let mut with_token = clean.clone();
+        with_token["pairing_token"] = serde_json::json!("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        assert!(sanitize_diagnostics_json(&serde_json::to_string(&with_token).unwrap()).is_err());
+
+        // Injected forbidden key inside nested object (counters)
+        let mut with_nested = clean.clone();
+        with_nested["counters"]["pcm_bytes"] = serde_json::json!(12345);
+        assert!(sanitize_diagnostics_json(&serde_json::to_string(&with_nested).unwrap()).is_err());
+
+        // Forbidden destination path check
+        let forbidden_path = Path::new("/var/lib/velora/diagnostics.json");
+        assert!(save_diagnostics_file(forbidden_path, &serde_json::to_string(&clean).unwrap()).is_err());
+    }
+
+    #[test]
+    fn test_diagnostics_empty_and_zero_histograms() {
+        let status = DeviceStatus {
+            status: LinkStatus::Paired,
+            configured: true,
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            device_id: Some("dev-zero".to_string()),
+            model: Some("Velora 73".to_string()),
+            firmware_version: Some("1.4.0".to_string()),
+            device_version: Some("1".to_string()),
+            features: vec![],
+            detail: None,
+            persist_error: None,
+        };
+        let diag = DiagnosticsReply {
+            xrun: 0,
+            voice_steal: 0,
+            voice_exhausted: 0,
+            stream_underrun: 0,
+            uptime_ms: 0,
+            render_time: None,
+            latency: None,
+        };
+        let json_str = create_diagnostics_export(&status, "Stage", "Production", &diag, "2026-10-29T00:00:00Z").unwrap();
+        assert!(sanitize_diagnostics_json(&json_str).is_ok());
+        let report: DiagnosticReport = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(report.uptime_ms, 0);
+        assert!(report.render_time_histogram.edges_us.is_empty());
+        assert!(report.render_time_histogram.counts.is_empty());
+        assert!(report.latency_histogram.edges_us.is_empty());
+        assert!(report.latency_histogram.counts.is_empty());
     }
 }

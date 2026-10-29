@@ -2205,3 +2205,197 @@ nav.jump a:hover {
 .wr-banner-text {
   flex: 1 1 20rem;
 }
+
+/* ---- Story 9.21: Device View & Diagnostics Export ---- */
+.device-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3);
+  max-width: 60rem;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.device-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--spacing-2);
+}
+
+.device-header-title {
+  margin: 0;
+  font-size: var(--font-desktop-part-name);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.device-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.device-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3);
+  background-color: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  color: var(--text);
+}
+
+.device-card-title {
+  margin: 0;
+  font-size: var(--font-desktop-body);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.device-section-subtitle {
+  margin: var(--spacing-2) 0 var(--spacing-1);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.device-card-desc, .device-status-text {
+  margin: 0;
+  font-size: var(--font-desktop-body);
+  color: var(--text);
+}
+
+.device-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--spacing-2) var(--spacing-3);
+}
+
+.device-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.device-info-label {
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.device-info-value {
+  font-size: var(--font-desktop-body);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.badge-stage, .badge-pro, .badge-variant, .badge-factory, .badge-user {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-desktop-sm);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  width: fit-content;
+}
+
+.badge-stage {
+  background-color: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+}
+
+.badge-pro {
+  background-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.badge-variant {
+  background-color: var(--raised);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.badge-factory {
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.badge-user {
+  background-color: var(--raised);
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+}
+
+.storage-breakdown-text {
+  font-size: var(--font-desktop-body);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.storage-meter {
+  height: 0.75rem;
+  background-color: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin: var(--spacing-1) 0;
+}
+
+.storage-meter-fill {
+  height: 100%;
+  background-color: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.device-libraries-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-desktop-body);
+  margin-top: var(--spacing-1);
+}
+
+.device-libraries-table th {
+  text-align: left;
+  padding: var(--spacing-1) var(--spacing-2);
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+
+.device-libraries-table td {
+  padding: var(--spacing-1) var(--spacing-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+
+.lib-size-cell, .lib-count-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+.device-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-1);
+}
+
+.device-error-banner {
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-desktop-sm);
+  background-color: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+  font-size: var(--font-desktop-body);
+}
+
