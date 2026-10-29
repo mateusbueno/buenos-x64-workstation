@@ -66,6 +66,7 @@ struct KeybedCalibrationSpec {
   std::uint8_t rel_to = 1;                    // 0-based contact whose opening completes the release measurement
   std::uint64_t rel_fast_ns = 3'000'000;      // TODO(measure on prototype)
   std::uint64_t rel_slow_ns = 80'000'000;     // TODO(measure on prototype)
+  bool has_aftertouch = false;                // Story 3.7: whether the keybed has channel or per-key aftertouch before HELLO overrides it
   std::vector<std::uint8_t> key_notes;  // optional explicit key index -> note map (overrides first_note/key_count when not empty)
 };
 
@@ -85,6 +86,7 @@ class KeybedCalibration {
   std::uint8_t vel_to() const noexcept { return spec_.vel_to; }
   std::uint8_t release_contact() const noexcept { return spec_.release_contact; }
   bool release_pair() const noexcept { return spec_.release_pair; }
+  bool has_aftertouch() const noexcept { return spec_.has_aftertouch; }
   std::uint8_t rel_to() const noexcept { return spec_.rel_to; }
   VelocityRange velocity_range() const noexcept { return {spec_.vel_fast_ns, spec_.vel_slow_ns}; }
   VelocityRange release_range() const noexcept { return {spec_.rel_fast_ns, spec_.rel_slow_ns}; }

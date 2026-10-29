@@ -153,6 +153,17 @@ class PartRouter {
   bool pedal_down_target(std::uint32_t part) const noexcept VELORA_NONBLOCKING {
     return part < kParts && part_[part].sounds && part_[part].keyboard_on;
   }
+  // Pitch on `part` for a polyphonic pressure event on keyboard `src`, key `key` (-1 if outside the part's zone or keyboard off).
+  int poly_pressure_pitch(std::uint32_t src, std::uint32_t key, std::uint32_t part) const noexcept VELORA_NONBLOCKING {
+    if (!pedal_down_target(part)) return -1;
+    key &= 127u;
+    const Track& tr = track_[(src & 15u) * 128 + key][part];
+    if (tr.pitch != kNoPitch) return static_cast<int>(tr.pitch);
+    const Part& r = part_[part];
+    if (key < r.low || key > r.high) return -1;
+    const int pitch = static_cast<int>(key) + r.shift;
+    return (pitch >= 0 && pitch <= 127) ? pitch : -1;
+  }
 
   // Counters (relaxed atomics, any thread).
   std::uint64_t fanned_notes() const noexcept { return fanned_.load(std::memory_order_relaxed); }

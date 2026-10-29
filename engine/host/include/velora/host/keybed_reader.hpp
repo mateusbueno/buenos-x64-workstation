@@ -8,6 +8,7 @@
 // deterministic under test. Single thread (the keybed input thread); allocates (frame decode), never runs on the RT thread.
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -37,8 +38,9 @@ struct KeybedReaderConfig {
 
 struct KeybedReaderCounters {
   std::uint64_t frames = 0, crc_errors = 0, framing_errors = 0, seq_gaps = 0, seq_lost = 0, version_rejects = 0, rejected_frames = 0;
-  std::uint64_t ignored_frames = 0;       // frames of other types (panel controls, aftertouch, ...)
+  std::uint64_t ignored_frames = 0;       // frames of other types (panel controls, aftertouch when unavailable/disabled, ...)
   std::uint64_t key_frames = 0, contact_events = 0, note_ons = 0, note_offs = 0;
+  std::uint64_t aftertouch_frames = 0, aftertouch_events = 0;  // Story 3.7
   std::uint64_t unknown_key = 0, bad_contact = 0, duplicate_closes = 0, spurious_opens = 0;
   std::uint64_t recovered_opens = 0;      // open events synthesised because the real one was lost
   std::uint64_t velocity_fallbacks = 0;   // Note On whose velocity pair start was never seen (slowest velocity used)
@@ -73,6 +75,10 @@ class KeybedReader {
   void set_velocity_curve(VelocityCurve c) noexcept { attack_mapper_.set_curve(c); }
   VelocityCurve velocity_curve() const noexcept { return attack_mapper_.curve(); }
   void set_fixed_velocity(std::uint8_t v7) noexcept { attack_mapper_.set_fixed_velocity(v7); }
+  // Story 3.7: aftertouch availability (from calibration table or keybed MCU HELLO) and player enable/disable (Story 10.2).
+  bool aftertouch_available() const noexcept { return aftertouch_available_.load(std::memory_order_relaxed); }
+  bool aftertouch_enabled() const noexcept { return aftertouch_enabled_.load(std::memory_order_relaxed); }
+  void set_aftertouch_enabled(bool enabled) noexcept { aftertouch_enabled_.store(enabled, std::memory_order_relaxed); }
   // Swaps the calibration table (data change, no code change). Sounding keys are released first.
   void set_calibration(KeybedCalibration table, std::uint64_t now_ns);
 
@@ -108,6 +114,7 @@ class KeybedReader {
   };
   void handle(const mcu::Frame& f, std::uint64_t rx_ns);
   void on_key_contact(const mcu::KeyContact& kc, std::uint64_t t);
+  void on_aftertouch(const mcu::Aftertouch& at, std::uint64_t t);
   void on_time_sync(const mcu::TimeSync& ts, std::uint64_t rx_ns);
   void on_hello(const mcu::Hello& h, std::uint32_t tick, std::uint64_t rx_ns);
   // `synthetic`: the open was inferred (lost frame, key-state snapshot, link loss), so it carries no timing and never measures a release velocity.
@@ -132,6 +139,8 @@ class KeybedReader {
   bool recovery_pending_ = false;
   mcu::Hello hello_{};
   bool have_hello_ = false;
+  std::atomic<bool> aftertouch_available_{false};
+  std::atomic<bool> aftertouch_enabled_{true};
   std::vector<mcu::Frame> frames_;  // scratch
 };
 

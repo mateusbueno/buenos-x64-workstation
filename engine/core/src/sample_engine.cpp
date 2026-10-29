@@ -204,9 +204,17 @@ bool cc_curves_ok(const velora::ports::SampleRegionDesc& d, const std::array<boo
 // The engine's own starting value of a controller (sfizz: CC7 100, CC10 centre, CC11 127, the rest 0).
 float engine_cc_default(unsigned cc) noexcept { return cc == 7 ? 100.0f : cc == 10 ? 63.5f : cc == 11 ? 127.0f : 0.0f; }
 
+// Story 3.7 fields: aftertouch modulation depths must be finite and inside documented ranges (cutoff requires a first filter).
+bool aftertouch_sane(const velora::ports::SampleRegionDesc& d) noexcept {
+  auto in = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+  if (!in(d.volume_aftertouch_db, -144.0f, 48.0f) || !in(d.cutoff_aftertouch_cents, -12000.0f, 12000.0f)) return false;
+  if (d.cutoff_aftertouch_cents != 0.0f && d.filter_type == velora::ports::SampleFilterType::kNone) return false;
+  return true;
+}
+
 // Everything the audio thread later turns into counts, rates and gains must be finite and bounded.
 bool region_params_sane(const velora::ports::SampleRegionDesc& d) noexcept {
-  return extension_sane(d) && amp_sane(d) && cc_sane(d) && filter_map_sane(d) && mod_sane(d) && voice_group_sane(d) && bend_trigger_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
+  return extension_sane(d) && amp_sane(d) && cc_sane(d) && filter_map_sane(d) && mod_sane(d) && aftertouch_sane(d) && voice_group_sane(d) && bend_trigger_sane(d) && finite_time(d.ampeg_delay) && finite_time(d.ampeg_attack) && finite_time(d.ampeg_hold) &&
          finite_time(d.ampeg_decay) && finite_time(d.ampeg_release) && std::isfinite(d.ampeg_start) &&
          std::isfinite(d.ampeg_sustain) && std::isfinite(d.lorand) && std::isfinite(d.hirand) &&
          d.lorand < d.hirand && d.seq_length >= 1 && d.seq_position >= 1 && d.seq_position <= d.seq_length &&
@@ -588,8 +596,13 @@ std::shared_ptr<SampleBank> SampleEngine::prepare(const velora::ports::SampleSou
       r.lfo_f = m.fil.on && r.filtered;
       r.eg_p = m.pitch_eg.on;
       r.eg_f = m.fil_eg.on && r.filtered;
-      r.modded = r.lfo_a || r.lfo_p || r.lfo_f || r.eg_p || r.eg_f;
-      r.cutmod = r.lfo_f || r.eg_f;
+      if (aftertouch_sane(d)) {
+        r.vol_at = d.volume_aftertouch_db != 0.0f;
+        r.cut_at = d.cutoff_aftertouch_cents != 0.0f && r.filtered;
+      }
+      r.modded = r.lfo_a || r.lfo_p || r.lfo_f || r.eg_p || r.eg_f || r.vol_at || r.cut_at;
+      r.cutmod = r.lfo_f || r.eg_f || r.cut_at;
+      bank->uses_aftertouch = bank->uses_aftertouch || r.vol_at || r.cut_at;
       r.mod_fac_max = std::pow(2.0f, mod_pitch_cents_max(d) / 1200.0f);
       for (unsigned b = 0; b < m.eq_count; ++b) {
         const velora::ports::SampleEqBand& q = m.eq[b];
@@ -744,6 +757,8 @@ void SampleEngine::clear_part_banks() noexcept {
 void SampleEngine::reset_play_state() noexcept {
   cc_started_ = {};
   bend_.fill(0.0f);  // a stale wheel must not bend the first voices of the next set (the block loop replays the keyboard's wheel after a switch)
+  aftertouch_.fill(0.0f);
+  for (auto& p : poly_aftertouch_) p.fill(0.0f);
   for (std::uint32_t ch = 0; ch < 16; ++ch) {
     reset_part_keys(ch);
     part_engaged_[ch].clear();  // the new Live Set's stored part_attack / part_release arrive right after and engage again where they differ from the default
@@ -797,6 +812,21 @@ bool SampleEngine::set_part_pitch_bend(std::uint32_t part, std::uint32_t value32
   bend_[part & 15u] = static_cast<float>(std::clamp(x, -1.0, 1.0));
   const SampleBank* bank = bank_for(part);
   return bank != nullptr && bank->uses_bend;
+}
+
+bool SampleEngine::set_part_aftertouch(std::uint32_t part, std::uint32_t value32) noexcept {
+  const double x = static_cast<double>(value32) * (1.0 / 4294967295.0);
+  aftertouch_[part & 15u] = static_cast<float>(std::clamp(x, 0.0, 1.0));
+  const SampleBank* bank = bank_for(part);
+  return bank != nullptr && bank->uses_aftertouch;
+}
+
+bool SampleEngine::set_part_poly_aftertouch(std::uint32_t part, std::uint32_t note, std::uint32_t value32) noexcept {
+  if (note > 127) return false;
+  const double x = static_cast<double>(value32) * (1.0 / 4294967295.0);
+  poly_aftertouch_[part & 15u][note & 127u] = static_cast<float>(std::clamp(x, 0.0, 1.0));
+  const SampleBank* bank = bank_for(part);
+  return bank != nullptr && bank->uses_aftertouch;
 }
 
 float SampleEngine::bend_cents(const SampleBankRegion& r, float wheel) noexcept {
@@ -1511,6 +1541,7 @@ EngineStatus SampleEngine::start_voice(std::uint32_t channel, std::uint32_t note
   KeyState& ks = ks_[channel];
   const bool others_held = ks.others_held(static_cast<int>(note));  // Story 13.3: before this key goes down (first / legato)
   ks.set_held(static_cast<int>(note), true);  // the key state follows the keyboard even when the part has no (or an empty) instrument
+  poly_aftertouch_[channel][note] = 0.0f;     // Story 3.7: a new strike starts with zero poly pressure until an aftertouch event arrives for it
   const std::uint32_t v16 = std::min<std::uint32_t>(velocity16, 65535u);
   // 7-bit velocity, as MIDI 1.0 and SFZ define it (the UMP value is rounded to the nearest step).
   std::uint8_t vel7 = static_cast<std::uint8_t>((v16 * 127u + 32767u) / 65535u);
@@ -1921,12 +1952,20 @@ void SampleEngine::render_voice(Voice& v, float* left, float* right, std::uint32
       const velora::ports::SampleModDesc& mdesc = r.d.mod;
       release_mod_egs(v, r);
       float cents = 0.0f, cut_cents = 0.0f;
-      if (r.lfo_a) amp_mod = std::pow(10.0f, (mdesc.amp.depth * lfo_next(md.lfo[0], mdesc.amp)) * 0.05f);
+      const float at_pressure = (r.vol_at || r.cut_at)
+                                    ? std::clamp(aftertouch_[v.channel & 15u] + poly_aftertouch_[v.channel & 15u][v.note & 127u], 0.0f, 1.0f)
+                                    : 0.0f;
+      if (r.lfo_a || r.vol_at) {
+        const float db = (r.lfo_a ? mdesc.amp.depth * lfo_next(md.lfo[0], mdesc.amp) : 0.0f) +
+                         (r.vol_at ? r.d.volume_aftertouch_db * at_pressure : 0.0f);
+        amp_mod = std::pow(10.0f, db * 0.05f);
+      }
       if (r.lfo_p) cents += mdesc.pitch.depth * lfo_next(md.lfo[1], mdesc.pitch);
       const bool blk_end = oracle_n != 0 && (clock_ + f + 1) % oracle_n == 0;
       if (r.eg_p) cents += md.eg_depth[0] * env_next(md.eg[0], r, true, blk_end);
       if (r.lfo_f) cut_cents += mdesc.fil.depth * lfo_next(md.lfo[2], mdesc.fil);
       if (r.eg_f) cut_cents += md.eg_depth[1] * env_next(md.eg[1], r, true, blk_end);
+      if (r.cut_at) cut_cents += r.d.cutoff_aftertouch_cents * at_pressure;
       if (cents != 0.0f) pitch_mul = std::pow(2.0f, cents / 1200.0f);
       if (md.age > 0 && !stall_now && pitch_mul != v.prev_pitch_mul)  // sfizz steps INTO frame f with frame f's pitch: the step added after frame f - 1 used its own factor, so correct it
         v.pos += static_cast<double>(v.ratio) * (bends ? static_cast<double>(v.bend_fac) : 1.0) * (static_cast<double>(pitch_mul) - static_cast<double>(v.prev_pitch_mul));

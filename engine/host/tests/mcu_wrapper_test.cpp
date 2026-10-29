@@ -42,7 +42,8 @@ static void append(Bytes& a, const Bytes& b) { a.insert(a.end(), b.begin(), b.en
 
 static void test_roundtrip_and_ranges() {
   const std::vector<Message> all = {
-      Hello{0x0102, kProtocolVersion, 1, 3}, Hello{1, kProtocolVersion, 2, 0}, KeyContact{72, 2, true},
+      Hello{0x0102, kProtocolVersion, 1, 3}, Hello{0x0102, kProtocolVersion, 1, 3, true},
+      Hello{1, kProtocolVersion, 2, 0},      KeyContact{72, 2, true},
       KeyContact{0, 0, false},               Aftertouch{0xFF, 0xFFFF},         Control{mcu_ids::controls::FADER_9, 4095},
       make_delta(mcu_ids::controls::ENCODER_1, -127), make_delta(mcu_ids::controls::VALUE_ENCODER, 127),
       Button{mcu_ids::buttons::VALUE_PUSH, true},     LedSet{mcu_ids::leds::ENCODER_RING_8, 200, 128},
@@ -59,6 +60,8 @@ static void test_roundtrip_and_ranges() {
   // out-of-range or unknown fields: no frame
   CHECK(!make_frame(Hello{1, kProtocolVersion, 3, 2}, 0, 0));
   CHECK(!make_frame(Hello{1, kProtocolVersion, 1, 1}, 0, 0));
+  CHECK(!make_frame(Hello{1, kProtocolVersion, 2, 0, true}, 0, 0));  // panel MCU cannot advertise keybed aftertouch
+  CHECK(!make_frame(Hello{1, kProtocolVersion, 1, 0x83, false}, 0, 0));
   CHECK(!make_frame(Control{mcu_ids::controls::FADER_1, 4096}, 0, 0));
   CHECK(make_frame(Control{mcu_ids::controls::FADER_1, 4095}, 0, 0));
   CHECK(!make_frame(Control{mcu_ids::controls::PEDAL_SWITCH, 2}, 0, 0));

@@ -292,6 +292,12 @@ class ControlPlane {
   // Declared cost of the effect instances of the current generation (fixed topology included); 0 before load_initial().
   std::uint64_t fx_cost() const noexcept { return fx_cost_.load(std::memory_order_acquire); }
 
+  // Story 3.7: whether the attached keybed reports aftertouch capability (false on a keybed without an aftertouch strip, so UIs hide / disable the setting).
+  void set_aftertouch_available(bool available) noexcept {
+    if (aftertouch_available_.exchange(available, std::memory_order_acq_rel) != available) bump_revision();
+  }
+  bool aftertouch_available() const noexcept { return aftertouch_available_.load(std::memory_order_acquire); }
+
   static constexpr std::uint32_t kProtocolVersion = 1;
 
  private:
@@ -341,6 +347,7 @@ class ControlPlane {
   const TierProfile* tier_ = &v1_profile();
   bool tier_set_ = false;
   std::atomic<std::uint64_t> fx_budget_{v1_profile().fx_budget}, fx_cost_{0};
+  std::atomic<bool> aftertouch_available_{false};
 };
 
 }  // namespace velora::host

@@ -102,7 +102,12 @@ int mcu_encode(const mcu_frame* f, uint8_t* buf, size_t cap) {
 /* ---- typed payloads ---- */
 
 static int hello_ok(uint8_t board_id, uint8_t contacts) {
-  return (board_id == MCU_BOARD_KEYBED || board_id == MCU_BOARD_PANEL) && (contacts == 0u || contacts == 2u || contacts == 3u);
+  const uint8_t c = (uint8_t)(contacts & MCU_KEYBED_CONTACTS_MASK);
+  if ((contacts & MCU_KEYBED_AFTERTOUCH_FLAG) != 0u &&
+      (board_id != MCU_BOARD_KEYBED || (c != 2u && c != 3u))) {
+    return 0;
+  }
+  return (board_id == MCU_BOARD_KEYBED || board_id == MCU_BOARD_PANEL) && (c == 0u || c == 2u || c == 3u);
 }
 
 static int control_ok(uint8_t id, uint16_t value) {

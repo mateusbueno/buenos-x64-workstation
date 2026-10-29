@@ -137,6 +137,11 @@ class SampleEngine final : public Engine {
   // voice was bound to (the region's pitch_keycenter) so the block loop can bind the snapshot generation to it.
   bool set_part_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
   float part_bend(std::uint32_t part) const noexcept { return bend_[part & 15u]; }
+  // Story 3.7: channel and polyphonic aftertouch (value32 0..0xFFFFFFFF -> 0..1). Returns true when the part's bank has a region that maps aftertouch.
+  bool set_part_aftertouch(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
+  bool set_part_poly_aftertouch(std::uint32_t part, std::uint32_t note, std::uint32_t value32) noexcept VELORA_NONBLOCKING override;
+  float part_aftertouch(std::uint32_t part) const noexcept { return aftertouch_[part & 15u]; }
+  float part_poly_aftertouch(std::uint32_t part, std::uint32_t note) const noexcept { return poly_aftertouch_[part & 15u][note & 127u]; }
   // The read position, in frames of the sample, of the voice in `slot` (tests and diagnostics; 0 for a free slot).
   double voice_position(std::uint32_t slot) const noexcept { return slot < voices_.size() && voices_[slot].active ? voices_[slot].pos : 0.0; }
   // Drains one key per call from the set of keys that controller voices started since the last drain (a 128-bit mask: one controller event can start regions with different pitch_keycenters).
@@ -483,6 +488,8 @@ class SampleEngine final : public Engine {
   PseudoCc pseudo_{};                                   // Story 13.5: audio thread only, set before each start_region batch
   std::array<std::array<float, 128>, 16> cc_{};         // per part CcState, CC units
   std::array<float, 16> bend_{};                        // Story 13.7: per part pitch wheel, -1..1
+  std::array<float, 16> aftertouch_{};                  // Story 3.7: per part channel pressure, 0..1
+  std::array<std::array<float, 128>, 16> poly_aftertouch_{};  // Story 3.7: per (part, note) polyphonic pressure, 0..1
   std::array<std::uint64_t, 2> cc_started_{};           // Story 13.7: keys of the controller-started voices, until take_cc_started()
   // Story 1.18 (parallel voice render).
   WorkerPool* pool_ = nullptr;

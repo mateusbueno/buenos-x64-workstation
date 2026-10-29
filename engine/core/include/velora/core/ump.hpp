@@ -14,9 +14,11 @@ struct Ump {
   static constexpr std::uint32_t kMessageTypeChannelVoice2 = 0x4;
   static constexpr std::uint32_t kStatusNoteOff = 0x8;
   static constexpr std::uint32_t kStatusNoteOn = 0x9;
+  static constexpr std::uint32_t kStatusPolyPressure = 0xA;  // MIDI 2.0 polyphonic pressure: word0 [15:8] = note, word1 = 32-bit pressure (Story 3.7)
   static constexpr std::uint32_t kStatusAssignableController = 0x3;  // MIDI 2.0 assignable controller (NRPN)
   static constexpr std::uint32_t kStatusAssignablePerNoteController = 0x1;  // MIDI 2.0 assignable per-note controller
   static constexpr std::uint32_t kStatusControlChange = 0xB;
+  static constexpr std::uint32_t kStatusChannelPressure = 0xD;  // MIDI 2.0 channel pressure: word1 = 32-bit pressure (Story 3.7)
   static constexpr std::uint32_t kStatusPitchBend = 0xE;  // MIDI 2.0 pitch bend: word1 = unsigned 32-bit value, centre 0x80000000 (Story 3.10)
   static constexpr std::uint32_t kControllerModulation = 1;
   // The one definition of "sustain pedal down" (Story 3.11): CC 64 >= this (MIDI value 64 of 0..127 scaled to 32 bits, i.e. half travel) holds notes. The block
@@ -79,6 +81,14 @@ struct Ump {
     return message_type() == kMessageTypeChannelVoice2 && status() == kStatusPitchBend;
   }
   constexpr std::uint32_t pitch_bend_value32() const noexcept { return word1; }
+  constexpr bool is_channel_pressure() const noexcept {
+    return message_type() == kMessageTypeChannelVoice2 && status() == kStatusChannelPressure;
+  }
+  constexpr bool is_poly_pressure() const noexcept {
+    return message_type() == kMessageTypeChannelVoice2 && status() == kStatusPolyPressure;
+  }
+  constexpr std::uint32_t pressure_value32() const noexcept { return word1; }
+  constexpr std::uint32_t pressure16() const noexcept { return word1 >> 16; }
   constexpr bool is_assignable_controller() const noexcept {
     return message_type() == kMessageTypeChannelVoice2 && status() == kStatusAssignableController;
   }
@@ -141,6 +151,25 @@ constexpr Ump make_control_change(std::uint32_t group, std::uint32_t channel, st
 constexpr Ump make_pitch_bend(std::uint32_t group, std::uint32_t channel, std::uint32_t value32) noexcept {
   return Ump{(Ump::kMessageTypeChannelVoice2 << 28) | ((group & 0xF) << 24) | (Ump::kStatusPitchBend << 20) | ((channel & 0xF) << 16),
              value32};
+}
+
+// MIDI 2.0 channel pressure (status 0xD) and polyphonic pressure (status 0xA, Story 3.7).
+constexpr Ump make_channel_pressure(std::uint32_t group, std::uint32_t channel, std::uint32_t value32) noexcept {
+  return Ump{(Ump::kMessageTypeChannelVoice2 << 28) | ((group & 0xF) << 24) | (Ump::kStatusChannelPressure << 20) | ((channel & 0xF) << 16),
+             value32};
+}
+constexpr Ump make_channel_pressure16(std::uint32_t group, std::uint32_t channel, std::uint32_t value16) noexcept {
+  const std::uint32_t v = value16 & 0xFFFFu;
+  return make_channel_pressure(group, channel, (v << 16) | v);
+}
+constexpr Ump make_poly_pressure(std::uint32_t group, std::uint32_t channel, std::uint32_t note, std::uint32_t value32) noexcept {
+  return Ump{(Ump::kMessageTypeChannelVoice2 << 28) | ((group & 0xF) << 24) | (Ump::kStatusPolyPressure << 20) |
+                 ((channel & 0xF) << 16) | ((note & 0x7F) << 8),
+             value32};
+}
+constexpr Ump make_poly_pressure16(std::uint32_t group, std::uint32_t channel, std::uint32_t note, std::uint32_t value16) noexcept {
+  const std::uint32_t v = value16 & 0xFFFFu;
+  return make_poly_pressure(group, channel, note, (v << 16) | v);
 }
 
 constexpr Ump make_timing_clock(std::uint32_t group = 0) noexcept {

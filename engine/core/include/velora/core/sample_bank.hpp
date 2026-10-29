@@ -53,6 +53,7 @@ struct SampleBankRegion {
   // can change the sound (a band at gain 0 with no velocity or controller gain is transparent and skipped); mod_fac_max: the largest pitch factor the pitch LFO and EG can
   // produce (bounds the stream window).
   bool modded = false, lfo_a = false, lfo_p = false, lfo_f = false, eg_p = false, eg_f = false, cutmod = false, eq_on = false;
+  bool vol_at = false, cut_at = false;  // Story 3.7: volume / first-filter cutoff follows channel or polyphonic aftertouch
   float mod_fac_max = 1.0f;
   bool uses_sequence = false;
   bool loops = false;  // loop_continuous / loop_sustain with a valid loop range
@@ -110,7 +111,7 @@ struct SampleBank {
   // Story 13.7: some region follows the pitch wheel / is started by a controller. A bank with neither ignores the wheel and runs no controller trigger code.
   // cct_list: region indices grouped by trigger controller (a region with several triggers appears once per controller): controller c uses cct_list[cct_begin[c],
   // cct_begin[c+1]).
-  bool uses_bend = false, uses_cc_triggers = false;
+  bool uses_bend = false, uses_cc_triggers = false, uses_aftertouch = false;
   std::array<std::uint32_t, 129> cct_begin{};
   std::vector<std::uint32_t> cct_list;
   std::vector<std::array<float, 128>> vel_tables;  // Story 13.4: the amp_velcurve_N curves, one table of 128 entries per region that has points

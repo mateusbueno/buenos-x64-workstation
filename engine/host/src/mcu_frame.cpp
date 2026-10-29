@@ -34,7 +34,13 @@ std::optional<Frame> make_frame(const Message& m, std::uint16_t seq, std::uint32
       [&](const auto& v) {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, Hello>) {
-          mcu_hello x{v.fw_version, v.protocol_version, v.board_id, v.keybed_contacts};
+          if ((v.keybed_contacts & MCU_KEYBED_AFTERTOUCH_FLAG) != 0u) {
+            r = MCU_ERR_BAD_VALUE;
+            return;
+          }
+          const std::uint8_t contacts_byte =
+              static_cast<std::uint8_t>(v.keybed_contacts | (v.aftertouch ? MCU_KEYBED_AFTERTOUCH_FLAG : 0u));
+          mcu_hello x{v.fw_version, v.protocol_version, v.board_id, contacts_byte};
           r = mcu_pack_hello(&c, &x);
         } else if constexpr (std::is_same_v<T, KeyContact>) {
           mcu_key_contact x{v.key, v.contact, static_cast<std::uint8_t>(v.closed ? 1 : 0)};
@@ -73,7 +79,9 @@ std::optional<Message> parse_message(const Frame& f) {
     case MCU_TYPE_HELLO: {
       mcu_hello x;
       if (mcu_unpack_hello(&c, &x) != MCU_OK) return std::nullopt;
-      return Message{Hello{x.fw_version, x.protocol_version, x.board_id, x.keybed_contacts}};
+      return Message{Hello{x.fw_version, x.protocol_version, x.board_id,
+                           static_cast<std::uint8_t>(x.keybed_contacts & MCU_KEYBED_CONTACTS_MASK),
+                           (x.keybed_contacts & MCU_KEYBED_AFTERTOUCH_FLAG) != 0u}};
     }
     case MCU_TYPE_KEY_CONTACT: {
       mcu_key_contact x;

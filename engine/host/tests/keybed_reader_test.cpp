@@ -13,6 +13,8 @@
 #include "velora/core/contact_events.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/params_gen.hpp"
+#include "velora/core/sample_engine.hpp"
+#include "velora/host/control_plane.hpp"
 #include "velora/host/keybed_calibration.hpp"
 #include "velora/host/keybed_reader.hpp"
 
@@ -828,6 +830,198 @@ void test_velocity_mapper() {
   CHECK(decode(r.out.ev.back()).kind == Kind::kNoteOn && decode(r.out.ev.back()).vel != 1234);
 }
 
+void test_aftertouch_routing_and_render() {
+  // 1. Keybed WITHOUT aftertouch: aftertouch_available() is false, AFTERTOUCH frames are ignored, and ControlPlane State publishes aftertouch_available = false.
+  {
+    Rig r(KeybedCalibration::three_contact_73());
+    CHECK(!r.reader->aftertouch_available() && r.reader->aftertouch_enabled());
+    r.feed(r.mcu.frame(mcu::Hello{0x0100, mcu::kProtocolVersion, 1, 3, false}, r.host0), r.host0);
+    CHECK(!r.reader->aftertouch_available());
+    r.feed(r.mcu.frame(mcu::Aftertouch{0xFF, 32768}, r.host0 + 10 * kMs), r.host0 + 10 * kMs);
+    r.feed(r.mcu.frame(mcu::Aftertouch{32, 32768}, r.host0 + 20 * kMs), r.host0 + 20 * kMs);
+    CHECK(r.out.ev.empty());
+    CHECK(r.reader->counters().aftertouch_frames == 0 && r.reader->counters().aftertouch_events == 0);
+    CHECK(r.reader->counters().ignored_frames == 2);
+
+    core::SnapshotExchange ex;
+    core::LastValueTable live;
+    ControlEventQueue rt_ev;
+    ControlPlane cp(ex, live, rt_ev, []() -> std::uint64_t { return 0; });
+    std::string err;
+    ws::v1::State init;
+    CHECK(cp.load_initial(init, err));
+    cp.set_aftertouch_available(r.reader->aftertouch_available());
+    ws::v1::State st;
+    cp.fill_state(&st);
+    CHECK(!st.aftertouch_available());
+  }
+
+  // 2. Keybed WITH aftertouch: HELLO capability bit or calibration spec enables aftertouch; channel (0xFF) and poly (key_index) pressure UMPs are emitted
+  // in drift-tracked device time without delaying KEY_CONTACT frames.
+  {
+    Rig r(KeybedCalibration::three_contact_73());
+    r.feed(r.mcu.frame(mcu::Hello{0x0100, mcu::kProtocolVersion, 1, 3, true}, r.host0), r.host0);
+    CHECK(r.reader->aftertouch_available());
+
+    core::SnapshotExchange ex;
+    core::LastValueTable live;
+    ControlEventQueue rt_ev;
+    ControlPlane cp(ex, live, rt_ev, []() -> std::uint64_t { return 0; });
+    std::string err;
+    ws::v1::State init;
+    CHECK(cp.load_initial(init, err));
+    cp.set_aftertouch_available(r.reader->aftertouch_available());
+    ws::v1::State st;
+    cp.fill_state(&st);
+    CHECK(st.aftertouch_available());
+
+    const std::uint64_t t = r.host0 + kSec;
+    r.key(32, 0, true, t);
+    r.key(32, 1, true, t + 10 * kMs);
+    r.key(32, 2, true, t + 20 * kMs);  // key 32 -> note 60
+    r.feed(r.mcu.frame(mcu::Aftertouch{0xFF, 0x8000}, t + 30 * kMs), t + 30 * kMs);
+    r.feed(r.mcu.frame(mcu::Aftertouch{32, 0xFFFF}, t + 40 * kMs), t + 40 * kMs);
+    r.key(34, 0, true, t + 50 * kMs);  // interleaved KEY_CONTACT right after AFTERTOUCH: not delayed
+    CHECK(r.reader->counters().aftertouch_frames == 2 && r.reader->counters().aftertouch_events == 2);
+    CHECK(r.out.ev.size() == 7);
+    if (r.out.ev.size() == 7) {
+      CHECK(r.out.ev[4].ump.is_channel_pressure() && r.out.ev[4].ump.pressure16() == 0x8000);
+      CHECK(r.out.ev[5].ump.is_poly_pressure() && r.out.ev[5].ump.note() == 60 && r.out.ev[5].ump.pressure16() == 0xFFFF);
+      CHECK(std::llabs(static_cast<long long>(r.out.ev[4].host_ns - r.out.ev[3].host_ns) - 10'000'000) < 5000);
+      CHECK(std::llabs(static_cast<long long>(r.out.ev[5].host_ns - r.out.ev[4].host_ns) - 10'000'000) < 5000);
+      CHECK(std::llabs(static_cast<long long>(r.out.ev[6].host_ns - r.out.ev[5].host_ns) - 10'000'000) < 5000);
+    }
+
+    // Disabling aftertouch suppresses emission even when the keybed has it.
+    r.reader->set_aftertouch_enabled(false);
+    r.feed(r.mcu.frame(mcu::Aftertouch{0xFF, 0x4000}, t + 60 * kMs), t + 60 * kMs);
+    CHECK(r.reader->counters().aftertouch_events == 2 && r.reader->counters().ignored_frames == 1);
+  }
+
+  // 3. Live Set routing & SampleEngine render: aftertouch routes to every part with keyboard_on = true (and not to keyboard_on = false),
+  // and a SampleEngine part mapping pressure to volume (+12 dB) and filter cutoff (+3600 cents) follows pressure changes.
+  {
+    core::SampleEngine::Config scfg;
+    scfg.max_voices = 16;
+    scfg.sample_rate = core::kSampleRate;
+    scfg.interpolation = core::SampleInterpolation::kLinear;
+    scfg.extended_voices = true;
+    scfg.modulated_voices = true;
+    core::SampleEngine se(scfg);
+    constexpr std::size_t kFrames = 4096;
+    std::vector<float> pcm(kFrames);
+    for (std::size_t i = 0; i < kFrames; ++i) {
+      // Rich harmonic signal (220 Hz + 2200 Hz) so both volume and low-pass filter cutoff changes are clearly measurable.
+      const double ph = static_cast<double>(i) / core::kSampleRate;
+      pcm[i] = static_cast<float>(0.2 * std::sin(2.0 * 3.14159265358979323846 * 220.0 * ph) +
+                                  0.2 * std::sin(2.0 * 3.14159265358979323846 * 2200.0 * ph));
+    }
+    ports::SampleRegionDesc reg{};
+    reg.sample_index = 0;
+    reg.key_lo = 0;
+    reg.key_hi = 127;
+    reg.vel_lo = 1;
+    reg.vel_hi = 127;
+    reg.key_center = 60;
+    reg.ampeg_sustain = 100.0f;
+    reg.ampeg_release = 0.2f;
+    reg.loop_mode = ports::SampleLoopMode::kLoopContinuous;
+    reg.has_loop_points = true;
+    reg.loop_start = 0;
+    reg.loop_end = kFrames - 1;
+    reg.filter_type = ports::SampleFilterType::kLpf2p;
+    reg.filter_cutoff_hz = 400.0f;
+    reg.volume_aftertouch_db = 12.0f;
+    reg.cutoff_aftertouch_cents = 3600.0f;
+    ports::SamplePcm spcm{};
+    spcm.sample_rate = core::kSampleRate;
+    spcm.channels = 1;
+    spcm.frames = kFrames;
+    spcm.total_frames = kFrames;
+    spcm.left = pcm.data();
+    struct TestSource final : ports::SampleSource {
+      ports::SampleRegionDesc r;
+      ports::SamplePcm s;
+      ports::InstrumentView instrument() const noexcept override {
+        return {std::span<const ports::SampleRegionDesc>(&r, 1), std::span<const ports::SamplePcm>(&s, 1)};
+      }
+    } src;
+    src.r = reg;
+    src.s = spcm;
+    auto bank0 = se.prepare(src);
+    auto bank1 = se.prepare(src);
+    CHECK(bank0 && bank0->uses_aftertouch && bank1);
+
+    core::Snapshot snap = core::Snapshot::defaults();
+    snap.live_set = true;
+    snap.parts[0].keyboard_on = 1;
+    snap.parts[0].low_key = 0;
+    snap.parts[0].high_key = 127;
+    snap.parts[0].engine_type = static_cast<std::uint32_t>(core::EngineTypeId::kSample);
+    snap.parts[0].state = core::PartState::kReady;
+    snap.parts[0].sample_bank = bank0;
+    snap.parts[0].volume = 1.0f;
+    snap.parts[1].keyboard_on = 0;  // keyboard_on = false: must not receive aftertouch
+    snap.parts[1].low_key = 0;
+    snap.parts[1].high_key = 127;
+    snap.parts[1].engine_type = static_cast<std::uint32_t>(core::EngineTypeId::kSample);
+    snap.parts[1].state = core::PartState::kReady;
+    snap.parts[1].sample_bank = bank1;
+    snap.parts[1].volume = 1.0f;
+
+    core::BlockRenderer br(64);
+    br.bind_engine(se);
+    br.snapshots().publish(&snap);
+
+    std::vector<float> l(64), r(64);
+    br.process_block(l.data(), r.data());  // adopt snapshot
+
+    // Strike middle C (note 60) from keyboard source (group 0, channel 0) and render 4 blocks at zero pressure.
+    br.submit({core::make_note_on(0, 0, 60, 0xC000), 0});
+    double rms_zero = 0.0;
+    for (int b = 0; b < 4; ++b) {
+      br.process_block(l.data(), r.data());
+      if (b >= 1) {
+        for (float s : l) rms_zero += static_cast<double>(s) * s;
+      }
+    }
+    rms_zero = std::sqrt(rms_zero / (3.0 * 64.0));
+    CHECK(rms_zero > 0.01);
+    CHECK(se.part_aftertouch(0) == 0.0f && se.part_aftertouch(1) == 0.0f);
+
+    // Send full channel pressure: routed to part 0 (keyboard_on = true), NOT to part 1 (keyboard_on = false).
+    br.submit({core::make_channel_pressure16(0, 0, 0xFFFF), 0});
+    double rms_full = 0.0;
+    for (int b = 0; b < 4; ++b) {
+      br.process_block(l.data(), r.data());
+      if (b >= 1) {
+        for (float s : l) rms_full += static_cast<double>(s) * s;
+      }
+    }
+    rms_full = std::sqrt(rms_full / (3.0 * 64.0));
+    CHECK(std::fabs(se.part_aftertouch(0) - 1.0f) < 1e-5f);
+    CHECK(se.part_aftertouch(1) == 0.0f);
+    // With +12 dB volume and +3600 cents filter opening, RMS increases by more than 4x.
+    CHECK(rms_full > rms_zero * 4.0);
+
+    // Drop channel pressure to 0 and apply poly pressure on note 60: part 0 receives poly aftertouch on note 60, part 1 does not.
+    br.submit({core::make_channel_pressure16(0, 0, 0), 0});
+    br.submit({core::make_poly_pressure16(0, 0, 60, 0x8000), 0});
+    double rms_poly = 0.0;
+    for (int b = 0; b < 4; ++b) {
+      br.process_block(l.data(), r.data());
+      if (b >= 1) {
+        for (float s : l) rms_poly += static_cast<double>(s) * s;
+      }
+    }
+    rms_poly = std::sqrt(rms_poly / (3.0 * 64.0));
+    CHECK(se.part_aftertouch(0) == 0.0f);
+    CHECK(std::fabs(se.part_poly_aftertouch(0, 60) - (static_cast<float>(0x8000) / 65535.0f)) < 1e-4f);
+    CHECK(se.part_poly_aftertouch(1, 60) == 0.0f);
+    CHECK(rms_poly > rms_zero * 1.8 && rms_poly < rms_full * 0.8);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -844,6 +1038,7 @@ int main() {
   test_counters_and_hello();
   test_drift_clock_rejection();
   test_velocity_mapper();
+  test_aftertouch_routing_and_render();
   if (g_fail) {
     std::printf("keybed_reader_test: %d failure(s)\n", g_fail);
     return 1;

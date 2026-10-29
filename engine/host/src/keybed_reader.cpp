@@ -22,7 +22,8 @@ KeybedReaderConfig sanitize(KeybedReaderConfig c) {
 
 KeybedReader::KeybedReader(HostEventQueue& out, KeybedCalibration table, KeybedReaderConfig cfg)
     : out_(out), table_(std::move(table)), cfg_(sanitize(cfg)), link_(TimeSyncConfig{cfg_.tick_hz, cfg_.sync_interval_ns, cfg_.sync_fast_interval_ns, cfg_.sync_fast_samples, cfg_.sync_timeout_ns}),
-      attack_mapper_(table_.velocity_range()), release_mapper_(table_.release_range()), keys_(table_.key_count()) {}
+      attack_mapper_(table_.velocity_range()), release_mapper_(table_.release_range()), keys_(table_.key_count()),
+      aftertouch_available_(table_.has_aftertouch()) {}
 
 void KeybedReader::set_calibration(KeybedCalibration table, std::uint64_t now_ns) {
   release_all(now_ns);
@@ -31,6 +32,7 @@ void KeybedReader::set_calibration(KeybedCalibration table, std::uint64_t now_ns
   rel_pending_count_ = 0;
   attack_mapper_.set_range(table_.velocity_range());
   release_mapper_.set_range(table_.release_range());
+  aftertouch_available_.store(have_hello_ ? hello_.aftertouch : table_.has_aftertouch(), std::memory_order_relaxed);
 }
 
 KeybedReaderCounters KeybedReader::counters() const {
@@ -85,6 +87,8 @@ void KeybedReader::handle(const mcu::Frame& f, std::uint64_t rx_ns) {
   }
   if (const auto* kc = std::get_if<mcu::KeyContact>(&*msg)) {
     on_key_contact(*kc, link_.convert(f.tick, rx_ns));
+  } else if (const auto* at = std::get_if<mcu::Aftertouch>(&*msg)) {
+    on_aftertouch(*at, link_.convert(f.tick, rx_ns));
   } else if (const auto* ts = std::get_if<mcu::TimeSync>(&*msg)) {
     on_time_sync(*ts, rx_ns);
   } else if (const auto* h = std::get_if<mcu::Hello>(&*msg)) {
@@ -92,6 +96,27 @@ void KeybedReader::handle(const mcu::Frame& f, std::uint64_t rx_ns) {
   } else {
     ++c_.ignored_frames;
   }
+}
+
+void KeybedReader::on_aftertouch(const mcu::Aftertouch& at, std::uint64_t t) {
+  if (!aftertouch_available() || !aftertouch_enabled()) {
+    ++c_.ignored_frames;
+    return;
+  }
+  ++c_.aftertouch_frames;
+  flush_slow_releases(t);
+  if (at.target == MCU_AFTERTOUCH_CHANNEL) {
+    emit(core::make_channel_pressure16(cfg_.group, cfg_.channel, at.value), t);
+    ++c_.aftertouch_events;
+    return;
+  }
+  const int note = table_.note_of(at.target);
+  if (note < 0) {
+    ++c_.unknown_key;
+    return;
+  }
+  emit(core::make_poly_pressure16(cfg_.group, cfg_.channel, static_cast<std::uint32_t>(note), at.value), t);
+  ++c_.aftertouch_events;
 }
 
 void KeybedReader::on_hello(const mcu::Hello& h, std::uint32_t tick, std::uint64_t rx_ns) {
@@ -107,6 +132,7 @@ void KeybedReader::on_hello(const mcu::Hello& h, std::uint32_t tick, std::uint64
   }
   hello_ = h;
   have_hello_ = true;
+  aftertouch_available_.store(h.aftertouch, std::memory_order_relaxed);
   if (h.keybed_contacts != 0 && h.keybed_contacts != table_.contacts()) ++c_.contact_mismatch;
 }
 

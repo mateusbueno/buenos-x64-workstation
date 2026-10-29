@@ -524,6 +524,7 @@ void ControlPlane::fill_state(ws::v1::State* out) const {
   fill_tier(out);
   fill_encoders(out);
   fill_content(out);
+  out->set_aftertouch_available(aftertouch_available_.load(std::memory_order_acquire));
   if (switch_handler_) switch_handler_->fill_status(out);
   if (setlist_handler_) setlist_handler_->fill_status(out);
   if (edit_handler_) edit_handler_->fill_status(out);

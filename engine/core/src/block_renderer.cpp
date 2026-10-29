@@ -157,6 +157,7 @@ void BlockRenderer::leave_live_set(std::array<bool, params::kPartCount>& remappe
   }
   in_live_set_ = false;
   keyboard_pitch_seen_ = false;
+  keyboard_aftertouch_seen_ = false;
   keyboard_cc_seen_.fill(false);  // the keyboard's controllers of that Live Set must not be replayed into a later one
   replay_listening_.fill(false);
   keyboard_pedal_down_ = false;  // the plain path owns the pedal again (its own events set it)
@@ -431,6 +432,14 @@ void BlockRenderer::apply(const Ump& ump) noexcept {
     route_pitch_bend(ump.channel(), ump.pitch_bend_value32());
     return;
   }
+  if (ump.group() == 0 && ump.is_channel_pressure()) {  // Story 3.7
+    route_aftertouch(ump.channel(), ump.pressure_value32());
+    return;
+  }
+  if (ump.group() == 0 && ump.is_poly_pressure()) {  // Story 3.7
+    route_poly_aftertouch(ump.channel(), ump.note(), ump.pressure_value32());
+    return;
+  }
   if (ump.group() == 0 && ump.is_assignable_per_note_controller()) {  // contact_k (Story 2.5)
     apply_contact(ump);
     return;
@@ -613,6 +622,44 @@ void BlockRenderer::route_pitch_bend(std::uint32_t channel, std::uint32_t value3
   if (!consumed) ++ignored_;
 }
 
+bool BlockRenderer::deliver_aftertouch(std::uint32_t part, std::uint32_t value32) noexcept {
+  Engine* engine = nullptr;
+  if (part >= 16 || registry_.resolve(channel_engine_[part], engine) != EngineStatus::kOk) return false;
+  return engine->set_part_aftertouch(part, value32);
+}
+
+bool BlockRenderer::deliver_poly_aftertouch(std::uint32_t part, std::uint32_t note, std::uint32_t value32) noexcept {
+  Engine* engine = nullptr;
+  if (part >= 16 || registry_.resolve(channel_engine_[part], engine) != EngineStatus::kOk) return false;
+  return engine->set_part_poly_aftertouch(part, note, value32);
+}
+
+void BlockRenderer::route_aftertouch(std::uint32_t channel, std::uint32_t value32) noexcept {
+  bool consumed = false;
+  if (router_.active()) {
+    keyboard_aftertouch_ = value32;
+    keyboard_aftertouch_seen_ = true;
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p)
+      if (router_.pedal_down_target(p)) consumed = deliver_aftertouch(p, value32) || consumed;
+  } else {
+    consumed = deliver_aftertouch(channel, value32);
+  }
+  if (!consumed) ++ignored_;
+}
+
+void BlockRenderer::route_poly_aftertouch(std::uint32_t channel, std::uint32_t note, std::uint32_t value32) noexcept {
+  bool consumed = false;
+  if (router_.active()) {
+    for (std::uint32_t p = 0; p < params::kPartCount; ++p) {
+      const int pitch = router_.poly_pressure_pitch(channel, note, p);
+      if (pitch >= 0) consumed = deliver_poly_aftertouch(p, static_cast<std::uint32_t>(pitch), value32) || consumed;
+    }
+  } else {
+    consumed = deliver_poly_aftertouch(channel, note, value32);
+  }
+  if (!consumed) ++ignored_;
+}
+
 // A Live Set switch: the keyboard's controllers are physical, so every part that sounds with the keyboard on takes their last values
 // (a part the keyboard did not reach before would otherwise start from the instrument defaults).
 void BlockRenderer::replay_keyboard_ccs(const Snapshot& s, bool all, const std::array<bool, params::kPartCount>& remapped) noexcept {
@@ -627,6 +674,7 @@ void BlockRenderer::replay_keyboard_ccs(const Snapshot& s, bool all, const std::
     for (std::uint32_t cc = 0; cc < 128; ++cc)
       if (keyboard_cc_seen_[cc]) deliver_cc(p, cc, keyboard_cc_[cc], true);  // replay: no controller moved, no trigger fires
     if (keyboard_pitch_seen_) deliver_pitch_bend(p, keyboard_pitch_bend_);
+    if (keyboard_aftertouch_seen_) deliver_aftertouch(p, keyboard_aftertouch_);
   }
 }
 

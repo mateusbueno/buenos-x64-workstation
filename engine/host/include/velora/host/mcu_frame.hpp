@@ -49,7 +49,7 @@ struct Frame {
 };
 
 // Typed messages (payload layouts in mcu_frame.h and MCU-ID-MAP.md).
-struct Hello { std::uint16_t fw_version; std::uint8_t protocol_version; std::uint8_t board_id; std::uint8_t keybed_contacts; friend bool operator==(const Hello&, const Hello&) = default; };
+struct Hello { std::uint16_t fw_version; std::uint8_t protocol_version; std::uint8_t board_id; std::uint8_t keybed_contacts; bool aftertouch = false; friend bool operator==(const Hello&, const Hello&) = default; };
 struct KeyContact { std::uint8_t key; std::uint8_t contact; bool closed; friend bool operator==(const KeyContact&, const KeyContact&) = default; };
 struct Aftertouch { std::uint8_t target; std::uint16_t value; friend bool operator==(const Aftertouch&, const Aftertouch&) = default; };  // target 0xFF = channel
 struct Control { std::uint8_t id; std::uint16_t value; friend bool operator==(const Control&, const Control&) = default; };  // encoders: int16 delta in two's complement

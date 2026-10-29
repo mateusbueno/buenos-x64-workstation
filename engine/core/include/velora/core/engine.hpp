@@ -194,6 +194,21 @@ class Engine {
     return false;
   }
 
+  // Aftertouch (Story 3.7): MIDI 2.0 channel pressure and polyphonic key pressure addressed to `part`, `value32` unsigned 0 = 0.0 .. 0xFFFFFFFF = 1.0,
+  // delivered at the event's frame between render segments. Returns true when the engine's part maps pressure; the block loop counts the event as ignored
+  // when no engine did. Default: not followed.
+  virtual bool set_part_aftertouch(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING {
+    (void)part;
+    (void)value32;
+    return false;
+  }
+  virtual bool set_part_poly_aftertouch(std::uint32_t part, std::uint32_t note, std::uint32_t value32) noexcept VELORA_NONBLOCKING {
+    (void)part;
+    (void)note;
+    (void)value32;
+    return false;
+  }
+
   // The key (channel, note) physically came up (Story 5.2). Called at the note off even when the sustain pedal defers the engine's
   // stop_voice() to the pedal up, so that engines that follow held keys (sw_down / sw_up keyswitches) see the release at once.
   // Idempotent for the engine: stop_voice() of the same key afterwards changes nothing more. Default: nothing.

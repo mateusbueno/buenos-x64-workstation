@@ -240,6 +240,7 @@ message State {
   FaderStatus faders = 15;               // Story 4.12: fader bindings, modes and pickup state; additive
   PreloadStatus preload = 16;            // Story 4.7: the next Live Set of the loaded setlist, preloaded within the head budget; additive
   TierStatus tier = 17;                  // Story 4.1: the tier profile the engine started with (read once, immutable); additive
+  bool aftertouch_available = 18;        // Story 3.7: true only when the attached keybed MCU reports aftertouch capability; additive
 }
 
 // Story 4.1 (AD-27): the tier profile, read once at engine start from the board strap / OTP (the Mac host and an unreadable strap run v1; `--tier pro|v1` is a

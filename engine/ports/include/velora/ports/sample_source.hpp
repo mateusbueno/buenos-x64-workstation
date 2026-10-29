@@ -231,6 +231,11 @@ struct SampleRegionDesc {
   SampleFilterTune filter2_tune;
   // Story 13.9: region EQ and dedicated LFO / EG modulation; the default means none.
   SampleModDesc mod;
+  // Story 3.7: aftertouch modulation (channel pressure or polyphonic key pressure).
+  // volume_aftertouch_db: dB added at full pressure (1.0), -144..48 dB (default 0).
+  // cutoff_aftertouch_cents: cents added to the first filter's cutoff at full pressure (1.0), -12000..12000 cents (default 0).
+  float volume_aftertouch_db = 0.0f;
+  float cutoff_aftertouch_cents = 0.0f;
 };
 
 // Story 1.17: a resident piece of a sample past its head: frames [start, start + frames) of the sample.

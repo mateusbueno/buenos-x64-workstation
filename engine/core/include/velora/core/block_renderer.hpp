@@ -260,6 +260,11 @@ class BlockRenderer {
   // Pitch bend (Story 3.10): like a controller. In a Live Set generation the keyboard's bend goes to every part that sounds with the keyboard on; otherwise to the channel's part.
   void route_pitch_bend(std::uint32_t channel, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
   bool deliver_pitch_bend(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
+  // Aftertouch (Story 3.7): channel and polyphonic pressure routed to every part with the keyboard on in a Live Set generation, or to the channel's part outside one.
+  void route_aftertouch(std::uint32_t channel, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
+  void route_poly_aftertouch(std::uint32_t channel, std::uint32_t note, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
+  bool deliver_aftertouch(std::uint32_t part, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
+  bool deliver_poly_aftertouch(std::uint32_t part, std::uint32_t note, std::uint32_t value32) noexcept VELORA_NONBLOCKING;
   bool deliver_cc(std::uint32_t part, std::uint32_t cc, std::uint32_t value32, bool replay = false) noexcept VELORA_NONBLOCKING;
   // Gives the keyboard's last controller values to the parts that listen and did not have them (all = a seamless switch: every listening part).
   void replay_keyboard_ccs(const Snapshot& s, bool all, const std::array<bool, params::kPartCount>& remapped) noexcept VELORA_NONBLOCKING;
@@ -318,6 +323,8 @@ class BlockRenderer {
   std::array<bool, 128> keyboard_cc_seen_{};
   std::uint32_t keyboard_pitch_bend_ = Ump::kPitchBendCentre32;  // RT-owned: the keyboard's last pitch bend in a Live Set generation (replayed like the controllers)
   bool keyboard_pitch_seen_ = false;
+  std::uint32_t keyboard_aftertouch_ = 0;                        // RT-owned: the keyboard's last channel pressure in a Live Set generation (Story 3.7)
+  bool keyboard_aftertouch_seen_ = false;
   std::array<bool, params::kPartCount> replay_listening_{};    // RT-owned: parts that listened to the keyboard at the last replay decision
   std::array<std::uint64_t, params::kPartCount> replay_bank_{};  // ... and the SampleBank::id they had
   // Story 8.8: physical input activity (group 0 note on/off, CC 64), published once per block through LastValueTable::store_input_activity().

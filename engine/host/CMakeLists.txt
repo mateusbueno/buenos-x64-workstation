@@ -350,9 +350,9 @@ add_executable(mcu_wrapper_test tests/mcu_wrapper_test.cpp)
 target_link_libraries(mcu_wrapper_test PRIVATE velora_host)
 add_test(NAME mcu_wrapper_test COMMAND mcu_wrapper_test)
 
-# Keybed reader (Story 3.5): drift-tracked device time, contact_k + Note On/Off, calibration tables, organ render of a recorded slow press.
+# Keybed reader (Story 3.5 / 3.7): drift-tracked device time, contact_k + Note On/Off, aftertouch, calibration tables, organ & sample render.
 add_executable(keybed_reader_test tests/keybed_reader_test.cpp)
-target_link_libraries(keybed_reader_test PRIVATE velora_host)
+target_link_libraries(keybed_reader_test PRIVATE velora_control velora_host)
 add_test(NAME keybed_reader_test COMMAND keybed_reader_test)
 set_tests_properties(keybed_reader_test PROPERTIES TIMEOUT 300)
 
