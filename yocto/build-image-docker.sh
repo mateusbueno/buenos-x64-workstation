@@ -65,7 +65,7 @@ cat <<EOF > "$PROJ/yocto/kas/build-dev.yml"
 header:
   version: 14
   includes:
-    - yocto/kas/velora-dev.yml
+    - velora-dev.yml
 local_conf_header:
   build-dev-custom: |
     VELORA_DEV_AUTHORIZED_KEYS_FILE = "/certs/id_ed25519.pub"
