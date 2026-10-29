@@ -88,7 +88,7 @@ development_status:
   epic-3: in-progress
   3-1-versioned-mcu-frame-protocol-library-and-control-led-id-maps: done
   3-2-prototype-board-bring-up: backlog
-  3-3-keybed-mcu-firmware-with-raw-per-contact-timestamps: backlog
+  3-3-keybed-mcu-firmware-with-raw-per-contact-timestamps: done
   3-4-mcu-dual-bank-bootloader-and-reflash-from-the-soc: done
   3-5-keybed-reader-on-the-soc-with-drift-tracked-device-time-and: done
   3-6-attack-and-release-velocity-with-selectable-curves: done
