@@ -142,6 +142,31 @@ class SettingsView {
   const std::vector<SysdConfigSender::Event::PairedComputer>& paired_computers() const noexcept { return paired_computers_; }
   void rebuild_paired_computers_ui();
 
+  // Story 8.3: System & Update section and install confirmation Action Sheet
+  void set_firmware_info(const std::string& version, const std::string& variant);
+  const std::string& firmware_version() const noexcept { return firmware_version_; }
+  const std::string& firmware_variant() const noexcept { return firmware_variant_; }
+  void set_available_update(const std::string& version, const std::string& bundle_path = "");
+  const std::string& available_update_version() const noexcept { return available_update_version_; }
+  const std::string& available_update_bundle_path() const noexcept { return available_update_bundle_path_; }
+  void set_update_error(const std::string& error_text);
+  const std::string& update_error_text() const noexcept { return update_error_text_; }
+  std::string update_status_text() const;
+  bool is_install_row_visible() const noexcept;
+  void open_install_update_action_sheet();
+  void confirm_install_update();
+  using UpdateAvailableCallback = std::function<void(const std::string& version)>;
+  using UpdateStartCallback = std::function<void(const std::string& target_version, const std::string& prev_version)>;
+  using UpdateProgressCallback = std::function<void(const std::string& phase, uint32_t percent, const std::string& target_ver, const std::string& fallback_ver)>;
+  using UpdateFailedCallback = std::function<void(const std::string& error_msg)>;
+  using UpdateFinishedCallback = std::function<void(const std::string& new_version)>;
+  void set_on_update_available(UpdateAvailableCallback cb) { on_update_available_ = std::move(cb); }
+  void set_on_update_start(UpdateStartCallback cb) { on_update_start_ = std::move(cb); }
+  void set_on_update_progress(UpdateProgressCallback cb) { on_update_progress_ = std::move(cb); }
+  void set_on_update_failed(UpdateFailedCallback cb) { on_update_failed_ = std::move(cb); }
+  void set_on_update_finished(UpdateFinishedCallback cb) { on_update_finished_ = std::move(cb); }
+  void update_system_update_ui();
+
   // Navigation / Selection
   void select_section(SettingsSection section);
   SettingsSection selected_section() const noexcept { return current_section_; }
@@ -329,6 +354,19 @@ class SettingsView {
   lv_obj_t* system_update_container_{nullptr};
   lv_obj_t* lbl_update_version_{nullptr};
   lv_obj_t* lbl_update_status_{nullptr};
+  lv_obj_t* card_install_update_{nullptr};
+  lv_obj_t* btn_install_update_{nullptr};
+  lv_obj_t* lbl_install_update_{nullptr};
+  std::string firmware_version_{"1.2.0"};
+  std::string firmware_variant_{"Development"};
+  std::string available_update_version_;
+  std::string available_update_bundle_path_;
+  std::string update_error_text_;
+  UpdateAvailableCallback on_update_available_;
+  UpdateStartCallback on_update_start_;
+  UpdateProgressCallback on_update_progress_;
+  UpdateFailedCallback on_update_failed_;
+  UpdateFinishedCallback on_update_finished_;
 
   ConfigChangeCallback on_config_changed_;
 };

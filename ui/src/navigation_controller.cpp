@@ -4,6 +4,10 @@
 #include "velora/ui/theme.hpp"
 #include "velora/ui/font_manager.hpp"
 
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+
 namespace velora::ui {
 
 NavigationController::NavigationController(WsClient* client)
@@ -210,6 +214,13 @@ bool NavigationController::initialize(lv_obj_t* parent) {
   });
 
   notice_toast_.set_on_action([this]() {
+    if (pending_update_toast_) {
+      pending_update_toast_ = false;
+      surface_before_launcher_ = current_surface_;
+      navigate_to(SurfaceId::Settings);
+      settings_view_.select_section(SettingsSection::SystemUpdate);
+      return;
+    }
     if (pending_sysex_ && pending_sysex_->ok()) {
       std::vector<ImportItem> items;
       for (const auto& v : pending_sysex_->voices) {
@@ -231,6 +242,7 @@ bool NavigationController::initialize(lv_obj_t* parent) {
 
   notice_toast_.set_on_dismiss([this]() {
     pending_sysex_.reset();
+    pending_update_toast_ = false;
   });
 
   settings_view_.set_on_close([this]() {
@@ -263,6 +275,22 @@ bool NavigationController::initialize(lv_obj_t* parent) {
 
   settings_view_.set_on_request_live_sets([this]() { request_live_set_choices(); });
   settings_view_.set_on_notice([this](const std::string& msg) { notice_toast_.show(msg, ""); });
+  settings_view_.set_on_update_available([this](const std::string& ver) {
+    on_update_available(ver, settings_view_.available_update_bundle_path());
+  });
+  settings_view_.set_on_update_start([this](const std::string& target_ver, const std::string& prev_ver) {
+    on_update_started(target_ver, prev_ver);
+  });
+  settings_view_.set_on_update_progress([this](const std::string& phase, uint32_t pct, const std::string& target_ver, const std::string& fallback_ver) {
+    on_update_progress(phase, pct, target_ver, fallback_ver);
+  });
+  settings_view_.set_on_update_failed([this](const std::string& err_msg) {
+    on_update_failed(err_msg);
+  });
+  settings_view_.set_on_update_finished([this](const std::string& new_ver) {
+    const std::string ver = new_ver;  // copy before on_update_finished clears available_update_version_
+    on_update_finished(ver);
+  });
   settings_view_.set_on_config_changed([this](const SystemConfig& c) {
     show_clock_source(c.clock_source);  // follows sysd's value
     performance_view_.set_touch_mode(c.touch_mode);
@@ -542,6 +570,11 @@ void NavigationController::on_panel_event(const PanelEvent& ev) {
 }
 
 void NavigationController::on_panel_event_impl(const PanelEvent& ev) {
+  // Story 8.3: panel and touch input are ignored during firmware install (no control cancels a slot write in progress)
+  if (installing_update_) {
+    return;
+  }
+
   // If WriteDialog is open, it captures all panel events
   if (write_dialog_.is_open()) {
     write_dialog_.on_panel_event(ev);
@@ -854,6 +887,103 @@ void NavigationController::on_sysex_dump_received(const format::SysexParseResult
 void NavigationController::on_sysex_damaged() {
   pending_sysex_.reset();
   notice_toast_.show(tr("notice.sysex_damaged"), "");
+}
+
+void NavigationController::on_update_available(const std::string& version, const std::string& bundle_path) {
+  settings_view_.set_available_update(version, bundle_path);
+  pending_update_toast_ = true;
+  char buf[128];
+  std::snprintf(buf, sizeof(buf), tr("notice.update_found").c_str(), version.c_str());
+  notice_toast_.show(buf, tr("notice.action.open"), 8000);
+}
+
+void NavigationController::on_update_started(const std::string& target_version, const std::string& prev_version) {
+  installing_update_ = true;
+  audio_muted_for_update_ = true;
+  notice_toast_.hide();
+
+  char sbuf[256];
+  std::snprintf(sbuf, sizeof(sbuf), tr("boot.updating_to").c_str(), target_version.c_str());
+  boot_view_.set_status_text(sbuf);
+
+  char rbuf[256];
+  std::snprintf(rbuf, sizeof(rbuf), tr("boot.power_loss_reassurance").c_str(), prev_version.c_str());
+  boot_view_.set_sub_status_text(rbuf);
+  boot_view_.set_progress(0.0f);
+
+  navigate_to(SurfaceId::Boot);
+}
+
+void NavigationController::on_update_progress(const std::string& /*phase*/, uint32_t percent,
+                                              const std::string& target_ver, const std::string& fallback_ver) {
+  if (!installing_update_) return;
+  boot_view_.set_progress(static_cast<float>(percent) / 100.0f);
+  if (!target_ver.empty()) {
+    char sbuf[256];
+    std::snprintf(sbuf, sizeof(sbuf), tr("boot.updating_to").c_str(), target_ver.c_str());
+    boot_view_.set_status_text(sbuf);
+  }
+  if (!fallback_ver.empty()) {
+    char rbuf[256];
+    std::snprintf(rbuf, sizeof(rbuf), tr("boot.power_loss_reassurance").c_str(), fallback_ver.c_str());
+    boot_view_.set_sub_status_text(rbuf);
+  }
+}
+
+void NavigationController::on_update_failed(const std::string& error_msg) {
+  // Slot was never written when sysd rejects the bundle: restore sound without a restart and return to Settings › System & Update
+  installing_update_ = false;
+  audio_muted_for_update_ = false;
+  boot_view_.set_sub_status_text("");
+  settings_view_.set_update_error(error_msg);
+  navigate_to(SurfaceId::Settings);
+  settings_view_.select_section(SettingsSection::SystemUpdate);
+}
+
+void NavigationController::on_update_finished(const std::string& new_version) {
+  installing_update_ = false;
+  audio_muted_for_update_ = false;
+  boot_view_.set_sub_status_text("");
+  if (!new_version.empty()) {
+    settings_view_.set_firmware_info(new_version, settings_view_.firmware_variant());
+  }
+  settings_view_.set_available_update("", "");
+  on_post_update_boot(new_version);
+}
+
+void NavigationController::on_post_update_boot(const std::string& new_version) {
+  navigate_to(SurfaceId::Performance);
+  char buf[128];
+  std::snprintf(buf, sizeof(buf), tr("notice.updated_to").c_str(), new_version.c_str());
+  notice_toast_.show(buf, "");
+}
+
+bool NavigationController::check_and_consume_rollback_file(const std::string& rollback_json_path) {
+  std::error_code ec;
+  if (!std::filesystem::exists(rollback_json_path, ec)) return false;
+  std::ifstream ifs(rollback_json_path);
+  if (!ifs.is_open()) return false;
+  std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+  ifs.close();
+
+  std::string to_ver = settings_view_.firmware_version();
+  for (const std::string& pat : {"\"to_version\":\"", "\"to_version\": \""}) {
+    auto pos = content.find(pat);
+    if (pos != std::string::npos) {
+      pos += pat.size();
+      auto end = content.find('"', pos);
+      if (end != std::string::npos) {
+        to_ver = content.substr(pos, end - pos);
+        break;
+      }
+    }
+  }
+
+  std::filesystem::remove(rollback_json_path, ec);
+  char buf[256];
+  std::snprintf(buf, sizeof(buf), tr("notice.update_rollback").c_str(), to_ver.c_str());
+  notice_toast_.show(buf, "");
+  return true;
 }
 
 void NavigationController::tick(uint32_t elapsed_ms) {

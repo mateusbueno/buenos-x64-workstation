@@ -279,3 +279,9 @@ add_test(NAME config_version_test COMMAND config_version_test)
 add_executable(compat_config_test tests/compat_config_test.cpp)
 target_link_libraries(compat_config_test PRIVATE velora_ui)
 add_test(NAME compat_config_test COMMAND compat_config_test "${CMAKE_CURRENT_SOURCE_DIR}/../tests/compat")
+
+# Story 8.3: Install flow on the device (System & Update, Action Sheet, Boot Screen progress, rollback toast, +40% pseudo-locale).
+add_executable(update_flow_test tests/update_flow_test.cpp)
+target_link_libraries(update_flow_test PRIVATE velora_ui)
+add_test(NAME update_flow_test COMMAND update_flow_test)
+set_tests_properties(update_flow_test PROPERTIES ENVIRONMENT "VELORA_LOCALE_DIR=${CMAKE_SOURCE_DIR}/locale")

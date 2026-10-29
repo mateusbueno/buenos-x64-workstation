@@ -208,7 +208,7 @@ development_status:
   epic-8: in-progress
   8-1-sysd-as-the-sole-installer-from-a-usb-a-stick: done
   8-2-production-release-signing-and-per-root-update-bundles: done
-  8-3-install-flow-on-the-device: backlog
+  8-3-install-flow-on-the-device: done
   8-4-mcu-firmware-manifest-in-the-a-b-image-and-boot-time-version: done
   8-5-format-versions-n-n-1-and-migrations-only-after-the-slot-is: done
   8-6-a-firmware-update-adds-a-new-engine-on-a-v1-unit: backlog

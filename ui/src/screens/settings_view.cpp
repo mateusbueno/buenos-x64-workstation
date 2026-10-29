@@ -919,7 +919,19 @@ void SettingsView::on_panel_event(const PanelEvent& ev) {
 
   if (ev.type == PanelEventType::Button && ev.pressed) {
     if (ev.id == MCU_BTN_VALUE_PUSH) {
+      if (current_section_ == SettingsSection::SystemUpdate) {
+        if (!available_update_version_.empty()) {
+          open_install_update_action_sheet();
+        }
+        return;
+      }
       open_param_picker(static_cast<size_t>(selected_slot_idx_));
+      return;
+    }
+    if (ev.id == MCU_BTN_WRITE && current_section_ == SettingsSection::SystemUpdate) {
+      if (!available_update_version_.empty()) {
+        open_install_update_action_sheet();
+      }
       return;
     }
     if (ev.id == MCU_BTN_EXIT) {
@@ -1710,19 +1722,132 @@ void SettingsView::build_system_update_detail() {
   lv_obj_set_style_border_width(system_update_container_, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(system_update_container_, sp.space_3, LV_PART_MAIN);
 
-  lv_obj_t* card = create_setting_card_helper(system_update_container_, 0, 96);
+  lv_obj_t* card = create_setting_card_helper(system_update_container_, 0, 108);
   lbl_update_version_ = lv_label_create(card);
-  lv_label_set_text(lbl_update_version_, tr("settings.model_info").c_str());
   lv_obj_add_style(lbl_update_version_, Theme::style_text(), LV_PART_MAIN);
   lv_obj_align(lbl_update_version_, LV_ALIGN_TOP_LEFT, 8, 8);
 
   lbl_update_status_ = lv_label_create(card);
-  lv_label_set_text(lbl_update_status_, tr("settings.update.up_to_date").c_str());
+  lv_obj_set_width(lbl_update_status_, 680);
+  lv_label_set_long_mode(lbl_update_status_, LV_LABEL_LONG_WRAP);
   lv_obj_add_style(lbl_update_status_, Theme::style_text_muted(), LV_PART_MAIN);
-  lv_obj_set_style_text_color(lbl_update_status_, p.ok, LV_PART_MAIN);
+  lv_obj_set_style_text_color(lbl_update_status_, p.muted, LV_PART_MAIN);
   lv_obj_align(lbl_update_status_, LV_ALIGN_BOTTOM_LEFT, 8, -8);
 
+  // Story 8.3: Install row card (visible only when a verified bundle is ready to install)
+  card_install_update_ = create_setting_card_helper(system_update_container_, 120, 72);
+  lv_obj_t* lbl_inst_row = lv_label_create(card_install_update_);
+  lv_label_set_text(lbl_inst_row, tr("settings.update.install_action").c_str());
+  lv_obj_add_style(lbl_inst_row, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_inst_row, LV_ALIGN_LEFT_MID, 8, 0);
+
+  btn_install_update_ = lv_btn_create(card_install_update_);
+  lv_obj_set_size(btn_install_update_, 140, 44);
+  lv_obj_align(btn_install_update_, LV_ALIGN_RIGHT_MID, -8, 0);
+  lv_obj_set_style_bg_color(btn_install_update_, p.accent, LV_PART_MAIN);
+  lv_obj_set_style_border_width(btn_install_update_, 0, LV_PART_MAIN);
+  lbl_install_update_ = lv_label_create(btn_install_update_);
+  lv_label_set_text(lbl_install_update_, tr("settings.update.install_action").c_str());
+  lv_obj_set_style_text_color(lbl_install_update_, p.bg, LV_PART_MAIN);
+  lv_obj_center(lbl_install_update_);
+
+  lv_obj_add_event_cb(btn_install_update_, [](lv_event_t* e) {
+    auto* self = static_cast<SettingsView*>(lv_event_get_user_data(e));
+    if (self) self->open_install_update_action_sheet();
+  }, LV_EVENT_CLICKED, this);
+
+  lv_obj_add_event_cb(card_install_update_, [](lv_event_t* e) {
+    auto* self = static_cast<SettingsView*>(lv_event_get_user_data(e));
+    if (self) self->open_install_update_action_sheet();
+  }, LV_EVENT_CLICKED, this);
+
+  update_system_update_ui();
   lv_obj_set_hidden(system_update_container_, true);
+}
+
+void SettingsView::set_firmware_info(const std::string& version, const std::string& variant) {
+  firmware_version_ = version;
+  firmware_variant_ = variant;
+  update_system_update_ui();
+}
+
+void SettingsView::set_available_update(const std::string& version, const std::string& bundle_path) {
+  available_update_version_ = version;
+  available_update_bundle_path_ = bundle_path;
+  update_error_text_.clear();
+  update_system_update_ui();
+}
+
+void SettingsView::set_update_error(const std::string& error_text) {
+  update_error_text_ = error_text;
+  update_system_update_ui();
+}
+
+std::string SettingsView::update_status_text() const {
+  if (!update_error_text_.empty()) {
+    return update_error_text_;
+  }
+  if (!available_update_version_.empty()) {
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), tr("settings.update.ready_to_install").c_str(), available_update_version_.c_str());
+    return buf;
+  }
+  return tr("settings.update.no_update_found");
+}
+
+bool SettingsView::is_install_row_visible() const noexcept {
+  return card_install_update_ && !lv_obj_is_hidden(card_install_update_);
+}
+
+void SettingsView::update_system_update_ui() {
+  const auto& p = Theme::current();
+  if (lbl_update_version_) {
+    char vbuf[256];
+    std::snprintf(vbuf, sizeof(vbuf), tr("settings.update.version_variant").c_str(),
+                  firmware_version_.c_str(), firmware_variant_.c_str());
+    lv_label_set_text(lbl_update_version_, vbuf);
+  }
+  if (lbl_update_status_) {
+    const std::string st = update_status_text();
+    lv_label_set_text(lbl_update_status_, st.c_str());
+    if (!update_error_text_.empty()) {
+      lv_obj_set_style_text_color(lbl_update_status_, p.warn, LV_PART_MAIN);
+    } else if (!available_update_version_.empty()) {
+      lv_obj_set_style_text_color(lbl_update_status_, p.ok, LV_PART_MAIN);
+    } else {
+      lv_obj_set_style_text_color(lbl_update_status_, p.muted, LV_PART_MAIN);
+    }
+  }
+  if (card_install_update_) {
+    lv_obj_set_hidden(card_install_update_, available_update_version_.empty());
+  }
+}
+
+void SettingsView::open_install_update_action_sheet() {
+  if (available_update_version_.empty()) return;
+  action_sheet_.set_on_close(nullptr);
+  std::vector<ActionSheetOption> options;
+  options.push_back({"WRITE", tr("action_sheet.update.install"), [this]() {
+    confirm_install_update();
+  }, false});
+  options.push_back({"EXIT", tr("action_sheet.update.later"), [this]() {
+    action_sheet_.close();
+  }, true});
+  action_sheet_.open(tr("action_sheet.eyebrow.update"), tr("action_sheet.update.title"), options);
+}
+
+void SettingsView::confirm_install_update() {
+  if (action_sheet_.is_open()) {
+    action_sheet_.close();
+  }
+  if (available_update_version_.empty()) return;
+  const std::string target_ver = available_update_version_;
+  if (on_update_start_) {
+    on_update_start_(target_ver, firmware_version_);
+  }
+  if (sysd_) {
+    sysd_->request_install_update(available_update_bundle_path_);
+  }
 }
 
 void SettingsView::calibrate_sustain() {
@@ -1796,7 +1921,29 @@ void SettingsView::poll_sysd() {
       }
     } else if (ev.kind == SysdConfigSender::Event::Kind::PairedComputers) {
       set_paired_computers(std::move(ev.paired_computers));
+    } else if (ev.kind == SysdConfigSender::Event::Kind::UpdateAvailable) {
+      set_available_update(ev.update_version, ev.update_bundle_path);
+      if (on_update_available_) {
+        on_update_available_(ev.update_version);
+      }
+    } else if (ev.kind == SysdConfigSender::Event::Kind::UpdateProgress) {
+      if (on_update_progress_) {
+        on_update_progress_(ev.update_phase, ev.update_percent, ev.update_version, ev.update_fallback_version);
+      }
+    } else if (ev.kind == SysdConfigSender::Event::Kind::UpdateFinished) {
+      if (on_update_finished_) {
+        on_update_finished_(available_update_version_);
+      }
     } else {
+      if (ev.setting == SysdConfigSender::Event::Setting::Update) {
+        char fbuf[256];
+        std::snprintf(fbuf, sizeof(fbuf), tr("settings.update.failed").c_str(), firmware_version_.c_str());
+        set_update_error(fbuf);
+        if (on_update_failed_) {
+          on_update_failed_(fbuf);
+        }
+        continue;
+      }
       // The change did not reach sysd (absent, refused): the control goes back to the last value sysd reported, and the player is told.
       applying_sysd_ = true;
       if (ev.setting == SysdConfigSender::Event::Setting::BootInto) {

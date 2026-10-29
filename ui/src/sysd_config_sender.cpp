@@ -117,6 +117,14 @@ class SocketSender final : public SysdConfigSender {
     cv_.notify_all();
   }
 
+  void request_install_update(const std::string& bundle_path) override {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      pending_install_bundle_ = bundle_path;
+    }
+    cv_.notify_all();
+  }
+
   bool poll(Event& out) override {
     std::lock_guard<std::mutex> lk(mu_);
     if (events_.empty()) return false;
@@ -173,6 +181,27 @@ class SocketSender final : public SysdConfigSender {
     }
     push(std::move(e));
   }
+  void push_update_available(const ws::v1::UpdateAvailable& u) {
+    Event e;
+    e.kind = Event::Kind::UpdateAvailable;
+    e.update_version = u.version();
+    e.update_bundle_path = u.bundle_path();
+    push(std::move(e));
+  }
+  void push_update_progress(const ws::v1::UpdateProgress& p) {
+    Event e;
+    e.kind = Event::Kind::UpdateProgress;
+    e.update_phase = p.phase();
+    e.update_percent = p.percent();
+    e.update_version = p.target_version();
+    e.update_fallback_version = p.fallback_version();
+    push(std::move(e));
+  }
+  void push_update_finished() {
+    Event e;
+    e.kind = Event::Kind::UpdateFinished;
+    push(std::move(e));
+  }
   struct BootRequest {
     uint8_t mode{0};
     std::string id;
@@ -201,6 +230,13 @@ class SocketSender final : public SysdConfigSender {
     if (pending_list_paired_) { list = true; pending_list_paired_ = false; return true; }
     return true;
   }
+  bool take_install(std::optional<std::string>& bundle_path) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (stop_) return false;
+    bundle_path = std::move(pending_install_bundle_);
+    pending_install_bundle_.reset();
+    return true;
+  }
   bool stopping() {
     std::lock_guard<std::mutex> lk(mu_);
     return stop_;
@@ -210,7 +246,7 @@ class SocketSender final : public SysdConfigSender {
     cv_.wait_for(lk, std::chrono::milliseconds(ms), [this] {
       return stop_ || pending_.has_value() || pending_boot_.has_value() ||
              pending_pairing_start_ || pending_pairing_cancel_ || pending_pairing_status_ ||
-             pending_list_paired_ || pending_forget_id_.has_value();
+             pending_list_paired_ || pending_forget_id_.has_value() || pending_install_bundle_.has_value();
     });
   }
 
@@ -312,10 +348,34 @@ class SocketSender final : public SysdConfigSender {
         if (conn.list_paired_computers(rep, err)) push_paired_computers(rep);
         continue;
       }
+      std::optional<std::string> inst_path;
+      if (!take_install(inst_path)) return;
+      if (inst_path) {
+        std::string err;
+        ws::v1::Error refused;
+        const bool ok = conn.install_update(*inst_path, err, &refused);
+        // Drain any queued progress pushes first
+        ws::v1::ServerMessage pm;
+        while (conn.next_push(pm, 0)) {
+          if (pm.has_update_progress()) push_update_progress(pm.update_progress());
+          else if (pm.has_update_available()) push_update_available(pm.update_available());
+          else if (pm.has_config_reply()) report(pm.config_reply().config());
+        }
+        if (!ok) {
+          const bool transport = refused.code() == ws::v1::ERROR_CODE_UNSPECIFIED;
+          fail(err, transport, Event::Setting::Update);
+          if (transport) return;
+        } else {
+          push_update_finished();
+        }
+        continue;
+      }
       ws::v1::ServerMessage m;
       if (conn.next_push(m, 100)) {
         if (m.has_config_reply()) report(m.config_reply().config());
         else if (m.has_pairing_window_reply()) push_pairing_window(m.pairing_window_reply());
+        else if (m.has_update_available()) push_update_available(m.update_available());
+        else if (m.has_update_progress()) push_update_progress(m.update_progress());
         continue;
       }
       // false: a timeout (nothing arrived) or a lost connection; tell them apart without consuming anything.
@@ -336,6 +396,7 @@ class SocketSender final : public SysdConfigSender {
   bool pending_pairing_status_{false};
   bool pending_list_paired_{false};
   std::optional<std::string> pending_forget_id_;
+  std::optional<std::string> pending_install_bundle_;
   std::deque<Event> events_;
   std::thread thread_;
 };

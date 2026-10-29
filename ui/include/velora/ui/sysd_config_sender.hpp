@@ -18,9 +18,12 @@ class SysdConfigSender {
       Failed,  // a request could not be delivered or sysd refused it: `error` says why; the ui reverts to its last known value
       PairingWindow,   // Story 9.6: pairing window status / code / active computer
       PairedComputers, // Story 9.6: list of paired computers
+      UpdateAvailable, // Story 8.3: verified firmware bundle announced by sysd
+      UpdateProgress,  // Story 8.3: install progress phase + percent
+      UpdateFinished,  // Story 8.3: install completed (unit restarting)
     };
     // Which request a Failed event is about (the ui reverts that control and says so).
-    enum class Setting : uint8_t { ClockSource, BootInto, Pairing };
+    enum class Setting : uint8_t { ClockSource, BootInto, Pairing, Update };
     Setting setting{Setting::ClockSource};
     // Config: sysd's Boot into (Story 8.9), when it reported one this ui knows: the mode as SystemConfig::boot_into (0 last sound, 1 start of setlist, 2 default Live Set)
     // and the default Live Set id ("" = none).
@@ -45,6 +48,13 @@ class SysdConfigSender {
     int32_t pairing_attempts_left{0};
     std::string pairing_active_computer_name;
     std::vector<PairedComputer> paired_computers;
+
+    // Story 8.3 update fields
+    std::string update_version;
+    std::string update_bundle_path;
+    std::string update_phase;
+    uint32_t update_percent{0};
+    std::string update_fallback_version;
   };
 
   virtual ~SysdConfigSender() = default;
@@ -59,6 +69,8 @@ class SysdConfigSender {
   virtual void request_pairing_status() = 0;
   virtual void request_list_paired_computers() = 0;
   virtual void request_forget_computer(const std::string& id) = 0;
+  // Story 8.3: request firmware install on the unit
+  virtual void request_install_update(const std::string& bundle_path = "") {}
   // The next outcome / report, oldest first. UI thread; false when there is none.
   virtual bool poll(Event& out) = 0;
 };

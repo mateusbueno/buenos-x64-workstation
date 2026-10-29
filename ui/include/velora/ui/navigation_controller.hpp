@@ -76,6 +76,16 @@ class NavigationController {
   void on_usb_drive_inserted(const std::string& drive_name, const std::vector<ImportItem>& items);
   void on_sysex_dump_received(const format::SysexParseResult& result);
   void on_sysex_damaged();
+  // Story 8.3: firmware update discovery, install flow, post-update toast, and rollback state check
+  void on_update_available(const std::string& version, const std::string& bundle_path = "");
+  void on_update_started(const std::string& target_version, const std::string& prev_version);
+  void on_update_progress(const std::string& phase, uint32_t percent, const std::string& target_ver, const std::string& fallback_ver);
+  void on_update_failed(const std::string& error_msg);
+  void on_update_finished(const std::string& new_version);
+  void on_post_update_boot(const std::string& new_version);
+  bool check_and_consume_rollback_file(const std::string& rollback_json_path);
+  bool is_installing_update() const noexcept { return installing_update_; }
+  bool is_audio_muted_for_update() const noexcept { return audio_muted_for_update_; }
   void tick(uint32_t elapsed_ms);
 
   void on_midi_note(uint8_t note_number);
@@ -178,6 +188,9 @@ class NavigationController {
   bool has_timbre_edit_{false};
   std::string change_summary_text_;
   std::optional<format::SysexParseResult> pending_sysex_;
+  bool pending_update_toast_{false};
+  bool installing_update_{false};
+  bool audio_muted_for_update_{false};
 };
 
 }  // namespace velora::ui

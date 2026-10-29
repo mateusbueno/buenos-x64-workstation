@@ -252,6 +252,23 @@ bool Connection::forget_paired_computer(const std::string& id, std::string& err)
   return true;
 }
 
+bool Connection::install_update(const std::string& bundle_path, std::string& err, ws::v1::Error* error) {
+  ws::v1::ClientMessage m;
+  m.mutable_install_update()->set_bundle_path(bundle_path);
+  ws::v1::ServerMessage rep;
+  if (!call(std::move(m), rep, err)) return false;
+  if (!rep.has_ack()) {
+    if (rep.has_error()) {
+      if (error) *error = rep.error();
+      err = ws::v1::ErrorCode_Name(rep.error().code()) + ": " + rep.error().message();
+    } else {
+      err = "unexpected reply";
+    }
+    return false;
+  }
+  return true;
+}
+
 std::string format_pedal_result(const ws::v1::PedalCalibrationReply& r) {
   using R = ws::v1::PedalCalibrationResult;
   const std::string range = " (measured min " + std::to_string(r.min()) + ", max " + std::to_string(r.max()) + ")";

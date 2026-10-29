@@ -34,6 +34,9 @@ class BootView {
   void set_status_text(const std::string& text);
   const std::string& status_text() const noexcept { return current_status_text_; }
 
+  void set_sub_status_text(const std::string& text);
+  const std::string& sub_status_text() const noexcept { return current_sub_status_text_; }
+
   void set_ready(bool ready);
   bool is_ready() const noexcept { return is_ready_; }
 
@@ -63,6 +66,7 @@ class BootView {
 
   float progress_{0.0f};
   std::string current_status_text_;
+  std::string current_sub_status_text_;
 
   uint32_t anim_elapsed_ms_{0};
 
@@ -73,6 +77,7 @@ class BootView {
   lv_obj_t* lbl_wordmark_{nullptr};
   lv_obj_t* progress_bar_{nullptr};
   lv_obj_t* lbl_status_{nullptr};
+  lv_obj_t* lbl_sub_status_{nullptr};
 
   // Dimensions
   static constexpr int kNumBars = 5;

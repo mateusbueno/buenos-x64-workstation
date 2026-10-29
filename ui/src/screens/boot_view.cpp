@@ -95,6 +95,13 @@ bool BootView::create(lv_obj_t* parent) {
   lv_obj_add_style(lbl_status_, Theme::style_text_muted(), LV_PART_MAIN);
   lv_obj_align(lbl_status_, LV_ALIGN_TOP_MID, 0, 370);
 
+  // Sub-status line (Story 8.3: "If power is lost, the Velora starts on <ver>.")
+  lbl_sub_status_ = lv_label_create(root_);
+  lv_label_set_text(lbl_sub_status_, "");
+  lv_obj_add_style(lbl_sub_status_, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_align(lbl_sub_status_, LV_ALIGN_TOP_MID, 0, 400);
+  lv_obj_set_hidden(lbl_sub_status_, true);
+
   if (reduced_motion_) {
     animation_finished_ = true;
   }
@@ -152,6 +159,15 @@ void BootView::set_status_text(const std::string& text) {
   if (lbl_status_) {
     lv_label_set_text(lbl_status_, current_status_text_.c_str());
     lv_obj_align(lbl_status_, LV_ALIGN_TOP_MID, 0, 370);
+  }
+}
+
+void BootView::set_sub_status_text(const std::string& text) {
+  current_sub_status_text_ = text;
+  if (lbl_sub_status_) {
+    lv_label_set_text(lbl_sub_status_, current_sub_status_text_.c_str());
+    lv_obj_set_hidden(lbl_sub_status_, current_sub_status_text_.empty());
+    lv_obj_align(lbl_sub_status_, LV_ALIGN_TOP_MID, 0, 400);
   }
 }
 
