@@ -923,6 +923,62 @@ void test_seamless_scene_and_live_set_switching_with_running_arp() {
   CHECK(sample_engine.active_voices() == 0);
   CHECK(rig.br->status_count(EngineStatus::kVoiceNotFound) == 0);
 
+  // Regression test (deferred-work Arpeggiator stuck voice):
+  // 1) Seamless scene switch disables Arp while a step note with a long gate (longer than 64 blocks) is sounding,
+  //    followed by an explicit set_part_arp(off) before the gate expires -> must cut the sounding step note immediately.
+  // 2) Note pressed while Arp is Off (passthrough_sounding = true), then Arp is enabled with Latch On and the key is
+  //    released BEFORE the next block runs apply_mode_transition(), followed by disabling Arp -> must NOT orphan the
+  //    passthrough voice in Held state!
+  {
+    Rig rig_reg;
+    ArpConfig c_on;
+    c_on.enabled = true;
+    c_on.mode = ArpMode::kUp;
+    c_on.rate = ArpRate::k1_4;  // 24000 frames at 120 BPM
+    c_on.octaves = 1;
+    c_on.gate_percent = 100.0f;  // 24000 frames gate (> 64 blocks = 4096 frames)
+    c_on.latch = true;
+
+    Snapshot sa = Snapshot::defaults();
+    sa.revision = 1;
+    sa.parts[0].arp = c_on;
+    rig_reg.br->snapshots().publish(&sa);
+    rig_reg.br->submit({make_note_on(0, 0, 60, 50000), 0});
+    rig_reg.run(2);  // frame 0 triggers note 60 with off_frame = 24000
+    CHECK(rig_reg.br->test_tone().active_voices() == 1);
+
+    // Seamless generation switch turns Arp Off at block 2 (frame 128): step note 60 keeps sounding toward frame 24000.
+    Snapshot sb = sa;
+    sb.revision = 2;
+    sb.parts[0].arp.enabled = false;
+    rig_reg.br->snapshots().publish(&sb);
+    rig_reg.run(2);
+    CHECK(rig_reg.br->test_tone().active_voices() == 1);
+
+    // Explicit non-seamless set_part_arp(off) + key release must immediately stop the still-sounding step note!
+    ArpConfig c_off = c_on;
+    c_off.enabled = false;
+    c_off.latch = false;
+    rig_reg.br->set_part_arp(0, c_off);
+    rig_reg.br->submit({make_note_off(0, 0, 60, 0), 0});
+    rig_reg.run(2);
+    CHECK(rig_reg.br->test_tone().active_voices() == 0);
+
+    // Sub-case 2: Passthrough note pressed while Arp is Off, then Arp enabled with Latch On and key released
+    // in the same block before apply_mode_transition runs, then Arp disabled.
+    rig_reg.br->submit({make_note_on(0, 0, 64, 50000), 0});
+    rig_reg.run(1);  // note 64 is passthrough_sounding = true, physically_held = true
+    CHECK(rig_reg.br->test_tone().active_voices() == 1);
+
+    rig_reg.br->arp(0).set_config(c_on);
+    // Simulate key release while held_[i].passthrough_sounding is still true and Latch is On, then disable Arp:
+    rig_reg.br->submit({make_note_off(0, 0, 64, 0), 0});
+    rig_reg.run(1);
+    rig_reg.br->set_part_arp(0, c_off);
+    rig_reg.run(2);
+    CHECK(rig_reg.br->test_tone().active_voices() == 0);
+  }
+
   std::vector<EmittedNoteEvent> expected_trace = {
       {0, 0, 60, 65535, true},
       {3000, 0, 60, 0, false},

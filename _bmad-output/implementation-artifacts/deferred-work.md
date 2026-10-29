@@ -11,12 +11,12 @@
 
 ## Deferred from: Story 4.1 (tier profile), 2026-10-26
 
-### BUG: Arpeggiator leaves a voice stuck after the final release (production code, found by arpeggiator_traffic_test)
+### RESOLVED (2026-10-29): Arpeggiator stuck-voice bug (`engine/core/src/arpeggiator.cpp`)
 
-- **Symptom.** After the traffic stops, every held key is released, every arpeggiator is disabled with latch off and the sustain pedal is lifted on every part, yet `br->test_tone().active_voices()` stays at 1 ("FAIL: 1 test-tone voices still active after release").
-- **Repro.** `engine/core/tests/rtsan_arpeggiator_test.cpp` (ctest `arpeggiator_traffic_test`) with other random streams. At the pre-4.1 baseline (8 parts) seeds 11111 and 424242 reproduce it, and so does merely changing how many random numbers `Control::publish_variant` consumes. Harnesses: `.../scratchpad/arp_s11111.cpp` and `arp_s424242.cpp` (session scratchpad of the 4.1 work). The committed test keeps its tuned stream and `kTrafficParts = 8`, which hide the bug.
-- **Suspect area.** `Arpeggiator::set_config`, `is_held_non_passthrough` and `track_passthrough_note`, and the note-off suppression in `engine/core/src/block_renderer.cpp` around lines 453-460 and `engine/core/src/arpeggiator.cpp` around line 119: a note-off swallowed because the arpeggiator still believed the key was arp-held, after a config change (enabled to disabled, or a latch change) moved the note's ownership.
-- **Not fixed in 4.1** (out of scope; the change is independent of the tier). Needs its own story with a regression test per seed.
+- **Fixed in `Arpeggiator::set_config` and `Arpeggiator::remove_unheld_notes`:**
+  1. When `set_config` disables the arpeggiator non-seamlessly (`!seamless_transition`) while step notes are still sounding from an earlier seamless scene switch (`!config_.enabled && has_active_sounding()`), it now arms `transition_start_passthrough_ = true` so `apply_mode_transition` emits immediate Note Offs for the lingering step notes.
+  2. `remove_unheld_notes()` preserves entries that still have `passthrough_sounding == true` until `apply_mode_transition` emits their Note Off, preventing a passthrough voice from being orphaned if Latch/Sustain held the entry across an Arp On/Off toggle before `apply_mode_transition` ran.
+- **Verified:** `arpeggiator_traffic_test` now runs both `8` and `params::kPartCount` (`16`) parts across seeds `54321`, `11111`, and `424242` with zero stuck voices, plus dedicated unit regression tests in `engine/core/tests/arpeggiator_test.cpp`.
 
 ### Other items left by Story 4.1
 

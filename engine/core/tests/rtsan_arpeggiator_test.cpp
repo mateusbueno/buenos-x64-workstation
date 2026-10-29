@@ -22,10 +22,7 @@ using namespace velora::core;
 
 namespace {
 
-// The traffic is the v1 tier's 8 parts: the seeded stream was tuned on 8 (the build now carries 16, Story 4.1). NOTE: kTrafficParts = 8 and the tuned seed HIDE a
-// real production bug: other seeds (e.g. 11111, 424242) leave a test-tone voice stuck after the final release, also at the pre-4.1 baseline. Tracked in
-// _bmad-output/implementation-artifacts/deferred-work.md ("Arpeggiator stuck voice"); do not widen or re-seed this test until it is fixed.
-constexpr std::uint32_t kTrafficParts = 8;
+constexpr std::uint32_t kTrafficParts = params::kPartCount;
 constexpr std::uint32_t kBlocks = 10000;
 constexpr std::uint32_t kGenEvery = 5;
 
@@ -34,8 +31,10 @@ struct Control {
   std::vector<std::unique_ptr<Snapshot>> live;
   Snapshot cur = Snapshot::defaults();
   std::uint64_t rev = 0, published = 0, rng = 54321;
+  std::uint32_t parts = kTrafficParts;
 
-  explicit Control(SnapshotExchange& e) : ex(e) {}
+  explicit Control(SnapshotExchange& e, std::uint64_t seed = 54321, std::uint32_t p = kTrafficParts)
+      : ex(e), rng(seed), parts(p) {}
 
   std::uint32_t rnd() {
     rng = rng * 6364136223846793005ull + 1442695040888963407ull;
@@ -59,7 +58,7 @@ struct Control {
   }
 
   void publish_variant(std::uint32_t k) {
-    for (std::uint32_t p = 0; p < kTrafficParts; ++p) {
+    for (std::uint32_t p = 0; p < parts; ++p) {
       ArpConfig& a = cur.parts[p].arp;
       const std::uint32_t r = rnd();
       a.enabled = ((k + p) % 4) != 0;
@@ -95,11 +94,12 @@ struct Player {
   }
 };
 
-void run_block(BlockRenderer& br, Player& pl, OutputBuses ob, std::uint32_t i) noexcept VELORA_NONBLOCKING {
+void run_block(BlockRenderer& br, Player& pl, OutputBuses ob, std::uint32_t i,
+               std::uint32_t traffic_parts) noexcept VELORA_NONBLOCKING {
   const std::uint32_t presses = pl.count >= 64 ? 0 : 1 + pl.rnd() % 2;
   std::uint16_t fresh[2]{};
   for (std::uint32_t n = 0; n < presses; ++n) {
-    const std::uint32_t ch = pl.rnd() % kTrafficParts;
+    const std::uint32_t ch = pl.rnd() % traffic_parts;
     const std::uint32_t key = 36 + (pl.rnd() % 60);
     br.submit({make_note_on(0, ch, key, 10000 + pl.rnd() % 50000), pl.rnd() % kBlockFrames});
     fresh[n] = static_cast<std::uint16_t>((ch << 7) | key);
@@ -113,7 +113,7 @@ void run_block(BlockRenderer& br, Player& pl, OutputBuses ob, std::uint32_t i) n
   }
   for (std::uint32_t n = 0; n < presses; ++n) pl.keys[pl.count++] = fresh[n];
   if (i % 7 == 0) {
-    const std::uint32_t ch = pl.rnd() % kTrafficParts;
+    const std::uint32_t ch = pl.rnd() % traffic_parts;
     const std::uint32_t val32 = (pl.rnd() & 1u) ? 0xFFFFFFFFu : 0u;
     br.submit({make_control_change(0, ch, Ump::kControllerSustain, val32), pl.rnd() % kBlockFrames});
   }
@@ -124,9 +124,10 @@ void run_block(BlockRenderer& br, Player& pl, OutputBuses ob, std::uint32_t i) n
   br.process_block(ob);
 }
 
-bool run_once(std::uint64_t& hash_out, std::uint64_t& gens_out) {
+bool run_once(std::uint64_t& hash_out, std::uint64_t& gens_out, std::uint64_t ctl_seed = 54321,
+              std::uint32_t traffic_parts = kTrafficParts) {
   auto br = std::make_unique<BlockRenderer>(64);
-  Control ctl(br->snapshots());
+  Control ctl(br->snapshots(), ctl_seed, traffic_parts);
   ctl.publish_variant(0);
   Player pl;
   std::uint64_t hash = 1469598103934665603ull;
@@ -136,7 +137,7 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& gens_out) {
   for (std::uint32_t i = 0; i < kBlocks; ++i) {
     if (i % kGenEvery == 0) ctl.publish_variant(1 + i / kGenEvery);
     if (i % 19 == 0) ctl.reclaim();
-    run_block(*br, pl, OutputBuses{l, r, al, ar}, i);
+    run_block(*br, pl, OutputBuses{l, r, al, ar}, i, traffic_parts);
     for (std::uint32_t f = 0; f < kBlockFrames; ++f) {
       finite = finite && std::isfinite(l[f]) && std::isfinite(r[f]);
       peak = std::max(peak, std::max(std::fabs(l[f]), std::fabs(r[f])));
@@ -147,7 +148,7 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& gens_out) {
     }
   }
   gens_out = ctl.published;
-  for (std::uint32_t p = 0; p < kTrafficParts; ++p) {
+  for (std::uint32_t p = 0; p < traffic_parts; ++p) {
     ArpConfig off_cfg = br->arp(p).config();
     off_cfg.latch = false;
     off_cfg.enabled = false;
@@ -179,14 +180,20 @@ bool run_once(std::uint64_t& hash_out, std::uint64_t& gens_out) {
 }  // namespace
 
 int main() {
-  std::uint64_t h1 = 0, h2 = 0, g1 = 0, g2 = 0;
-  if (!run_once(h1, g1) || !run_once(h2, g2)) return 1;
-  if (h1 != h2 || g1 != g2) {
-    std::printf("FAIL: two runs differ (%016llx vs %016llx)\n",
-                static_cast<unsigned long long>(h1), static_cast<unsigned long long>(h2));
-    return 1;
+  for (std::uint32_t parts : {8u, params::kPartCount}) {
+    for (std::uint64_t seed : {54321ull, 11111ull, 424242ull}) {
+      std::uint64_t h1 = 0, h2 = 0, g1 = 0, g2 = 0;
+      if (!run_once(h1, g1, seed, parts) || !run_once(h2, g2, seed, parts)) return 1;
+      if (h1 != h2 || g1 != g2) {
+        std::printf("FAIL: two runs differ for parts=%u seed=%llu (%016llx vs %016llx)\n",
+                    parts, static_cast<unsigned long long>(seed),
+                    static_cast<unsigned long long>(h1), static_cast<unsigned long long>(h2));
+        return 1;
+      }
+      std::printf("arpeggiator traffic (parts=%u, seed=%llu): %u blocks, %llu generations, deterministic (%016llx)\n",
+                  parts, static_cast<unsigned long long>(seed), kBlocks,
+                  static_cast<unsigned long long>(g1), static_cast<unsigned long long>(h1));
+    }
   }
-  std::printf("arpeggiator traffic: %u blocks, %llu generations, deterministic (%016llx)\n",
-              kBlocks, static_cast<unsigned long long>(g1), static_cast<unsigned long long>(h1));
   return 0;
 }

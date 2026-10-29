@@ -58,14 +58,16 @@ void Arpeggiator::set_config(const ArpConfig& cfg, bool seamless_transition) noe
   } else if (next.latch) {
     latch_off_pending_ = false;
   }
-  if (config_.enabled && !next.enabled) {
+  if (!next.enabled) {
     latch_off_pending_ = false;
     remove_unheld_notes();
     if (seamless_transition) {
-      transition_start_passthrough_ = false;
-      pattern_running_ = false;
-      rate_changed_ = false;
-    } else {
+      if (config_.enabled) {
+        transition_start_passthrough_ = false;
+        pattern_running_ = false;
+        rate_changed_ = false;
+      }
+    } else if (config_.enabled || has_active_sounding()) {
       transition_start_passthrough_ = true;
     }
   } else if (!config_.enabled && next.enabled) {
@@ -215,7 +217,7 @@ void Arpeggiator::mark_note_released(std::uint8_t note) noexcept {
 void Arpeggiator::remove_unheld_notes() noexcept {
   std::size_t write = 0;
   for (std::size_t read = 0; read < held_count_; ++read) {
-    if (held_[read].physically_held) {
+    if (held_[read].physically_held || held_[read].passthrough_sounding) {
       if (write != read) {
         held_[write] = held_[read];
       }
