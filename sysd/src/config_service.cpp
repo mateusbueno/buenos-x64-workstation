@@ -2,6 +2,7 @@
 
 #include "velora/host/control_plane.hpp"  // check_protocol_version, min_protocol_version
 #include "velora/sysd/pairing.hpp"
+#include "velora/sysd/update_installer.hpp"
 
 namespace velora::sysd {
 
@@ -40,6 +41,25 @@ void ConfigService::set_pairing(PairingWindow* window, PairedStore* paired) {
   std::lock_guard<std::mutex> lk(mu_);
   window_ = window;
   paired_ = paired;
+}
+
+void ConfigService::set_update_installer(UpdateInstaller* installer) {
+  std::lock_guard<std::mutex> lk(mu_);
+  installer_ = installer;
+}
+
+void ConfigService::announce_update_available(const ws::v1::UpdateAvailable& avail, std::vector<Outbound>& out) {
+  std::lock_guard<std::mutex> lk(mu_);
+  if (installer_) installer_->set_available(avail);
+  for (const auto& kv : conns_) {
+    if (!kv.second.subscribed) continue;
+    Outbound push;
+    push.to = kv.first;
+    push.msg.set_request_id(0);
+    push.msg.set_revision(store_.revision());
+    *push.msg.mutable_update_available() = avail;
+    out.push_back(std::move(push));
+  }
 }
 
 ws::v1::ServerMessage ConfigService::config_message(std::uint64_t request_id, bool not_durable) const {
@@ -229,6 +249,47 @@ void ConfigService::handle(ConnId c, const std::string& payload, std::vector<Out
       o.msg.set_revision(store_.revision());
       o.msg.mutable_ack();
       out.push_back(std::move(o));
+      return;
+    }
+    case B::kInstallUpdate: {
+      if (!installer_) {
+        error(c, msg.request_id(), ws::v1::ERROR_CODE_UNSUPPORTED_FEATURE, "update installer not available in this sysd instance", {}, out);
+        return;
+      }
+      std::string bundle_path = msg.install_update().bundle_path();
+      if (bundle_path.empty() && installer_->has_available()) {
+        bundle_path = installer_->last_available().bundle_path();
+      }
+      if (bundle_path.empty()) {
+        error(c, msg.request_id(), ws::v1::ERROR_CODE_UPDATE_IO, "no update bundle specified or ready to install", {}, out);
+        return;
+      }
+      ws::v1::ErrorCode err_code = ws::v1::ERROR_CODE_UNSPECIFIED;
+      std::string err_msg;
+      const bool ok = installer_->install(
+          bundle_path, "velora-sysd",
+          [&](const ws::v1::UpdateProgress& prog) {
+            for (const auto& kv : conns_) {
+              if (!kv.second.subscribed && kv.first != c) continue;
+              Outbound push;
+              push.to = kv.first;
+              push.msg.set_request_id(0);
+              push.msg.set_revision(store_.revision());
+              *push.msg.mutable_update_progress() = prog;
+              out.push_back(std::move(push));
+            }
+          },
+          err_code, err_msg);
+      if (!ok) {
+        error(c, msg.request_id(), err_code, err_msg, {}, out);
+        return;
+      }
+      Outbound ack;
+      ack.to = c;
+      ack.msg.set_request_id(msg.request_id());
+      ack.msg.set_revision(store_.revision());
+      ack.msg.mutable_ack();
+      out.push_back(std::move(ack));
       return;
     }
     case B::kHello:

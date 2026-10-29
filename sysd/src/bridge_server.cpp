@@ -127,6 +127,8 @@ const std::vector<BridgeServer::MessageRule>& BridgeServer::message_rules() {
       {B::kStageFirmwareChunk, "stage_firmware_chunk", "update.v1", R::kUpdate, false},
       {B::kGetFirmwareUpdateStatus, "get_firmware_update_status", "update.v1", R::kUpdate, false},
       {B::kAbortFirmwareUpdate, "abort_firmware_update", "update.v1", R::kUpdate, false},
+      // Story 8.1: on-device install trigger (sysd UDS only, denied over TCP bridge)
+      {B::kInstallUpdate, "install_update", nullptr, R::kDenied, false},
   };
   return t;
 }

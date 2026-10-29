@@ -963,6 +963,30 @@ message AbortFirmwareUpdate {
   string transfer_id = 1;
 }
 
+// --- Story 8.1: sysd as the sole installer from USB-A stick and staged Studio bundles (sysd UDS) -----------------------
+enum UpdateSource {
+  UPDATE_SOURCE_UNSPECIFIED = 0;
+  UPDATE_SOURCE_USB = 1;
+  UPDATE_SOURCE_STUDIO = 2;
+}
+
+message UpdateAvailable {
+  string version = 1;
+  UpdateSource source = 2;
+  string bundle_path = 3;
+}
+
+message UpdateProgress {
+  string phase = 1;           // "copying", "verifying", "installing", "completed", "failed"
+  uint32 percent = 2;         // 0..100
+  string target_version = 3;
+  string fallback_version = 4;
+}
+
+message InstallUpdate {
+  string bundle_path = 1;     // optional: when empty, installs the currently announced UpdateAvailable bundle
+}
+
 message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
   // Story 9.9 (additive): the Live Set revision (State.edits.live_set_revision) the client's view was built on when it made this edit (0 = not provided: accepted exactly as
@@ -1035,6 +1059,7 @@ message ClientMessage {
     StageFirmwareChunk stage_firmware_chunk = 71;    // Story 9.20: sysd TCP bridge
     GetFirmwareUpdateStatus get_firmware_update_status = 72; // Story 9.20: sysd TCP bridge
     AbortFirmwareUpdate abort_firmware_update = 73;  // Story 9.20: sysd TCP bridge
+    InstallUpdate install_update = 74;               // Story 8.1: sysd UDS only
   }
 }
 
@@ -1077,5 +1102,7 @@ message ServerMessage {
     PairedComputersReply paired_computers_reply = 31; // Story 9.6: sysd UDS only
     StageFirmwareChunkReply stage_firmware_chunk_reply = 32; // Story 9.20: sysd TCP bridge
     FirmwareUpdateStatusReply firmware_update_status_reply = 33; // Story 9.20: sysd TCP bridge
+    UpdateAvailable update_available = 34;           // Story 8.1: sysd UDS push
+    UpdateProgress update_progress = 35;             // Story 8.1: sysd UDS push
   }
 }
