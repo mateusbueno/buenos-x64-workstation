@@ -1,0 +1,36 @@
+#!/usr/sbin/nft -f
+# Story 9.3: nftables single-port firewall policy for the USB CDC-NCM interface (usb0).
+# Velora 73 only exposes port 50051 (ws.v1 framed protocol for Velora Studio) over USB NCM.
+# All other ports (SSH, DNS, HTTP, RPC, etc.) are strictly dropped on usb0 (NFR24, AR38).
+
+table inet velora_ncm {
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        # Allow non-NCM interfaces to follow their normal system policy
+        iifname != "usb0" accept
+
+        # Allow established and related connections
+        ct state established,related accept
+
+        # Allow essential IPv4/IPv6 link setup (NDP, ICMP essential)
+        ip protocol icmp icmp type { echo-reply, destination-unreachable, time-exceeded } accept
+        ip6 nexthdr icmpv6 icmpv6 type { echo-reply, destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+
+        # Single Open Port: Velora Studio ws.v1 bridge (Story 9.3)
+        tcp dport 50051 accept
+
+        # Everything else on usb0 is dropped
+        drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        # Never route or forward packets across USB NCM
+        drop
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+    }
+}

@@ -1684,6 +1684,17 @@ void test_firmware_update_flow() {
   }
 }
 
+static void test_ncm_single_port_policy() {
+  CHECK(sd::kDefaultStudioBridgePort == 50051);
+  CHECK(std::string(sd::kDefaultNcmDeviceIp) == "169.254.73.1");
+  CHECK(std::string(sd::kDefaultNcmHostIp) == "169.254.73.2");
+  CHECK(std::string(sd::kDefaultNcmSubnet) == "169.254.73.0/24");
+
+  Rig r;
+  CHECK(r.start());
+  CHECK(r.port() > 0);
+}
+
 int main() {
   ::signal(SIGPIPE, SIG_IGN);
   test_pairing_window_unit();
@@ -1705,6 +1716,7 @@ int main() {
   test_write_to_velora_is_a_paired_engine_command();
   test_unpaired_cap_and_pending_timeout();
   test_firmware_update_flow();
+  test_ncm_single_port_policy();
   std::printf(g_fail ? "sysd_bridge_tests: FAILED (%d)\n" : "sysd_bridge_tests: ok\n", g_fail);
   return g_fail ? 1 : 0;
 }

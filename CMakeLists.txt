@@ -115,6 +115,13 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME check_usb_gadget_selftest
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_usb_gadget.py
                    --self-test)
+  # Story 9.3: USB NCM nftables single-port firewall policy gate.
+  add_test(NAME check_ncm_firewall
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_ncm_firewall.py
+                   --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME check_ncm_firewall_selftest
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_ncm_firewall.py
+                   --self-test)
   # Story 8.14: Kernel LTS migration plan CI check.
   add_test(NAME kernel_lts_plan_check
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_kernel_lts_plan.py --today 2026-10-29)

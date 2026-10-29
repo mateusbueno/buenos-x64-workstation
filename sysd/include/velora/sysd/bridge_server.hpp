@@ -36,6 +36,12 @@
 
 namespace velora::sysd {
 
+// Story 9.3: Standard USB NCM Link-Local addressing and single open port constants
+inline constexpr int kDefaultStudioBridgePort = 50051;
+inline constexpr const char* kDefaultNcmDeviceIp = "169.254.73.1";
+inline constexpr const char* kDefaultNcmHostIp = "169.254.73.2";
+inline constexpr const char* kDefaultNcmSubnet = "169.254.73.0/24";
+
 struct BridgeOptions {
   std::string bind_host = "127.0.0.1";
   int port = 0;  // 0: an ephemeral port (tests); see BridgeServer::port()
