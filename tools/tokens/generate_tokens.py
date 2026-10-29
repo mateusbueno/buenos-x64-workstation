@@ -456,7 +456,7 @@ class CssEmitter(BaseEmitter):
 
         # Desktop typography scale
         lines.append("")
-        lines.append("  --font-family-studio: 'Gill Sans', 'Gill Sans MT', Calibri, sans-serif;")
+        lines.append("  --font-family-studio: 'Lato', 'Gill Sans', Calibri, sans-serif;")
         for k, v in sorted(typography.items()):
             if isinstance(v, dict) and "fontSize" in v:
                 lines.append(f"  --font-{k}: {v['fontSize']};")

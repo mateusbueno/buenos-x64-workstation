@@ -62,137 +62,138 @@ colors:
   logo-ink: '#111111'
   logo-paper: '#f4f2ee'
 typography:
-  # Typeface: humanist-technical sans. "Gill Sans" is a stand-in only; the final
-  # face and the logo are to be drawn/licensed by a type designer (see Deferred).
+  # Typeface: Lato (SIL OFL 1.1), adopted by the founder 2026-10-29 for device, Studio and panel
+  # (files in ui/assets/fonts/lato/). "Gill Sans" stays only as a local fallback in the stack.
+  # The logo is drawn geometry (logo/), not set in this face.
   # Device sizes are px at the native 1024x600 panel (mockups use container units; 1cqw = 10.24px).
   # Every device token uses lineHeight >= 1.2 so accented capitals (Á Ç Ê Õ Ñ) never clip.
   live-set-name:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 53px
     fontWeight: '400'
     lineHeight: '1.2'
   live-set-name-large:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 66px
     fontWeight: '400'
     lineHeight: '1.2'
   next-title:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 22px
     fontWeight: '400'
   next-title-large:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 28px
     fontWeight: '400'
   modal-title:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 27px
     fontWeight: '400'
   organ-registration:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 25px
     letterSpacing: 0.2em
     note: 'tabular numerals'
   organ-name:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 23px
   search-input:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 20px
   list-item:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 19px
   drawbar-value:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 19px
     note: 'tabular numerals'
   part-name:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 17px
     lineHeight: '1.2'
   part-name-large:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 21px
     lineHeight: '1.2'
   tile-label:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 16px
   tile-label-large:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 20px
   bar-label:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 15px
     letterSpacing: 0.25em
     note: 'uppercase'
   mode-mirror:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 20px
     fontWeight: '700'
     lineHeight: '1.2'
     letterSpacing: 0.06em
     note: 'uppercase; Top Bar mode mirror (DRAWBARS/MIXER, PARTS/SCENES, KNOBS PART n / ALL / ASSIGN)'
   status:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 14px
     letterSpacing: 0.06em
     note: 'uppercase'
   status-large:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 18px
     letterSpacing: 0.06em
     note: 'uppercase'
   status-takeover:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 24px
     letterSpacing: 0.06em
     note: 'uppercase; pending-pickup line that takes over the Status Bar (12 arcmin at 0.7 m)'
   status-takeover-large:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 30px
     letterSpacing: 0.06em
     note: 'uppercase'
   chip:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 14px
   meta-caps:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 12px
     letterSpacing: 0.12em
     note: 'uppercase; part number, category short label, footage, sub-labels, OFF / NOW tags'
   # Velora Studio (desktop): rem units, honour OS text size and zoom to 200%.
   desktop-live-set-name:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 1.75rem
     fontWeight: '400'
   desktop-part-name:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 0.875rem
   desktop-body:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 0.8125rem
     note: '13 px at default text size; minimum body size'
   desktop-section-label:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 0.6875rem
     fontWeight: '600'
     letterSpacing: 0.18em
     note: 'uppercase; 11 px at default text size; minimum label size'
   wordmark-brand:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontWeight: '300'
     letterSpacing: 0.2em
     note: 'LADIANI, uppercase, light, wide tracking (direction T3). Stand-in for custom-drawn wordmark'
   wordmark-model:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     letterSpacing: 0.42em
     note: 'VELORA (V1), uppercase spaced, same family, always subordinate to LADIANI'
   boot-wordmark:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     fontSize: 25px
     letterSpacing: 0.5em
   panel-legend:
-    fontFamily: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"
+    fontFamily: "'Lato', 'Gill Sans', Calibri, sans-serif"
     letterSpacing: 0.17em
     note: 'uppercase English legends; cap height >= 2.5 mm on a matte legend band; final mm with the hardware partner'
 rounded:
@@ -566,7 +567,7 @@ Studio-theme muted, accent and warn use the darker set (`#5a635c` / `#466853` / 
 
 ## Typography
 
-One humanist-technical sans family across panel, screen and desktop (Gill Sans as stand-in; final face drawn or licensed — see Deferred). Roles:
+One humanist-technical sans family across panel, screen and desktop (Lato 400/700, SIL OFL; adopted 2026-10-29 — see Deferred). Roles:
 
 - **Live Set name** `{typography.live-set-name}` is the largest element on the device and the only one read at a glance from 1.5 m.
 - **Uppercase tracked labels** (`{typography.bar-label}`, `{typography.meta-caps}`, `{typography.status}`) carry system state and structure. The Top Bar mode mirror uses `{typography.mode-mirror}` (20 px bold) so mode reads at a glance. Content names (Live Sets, timbres, scenes) stay in sentence/title case.
@@ -695,7 +696,7 @@ None open; earlier questions are resolved in .memlog.md (Studio-theme darker set
 
 Not open UX questions; owned by other parties and tracked here for handoff.
 
-- **Final typeface** (custom or licensed for LVGL embedding and desktop) and the final logo drawing — **type/logo designer**. Acceptance criteria: distinct I / l / 1 and 0 / O; x-height ≥ 0.5 em; open apertures; tabular numerals and fraction glyphs (⅓ ⅔ ⅗); weight ≥ 400 for all device UI text (300 only for the wordmark); full Latin-1 + Latin Extended-A with accented capitals that fit a 1.2 line box.
+- **Final typeface**: Lato 400/700 adopted 2026-10-29 (OFL, no royalties; measured against the criteria below: x-height 0.506 em, tabular figures by default, ⅓ ⅔ ⅗, full Latin-1 + Extended-A, accented capitals span 1.10 em). Still open: visual check of I/l/1 and open apertures at 16–20 px, and legal confirmation of OFL Reserved Font Name "Lato" for subsetted LVGL glyphs. Final **logo drawing** stays with the **logo designer**. Original acceptance criteria: distinct I / l / 1 and 0 / O; x-height ≥ 0.5 em; open apertures; tabular numerals and fraction glyphs (⅓ ⅔ ⅗); weight ≥ 400 for all device UI text (300 only for the wordmark); full Latin-1 + Latin Extended-A with accented capitals that fit a 1.2 line box.
 - **Physical panel specs** — engraving vs silkscreen, LED colors, aluminum finish — **hardware partners**, within the Hardware asks below. The MASTER control type was decided on 2026-10-23: an analog potentiometer with a Ø20 mm knob.
 - **Desktop app icon and social avatar** renderings of the symbol — **logo designer**.
 
