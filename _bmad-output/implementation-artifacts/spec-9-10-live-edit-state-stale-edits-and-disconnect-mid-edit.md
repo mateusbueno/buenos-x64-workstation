@@ -2,7 +2,7 @@
 title: 'Story 9.10: Live edit state, stale edits and disconnect mid-edit (Mac, against host engine)'
 type: 'feature'
 created: '2026-10-26'
-status: 'in-progress'
+status: 'done'
 baseline_revision: '50913c1'
 review_loop_iteration: 0
 followup_review_recommended: true

@@ -2,7 +2,7 @@
 title: 'Story 9.9: Part Editor layout with Studio Knobs (Mac, against host engine)'
 type: 'feature'
 created: '2026-10-26'
-status: 'in-progress'
+status: 'done'
 baseline_revision: '99cea91e64fdabfd6e07b2603c521af359d53f45'
 review_loop_iteration: 0
 followup_review_recommended: false

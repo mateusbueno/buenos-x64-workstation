@@ -2,7 +2,7 @@
 title: 'Story 9.11: Add a timbre to an empty part from Velora Studio (Mac, against host engine and librarian)'
 type: 'feature'
 created: '2026-10-26'
-status: 'in-progress'
+status: 'done'
 baseline_revision: 'bc6e0bd'
 review_loop_iteration: 0
 followup_review_recommended: true

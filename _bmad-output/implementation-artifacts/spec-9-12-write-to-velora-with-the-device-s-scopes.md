@@ -2,7 +2,7 @@
 title: 'Story 9.12: Write to Velora with the device''s scopes (Mac, against host engine)'
 type: 'feature'
 created: '2026-10-26'
-status: 'in-progress'
+status: 'done'
 baseline_revision: '1ba0c72'
 review_loop_iteration: 0
 followup_review_recommended: true
