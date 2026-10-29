@@ -102,6 +102,10 @@ int mcu_encode(const mcu_frame* f, uint8_t* buf, size_t cap) {
 /* ---- typed payloads ---- */
 
 static int hello_ok(uint8_t board_id, uint8_t contacts) {
+  if (board_id == MCU_BOARD_PANEL &&
+      (contacts & (uint8_t)~MCU_PANEL_PEDAL_POLARITY_MASK) == 0u) {
+    return 1;
+  }
   const uint8_t c = (uint8_t)(contacts & MCU_KEYBED_CONTACTS_MASK);
   if ((contacts & MCU_KEYBED_AFTERTOUCH_FLAG) != 0u &&
       (board_id != MCU_BOARD_KEYBED || (c != 2u && c != 3u))) {

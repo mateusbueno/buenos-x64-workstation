@@ -93,7 +93,7 @@ development_status:
   3-5-keybed-reader-on-the-soc-with-drift-tracked-device-time-and: done
   3-6-attack-and-release-velocity-with-selectable-curves: done
   3-7-aftertouch-read-and-routed-when-the-keybed-has-it: done
-  3-8-panel-mcu-firmware-inputs: backlog
+  3-8-panel-mcu-firmware-inputs: done
   3-9-panel-mcu-firmware-soc-driven-leds: backlog
   3-10-panel-reader-on-the-soc-and-the-mac-virtual-panel: done
   3-11-pedals-with-half-pedal-calibration-and-expression: done
