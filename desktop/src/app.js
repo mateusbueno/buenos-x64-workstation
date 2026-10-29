@@ -28,6 +28,8 @@ import { WriteController, foldName } from "./write_to_velora.js";
 import { WriteBannerView, WriteDialogView, announceText } from "./write_to_velora_dom.js";
 import { ExportController, EXPORT_SCOPE } from "./export_dialog.js";
 import { ExportDialogView } from "./export_dialog_dom.js";
+import { ImportController, COLLISION_ACTION } from "./import_dialog.js";
+import { ImportDialogView } from "./import_dialog_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -1871,5 +1873,161 @@ window.addEventListener("DOMContentLoaded", () => {
   const restoreFileInput = document.getElementById("restore-file-input");
   document.getElementById("btn-restore")?.addEventListener("click", () => {
     restoreFileInput?.click();
+  });
+
+  // Import actions (Story 9.19)
+  const importHost = document.getElementById("import-dialog-host") || document.body;
+  const inputImportFile = document.getElementById("input-import-file");
+  let importCtl = null;
+  let importView = null;
+
+  async function openImportDialog(filePath) {
+    if (!filePath) return;
+
+    let manifestResult = null;
+    let formatError = null;
+
+    if (window.__TAURI__?.core?.invoke) {
+      try {
+        manifestResult = await window.__TAURI__.core.invoke("read_import_manifest", { filePath });
+      } catch (err) {
+        formatError = String(err);
+      }
+    } else {
+      manifestResult = {
+        file_name: filePath.split("/").pop() || filePath,
+        file_path: filePath,
+        format_version: 1,
+        scope: "sets",
+        device_model: "Velora 73",
+        firmware_version: "1.4.0",
+        items: [],
+        collision_count: 0,
+        missing_libraries: [],
+        missing_libraries_report: null,
+      };
+    }
+
+    if (!importCtl) {
+      importCtl = new ImportController({
+        deviceName: "VELORA 73",
+        tr: (key) => localeMgr.tr(key),
+        onImport: async ({ filePath: targetPath, decisions }) => {
+          const footerBackup = document.getElementById("footer-backup-status");
+          const originalFooter = footerBackup ? footerBackup.textContent : "";
+          if (footerBackup) {
+            let runningStr = localeMgr.tr("studio.import.running_footer");
+            runningStr = runningStr
+              .replace("%s", "VELORA 73")
+              .replace("%d", "0")
+              .replace("%d", String(decisions.length));
+            footerBackup.textContent = runningStr;
+          }
+          try {
+            if (window.__TAURI__?.core?.invoke) {
+              const res = await window.__TAURI__.core.invoke("execute_import", {
+                params: {
+                  file_path: targetPath,
+                  decisions,
+                },
+              });
+              importCtl.finishImport({
+                importedCount: res.imported_count,
+                skippedCount: res.skipped_count,
+              });
+              importView.close();
+            } else {
+              importCtl.finishImport({
+                importedCount: decisions.length,
+                skippedCount: 0,
+              });
+              importView.close();
+            }
+          } catch (err) {
+            const errStr = String(err);
+            if (errStr.includes("connection lost")) {
+              let importedCount = 0;
+              const m = errStr.match(/(\d+)\s+of\s+(\d+)\s+imported/i);
+              if (m) {
+                importedCount = parseInt(m[1], 10);
+              }
+              announce(errStr, true);
+              importCtl.handleConnectionLost({
+                importedCount,
+                totalCount: decisions.length,
+                rawMessage: errStr,
+              });
+            } else {
+              announce(localeMgr.tr("studio.import.announced_failed").replace("%s", errStr), true);
+              importCtl.cancelImport();
+            }
+          } finally {
+            if (footerBackup) footerBackup.textContent = originalFooter;
+          }
+        },
+        onCancel: () => {
+          if (window.__TAURI__?.core?.invoke) {
+            window.__TAURI__.core.invoke("cancel_import").catch(() => {});
+          }
+        },
+        onAnnounce: (msg) => {
+          announce(msg);
+        },
+      });
+
+      importView = new ImportDialogView({
+        doc: document,
+        host: importHost,
+        tr: (k, ...args) => {
+          let s = localeMgr.tr(k);
+          for (const a of args) {
+            s = s.replace(/%[ds]/, a);
+          }
+          return s;
+        },
+        controller: importCtl,
+        restore: document.getElementById("btn-import") || document.getElementById("main-region"),
+      });
+
+      importCtl.onChange = () => {
+        importView.render();
+      };
+    }
+
+    if (formatError) {
+      importCtl.loadManifest({
+        file_name: filePath.split("/").pop() || filePath,
+        file_path: filePath,
+        format_version: 99,
+        items: [],
+      });
+      importCtl.errorBanner = formatError;
+      importView.open();
+    } else if (manifestResult) {
+      importCtl.loadManifest(manifestResult);
+      importView.open();
+    }
+  }
+
+  function handleImportTrigger() {
+    if (window.__TAURI__?.core?.invoke) {
+      const target = prompt("Enter path to .velorasets or .veloratimbre file:");
+      if (target) {
+        openImportDialog(target);
+      }
+    } else {
+      inputImportFile?.click();
+    }
+  }
+
+  document.getElementById("btn-import")?.addEventListener("click", handleImportTrigger);
+  document.getElementById("btn-offline-import")?.addEventListener("click", handleImportTrigger);
+
+  inputImportFile?.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) {
+      openImportDialog(file.name);
+    }
+    inputImportFile.value = "";
   });
 });

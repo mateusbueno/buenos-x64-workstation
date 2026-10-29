@@ -1,3 +1,4 @@
+use crate::backup_restore::{mint_uuid_v4, DeviceState};
 use crate::backup_v1::*;
 use crate::liveset_v1::*;
 use prost::Message;
@@ -661,6 +662,524 @@ pub fn perform_export_with_cancel(
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CollisionAction {
+    KeepBoth,
+    Replace,
+    Skip,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportItemManifest {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub item_type: String, // "live_set" | "timbre"
+    pub is_reference_only: bool,
+    pub has_collision: bool,
+    pub collision_type: Option<String>,
+    pub collision_action: CollisionAction,
+    pub library_id: String,
+    pub instrument_key: String,
+    pub missing_libraries: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportManifestResult {
+    pub file_name: String,
+    pub file_path: String,
+    pub format_version: u32,
+    pub scope: String,
+    pub device_model: String,
+    pub firmware_version: String,
+    pub items: Vec<ImportItemManifest>,
+    pub collision_count: usize,
+    pub missing_libraries: Vec<String>,
+    pub missing_libraries_report: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportItemDecision {
+    pub id: String,
+    pub action: CollisionAction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportExecutionParams {
+    pub file_path: String,
+    pub decisions: Vec<ImportItemDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub success: bool,
+    pub total_items: usize,
+    pub imported_count: usize,
+    pub skipped_count: usize,
+    pub missing_libraries: Vec<String>,
+    pub announced_message: String,
+    pub remapped_ids: HashMap<String, String>,
+}
+
+pub fn inspect_import_file(
+    file_path: &str,
+    device: &DeviceState,
+    installed_factory_libraries: &[String],
+) -> Result<ImportManifestResult, String> {
+    let path = Path::new(file_path);
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(file_path)
+        .to_string();
+
+    let data = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+    let is_timbre_ext = file_name.to_lowercase().ends_with(".veloratimbre");
+
+    if is_timbre_ext {
+        let timbre_exp = if let Ok(pb) = VeloraTimbreExport::decode(&data[..]) {
+            pb
+        } else if let Ok(json_str) = std::str::from_utf8(&data) {
+            serde_json::from_str::<VeloraTimbreExport>(json_str)
+                .map_err(|e| format!("Failed to parse JSON: {}", e))?
+        } else {
+            return Err("Malformed .veloratimbre file".to_string());
+        };
+
+        if timbre_exp.format_version == 0 {
+            return Err("Invalid export: missing or zero format_version".to_string());
+        }
+        if timbre_exp.format_version > EXPORT_FORMAT_VERSION {
+            return Err(format!(
+                "Couldn't import {}: file made by a newer Velora Studio. Update the app.",
+                file_name
+            ));
+        }
+
+        let mut existing_timbres = HashSet::new();
+        for ls in &device.live_sets {
+            for part in &ls.parts {
+                if let Some(ref t) = part.timbre {
+                    if !t.library_id.is_empty() {
+                        existing_timbres.insert(format!("{}:{}", t.library_id.to_lowercase(), t.instrument_key));
+                    }
+                }
+            }
+        }
+
+        let mut items = Vec::new();
+        let mut collision_count = 0;
+
+        for t in &timbre_exp.timbres {
+            let key = format!("{}:{}", t.library_id.to_lowercase(), t.instrument_key);
+            let has_col = existing_timbres.contains(&key);
+            if has_col {
+                collision_count += 1;
+            }
+            items.push(ImportItemManifest {
+                id: key.clone(),
+                name: if !t.name.is_empty() { t.name.clone() } else { t.instrument_key.clone() },
+                category: t.category.clone(),
+                item_type: "timbre".to_string(),
+                is_reference_only: t.is_reference_only,
+                has_collision: has_col,
+                collision_type: if has_col { Some("timbre_key".to_string()) } else { None },
+                collision_action: CollisionAction::KeepBoth,
+                library_id: t.library_id.clone(),
+                instrument_key: t.instrument_key.clone(),
+                missing_libraries: Vec::new(),
+            });
+        }
+
+        Ok(ImportManifestResult {
+            file_name,
+            file_path: file_path.to_string(),
+            format_version: timbre_exp.format_version,
+            scope: "timbres".to_string(),
+            device_model: timbre_exp.device_model,
+            firmware_version: timbre_exp.firmware_version,
+            items,
+            collision_count,
+            missing_libraries: Vec::new(),
+            missing_libraries_report: None,
+        })
+    } else {
+        let sets_exp = if let Ok(pb) = VeloraSetsExport::decode(&data[..]) {
+            Ok(pb)
+        } else if let Ok(json_str) = std::str::from_utf8(&data) {
+            serde_json::from_str::<VeloraSetsExport>(json_str)
+                .map_err(|e| format!("Failed to parse JSON: {}", e))
+        } else if let Ok(timbre_pb) = VeloraTimbreExport::decode(&data[..]) {
+            if timbre_pb.format_version > EXPORT_FORMAT_VERSION {
+                return Err(format!(
+                    "Couldn't import {}: file made by a newer Velora Studio. Update the app.",
+                    file_name
+                ));
+            }
+            Err("Not a sets export".to_string())
+        } else {
+            return Err("Malformed import file".to_string());
+        };
+
+        let sets_exp = sets_exp.map_err(|_| {
+            "Malformed .velorasets file".to_string()
+        })?;
+
+        if sets_exp.format_version == 0 {
+            return Err("Invalid export: missing or zero format_version".to_string());
+        }
+        if sets_exp.format_version > EXPORT_FORMAT_VERSION {
+            return Err(format!(
+                "Couldn't import {}: file made by a newer Velora Studio. Update the app.",
+                file_name
+            ));
+        }
+
+        let existing_ls_ids: HashSet<String> = device.live_sets.iter().map(|ls| ls.id.clone()).collect();
+        let existing_ls_names: HashSet<String> = device.live_sets.iter().map(|ls| ls.name.clone()).collect();
+
+        let mut existing_timbres = HashSet::new();
+        for ls in &device.live_sets {
+            for part in &ls.parts {
+                if let Some(ref t) = part.timbre {
+                    if !t.library_id.is_empty() {
+                        existing_timbres.insert(format!("{}:{}", t.library_id.to_lowercase(), t.instrument_key));
+                    }
+                }
+            }
+        }
+
+        let mut installed_factories: HashSet<String> = installed_factory_libraries.iter().map(|s| s.to_lowercase()).collect();
+        installed_factories.insert("c82b9b7e-9669-424a-9ef8-e0eef0437aa8".to_string());
+
+        let mut items = Vec::new();
+        let mut collision_count = 0;
+        let mut missing_libraries_map: HashMap<String, String> = HashMap::new();
+        let mut live_sets_needing_libraries = HashSet::new();
+
+        // 1. Process Live Sets
+        for ls in &sets_exp.live_sets {
+            let has_col = existing_ls_ids.contains(&ls.id) || existing_ls_names.contains(&ls.name);
+            if has_col {
+                collision_count += 1;
+            }
+
+            let mut item_missing_libs = Vec::new();
+            for part in &ls.parts {
+                if let Some(ref t) = part.timbre {
+                    if !t.library_id.is_empty() {
+                        let is_factory = is_factory_or_partner_library(&t.library_id);
+                        if is_factory && !installed_factories.contains(&t.library_id.to_lowercase()) {
+                            let lib_name = sets_exp
+                                .manifest
+                                .iter()
+                                .find(|m| m.library_id.eq_ignore_ascii_case(&t.library_id))
+                                .map(|m| m.name.clone())
+                                .or_else(|| {
+                                    sets_exp
+                                        .timbres
+                                        .iter()
+                                        .find(|pt| pt.library_id.eq_ignore_ascii_case(&t.library_id))
+                                        .map(|pt| pt.name.clone())
+                                })
+                                .unwrap_or_else(|| {
+                                    if !t.instrument_key.is_empty() {
+                                        t.instrument_key.clone()
+                                    } else {
+                                        t.library_id.clone()
+                                    }
+                                });
+
+                            missing_libraries_map.insert(t.library_id.clone(), lib_name.clone());
+                            item_missing_libs.push(format!("{} (factory)", lib_name));
+                            live_sets_needing_libraries.insert(ls.id.clone());
+                        }
+                    }
+                }
+            }
+
+            items.push(ImportItemManifest {
+                id: ls.id.clone(),
+                name: ls.name.clone(),
+                category: "Live Set".to_string(),
+                item_type: "live_set".to_string(),
+                is_reference_only: false,
+                has_collision: has_col,
+                collision_type: if has_col { Some("live_set_id".to_string()) } else { None },
+                collision_action: CollisionAction::KeepBoth,
+                library_id: String::new(),
+                instrument_key: String::new(),
+                missing_libraries: item_missing_libs,
+            });
+        }
+
+        // 2. Process user timbres in bundle
+        for t in &sets_exp.timbres {
+            if !t.is_reference_only && !is_factory_or_partner_library(&t.library_id) {
+                let key = format!("{}:{}", t.library_id.to_lowercase(), t.instrument_key);
+                let has_col = existing_timbres.contains(&key);
+                if has_col {
+                    collision_count += 1;
+                }
+                items.push(ImportItemManifest {
+                    id: key.clone(),
+                    name: if !t.name.is_empty() { t.name.clone() } else { t.instrument_key.clone() },
+                    category: t.category.clone(),
+                    item_type: "timbre".to_string(),
+                    is_reference_only: false,
+                    has_collision: has_col,
+                    collision_type: if has_col { Some("timbre_key".to_string()) } else { None },
+                    collision_action: CollisionAction::KeepBoth,
+                    library_id: t.library_id.clone(),
+                    instrument_key: t.instrument_key.clone(),
+                    missing_libraries: Vec::new(),
+                });
+            }
+        }
+
+        let mut overall_missing_libs: Vec<String> = missing_libraries_map.values().cloned().collect();
+        overall_missing_libs.sort();
+        let missing_libraries_report = if !live_sets_needing_libraries.is_empty() {
+            let lib_names_str = overall_missing_libs.join(", ");
+            Some(format!(
+                "{} Live Sets need libraries: {} (factory)",
+                live_sets_needing_libraries.len(),
+                lib_names_str
+            ))
+        } else {
+            None
+        };
+
+        let scope_str = match sets_exp.scope {
+            2 => "timbres",
+            3 => "bundle",
+            _ => "sets",
+        };
+
+        Ok(ImportManifestResult {
+            file_name,
+            file_path: file_path.to_string(),
+            format_version: sets_exp.format_version,
+            scope: scope_str.to_string(),
+            device_model: sets_exp.device_model,
+            firmware_version: sets_exp.firmware_version,
+            items,
+            collision_count,
+            missing_libraries: overall_missing_libs,
+            missing_libraries_report,
+        })
+    }
+}
+
+pub fn execute_import_plan(
+    file_path: &str,
+    decisions: &[ImportItemDecision],
+    device: &mut DeviceState,
+    installed_factory_libraries: &[String],
+) -> Result<ImportResult, String> {
+    reset_cancel();
+    execute_import_plan_with_cancel(
+        file_path,
+        decisions,
+        device,
+        installed_factory_libraries,
+        &CANCEL_REQUESTED,
+    )
+}
+
+pub fn execute_import_plan_with_cancel(
+    file_path: &str,
+    decisions: &[ImportItemDecision],
+    device: &mut DeviceState,
+    installed_factory_libraries: &[String],
+    cancel_flag: &AtomicBool,
+) -> Result<ImportResult, String> {
+    let manifest = inspect_import_file(file_path, device, installed_factory_libraries)?;
+
+    let decision_map: HashMap<String, CollisionAction> = decisions
+        .iter()
+        .map(|d| (d.id.clone(), d.action.clone()))
+        .collect();
+
+    let mut imported_count = 0usize;
+    let mut skipped_count = 0usize;
+    let mut remapped_ids: HashMap<String, String> = HashMap::new();
+    let mut remapped_timbre_ids: HashMap<String, String> = HashMap::new();
+
+    let path = Path::new(file_path);
+    let data = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let is_timbre_ext = file_path.to_lowercase().ends_with(".veloratimbre");
+
+    let total_items = manifest.items.len();
+
+    let mut existing_ls_ids: HashSet<String> = device.live_sets.iter().map(|ls| ls.id.clone()).collect();
+    let mut existing_ls_names: HashSet<String> = device.live_sets.iter().map(|ls| ls.name.clone()).collect();
+
+    if is_timbre_ext {
+        let timbre_exp = read_timbre_export_bytes(&data)?;
+        for (idx, t) in timbre_exp.timbres.iter().enumerate() {
+            if cancel_flag.load(Ordering::SeqCst) {
+                return Err(format!(
+                    "connection lost · {} of {} imported. Reconnect and import again; finished items are kept.",
+                    imported_count, total_items
+                ));
+            }
+            let key = format!("{}:{}", t.library_id.to_lowercase(), t.instrument_key);
+            let action = decision_map.get(&key).unwrap_or(&CollisionAction::KeepBoth);
+
+            match action {
+                CollisionAction::Skip => {
+                    skipped_count += 1;
+                }
+                CollisionAction::Replace => {
+                    imported_count += 1;
+                }
+                CollisionAction::KeepBoth => {
+                    let has_col = device.live_sets.iter().any(|ls| {
+                        ls.parts.iter().any(|p| {
+                            p.timbre.as_ref().map(|pt| {
+                                format!("{}:{}", pt.library_id.to_lowercase(), pt.instrument_key) == key
+                            }).unwrap_or(false)
+                        })
+                    });
+                    if has_col {
+                        let new_lib_id = mint_uuid_v4(idx as u64 + 100);
+                        remapped_timbre_ids.insert(t.library_id.clone(), new_lib_id.clone());
+                        remapped_ids.insert(key, format!("{}:{}", new_lib_id, t.instrument_key));
+                    }
+                    imported_count += 1;
+                }
+            }
+        }
+    } else {
+        let sets_exp = read_sets_export_bytes(&data)?;
+
+        // First pass: timbres in bundle
+        for (idx, t) in sets_exp.timbres.iter().enumerate() {
+            if cancel_flag.load(Ordering::SeqCst) {
+                return Err(format!(
+                    "connection lost · {} of {} imported. Reconnect and import again; finished items are kept.",
+                    imported_count, total_items
+                ));
+            }
+            if !t.is_reference_only && !is_factory_or_partner_library(&t.library_id) {
+                let key = format!("{}:{}", t.library_id.to_lowercase(), t.instrument_key);
+                let action = decision_map.get(&key).unwrap_or(&CollisionAction::KeepBoth);
+                match action {
+                    CollisionAction::Skip => {
+                        skipped_count += 1;
+                    }
+                    CollisionAction::Replace => {
+                        imported_count += 1;
+                    }
+                    CollisionAction::KeepBoth => {
+                        let has_col = device.live_sets.iter().any(|ls| {
+                            ls.parts.iter().any(|p| {
+                                p.timbre.as_ref().map(|pt| {
+                                    format!("{}:{}", pt.library_id.to_lowercase(), pt.instrument_key) == key
+                                }).unwrap_or(false)
+                            })
+                        });
+                        if has_col {
+                            let new_lib_id = remapped_timbre_ids
+                                .entry(t.library_id.clone())
+                                .or_insert_with(|| mint_uuid_v4(idx as u64 + 200))
+                                .clone();
+                            remapped_ids.insert(key, format!("{}:{}", new_lib_id, t.instrument_key));
+                        }
+                        imported_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Second pass: live sets
+        for (idx, ls) in sets_exp.live_sets.iter().enumerate() {
+            #[cfg(test)]
+            if std::env::var("VELORA_TEST_CANCEL_AFTER_2").is_ok() && imported_count == 2 {
+                cancel_flag.store(true, Ordering::SeqCst);
+            }
+
+            if cancel_flag.load(Ordering::SeqCst) {
+                return Err(format!(
+                    "connection lost · {} of {} imported. Reconnect and import again; finished items are kept.",
+                    imported_count, total_items
+                ));
+            }
+            let action = decision_map.get(&ls.id).unwrap_or(&CollisionAction::KeepBoth);
+
+            match action {
+                CollisionAction::Skip => {
+                    skipped_count += 1;
+                }
+                CollisionAction::Replace => {
+                    let mut updated_ls = ls.clone();
+                    for part in &mut updated_ls.parts {
+                        if let Some(ref mut t) = part.timbre {
+                            if let Some(new_lib_id) = remapped_timbre_ids.get(&t.library_id) {
+                                t.library_id = new_lib_id.clone();
+                            }
+                        }
+                    }
+
+                    if let Some(pos) = device.live_sets.iter().position(|existing| existing.id == ls.id) {
+                        device.live_sets[pos] = updated_ls.clone();
+                    } else if let Some(pos) = device.live_sets.iter().position(|existing| existing.name == ls.name) {
+                        let original_id = device.live_sets[pos].id.clone();
+                        updated_ls.id = original_id;
+                        device.live_sets[pos] = updated_ls.clone();
+                    } else {
+                        device.live_sets.push(updated_ls.clone());
+                    }
+                    existing_ls_ids.insert(updated_ls.id.clone());
+                    existing_ls_names.insert(updated_ls.name.clone());
+                    imported_count += 1;
+                }
+                CollisionAction::KeepBoth => {
+                    let has_col = existing_ls_ids.contains(&ls.id) || existing_ls_names.contains(&ls.name);
+                    let mut updated_ls = ls.clone();
+
+                    if has_col {
+                        let new_id = mint_uuid_v4(device.live_sets.len() as u64 + idx as u64 + 1);
+                        remapped_ids.insert(ls.id.clone(), new_id.clone());
+                        updated_ls.id = new_id;
+                        updated_ls.name = format!("{} (2)", ls.name);
+                    }
+
+                    for part in &mut updated_ls.parts {
+                        if let Some(ref mut t) = part.timbre {
+                            if let Some(new_lib_id) = remapped_timbre_ids.get(&t.library_id) {
+                                t.library_id = new_lib_id.clone();
+                            }
+                        }
+                    }
+
+                    existing_ls_ids.insert(updated_ls.id.clone());
+                    existing_ls_names.insert(updated_ls.name.clone());
+                    device.live_sets.push(updated_ls);
+                    imported_count += 1;
+                }
+            }
+        }
+    }
+
+    device.unsaved_edits = true;
+
+    let announced_message = format!("Imported {} items · {} skipped", imported_count, skipped_count);
+
+    Ok(ImportResult {
+        success: true,
+        total_items,
+        imported_count,
+        skipped_count,
+        missing_libraries: manifest.missing_libraries,
+        announced_message,
+        remapped_ids,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -928,5 +1447,363 @@ mod tests {
 
         assert!(!tmp.exists(), "request_cancel() must unlink active in-flight file");
         reset_cancel();
+    }
+
+    fn make_test_device_state() -> DeviceState {
+        DeviceState {
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            has_fm_va: true,
+            setlists: crate::setlist_v1::SetlistLibrary::default(),
+            assign_default: crate::setlist_v1::AssignDefault::default(),
+            favorites: vec![],
+            live_sets: vec![LiveSet {
+                format_version: 1,
+                id: "ls-1".to_string(),
+                name: "Gig Opener".to_string(),
+                tempo: 120.0,
+                parts: vec![Part {
+                    timbre: Some(TimbreRef {
+                        library_id: "c82b9b7e-9669-424a-9ef8-e0eef0437aa8".to_string(),
+                        instrument_key: "pianos/concert_grand.sfz".to_string(),
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            unsaved_edits: false,
+        }
+    }
+
+    #[test]
+    fn test_import_manifest_n_minus_1_reader_and_version_rejection() {
+        let dev = make_test_device_state();
+        let tmp = std::env::temp_dir().join(format!("v2_test_{}.velorasets", std::process::id()));
+        let mut exp = VeloraSetsExport {
+            format_version: 2,
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            export_time: "2026-10-28T22:00:00Z".to_string(),
+            scope: ExportScope::Sets as i32,
+            manifest: vec![],
+            live_sets: vec![],
+            timbres: vec![],
+        };
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+
+        let err = inspect_import_file(&tmp.to_string_lossy(), &dev, &[]).unwrap_err();
+        let fname = tmp.file_name().unwrap().to_str().unwrap();
+        assert_eq!(
+            err,
+            format!("Couldn't import {}: file made by a newer Velora Studio. Update the app.", fname)
+        );
+
+        // Version 1 works
+        exp.format_version = 1;
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+        let res = inspect_import_file(&tmp.to_string_lossy(), &dev, &[]).unwrap();
+        assert_eq!(res.format_version, 1);
+
+        // Version 0 is rejected as missing or zero format_version
+        exp.format_version = 0;
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+        let err_v0 = inspect_import_file(&tmp.to_string_lossy(), &dev, &[]).unwrap_err();
+        assert!(err_v0.contains("format_version"));
+
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_import_collision_keep_both_remaps_id_and_appends_2() {
+        let mut dev = make_test_device_state();
+        let tmp = std::env::temp_dir().join(format!("collision_keep_both_{}.velorasets", std::process::id()));
+        let incoming_ls = LiveSet {
+            format_version: 1,
+            id: "ls-1".to_string(),
+            name: "Gig Opener".to_string(),
+            tempo: 125.0,
+            parts: vec![],
+            ..Default::default()
+        };
+        let exp = VeloraSetsExport {
+            format_version: 1,
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            export_time: "2026-10-28T22:00:00Z".to_string(),
+            scope: ExportScope::Sets as i32,
+            manifest: vec![],
+            live_sets: vec![incoming_ls],
+            timbres: vec![],
+        };
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+
+        let manifest = inspect_import_file(&tmp.to_string_lossy(), &dev, &[]).unwrap();
+        assert_eq!(manifest.collision_count, 1);
+        assert!(manifest.items[0].has_collision);
+
+        let decisions = vec![ImportItemDecision {
+            id: "ls-1".to_string(),
+            action: CollisionAction::KeepBoth,
+        }];
+
+        let res = execute_import_plan(&tmp.to_string_lossy(), &decisions, &mut dev, &[]).unwrap();
+        assert_eq!(res.imported_count, 1);
+        assert_eq!(res.skipped_count, 0);
+        assert_eq!(dev.live_sets.len(), 2);
+        assert_eq!(dev.live_sets[0].id, "ls-1");
+        assert_eq!(dev.live_sets[0].name, "Gig Opener");
+        assert_ne!(dev.live_sets[1].id, "ls-1");
+        assert_eq!(dev.live_sets[1].name, "Gig Opener (2)");
+        assert!(res.announced_message.contains("Imported 1 items · 0 skipped"));
+
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_import_collision_replace_overwrites_existing() {
+        let mut dev = make_test_device_state();
+        let tmp = std::env::temp_dir().join(format!("collision_replace_{}.velorasets", std::process::id()));
+        let incoming_ls = LiveSet {
+            format_version: 1,
+            id: "ls-1".to_string(),
+            name: "Gig Opener (Updated)".to_string(),
+            tempo: 130.0,
+            parts: vec![],
+            ..Default::default()
+        };
+        let exp = VeloraSetsExport {
+            format_version: 1,
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            export_time: "2026-10-28T22:00:00Z".to_string(),
+            scope: ExportScope::Sets as i32,
+            manifest: vec![],
+            live_sets: vec![incoming_ls],
+            timbres: vec![],
+        };
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+
+        let decisions = vec![ImportItemDecision {
+            id: "ls-1".to_string(),
+            action: CollisionAction::Replace,
+        }];
+
+        let res = execute_import_plan(&tmp.to_string_lossy(), &decisions, &mut dev, &[]).unwrap();
+        assert_eq!(res.imported_count, 1);
+        assert_eq!(dev.live_sets.len(), 1);
+        assert_eq!(dev.live_sets[0].id, "ls-1");
+        assert_eq!(dev.live_sets[0].name, "Gig Opener (Updated)");
+
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_import_collision_skip_ignores_incoming() {
+        let mut dev = make_test_device_state();
+        let tmp = std::env::temp_dir().join(format!("collision_skip_{}.velorasets", std::process::id()));
+        let incoming_ls = LiveSet {
+            format_version: 1,
+            id: "ls-1".to_string(),
+            name: "Gig Opener (Skip Me)".to_string(),
+            tempo: 130.0,
+            parts: vec![],
+            ..Default::default()
+        };
+        let exp = VeloraSetsExport {
+            format_version: 1,
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            export_time: "2026-10-28T22:00:00Z".to_string(),
+            scope: ExportScope::Sets as i32,
+            manifest: vec![],
+            live_sets: vec![incoming_ls],
+            timbres: vec![],
+        };
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+
+        let decisions = vec![ImportItemDecision {
+            id: "ls-1".to_string(),
+            action: CollisionAction::Skip,
+        }];
+
+        let res = execute_import_plan(&tmp.to_string_lossy(), &decisions, &mut dev, &[]).unwrap();
+        assert_eq!(res.imported_count, 0);
+        assert_eq!(res.skipped_count, 1);
+        assert_eq!(dev.live_sets.len(), 1);
+        assert_eq!(dev.live_sets[0].name, "Gig Opener");
+        assert_eq!(res.announced_message, "Imported 0 items · 1 skipped");
+
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_import_missing_factory_soundbank_reporting() {
+        let mut dev = make_test_device_state();
+        let tmp = std::env::temp_dir().join(format!("missing_factory_{}.velorasets", std::process::id()));
+        let incoming_ls = LiveSet {
+            format_version: 1,
+            id: "ls-new".to_string(),
+            name: "Special Solo".to_string(),
+            tempo: 100.0,
+            parts: vec![Part {
+                timbre: Some(TimbreRef {
+                    library_id: "factory-grand-piano-studio".to_string(),
+                    instrument_key: "Grand Piano Studio".to_string(),
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let exp = VeloraSetsExport {
+            format_version: 1,
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            export_time: "2026-10-28T22:00:00Z".to_string(),
+            scope: ExportScope::Sets as i32,
+            manifest: vec![ExportItemManifest {
+                id: "ls-new".to_string(),
+                name: "Special Solo".to_string(),
+                category: "Live Set".to_string(),
+                size_bytes: 1024,
+                is_reference_only: false,
+                item_type: "live_set".to_string(),
+                library_id: String::new(),
+                instrument_key: String::new(),
+            }],
+            live_sets: vec![incoming_ls],
+            timbres: vec![],
+        };
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+
+        let manifest = inspect_import_file(&tmp.to_string_lossy(), &dev, &[]).unwrap();
+        assert_eq!(manifest.missing_libraries.len(), 1);
+        assert!(manifest.missing_libraries[0].contains("Grand Piano Studio"));
+        assert_eq!(
+            manifest.missing_libraries_report,
+            Some("1 Live Sets need libraries: Grand Piano Studio (factory)".to_string())
+        );
+
+        let decisions = vec![ImportItemDecision {
+            id: "ls-new".to_string(),
+            action: CollisionAction::KeepBoth,
+        }];
+        let res = execute_import_plan(&tmp.to_string_lossy(), &decisions, &mut dev, &[]).unwrap();
+        assert_eq!(res.imported_count, 1);
+        assert_eq!(dev.live_sets.len(), 2);
+
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_import_disconnect_preserves_finished_items() {
+        let mut dev = make_test_device_state();
+        let initial_len = dev.live_sets.len();
+        let tmp = std::env::temp_dir().join(format!("disconnect_{}.velorasets", std::process::id()));
+        let mut live_sets = Vec::new();
+        for i in 1..=5 {
+            live_sets.push(LiveSet {
+                format_version: 1,
+                id: format!("ls-import-{}", i),
+                name: format!("Import Set {}", i),
+                ..Default::default()
+            });
+        }
+        let exp = VeloraSetsExport {
+            format_version: 1,
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            export_time: "2026-10-28T22:00:00Z".to_string(),
+            scope: ExportScope::Sets as i32,
+            manifest: vec![],
+            live_sets,
+            timbres: vec![],
+        };
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+
+        std::env::set_var("VELORA_TEST_CANCEL_AFTER_2", "1");
+        let cancel_flag = AtomicBool::new(false);
+        let decisions = vec![];
+        let err = execute_import_plan_with_cancel(&tmp.to_string_lossy(), &decisions, &mut dev, &[], &cancel_flag).unwrap_err();
+        std::env::remove_var("VELORA_TEST_CANCEL_AFTER_2");
+
+        assert!(err.contains("connection lost · 2 of 5 imported"));
+        assert!(err.contains("Reconnect and import again; finished items are kept."));
+        // Assert that the 2 finished items were preserved in dev.live_sets!
+        assert_eq!(dev.live_sets.len(), initial_len + 2, "Finished 2 items must be kept upon disconnection");
+        assert_eq!(dev.live_sets[initial_len].name, "Import Set 1");
+        assert_eq!(dev.live_sets[initial_len + 1].name, "Import Set 2");
+
+        let _ = fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_import_collision_bundle_timbre_remapping_in_live_set_parts() {
+        let mut dev = make_test_device_state();
+        // Give dev an existing part using user-lib-123:lead/synth_lead.sfz to create collision
+        dev.live_sets[0].parts.push(Part {
+            timbre: Some(TimbreRef {
+                library_id: "user-lib-123".to_string(),
+                instrument_key: "lead/synth_lead.sfz".to_string(),
+            }),
+            ..Default::default()
+        });
+        let tmp = std::env::temp_dir().join(format!("bundle_remap_{}.velorasets", std::process::id()));
+
+        let timbre = ExportTimbrePayload {
+            library_id: "user-lib-123".to_string(),
+            instrument_key: "lead/synth_lead.sfz".to_string(),
+            name: "Incoming Lead".to_string(),
+            category: "Synth".to_string(),
+            is_reference_only: false,
+            bundle_data: b"dummy-formatlib-data".to_vec(),
+        };
+
+        let live_set = LiveSet {
+            format_version: 1,
+            id: "ls-incoming-bundle".to_string(),
+            name: "Incoming Song".to_string(),
+            parts: vec![Part {
+                timbre: Some(TimbreRef {
+                    library_id: "user-lib-123".to_string(),
+                    instrument_key: "lead/synth_lead.sfz".to_string(),
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let exp = VeloraSetsExport {
+            format_version: 1,
+            device_model: "Velora 73".to_string(),
+            firmware_version: "1.4.0".to_string(),
+            export_time: "2026-10-28T22:00:00Z".to_string(),
+            scope: ExportScope::Bundle as i32,
+            manifest: vec![],
+            live_sets: vec![live_set],
+            timbres: vec![timbre],
+        };
+        fs::write(&tmp, serialize_sets_export(&exp)).unwrap();
+
+        let decisions = vec![
+            ImportItemDecision {
+                id: "user-lib-123:lead/synth_lead.sfz".to_string(),
+                action: CollisionAction::KeepBoth,
+            },
+            ImportItemDecision {
+                id: "ls-incoming-bundle".to_string(),
+                action: CollisionAction::KeepBoth,
+            },
+        ];
+
+        let res = execute_import_plan(&tmp.to_string_lossy(), &decisions, &mut dev, &[]).unwrap();
+        assert_eq!(res.imported_count, 2);
+
+        // Verify that the incoming Live Set had its part timbre library_id rewritten away from user-lib-123!
+        let imported_ls = dev.live_sets.iter().find(|ls| ls.id == "ls-incoming-bundle").unwrap();
+        let part_lib_id = &imported_ls.parts[0].timbre.as_ref().unwrap().library_id;
+        assert_ne!(part_lib_id, "user-lib-123", "Part library_id must be rewritten to new UUID");
+        assert_eq!(part_lib_id.len(), 36, "Part library_id must match newly minted RFC 4122 UUIDv4 length");
+
+        let _ = fs::remove_file(tmp);
     }
 }

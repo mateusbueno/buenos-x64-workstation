@@ -464,6 +464,36 @@ fn cancel_export() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn read_import_manifest(
+    file_path: String,
+    state: State<AppState>,
+) -> Result<ImportManifestResult, String> {
+    let dev = state.device.lock().unwrap();
+    let installed = vec!["c82b9b7e-9669-424a-9ef8-e0eef0437aa8".to_string()];
+    inspect_import_file(&file_path, &dev, &installed)
+}
+
+#[tauri::command]
+fn execute_import(
+    params: ImportExecutionParams,
+    state: State<AppState>,
+) -> Result<ImportResult, String> {
+    reset_cancel();
+    let mut dev = state.device.lock().unwrap();
+    let installed = vec!["c82b9b7e-9669-424a-9ef8-e0eef0437aa8".to_string()];
+    let res = execute_import_plan(&params.file_path, &params.decisions, &mut dev, &installed)?;
+    let mut conn = state.connection.lock().unwrap();
+    conn.has_unsaved_edits = true;
+    Ok(res)
+}
+
+#[tauri::command]
+fn cancel_import() -> Result<(), String> {
+    request_cancel();
+    Ok(())
+}
+
 // ---- device connection (Foundation: Velora Studio device connection) --------------------------------------------------------------------------------
 // The real link to a unit through the sysd bridge. The simulated device above stays as the offline fallback: the UI follows this status only once a device
 // address is configured (`device_connect`, or the VELORA_DEVICE=host:port environment variable at startup).
@@ -624,6 +654,9 @@ fn main() {
             estimate_export_size,
             export_selection,
             cancel_export,
+            read_import_manifest,
+            execute_import,
+            cancel_import,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");

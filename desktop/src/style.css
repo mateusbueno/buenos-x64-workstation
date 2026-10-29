@@ -452,6 +452,115 @@ html, body {
   margin-right: auto;
 }
 
+/* Import Modal & Tables (Story 9.19) */
+.import-modal {
+  width: 48rem;
+  max-width: 92vw;
+  max-height: 85vh;
+}
+.import-modal.active, dialog.import-modal[open], dialog.import-modal {
+  display: flex;
+}
+.import-banner {
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--radius-desktop-sm);
+  font-size: 0.875rem;
+}
+.banner-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid #ef4444;
+}
+.banner-warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid #f59e0b;
+}
+.import-table-container {
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-desktop-sm);
+}
+.import-table {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.import-thead, .import-row {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-2) var(--spacing-3);
+  gap: var(--spacing-2);
+}
+.import-thead {
+  background: var(--surface);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.import-row {
+  border-bottom: 1px solid var(--border);
+}
+.import-row:focus {
+  outline: 2px solid var(--accent);
+  background: var(--surface-focus);
+}
+.import-row:last-child {
+  border-bottom: none;
+}
+.action-header-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--spacing-2);
+}
+.apply-all-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.apply-all-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-right: 0.25rem;
+}
+.btn-apply-all {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+}
+.badge-collision {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-desktop-sm);
+}
+.collision-actions-group {
+  display: flex;
+  gap: 0.25rem;
+}
+.action-choice-btn {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: var(--radius-desktop-sm);
+  cursor: pointer;
+}
+.action-choice-btn.selected {
+  background: var(--surface-active);
+  color: var(--text);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.import-progress-text {
+  font-weight: 600;
+  color: var(--accent);
+  margin-right: auto;
+}
+
 
 .modal-header {
   display: flex;
