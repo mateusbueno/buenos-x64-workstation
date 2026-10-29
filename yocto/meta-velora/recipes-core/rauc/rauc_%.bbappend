@@ -23,3 +23,6 @@ do_install:append() {
         chmod 0750 ${D}${bindir}/rauc
     fi
 }
+
+FILES:${PN} += "${datadir}/dbus-1/system.d/de.pengutronix.rauc.velora.conf"
+
