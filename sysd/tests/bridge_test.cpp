@@ -1471,6 +1471,164 @@ void test_write_to_velora_is_a_paired_engine_command() {
   CHECK(seen_writes.load() == 6);
 }
 
+void test_firmware_update_flow() {
+  Rig r;
+  std::string ready_version;
+  r.window->open("111111");
+  CHECK(r.start([&](sd::BridgeOptions& bo) {
+    bo.update_staging_dir = r.tmp.path + "/update_staging";
+    bo.on_firmware_ready = [&](const std::string& ver) { ready_version = ver; };
+  }));
+
+  Client c;
+  CHECK(c.connect_to(r.port()));
+  auto ack = c.hello({"update.v1"}, "mac-fw");
+  CHECK(std::find(ack.hello_ack().features().begin(), ack.hello_ack().features().end(), "update.v1") != ack.hello_ack().features().end());
+  CHECK(!pair_with(c, "111111").empty());
+
+  // 1. Stage chunk 1 with sha256 mismatch -> fails
+  {
+    ws::v1::ClientMessage m;
+    m.set_request_id(201);
+    auto* s = m.mutable_stage_firmware_chunk();
+    s->set_transfer_id("fw-test-1");
+    s->set_bundle_version("1.5.0");
+    s->set_total_bytes(20);
+    s->set_chunk_offset(0);
+    s->set_chunk_data("chunk_content_here");
+    s->set_chunk_sha256("0000000000000000000000000000000000000000000000000000000000000000");
+    s->set_is_last_chunk(false);
+    c.send(m);
+    ws::v1::ServerMessage rep;
+    CHECK(c.recv(rep) == 1 && rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE);
+  }
+
+  // 2. Stage valid chunk 1 then valid chunk 2
+  {
+    std::string data1 = "first_valid_chunk_";
+    ws::v1::ClientMessage m1;
+    m1.set_request_id(202);
+    auto* s1 = m1.mutable_stage_firmware_chunk();
+    s1->set_transfer_id("fw-test-2");
+    s1->set_bundle_version("1.5.0");
+    s1->set_total_bytes(data1.size() + 18);
+    s1->set_chunk_offset(0);
+    s1->set_chunk_data(data1);
+    s1->set_chunk_sha256(sd::sha256_hex(data1));
+    s1->set_is_last_chunk(false);
+    c.send(m1);
+    ws::v1::ServerMessage rep1;
+    CHECK(c.recv(rep1) == 1 && rep1.has_stage_firmware_chunk_reply());
+    CHECK(rep1.stage_firmware_chunk_reply().bytes_received() == data1.size());
+    CHECK(!rep1.stage_firmware_chunk_reply().completed());
+
+    // Check status
+    ws::v1::ClientMessage mstat;
+    mstat.set_request_id(203);
+    mstat.mutable_get_firmware_update_status()->set_transfer_id("fw-test-2");
+    c.send(mstat);
+    ws::v1::ServerMessage repstat;
+    CHECK(c.recv(repstat) == 1 && repstat.has_firmware_update_status_reply());
+    CHECK(repstat.firmware_update_status_reply().bytes_received() == data1.size());
+    CHECK(!repstat.firmware_update_status_reply().ready_to_install());
+
+    // Chunk 2 (last chunk)
+    std::string data2 = "second_valid_chunk";
+    ws::v1::ClientMessage m2;
+    m2.set_request_id(204);
+    auto* s2 = m2.mutable_stage_firmware_chunk();
+    s2->set_transfer_id("fw-test-2");
+    s2->set_bundle_version("1.5.0");
+    s2->set_total_bytes(data1.size() + data2.size());
+    s2->set_chunk_offset(data1.size());
+    s2->set_chunk_data(data2);
+    s2->set_chunk_sha256(sd::sha256_hex(data2));
+    s2->set_is_last_chunk(true);
+    c.send(m2);
+    ws::v1::ServerMessage rep2;
+    CHECK(c.recv(rep2) == 1 && rep2.has_stage_firmware_chunk_reply());
+    CHECK(rep2.stage_firmware_chunk_reply().completed());
+    CHECK(ready_version == "1.5.0");
+  }
+
+  // 3. Abort firmware update cleans up staging
+  {
+    ws::v1::ClientMessage m;
+    m.set_request_id(205);
+    m.mutable_abort_firmware_update()->set_transfer_id("fw-test-2");
+    c.send(m);
+    ws::v1::ServerMessage rep;
+    CHECK(c.recv(rep) == 1 && rep.has_stage_firmware_chunk_reply());
+    CHECK(!rep.stage_firmware_chunk_reply().completed());
+  }
+
+  // 4. Incompatible and bad signature bundle rejection
+  {
+    std::string bad_data = "header_BAD_SIGNATURE_data";
+    ws::v1::ClientMessage m;
+    m.set_request_id(206);
+    auto* s = m.mutable_stage_firmware_chunk();
+    s->set_transfer_id("fw-bad-sig");
+    s->set_bundle_version("1.5.0");
+    s->set_total_bytes(bad_data.size());
+    s->set_chunk_offset(0);
+    s->set_chunk_data(bad_data);
+    s->set_chunk_sha256(sd::sha256_hex(bad_data));
+    s->set_is_last_chunk(true);
+    c.send(m);
+    ws::v1::ServerMessage rep;
+    CHECK(c.recv(rep) == 1 && rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE);
+  }
+  {
+    std::string incomp_data = "header_INCOMPATIBLE_data";
+    ws::v1::ClientMessage m;
+    m.set_request_id(207);
+    auto* s = m.mutable_stage_firmware_chunk();
+    s->set_transfer_id("fw-incomp");
+    s->set_bundle_version("1.5.0");
+    s->set_total_bytes(incomp_data.size());
+    s->set_chunk_offset(0);
+    s->set_chunk_data(incomp_data);
+    s->set_chunk_sha256(sd::sha256_hex(incomp_data));
+    s->set_is_last_chunk(true);
+    c.send(m);
+    ws::v1::ServerMessage rep;
+    CHECK(c.recv(rep) == 1 && rep.has_error() && rep.error().code() == ws::v1::ERROR_CODE_UPDATE_INCOMPATIBLE);
+  }
+
+  // 5. Client drops connection mid-upload: partial file is removed
+  const std::string staging_dir = r.tmp.path + "/update_staging";
+  {
+    r.window->open("222222");
+    Client c2;
+    CHECK(c2.connect_to(r.port()));
+    c2.hello({"update.v1"}, "mac-fw-2");
+    CHECK(!pair_with(c2, "222222").empty());
+
+    std::string part_data = "partial_data_stream";
+    ws::v1::ClientMessage m;
+    m.set_request_id(208);
+    auto* s = m.mutable_stage_firmware_chunk();
+    s->set_transfer_id("fw-partial-drop");
+    s->set_bundle_version("1.5.0");
+    s->set_total_bytes(10000);
+    s->set_chunk_offset(0);
+    s->set_chunk_data(part_data);
+    s->set_chunk_sha256(sd::sha256_hex(part_data));
+    s->set_is_last_chunk(false);
+    c2.send(m);
+    ws::v1::ServerMessage rep;
+    CHECK(c2.recv(rep) == 1 && rep.has_stage_firmware_chunk_reply());
+
+    std::string expected_part_file = staging_dir + "/fw-partial-drop.raucb";
+    CHECK(std::filesystem::exists(expected_part_file));
+
+    // Now c2 drops connection
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  CHECK(!std::filesystem::exists(staging_dir + "/fw-partial-drop.raucb"));
+}
+
 int main() {
   ::signal(SIGPIPE, SIG_IGN);
   test_pairing_window_unit();
@@ -1491,6 +1649,7 @@ int main() {
   test_part_editor_edits_carry_base_revision();
   test_write_to_velora_is_a_paired_engine_command();
   test_unpaired_cap_and_pending_timeout();
+  test_firmware_update_flow();
   std::printf(g_fail ? "sysd_bridge_tests: FAILED (%d)\n" : "sysd_bridge_tests: ok\n", g_fail);
   return g_fail ? 1 : 0;
 }

@@ -43,6 +43,8 @@ struct BridgeOptions {
   std::string librarian_socket;  // empty: library messages answer UPSTREAM_UNAVAILABLE
   std::string model = "Velora";
   std::string firmware_version = "0.1.0-dev";
+  std::string update_staging_dir = "/data/update/.staging";
+  std::function<void(const std::string& version)> on_firmware_ready;
   bool dev_bypass_pairing = false;  // DEV ONLY: every client is paired, model "DEV HOST"
   std::size_t max_clients = 8;
   std::size_t max_unpaired = 3;  // handshaken but unpaired sessions at once (more are refused with BUSY at Hello)
@@ -66,7 +68,7 @@ class BridgeServer {
   static const std::vector<std::string>& device_features();
 
   // The message table (a TOTAL table, no default): every ClientMessage body is classified. Unlisted bodies are INVALID_COMMAND.
-  enum class Route : std::uint8_t { kLocal, kEngine, kConfig, kLibrary, kDenied };
+  enum class Route : std::uint8_t { kLocal, kEngine, kConfig, kLibrary, kDenied, kUpdate };
   struct MessageRule {
     int body_case;          // ClientMessage::BodyCase (= the field number)
     const char* name;
@@ -128,6 +130,12 @@ class BridgeServer {
     std::int64_t accepted_ms = 0, last_rx_ms = 0, window_start_ms = 0;
     int msgs_in_window = 0;
     Upstream eng, lib;
+    std::string update_transfer_id;
+    std::string update_bundle_version;
+    std::string update_staged_path;
+    std::uint64_t update_total_bytes = 0;
+    std::uint64_t update_bytes_received = 0;
+    bool update_ready = false;
   };
 
   void run();
@@ -142,6 +150,8 @@ class BridgeServer {
   void forward_engine(Session& s, ws::v1::ClientMessage m);
   void forward_library(Session& s, const ws::v1::ClientMessage& m);
   void handle_config(Session& s, const std::string& payload);
+  void handle_update(Session& s, const ws::v1::ClientMessage& m);
+  void cleanup_update_staging(Session& s, bool force = false);
   bool ensure_upstream(Session& s, Upstream& up, bool library);
   void read_upstream(Session& s, Upstream& up, bool library);
   void on_engine_frame(Session& s, const std::string& frame);

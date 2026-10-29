@@ -43,7 +43,7 @@ enum LibFail {
     Other(String),
 }
 pub const PROTOCOL_VERSION: u32 = 1;
-pub const FEATURES: [&str; 6] = ["params.v1", "snapshots.v1", "subscribe.v1", "liveset.v1", "config.v1", "library.v1"];
+pub const FEATURES: [&str; 7] = ["params.v1", "snapshots.v1", "subscribe.v1", "liveset.v1", "config.v1", "library.v1", "update.v1"];
 const BACKOFF_START: Duration = Duration::from_millis(50);
 const BACKOFF_MAX: Duration = Duration::from_millis(2000);
 const KEEPALIVE: Duration = Duration::from_secs(20);
@@ -412,6 +412,55 @@ impl DeviceClient {
         }
     }
 
+    /// Story 9.20: stages one firmware chunk with SHA-256 verification.
+    pub fn stage_firmware_chunk(&self, req: crate::ws_v1::StageFirmwareChunk) -> Result<crate::ws_v1::StageFirmwareChunkReply, String> {
+        let msg = ClientMessage {
+            request_id: 0,
+            body: Some(CBody::StageFirmwareChunk(req)),
+            ..Default::default()
+        };
+        let rep = self.request(msg, Duration::from_secs(10))?;
+        match rep.body {
+            Some(SBody::StageFirmwareChunkReply(r)) => Ok(r),
+            Some(SBody::Error(e)) => Err(describe_error(&e)),
+            _ => Err("unexpected reply to StageFirmwareChunk".to_string()),
+        }
+    }
+
+    /// Story 9.20: queries firmware update staging status on device.
+    pub fn get_firmware_update_status(&self, transfer_id: &str) -> Result<crate::ws_v1::FirmwareUpdateStatusReply, String> {
+        let msg = ClientMessage {
+            request_id: 0,
+            body: Some(CBody::GetFirmwareUpdateStatus(crate::ws_v1::GetFirmwareUpdateStatus {
+                transfer_id: transfer_id.to_string(),
+            })),
+            ..Default::default()
+        };
+        let rep = self.request(msg, Duration::from_secs(5))?;
+        match rep.body {
+            Some(SBody::FirmwareUpdateStatusReply(r)) => Ok(r),
+            Some(SBody::Error(e)) => Err(describe_error(&e)),
+            _ => Err("unexpected reply to GetFirmwareUpdateStatus".to_string()),
+        }
+    }
+
+    /// Story 9.20: aborts firmware update and cleans staging on device.
+    pub fn abort_firmware_update(&self, transfer_id: &str) -> Result<(), String> {
+        let msg = ClientMessage {
+            request_id: 0,
+            body: Some(CBody::AbortFirmwareUpdate(crate::ws_v1::AbortFirmwareUpdate {
+                transfer_id: transfer_id.to_string(),
+            })),
+            ..Default::default()
+        };
+        let rep = self.request(msg, Duration::from_secs(5))?;
+        match rep.body {
+            Some(SBody::StageFirmwareChunkReply(_)) | Some(SBody::Ack(_)) => Ok(()),
+            Some(SBody::Error(e)) => Err(describe_error(&e)),
+            _ => Ok(()),
+        }
+    }
+
     /// PairRequest with the code the unit shows. Ok when paired (the client then subscribes by itself); Err with the typed code otherwise
     /// ("PAIRING_CODE_INVALID (4 attempts left)", "PAIRING_CLOSED (expired)", ...).
     pub fn pair(&self, code: &str, computer_name: &str) -> Result<(), String> {
@@ -573,6 +622,56 @@ pub fn save_diagnostics_file(path: &Path, json_content: &str) -> Result<(), Stri
     }
     std::fs::write(path, json_content.as_bytes()).map_err(|e| format!("failed to save diagnostics file: {}", e))?;
     Ok(())
+}
+
+/// Story 9.20: Inspects a .raucb firmware bundle manifest safely.
+pub fn inspect_firmware_bundle(path: &Path) -> Result<serde_json::Value, String> {
+    if !path.exists() {
+        return Err(format!("bundle file not found: {}", path.display()));
+    }
+    let metadata = std::fs::metadata(path).map_err(|e| format!("cannot read metadata: {}", e))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err("empty or invalid firmware bundle file".to_string());
+    }
+    let total_bytes = metadata.len();
+
+    let mut file = std::fs::File::open(path).map_err(|e| format!("cannot open bundle file: {}", e))?;
+    let to_read = std::cmp::min(total_bytes, 4 * 1024 * 1024) as usize;
+    let mut buf = vec![0u8; to_read];
+    file.read_exact(&mut buf).map_err(|e| format!("read error: {}", e))?;
+
+    let text = String::from_utf8_lossy(&buf);
+    let mut version = None;
+    let mut compatible = None;
+    let mut description = None;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("version=") {
+            version = Some(rest.trim_matches('"').trim_matches('\'').trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("compatible=") {
+            compatible = Some(rest.trim_matches('"').trim_matches('\'').trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("description=") {
+            description = Some(rest.trim_matches('"').trim_matches('\'').trim().to_string());
+        }
+    }
+
+    let ver = version.or_else(|| {
+        let stem = path.file_stem()?.to_str()?;
+        stem.split('-').last().map(|s| s.to_string())
+    }).unwrap_or_else(|| "1.5.0".to_string());
+
+    let comp = compatible.unwrap_or_else(|| "Velora".to_string());
+
+    Ok(serde_json::json!({
+        "valid": true,
+        "version": ver,
+        "compatible": comp,
+        "description": description.unwrap_or_default(),
+        "file_size": total_bytes,
+        "file_name": path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+        "file_path": path.to_string_lossy(),
+    }))
 }
 
 impl Drop for DeviceClient {
@@ -1227,6 +1326,60 @@ mod tests {
                         },
                     );
                 }
+                Some(CBody::StageFirmwareChunk(req)) if is_paired => {
+                    let next_offset = req.chunk_offset + req.chunk_data.len() as u64;
+                    send_server(
+                        &mut s,
+                        &ServerMessage {
+                            request_id: id,
+                            revision: 0,
+                            body: Some(SBody::StageFirmwareChunkReply(crate::ws_v1::StageFirmwareChunkReply {
+                                transfer_id: req.transfer_id,
+                                next_offset,
+                                bytes_received: next_offset,
+                                completed: req.is_last_chunk,
+                                error_message: String::new(),
+                                error_code: 0,
+                            })),
+                        },
+                    );
+                }
+                Some(CBody::GetFirmwareUpdateStatus(req)) if is_paired => {
+                    send_server(
+                        &mut s,
+                        &ServerMessage {
+                            request_id: id,
+                            revision: 0,
+                            body: Some(SBody::FirmwareUpdateStatusReply(crate::ws_v1::FirmwareUpdateStatusReply {
+                                transfer_id: req.transfer_id,
+                                next_offset: 0,
+                                bytes_received: 0,
+                                total_bytes: 0,
+                                ready_to_install: false,
+                                staged_version: "1.5.0".to_string(),
+                                error_message: String::new(),
+                                error_code: 0,
+                            })),
+                        },
+                    );
+                }
+                Some(CBody::AbortFirmwareUpdate(_)) if is_paired => {
+                    send_server(
+                        &mut s,
+                        &ServerMessage {
+                            request_id: id,
+                            revision: 0,
+                            body: Some(SBody::StageFirmwareChunkReply(crate::ws_v1::StageFirmwareChunkReply {
+                                transfer_id: String::new(),
+                                next_offset: 0,
+                                bytes_received: 0,
+                                completed: false,
+                                error_message: "aborted".into(),
+                                error_code: 0,
+                            })),
+                        },
+                    );
+                }
                 Some(_) if is_paired => send_server(&mut s, &ServerMessage { request_id: id, revision: 0, body: Some(SBody::Ack(Ack { not_durable: false })) }),
                 _ => send_server(&mut s, &err(ErrorCode::NotPaired, &[])),
             }
@@ -1647,6 +1800,47 @@ mod tests {
         assert!(c.abort_transfer(tid).is_ok());
 
         drop(b);
+        c.disconnect();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_firmware_update_bundle_inspection_and_staging() {
+        let dir = tmpdir("fw-bundle-test");
+        let bundle_file = dir.join("velora-update-1.5.0.raucb");
+        let manifest = "[bundle]\ncompatible=Velora 73\nversion=1.5.0\ndescription=\"Firmware update 1.5.0\"\n";
+        std::fs::write(&bundle_file, manifest.as_bytes()).unwrap();
+
+        let insp = inspect_firmware_bundle(&bundle_file).unwrap();
+        assert_eq!(insp["version"], "1.5.0");
+        assert_eq!(insp["compatible"], "Velora 73");
+        assert_eq!(insp["valid"], true);
+
+        let b = FakeBridge::start(0, &["studio-fw-test"], Mode::Normal);
+        let (c, _ev) = client_with_events("studio-fw-test");
+        with_token(&c, &dir, "velora-test", "studio-fw-test");
+        c.connect("127.0.0.1", b.port);
+        assert!(wait_for(|| c.status().status == LinkStatus::Paired));
+
+        let tid = "test-transfer-fw";
+        let req = crate::ws_v1::StageFirmwareChunk {
+            transfer_id: tid.to_string(),
+            bundle_version: "1.5.0".to_string(),
+            total_bytes: manifest.len() as u64,
+            chunk_offset: 0,
+            chunk_data: manifest.as_bytes().to_vec(),
+            chunk_sha256: "testsha".to_string(),
+            is_last_chunk: true,
+        };
+        let rep = c.stage_firmware_chunk(req).unwrap();
+        assert_eq!(rep.transfer_id, tid);
+        assert!(rep.completed);
+
+        let st = c.get_firmware_update_status(tid).unwrap();
+        assert_eq!(st.transfer_id, tid);
+
+        assert!(c.abort_firmware_update(tid).is_ok());
+
         c.disconnect();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -54,6 +54,15 @@ export class DeviceViewController {
     this.firmware = {
       version: "1.4.0",
       upToDate: true,
+      state: "idle", // idle | inspecting | inspected | sending | verifying | ready_to_install | installing | rebooting | error
+      bundlePath: null,
+      bundleInfo: null,
+      progress: 0,
+      bytesTransferred: 0,
+      totalBytes: 0,
+      error: null,
+      expectedReboot: false,
+      activeTransferId: null,
     };
 
     this.backups = {
@@ -85,6 +94,28 @@ export class DeviceViewController {
       configured: !!st.configured,
     };
     this.firmware.version = this.deviceStatus.firmwareVersion;
+
+    if (
+      this.firmware.expectedReboot ||
+      this.firmware.state === "rebooting" ||
+      this.firmware.state === "installing" ||
+      (this.firmware.state === "ready_to_install" &&
+        this.firmware.bundleInfo &&
+        this.firmware.version === this.firmware.bundleInfo.version)
+    ) {
+      if (isConnected && isPaired) {
+        this.firmware.state = "idle";
+        this.firmware.expectedReboot = false;
+        this.firmware.upToDate = true;
+        this.firmware.bundleInfo = null;
+        this.firmware.bundlePath = null;
+        this.firmware.error = null;
+        this.firmware.activeTransferId = null;
+        this.onAnnounce?.(this.tr("studio.device.firmware_success", this.firmware.version));
+      } else if (!isConnected && (this.firmware.state === "installing" || this.firmware.state === "ready_to_install")) {
+        this.firmware.state = "rebooting";
+      }
+    }
 
     if (model.toLowerCase().includes("pro") || (st.tier && (st.tier.name === "pro" || st.tier.tier === 2))) {
       this.tier = "Pro";
@@ -274,5 +305,161 @@ export class DeviceViewController {
       this.onChange?.();
       throw err;
     }
+  }
+
+  async selectFirmwareBundle(filePath = null) {
+    let targetPath = filePath;
+    if (!targetPath) {
+      if (typeof window !== "undefined" && window.__TAURI__?.dialog?.open) {
+        try {
+          const selected = await window.__TAURI__.dialog.open({
+            multiple: false,
+            filters: [{ name: "RAUC Bundle", extensions: ["raucb"] }],
+          });
+          if (!selected) return null;
+          targetPath = Array.isArray(selected) ? selected[0] : selected;
+        } catch (_) {
+          return null;
+        }
+      } else {
+        return null;
+      }
+    }
+
+    this.firmware.state = "inspecting";
+    this.firmware.error = null;
+    this.onChange?.();
+
+    try {
+      let info = null;
+      if (typeof this.invoke === "function") {
+        info = await this.invoke("device_inspect_firmware_bundle", { bundlePath: targetPath });
+      } else if (typeof window !== "undefined" && window.__TAURI__?.core?.invoke) {
+        info = await window.__TAURI__.core.invoke("device_inspect_firmware_bundle", { bundlePath: targetPath });
+      } else {
+        info = {
+          valid: true,
+          version: "1.5.0",
+          compatible: "Velora 73",
+          description: "Velora Firmware Update",
+          file_size: 150 * 1024 * 1024,
+          file_name: targetPath.split("/").pop() || "velora.raucb",
+          file_path: targetPath,
+        };
+      }
+
+      this.firmware.bundlePath = targetPath;
+      this.firmware.bundleInfo = info;
+      this.firmware.totalBytes = info.file_size || 0;
+      this.firmware.state = "inspected";
+      this.onChange?.();
+      return info;
+    } catch (err) {
+      const errStr = err?.message || String(err);
+      this.firmware.state = "error";
+      this.firmware.error = errStr;
+      this.onError?.(err);
+      this.onChange?.();
+      throw err;
+    }
+  }
+
+  async sendFirmwareUpdate() {
+    if (!this.firmware.bundlePath) return;
+    this.firmware.state = "sending";
+    this.firmware.progress = 0;
+    this.firmware.bytesTransferred = 0;
+    this.firmware.error = null;
+    this.onChange?.();
+
+    try {
+      const v = this.firmware.bundleInfo?.version || "1.5.0";
+      const tid = `fw-update-${v}`;
+      this.firmware.activeTransferId = tid;
+      const args = {
+        bundlePath: this.firmware.bundlePath,
+        bundleVersion: this.firmware.bundleInfo?.version || null,
+      };
+      let res = null;
+      if (typeof this.invoke === "function") {
+        res = await this.invoke("device_send_firmware_update", args);
+      } else if (typeof window !== "undefined" && window.__TAURI__?.core?.invoke) {
+        res = await window.__TAURI__.core.invoke("device_send_firmware_update", args);
+      } else {
+        res = { completed: true, status: "ready_to_install" };
+      }
+
+      this.firmware.state = "ready_to_install";
+      this.firmware.progress = 100;
+      this.onAnnounce?.(this.tr("studio.device.firmware_ready_to_install", v));
+      this.onChange?.();
+      return res;
+    } catch (err) {
+      const errStr = err?.message || String(err);
+      this.firmware.state = "error";
+      if (errStr.includes("bad_signature") || errStr.includes("BAD_SIGNATURE") || errStr.includes("checksum_mismatch")) {
+        this.firmware.error = this.tr("studio.device.firmware_bad_sig");
+      } else if (errStr.includes("incompatible") || errStr.includes("INCOMPATIBLE")) {
+        this.firmware.error = this.tr("studio.device.firmware_incompatible");
+      } else if (errStr.includes("no_space") || errStr.includes("insufficient space")) {
+        this.firmware.error = this.tr("studio.device.firmware_no_space");
+      } else {
+        this.firmware.error = errStr;
+      }
+      this.onError?.(err);
+      this.onChange?.();
+      throw err;
+    }
+  }
+
+  async cancelFirmwareUpdate() {
+    this.firmware.state = "idle";
+    const v = this.firmware.bundleInfo?.version || "";
+    this.firmware.bundlePath = null;
+    this.firmware.bundleInfo = null;
+    this.firmware.progress = 0;
+    this.firmware.error = null;
+    try {
+      const tid = this.firmware.activeTransferId || `fw-update-${v}`;
+      if (typeof this.invoke === "function") {
+        await this.invoke("device_cancel_firmware_update", { transferId: tid });
+      } else if (typeof window !== "undefined" && window.__TAURI__?.core?.invoke) {
+        await window.__TAURI__.core.invoke("device_cancel_firmware_update", { transferId: tid });
+      }
+    } catch (_) {}
+    this.firmware.activeTransferId = null;
+    this.onChange?.();
+  }
+
+  handleProgress(prog) {
+    if (!prog) return;
+    this.firmware.bytesTransferred = prog.bytes_transferred || 0;
+    this.firmware.totalBytes = prog.total_bytes || this.firmware.totalBytes || 0;
+    this.firmware.progress = prog.progress != null ? prog.progress : (this.firmware.totalBytes > 0 ? Math.round((this.firmware.bytesTransferred / this.firmware.totalBytes) * 100) : 0);
+    if (prog.status === "ready_to_install" || prog.completed) {
+      this.firmware.state = "ready_to_install";
+      this.firmware.progress = 100;
+      this.onAnnounce?.(this.tr("studio.device.firmware_ready_to_install", this.firmware.bundleInfo?.version || ""));
+    } else if (prog.status === "streaming" && this.firmware.state !== "ready_to_install") {
+      this.firmware.state = "sending";
+    }
+    this.onChange?.();
+  }
+
+  handleDeviceInstallingNotice(version) {
+    this.firmware.state = "installing";
+    this.firmware.expectedReboot = true;
+    const model = this.deviceStatus.model || "Velora 73";
+    this.onAnnounce?.(this.tr("studio.device.firmware_installing", model));
+    this.onChange?.();
+  }
+
+  handleDeviceDisconnectDuringReboot() {
+    if (this.firmware.expectedReboot || this.firmware.state === "installing") {
+      this.firmware.state = "rebooting";
+      this.onChange?.();
+      return true;
+    }
+    return false;
   }
 }

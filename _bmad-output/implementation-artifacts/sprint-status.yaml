@@ -242,7 +242,7 @@ development_status:
   9-17-restore-with-merge-or-replace-and-offline-backup-editing: done
   9-18-export-selected-live-sets-and-timbres-individually-or-as-a-b: done
   9-19-import-partial-exports-with-per-item-merge-decisions: done
-  9-20-send-firmware-from-velora-studio: backlog
+  9-20-send-firmware-from-velora-studio: done
   9-21-device-view-and-diagnostics-export: done
   9-22-velora-studio-accessibility-audit: done
   9-23-edit-zone-keyboard-and-arpeggiator-from-velora-studio: done

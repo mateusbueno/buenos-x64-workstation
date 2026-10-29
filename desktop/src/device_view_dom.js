@@ -272,24 +272,156 @@ export class DeviceView {
     const fwTitle = this.doc.createElement("h3");
     fwTitle.className = "device-card-title";
     fwTitle.textContent = this.tr("studio.device.firmware_title");
+    fwCard.appendChild(fwTitle);
 
-    const fwStatus = this.doc.createElement("p");
-    fwStatus.className = "device-status-text";
-    fwStatus.textContent = this.tr("studio.device.firmware_up_to_date", ctl.firmware.version);
+    // Current version
+    const fwCurrent = this.doc.createElement("p");
+    fwCurrent.className = "device-status-text";
+    fwCurrent.id = "device-firmware-current";
+    fwCurrent.textContent = this.tr("studio.device.firmware_current", ctl.firmware.version);
+    fwCard.appendChild(fwCurrent);
 
-    const fwAction = this.doc.createElement("div");
-    fwAction.className = "device-card-actions";
-    const fwBtn = this.doc.createElement("button");
-    fwBtn.type = "button";
-    fwBtn.className = "btn";
-    fwBtn.id = "btn-check-firmware-updates";
-    fwBtn.textContent = this.tr("studio.device.btn_check_updates");
-    fwBtn.addEventListener("click", () => {
-      this.announce(this.tr("studio.device.firmware_up_to_date", ctl.firmware.version));
-    });
-    fwAction.appendChild(fwBtn);
+    // Error banner if any
+    if (ctl.firmware.error) {
+      const errBanner = this.doc.createElement("div");
+      errBanner.className = "device-error-banner";
+      errBanner.id = "device-firmware-error";
+      errBanner.setAttribute("role", "alert");
+      errBanner.textContent = ctl.firmware.error;
+      fwCard.appendChild(errBanner);
+    }
 
-    fwCard.append(fwTitle, fwStatus, fwAction);
+    // Bundle details if inspected
+    if (ctl.firmware.bundleInfo) {
+      const bundleRow = this.doc.createElement("div");
+      bundleRow.className = "device-bundle-info-row";
+      bundleRow.id = "device-firmware-bundle-info";
+
+      const bundleVer = this.doc.createElement("span");
+      bundleVer.className = "device-bundle-version";
+      bundleVer.textContent = this.tr("studio.device.firmware_bundle", ctl.firmware.bundleInfo.version || "");
+
+      const bundleSize = this.doc.createElement("span");
+      bundleSize.className = "device-bundle-size badge-variant";
+      bundleSize.textContent = formatBytes(ctl.firmware.bundleInfo.file_size || 0);
+
+      bundleRow.append(bundleVer, bundleSize);
+      fwCard.appendChild(bundleRow);
+    }
+
+    // State-specific layout
+    if (ctl.firmware.state === "sending") {
+      const model = ctl.deviceStatus.model || "Velora 73";
+      const transferredStr = formatBytes(ctl.firmware.bytesTransferred);
+      const totalStr = formatBytes(ctl.firmware.totalBytes);
+      const pct = ctl.firmware.progress || 0;
+
+      const progressText = this.doc.createElement("div");
+      progressText.className = "firmware-progress-text";
+      progressText.id = "firmware-progress-text";
+      progressText.textContent = this.tr("studio.device.firmware_sending", model, transferredStr, totalStr, pct);
+
+      const meter = this.doc.createElement("div");
+      meter.className = "storage-meter firmware-progress-meter";
+      meter.id = "firmware-progress-meter";
+      meter.setAttribute("role", "progressbar");
+      meter.setAttribute("aria-valuenow", String(pct));
+      meter.setAttribute("aria-valuemin", "0");
+      meter.setAttribute("aria-valuemax", "100");
+      meter.setAttribute("aria-valuetext", `${transferredStr} of ${totalStr} (${pct}%)`);
+
+      const meterFill = this.doc.createElement("div");
+      meterFill.className = "storage-meter-fill firmware-meter-fill";
+      meterFill.style.width = `${pct}%`;
+      meter.appendChild(meterFill);
+
+      const cancelBtn = this.doc.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn";
+      cancelBtn.id = "btn-cancel-firmware-update";
+      cancelBtn.textContent = this.tr("studio.device.firmware_btn_cancel");
+      cancelBtn.addEventListener("click", () => ctl.cancelFirmwareUpdate());
+
+      const progressActions = this.doc.createElement("div");
+      progressActions.className = "device-card-actions";
+      progressActions.appendChild(cancelBtn);
+
+      fwCard.append(progressText, meter, progressActions);
+    } else if (ctl.firmware.state === "ready_to_install") {
+      const readyBanner = this.doc.createElement("div");
+      readyBanner.className = "device-notice-banner";
+      readyBanner.id = "firmware-ready-banner";
+      readyBanner.setAttribute("role", "status");
+
+      const readyTitle = this.doc.createElement("strong");
+      readyTitle.className = "firmware-ready-title";
+      readyTitle.textContent = this.tr("studio.device.firmware_ready_to_install", ctl.firmware.bundleInfo?.version || "");
+
+      const readyHint = this.doc.createElement("p");
+      readyHint.className = "firmware-ready-hint";
+      readyHint.textContent = this.tr("studio.device.firmware_ready_hint");
+
+      readyBanner.append(readyTitle, readyHint);
+      fwCard.appendChild(readyBanner);
+    } else if (ctl.firmware.state === "installing") {
+      const installBanner = this.doc.createElement("div");
+      installBanner.className = "device-installing-banner";
+      installBanner.id = "firmware-installing-banner";
+      installBanner.setAttribute("role", "status");
+      installBanner.textContent = this.tr("studio.device.firmware_installing", ctl.deviceStatus.model || "Velora 73");
+      fwCard.appendChild(installBanner);
+    } else if (ctl.firmware.state === "rebooting") {
+      const rebootBanner = this.doc.createElement("div");
+      rebootBanner.className = "device-rebooting-banner";
+      rebootBanner.id = "firmware-rebooting-banner";
+      rebootBanner.setAttribute("role", "status");
+      rebootBanner.textContent = this.tr("studio.device.firmware_rebooting", ctl.deviceStatus.model || "Velora 73");
+      fwCard.appendChild(rebootBanner);
+    } else if (ctl.firmware.state === "inspected") {
+      const actions = this.doc.createElement("div");
+      actions.className = "device-card-actions";
+
+      const sendBtn = this.doc.createElement("button");
+      sendBtn.type = "button";
+      sendBtn.className = "btn btn-primary";
+      sendBtn.id = "btn-send-firmware";
+      sendBtn.textContent = this.tr("studio.device.firmware_btn_send");
+      sendBtn.addEventListener("click", () => ctl.sendFirmwareUpdate());
+
+      const cancelBtn = this.doc.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn";
+      cancelBtn.id = "btn-cancel-firmware";
+      cancelBtn.textContent = this.tr("studio.device.firmware_btn_cancel");
+      cancelBtn.addEventListener("click", () => ctl.cancelFirmwareUpdate());
+
+      actions.append(sendBtn, cancelBtn);
+      fwCard.appendChild(actions);
+    } else {
+      // idle or error
+      const actions = this.doc.createElement("div");
+      actions.className = "device-card-actions";
+
+      const selectBtn = this.doc.createElement("button");
+      selectBtn.type = "button";
+      selectBtn.className = "btn";
+      selectBtn.id = "btn-select-firmware-file";
+      selectBtn.textContent = this.tr("studio.device.firmware_btn_select");
+      selectBtn.addEventListener("click", () => ctl.selectFirmwareBundle());
+
+      const checkBtn = this.doc.createElement("button");
+      checkBtn.type = "button";
+      checkBtn.className = "btn";
+      checkBtn.id = "btn-check-firmware-updates";
+      checkBtn.textContent = this.tr("studio.device.btn_check_updates");
+      checkBtn.addEventListener("click", () => {
+        this.announce(this.tr("studio.device.firmware_up_to_date", ctl.firmware.version));
+      });
+
+      actions.append(selectBtn, checkBtn);
+      fwCard.appendChild(actions);
+    }
+
     body.appendChild(fwCard);
 
     // 4. Backups Card

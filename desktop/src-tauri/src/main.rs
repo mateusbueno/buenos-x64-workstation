@@ -915,6 +915,148 @@ async fn device_start_library_transfer(
     .map_err(|e| e.to_string())?
 }
 
+// Story 9.20: Firmware update over USB
+static FIRMWARE_UPDATE_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+async fn device_inspect_firmware_bundle(bundle_path: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        device::inspect_firmware_bundle(Path::new(&bundle_path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn device_cancel_firmware_update(
+    transfer_id: Option<String>,
+    dev: State<'_, DeviceHandle>,
+) -> Result<(), String> {
+    FIRMWARE_UPDATE_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+    let client = dev.client.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let tid = transfer_id.unwrap_or_default();
+        let _ = client.abort_firmware_update(&tid);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn device_send_firmware_update(
+    bundle_path: String,
+    bundle_version: Option<String>,
+    dev: State<'_, DeviceHandle>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    FIRMWARE_UPDATE_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+    let client = dev.client.clone();
+    let app_clone = app.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(&bundle_path);
+        if !path.exists() || !path.is_file() {
+            return Err(format!("firmware bundle not found: {}", path.display()));
+        }
+        let total_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        if total_bytes == 0 {
+            return Err("firmware bundle is empty".to_string());
+        }
+
+        let inspected = device::inspect_firmware_bundle(&path).ok();
+        let version = bundle_version.or_else(|| {
+            inspected.as_ref().and_then(|v| v.get("version").and_then(|s| s.as_str()).map(|s| s.to_string()))
+        }).unwrap_or_else(|| "1.5.0".to_string());
+
+        let transfer_id = format!("fw-update-{}", version);
+        const CHUNK_SIZE: usize = 65536; // 64 KB
+
+        let mut offset: u64 = 0;
+        if let Ok(st) = client.get_firmware_update_status(&transfer_id) {
+            if st.next_offset > 0 && st.next_offset < total_bytes {
+                offset = st.next_offset;
+            }
+        }
+
+        let mut bytes_transferred = offset;
+        use sha2::Digest;
+        use std::io::{Read, Seek, SeekFrom};
+
+        let mut file = std::fs::File::open(&path).map_err(|e| format!("failed to open bundle: {}", e))?;
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
+        }
+
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_millis(200);
+
+        while bytes_transferred < total_bytes {
+            if FIRMWARE_UPDATE_CANCEL.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = client.abort_firmware_update(&transfer_id);
+                return Err("firmware update cancelled".to_string());
+            }
+
+            let to_read = std::cmp::min(CHUNK_SIZE as u64, total_bytes - bytes_transferred) as usize;
+            let n = file.read(&mut buffer[..to_read]).map_err(|e| format!("read error: {}", e))?;
+            if n == 0 {
+                break;
+            }
+
+            let chunk_data = &buffer[..n];
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(chunk_data);
+            let sha256_hex = format!("{:x}", hasher.finalize());
+
+            let is_last_chunk = (bytes_transferred + n as u64) >= total_bytes;
+
+            let req = crate::ws_v1::StageFirmwareChunk {
+                transfer_id: transfer_id.clone(),
+                bundle_version: version.clone(),
+                total_bytes,
+                chunk_offset: bytes_transferred,
+                chunk_data: chunk_data.to_vec(),
+                chunk_sha256: sha256_hex,
+                is_last_chunk,
+            };
+
+            let reply = client.stage_firmware_chunk(req)?;
+            bytes_transferred = reply.next_offset;
+
+            let now = std::time::Instant::now();
+            if reply.completed || is_last_chunk || now.duration_since(last_emit).as_millis() >= 100 {
+                last_emit = now;
+                let pct = if total_bytes > 0 { ((bytes_transferred as f64 / total_bytes as f64) * 100.0).round() as u32 } else { 0 };
+                let prog = serde_json::json!({
+                    "transfer_id": transfer_id,
+                    "bundle_version": version,
+                    "bytes_transferred": bytes_transferred,
+                    "total_bytes": total_bytes,
+                    "progress": pct,
+                    "completed": reply.completed,
+                    "status": if reply.completed { "ready_to_install" } else { "streaming" },
+                });
+                let _ = app_clone.emit("firmware_update://progress", &prog);
+            }
+
+            if reply.completed {
+                break;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "transfer_id": transfer_id,
+            "bundle_version": version,
+            "bytes_transferred": bytes_transferred,
+            "total_bytes": total_bytes,
+            "status": "ready_to_install",
+            "completed": true,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn make_device_handle() -> DeviceHandle {
     let app: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let app2 = app.clone();
@@ -1021,6 +1163,9 @@ fn main() {
             device_start_library_transfer,
             device_cancel_library_transfer,
             device_get_transfer_status,
+            device_inspect_firmware_bundle,
+            device_send_firmware_update,
+            device_cancel_firmware_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");

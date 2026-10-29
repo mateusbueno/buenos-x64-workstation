@@ -418,6 +418,23 @@ window.addEventListener("DOMContentLoaded", () => {
     const footerStatus = document.getElementById("footer-live-edit-status");
     const unsaved = document.getElementById("footer-unsaved-scope");
     if (!footerStatus) return;
+    if (typeof deviceCtl !== "undefined" && deviceCtl?.firmware?.state === "sending") {
+      const model = deviceCtl.deviceStatus?.model || "VELORA 73";
+      const transferredMb = (deviceCtl.firmware.bytesTransferred / (1024 * 1024)).toFixed(1);
+      const totalMb = (deviceCtl.firmware.totalBytes / (1024 * 1024)).toFixed(1);
+      footerStatus.classList.remove("foot-writing");
+      footerStatus.textContent = localeMgr.tr(
+        "studio.device.firmware_footer_sending",
+        model.toUpperCase(),
+        transferredMb,
+        totalMb + " MB"
+      );
+      if (unsaved) {
+        unsaved.hidden = true;
+        unsaved.textContent = "";
+      }
+      return;
+    }
     if (typeof libraryCtl !== "undefined" && libraryCtl?.transferState?.isTransferring) {
       footerStatus.classList.remove("foot-writing");
       footerStatus.textContent = formatTransferLine(
@@ -1733,6 +1750,15 @@ window.addEventListener("DOMContentLoaded", () => {
     window.__TAURI__.event.listen("library_transfer://progress", (event) => {
       libraryCtl.onTransferProgress(event.payload);
     });
+    window.__TAURI__.event.listen("firmware_update://progress", (event) => {
+      deviceCtl.handleProgress(event.payload);
+      paintLiveEditFooter();
+      if (deviceUi.open) deviceUi.view?.render();
+    });
+    window.__TAURI__.event.listen("device://firmware_installing", (event) => {
+      deviceCtl.handleDeviceInstallingNotice(event.payload?.version);
+      if (deviceUi.open) deviceUi.view?.render();
+    });
   }
 
   // What every State push does for the view: the model follows it at once; the sidebar follows the setlists' revision (throttled) and the sounding Live Set; and the
@@ -1931,6 +1957,9 @@ window.addEventListener("DOMContentLoaded", () => {
     if (hintEl && hint) hintEl.textContent = hint;
     const connEl = document.getElementById("connection-status");
     if (connEl) connEl.dataset.link = st.status;
+    if (st.status === "disconnected" && (deviceCtl.firmware.expectedReboot || deviceCtl.firmware.state === "installing" || deviceCtl.firmware.state === "ready_to_install")) {
+      deviceCtl.handleDeviceDisconnectDuringReboot();
+    }
     connBannerCtl.setStatus(st);
     const becameConnected = paired && (!isConnected || !wasLinked);
     const wasPaired = deviceLinkPaired;

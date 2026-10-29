@@ -123,6 +123,7 @@ Story 1.21 (in-RAM diagnostics) adds, additively: the command `GetDiagnostics` (
 
 Story 8.12 adds one additive error code to `library_api.proto`: `LIBRARY_ERROR_CODE_RECONCILING` (19). While the librarian runs its startup reconcile pass it answers the handshake but refuses every command with it (`details.reason=reconciling`, nothing changed); the client retries shortly. Semantics: `librarian/README.md` ("Startup ordering, summary and boot bound").
 Story 9.15 adds library transfer messages over USB mediated bridge: `FreeSpaceRequest` (21) / `FreeSpaceReply` (15), `StageChunkRequest` (22) / `StageChunkReply` (16), `GetTransferStatusRequest` (23), `AbortTransferRequest` (24), and error codes `LIBRARY_ERROR_CODE_TRANSFER_FAILED` (20) and `LIBRARY_ERROR_CODE_CHECKSUM_MISMATCH` (21).
+Story 9.20 adds firmware update messages over USB mediated bridge: `StageFirmwareChunk` (71) / `StageFirmwareChunkReply` (32), `GetFirmwareUpdateStatus` (72) / `FirmwareUpdateStatusReply` (33), `AbortFirmwareUpdate` (73), and error codes `UPDATE_BAD_SIGNATURE` (30), `UPDATE_INCOMPATIBLE` (31), `UPDATE_NO_SPACE` (32), `UPDATE_IO` (33) under `FirmwareUpdateErrorCode`, plus `ERROR_CODE_UPDATE_BAD_SIGNATURE` (48), `ERROR_CODE_UPDATE_INCOMPATIBLE` (49), `ERROR_CODE_UPDATE_NO_SPACE` (50), `ERROR_CODE_UPDATE_IO` (51) in `ErrorCode`. Negotiated under handshake feature `update.v1`. Staged in `/data/update/.staging/` and verified before device announcement.
 
 ## sysd config (Foundation: sysd config service)
 

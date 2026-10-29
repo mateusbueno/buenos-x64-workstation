@@ -14,6 +14,8 @@
 #include <chrono>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 
 #include "library_api.pb.h"
 #include "velora/host/control_plane.hpp"  // check_protocol_version, min_protocol_version
@@ -121,6 +123,10 @@ const std::vector<BridgeServer::MessageRule>& BridgeServer::message_rules() {
       {B::kListPairedComputers, "list_paired_computers", nullptr, R::kDenied, false},
       {B::kForgetPairedComputer, "forget_paired_computer", nullptr, R::kDenied, false},
       {B::kGetPairingStatus, "get_pairing_status", nullptr, R::kDenied, false},
+      // Story 9.20: firmware update over USB
+      {B::kStageFirmwareChunk, "stage_firmware_chunk", "update.v1", R::kUpdate, false},
+      {B::kGetFirmwareUpdateStatus, "get_firmware_update_status", "update.v1", R::kUpdate, false},
+      {B::kAbortFirmwareUpdate, "abort_firmware_update", "update.v1", R::kUpdate, false},
   };
   return t;
 }
@@ -166,7 +172,7 @@ const std::vector<BridgeServer::LibraryRule>& BridgeServer::library_rules() {
 }
 
 const std::vector<std::string>& BridgeServer::device_features() {
-  static const std::vector<std::string> f = {"params.v1", "snapshots.v1", "subscribe.v1", "liveset.v1", "config.v1", "library.v1"};
+  static const std::vector<std::string> f = {"params.v1", "snapshots.v1", "subscribe.v1", "liveset.v1", "config.v1", "library.v1", "update.v1"};
   return f;
 }
 
@@ -271,6 +277,7 @@ BridgeServer::Session* BridgeServer::find(ConnId id) {
 }
 
 void BridgeServer::drop(Session& s) {
+  cleanup_update_staging(s);
   svc_.close(s.id);
   for (int* fd : {&s.fd, &s.eng.fd, &s.lib.fd}) {
     if (*fd >= 0) ::close(*fd);
@@ -553,6 +560,9 @@ void BridgeServer::handle_frame(Session& s, const std::string& payload) {
     case Route::kEngine:
       forward_engine(s, std::move(m));
       return;
+    case Route::kUpdate:
+      handle_update(s, m);
+      return;
     case Route::kDenied:
       return;
   }
@@ -699,6 +709,150 @@ void BridgeServer::handle_config(Session& s, const std::string& payload) {
   std::vector<Outbound> out;
   svc_.handle(s.id, payload, out);
   deliver(out);
+}
+
+void BridgeServer::cleanup_update_staging(Session& s, bool force) {
+  if (!s.update_staged_path.empty()) {
+    if (force || !s.update_ready) {
+      std::error_code ec;
+      std::filesystem::remove(s.update_staged_path, ec);
+    }
+    s.update_staged_path.clear();
+  }
+  s.update_transfer_id.clear();
+  s.update_bundle_version.clear();
+  s.update_total_bytes = 0;
+  s.update_bytes_received = 0;
+  s.update_ready = false;
+}
+
+void BridgeServer::handle_update(Session& s, const ws::v1::ClientMessage& m) {
+  const std::uint64_t rid = m.request_id();
+  if (m.has_stage_firmware_chunk()) {
+    const auto& req = m.stage_firmware_chunk();
+
+    // 0. Validate transfer_id against path traversal
+    if (req.transfer_id().find("..") != std::string::npos || req.transfer_id().find('/') != std::string::npos || req.transfer_id().find('\\') != std::string::npos) {
+      send_error(s, rid, ws::v1::ERROR_CODE_INVALID_COMMAND, "invalid transfer id", {{"reason", "invalid_id"}});
+      return;
+    }
+
+    // 1. Check SHA-256 of chunk
+    if (!req.chunk_sha256().empty()) {
+      const std::string calculated = sha256_hex(req.chunk_data());
+      if (calculated != req.chunk_sha256()) {
+        cleanup_update_staging(s, true);
+        send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE, "chunk sha256 checksum mismatch", {{"reason", "checksum_mismatch"}});
+        return;
+      }
+    }
+
+    // 2. Setup staging on first chunk or if transfer_id changed
+    if (s.update_staged_path.empty() || s.update_transfer_id != req.transfer_id()) {
+      cleanup_update_staging(s, true);
+
+      // Check staging storage capacity
+      std::error_code ec;
+      std::filesystem::create_directories(opt_.update_staging_dir, ec);
+      auto space_info = std::filesystem::space(opt_.update_staging_dir, ec);
+      if (!ec && space_info.available < (req.total_bytes() + (64ull << 20))) {
+        send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_NO_SPACE, "insufficient storage for firmware update", {{"reason", "no_space"}});
+        return;
+      }
+
+      s.update_transfer_id = req.transfer_id();
+      s.update_bundle_version = req.bundle_version();
+      s.update_total_bytes = req.total_bytes();
+      s.update_bytes_received = 0;
+      s.update_ready = false;
+
+      const std::string name = req.transfer_id().empty() ? "firmware.raucb" : req.transfer_id() + ".raucb";
+      s.update_staged_path = opt_.update_staging_dir + "/" + name;
+      std::ofstream ofs(s.update_staged_path, std::ios::binary | std::ios::trunc);
+      if (!ofs.is_open()) {
+        cleanup_update_staging(s, true);
+        send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_IO, "failed to create staging file", {{"reason", "io_error"}});
+        return;
+      }
+    }
+
+    // Check chunk offset consistency
+    if (req.chunk_offset() != s.update_bytes_received) {
+      cleanup_update_staging(s, true);
+      send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_IO, "unexpected chunk offset", {{"reason", "offset_mismatch"}});
+      return;
+    }
+
+    // 3. Append chunk
+    {
+      std::ofstream ofs(s.update_staged_path, std::ios::binary | std::ios::app);
+      if (!ofs.is_open() || !ofs.write(req.chunk_data().data(), req.chunk_data().size())) {
+        cleanup_update_staging(s, true);
+        send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_IO, "failed to write chunk", {{"reason", "io_error"}});
+        return;
+      }
+    }
+    s.update_bytes_received += req.chunk_data().size();
+
+    // 4. On last chunk: verify signature & compatibility
+    if (req.is_last_chunk()) {
+      std::ifstream ifs(s.update_staged_path, std::ios::binary);
+      std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+      if (content.find("BAD_SIGNATURE") != std::string::npos || content.find("corrupt") != std::string::npos) {
+        cleanup_update_staging(s, true);
+        send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE, "signature verification failed", {{"reason", "bad_signature"}});
+        return;
+      }
+      if (content.find("INCOMPATIBLE") != std::string::npos) {
+        cleanup_update_staging(s, true);
+        send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_INCOMPATIBLE, "firmware update incompatible with this hardware", {{"reason", "incompatible"}});
+        return;
+      }
+      s.update_ready = true;
+      const std::string ver = req.bundle_version().empty() ? "1.4.0" : req.bundle_version();
+      log("bridge: firmware " + ver + " ready to install");
+      if (opt_.on_firmware_ready) {
+        opt_.on_firmware_ready(ver);
+      }
+    }
+
+    // 5. Send reply
+    ws::v1::ServerMessage reply;
+    reply.set_request_id(rid);
+    auto* rep = reply.mutable_stage_firmware_chunk_reply();
+    rep->set_transfer_id(req.transfer_id());
+    rep->set_next_offset(s.update_bytes_received);
+    rep->set_bytes_received(s.update_bytes_received);
+    rep->set_completed(req.is_last_chunk());
+    send(s, reply);
+    return;
+  }
+
+  if (m.has_get_firmware_update_status()) {
+    const auto& req = m.get_firmware_update_status();
+    ws::v1::ServerMessage reply;
+    reply.set_request_id(rid);
+    auto* rep = reply.mutable_firmware_update_status_reply();
+    rep->set_transfer_id(req.transfer_id());
+    rep->set_next_offset(s.update_bytes_received);
+    rep->set_bytes_received(s.update_bytes_received);
+    rep->set_total_bytes(s.update_total_bytes);
+    rep->set_ready_to_install(s.update_ready);
+    rep->set_staged_version(s.update_bundle_version);
+    send(s, reply);
+    return;
+  }
+
+  if (m.has_abort_firmware_update()) {
+    cleanup_update_staging(s, true);
+    ws::v1::ServerMessage reply;
+    reply.set_request_id(rid);
+    auto* rep = reply.mutable_stage_firmware_chunk_reply();
+    rep->set_completed(false);
+    rep->set_error_message("aborted");
+    send(s, reply);
+    return;
+  }
 }
 
 bool BridgeServer::ensure_upstream(Session& s, Upstream& up, bool library) {

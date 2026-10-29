@@ -2535,6 +2535,73 @@ nav.jump a:hover {
   font-size: var(--font-desktop-body);
 }
 
+/* Story 9.20: Firmware update over USB styling */
+.device-bundle-info-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-1);
+}
+
+.device-bundle-version {
+  font-weight: 600;
+  color: var(--text);
+  font-size: var(--font-desktop-body);
+}
+
+.firmware-progress-text {
+  font-size: var(--font-desktop-body);
+  color: var(--text);
+  margin-top: var(--spacing-1);
+}
+
+.firmware-progress-meter {
+  height: var(--spacing-2);
+  background-color: var(--raised);
+  border-radius: var(--radius-desktop-sm);
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.firmware-meter-fill {
+  height: 100%;
+  background-color: var(--accent);
+  transition: width 150ms ease-out;
+}
+
+.device-notice-banner {
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-desktop-sm);
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.firmware-ready-title {
+  color: var(--accent);
+  font-size: var(--font-desktop-body);
+}
+
+.firmware-ready-hint {
+  margin: 0;
+  font-size: var(--font-desktop-footnote);
+  color: var(--muted);
+}
+
+.device-installing-banner,
+.device-rebooting-banner {
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-desktop-sm);
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--text);
+  font-size: var(--font-desktop-body);
+  font-weight: 500;
+}
+
 /* Story 9.14: Library View and SFZ/SF2 Converter styles */
 .library-view {
   display: flex;

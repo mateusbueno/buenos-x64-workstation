@@ -80,6 +80,11 @@ enum ErrorCode {
   // unit (panel, encoders, faders, MIDI, device UI, scene recall, Live Set switch) after the client's view was built. Nothing changed. details: base_revision,
   // current_revision. The client shows "Changed on the Velora since you opened it" and offers Reload (a fresh GetState / GetLiveSetView).
   ERROR_CODE_STALE_REVISION = 47;
+  // Story 9.20: firmware update over USB (sysd TCP bridge)
+  ERROR_CODE_UPDATE_BAD_SIGNATURE = 48;
+  ERROR_CODE_UPDATE_INCOMPATIBLE = 49;
+  ERROR_CODE_UPDATE_NO_SPACE = 50;
+  ERROR_CODE_UPDATE_IO = 51;
 }
 
 message Error {
@@ -910,6 +915,53 @@ message PedalCalibrationReply {
   string detail = 7;                   // SYSD_REFUSED / SYSD_UNAVAILABLE: what sysd said
 }
 
+// --- Story 9.20: firmware update over USB (sysd TCP bridge) -------------------------------------------------------------
+enum FirmwareUpdateErrorCode {
+  FIRMWARE_UPDATE_ERROR_CODE_UNSPECIFIED = 0;
+  UPDATE_BAD_SIGNATURE = 30;
+  UPDATE_INCOMPATIBLE = 31;
+  UPDATE_NO_SPACE = 32;
+  UPDATE_IO = 33;
+}
+
+message StageFirmwareChunk {
+  string transfer_id = 1;
+  string bundle_version = 2;
+  uint64 total_bytes = 3;
+  uint64 chunk_offset = 4;
+  bytes chunk_data = 5;
+  string chunk_sha256 = 6;
+  bool is_last_chunk = 7;
+}
+
+message StageFirmwareChunkReply {
+  string transfer_id = 1;
+  uint64 next_offset = 2;
+  uint64 bytes_received = 3;
+  bool completed = 4;
+  string error_message = 5;
+  FirmwareUpdateErrorCode error_code = 6;
+}
+
+message GetFirmwareUpdateStatus {
+  string transfer_id = 1;
+}
+
+message FirmwareUpdateStatusReply {
+  string transfer_id = 1;
+  uint64 next_offset = 2;
+  uint64 bytes_received = 3;
+  uint64 total_bytes = 4;
+  bool ready_to_install = 5;
+  string staged_version = 6;
+  string error_message = 7;
+  FirmwareUpdateErrorCode error_code = 8;
+}
+
+message AbortFirmwareUpdate {
+  string transfer_id = 1;
+}
+
 message ClientMessage {
   uint64 request_id = 1;                 // echoed in the reply; chosen by the client
   // Story 9.9 (additive): the Live Set revision (State.edits.live_set_revision) the client's view was built on when it made this edit (0 = not provided: accepted exactly as
@@ -979,6 +1031,9 @@ message ClientMessage {
     ListPairedComputers list_paired_computers = 68;  // Story 9.6: sysd UDS only
     ForgetPairedComputer forget_paired_computer = 69; // Story 9.6: sysd UDS only
     GetPairingStatus get_pairing_status = 70;        // Story 9.6: sysd UDS only
+    StageFirmwareChunk stage_firmware_chunk = 71;    // Story 9.20: sysd TCP bridge
+    GetFirmwareUpdateStatus get_firmware_update_status = 72; // Story 9.20: sysd TCP bridge
+    AbortFirmwareUpdate abort_firmware_update = 73;  // Story 9.20: sysd TCP bridge
   }
 }
 
@@ -1019,5 +1074,7 @@ message ServerMessage {
     LiveSetViewReply live_set_view_reply = 29;  // Story 9.8: the reply to GetLiveSetView
     PairingWindowReply pairing_window_reply = 30; // Story 9.6: sysd UDS only
     PairedComputersReply paired_computers_reply = 31; // Story 9.6: sysd UDS only
+    StageFirmwareChunkReply stage_firmware_chunk_reply = 32; // Story 9.20: sysd TCP bridge
+    FirmwareUpdateStatusReply firmware_update_status_reply = 33; // Story 9.20: sysd TCP bridge
   }
 }
