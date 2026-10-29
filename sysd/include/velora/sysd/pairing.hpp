@@ -36,6 +36,10 @@ class PairingWindow {
   Result attempt(const std::string& code);
   int attempts_left() const;
   bool is_open() const;  // open and not expired
+  std::string code() const;
+  std::int64_t remaining_ms() const;
+  void set_active_computer_name(const std::string& name);
+  std::string active_computer_name() const;
   static bool random_code(std::string& out);  // six random digits, uniform (rejection sampling); false when no entropy
   static bool valid_code(const std::string& code);  // at least kMinCodeLength characters, digits only
   static bool constant_time_equals(const std::string& a, const std::string& b);
@@ -48,6 +52,7 @@ class PairingWindow {
   std::int64_t opened_ms_ = 0;
   int wrong_ = 0;
   bool closed_by_attempts_ = false;
+  std::string active_computer_name_;
 };
 
 struct PairedComputer {

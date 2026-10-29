@@ -765,7 +765,7 @@ void NavigationController::on_panel_event_impl(const PanelEvent& ev) {
         return;
       }
       if (current_surface_ == SurfaceId::Settings) {
-        if (settings_view_.is_picker_open()) {
+        if (settings_view_.is_picker_open() || settings_view_.action_sheet().is_open()) {
           settings_view_.on_panel_event(press_ev);
           return;
         }

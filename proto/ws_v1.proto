@@ -124,6 +124,35 @@ message PairReply {                  // a refusal is an Error (PAIRING_CODE_INVA
   string pairing_token = 3;          // 64 hex characters (256 random bits), returned ONCE; the unit keeps only its SHA-256. Present it in every later Hello
 }
 
+// Story 9.6: device-side pairing management (sysd UDS only; refused over the TCP bridge).
+message StartPairingWindow {}
+message CancelPairingWindow {}
+message GetPairingStatus {}
+
+message PairingWindowReply {
+  bool is_open = 1;
+  string code = 2;                     // 6 random digits while open, empty otherwise
+  int64 remaining_ms = 3;              // milliseconds left until window closes
+  int32 attempts_left = 4;             // wrong attempts remaining (max 5)
+  string active_computer_name = 5;     // computer name of client attempting or last paired
+}
+
+message ListPairedComputers {}
+
+message PairedComputerInfo {
+  string id = 1;
+  string name = 2;
+  int64 last_connected_unix_s = 3;
+}
+
+message PairedComputersReply {
+  repeated PairedComputerInfo computers = 1;
+}
+
+message ForgetPairedComputer {
+  string id = 1;                       // client_id to remove from the paired computers store
+}
+
 // Foundation: sysd TCP bridge, library forwarding. The library service speaks its own protocol (library_api.proto, LibraryClientMessage /
 // LibraryServerMessage); the bridge carries those messages opaquely: `payload` is a serialised LibraryClientMessage (request_id inside is the client's) and the
 // reply is a LibraryReply holding a serialised LibraryServerMessage. A library message larger than the ws.v1 frame limit cannot be relayed.
@@ -945,6 +974,11 @@ message ClientMessage {
     GetLiveSetView get_live_set_view = 63;  // Story 9.8 (engine control plane): read-only
     SetPartZone set_part_zone = 64;         // Story 9.23: edit zone & keyboard
     SetPartArp set_part_arp = 65;           // Story 9.23: edit arpeggiator
+    StartPairingWindow start_pairing_window = 66;    // Story 9.6: sysd UDS only
+    CancelPairingWindow cancel_pairing_window = 67;  // Story 9.6: sysd UDS only
+    ListPairedComputers list_paired_computers = 68;  // Story 9.6: sysd UDS only
+    ForgetPairedComputer forget_paired_computer = 69; // Story 9.6: sysd UDS only
+    GetPairingStatus get_pairing_status = 70;        // Story 9.6: sysd UDS only
   }
 }
 
@@ -983,5 +1017,7 @@ message ServerMessage {
     PairReply pair_reply = 27;           // sysd TCP bridge only
     LibraryReply library_reply = 28;     // sysd TCP bridge only: a library reply or push (request_id as the client sent it, 0 for pushes)
     LiveSetViewReply live_set_view_reply = 29;  // Story 9.8: the reply to GetLiveSetView
+    PairingWindowReply pairing_window_reply = 30; // Story 9.6: sysd UDS only
+    PairedComputersReply paired_computers_reply = 31; // Story 9.6: sysd UDS only
   }
 }

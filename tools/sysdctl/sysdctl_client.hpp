@@ -30,6 +30,12 @@ class Connection {
   bool start_pedal_calibration(ws::v1::PedalKind pedal, ws::v1::PedalCalibrationReply& out, std::string& err);
   bool finish_pedal_calibration(std::uint64_t run_token, ws::v1::PedalCalibrationReply& out, std::string& err);
   bool cancel_pedal_calibration(std::uint64_t run_token, ws::v1::PedalCalibrationReply& out, std::string& err);
+  // Story 9.6: device-side pairing management (sysd UDS only)
+  bool start_pairing_window(ws::v1::PairingWindowReply& out, std::string& err);
+  bool cancel_pairing_window(ws::v1::PairingWindowReply& out, std::string& err);
+  bool get_pairing_status(ws::v1::PairingWindowReply& out, std::string& err);
+  bool list_paired_computers(ws::v1::PairedComputersReply& out, std::string& err);
+  bool forget_paired_computer(const std::string& id, std::string& err);
   // The next pushed message (request_id 0), from the queue or the socket, waiting up to timeout_ms. False on timeout / loss.
   bool next_push(ws::v1::ServerMessage& out, int timeout_ms);
 

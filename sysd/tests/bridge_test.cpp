@@ -640,7 +640,8 @@ void test_message_tables_are_total() {
   CHECK(static_cast<std::size_t>(m) == sd::BridgeServer::library_rules().size());
   // The hardware commands the coordinator named are denied by decision.
   for (const char* name : {"set_led", "move_fader", "select_part", "set_fader_mode", "select_organ_part", "set_encoder_mode", "start_pedal_calibration",
-                           "finish_pedal_calibration", "cancel_pedal_calibration"}) {
+                           "finish_pedal_calibration", "cancel_pedal_calibration", "start_pairing_window", "cancel_pairing_window", "list_paired_computers",
+                           "forget_paired_computer", "get_pairing_status"}) {
     bool ok = false;
     for (const auto& r : sd::BridgeServer::message_rules())
       if (std::string(r.name) == name) ok = r.route == sd::BridgeServer::Route::kDenied;

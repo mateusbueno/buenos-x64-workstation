@@ -139,6 +139,7 @@ int main(int argc, char** argv) {
       return 1;
     }
     window = std::make_unique<velora::sysd::PairingWindow>(steady_ms);
+    service.set_pairing(window.get(), paired.get());
     bo.dev_bypass_pairing = dev_bypass;
     bo.now_ms = steady_ms;
     bo.log = log_line;

@@ -77,6 +77,46 @@ class SocketSender final : public SysdConfigSender {
     cv_.notify_all();
   }
 
+  void request_start_pairing() override {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      pending_pairing_start_ = true;
+    }
+    cv_.notify_all();
+  }
+
+  void request_cancel_pairing() override {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      pending_pairing_cancel_ = true;
+    }
+    cv_.notify_all();
+  }
+
+  void request_pairing_status() override {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      pending_pairing_status_ = true;
+    }
+    cv_.notify_all();
+  }
+
+  void request_list_paired_computers() override {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      pending_list_paired_ = true;
+    }
+    cv_.notify_all();
+  }
+
+  void request_forget_computer(const std::string& id) override {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      pending_forget_id_ = id;
+    }
+    cv_.notify_all();
+  }
+
   bool poll(Event& out) override {
     std::lock_guard<std::mutex> lk(mu_);
     if (events_.empty()) return false;
@@ -111,6 +151,28 @@ class SocketSender final : public SysdConfigSender {
     e.setting = setting;
     push(std::move(e));
   }
+  void push_pairing_window(const ws::v1::PairingWindowReply& r) {
+    Event e;
+    e.kind = Event::Kind::PairingWindow;
+    e.pairing_is_open = r.is_open();
+    e.pairing_code = r.code();
+    e.pairing_remaining_ms = r.remaining_ms();
+    e.pairing_attempts_left = r.attempts_left();
+    e.pairing_active_computer_name = r.active_computer_name();
+    push(std::move(e));
+  }
+  void push_paired_computers(const ws::v1::PairedComputersReply& r) {
+    Event e;
+    e.kind = Event::Kind::PairedComputers;
+    for (const auto& pc : r.computers()) {
+      Event::PairedComputer item;
+      item.id = pc.id();
+      item.name = pc.name();
+      item.last_connected_unix_s = pc.last_connected_unix_s();
+      e.paired_computers.push_back(std::move(item));
+    }
+    push(std::move(e));
+  }
   struct BootRequest {
     uint8_t mode{0};
     std::string id;
@@ -129,13 +191,27 @@ class SocketSender final : public SysdConfigSender {
     pending_boot_.reset();
     return true;
   }
+  bool take_pairing(bool& start, bool& cancel, bool& status, bool& list, std::optional<std::string>& forget) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (stop_) return false;
+    if (pending_pairing_start_) { start = true; pending_pairing_start_ = false; return true; }
+    if (pending_pairing_cancel_) { cancel = true; pending_pairing_cancel_ = false; return true; }
+    if (pending_pairing_status_) { status = true; pending_pairing_status_ = false; return true; }
+    if (pending_forget_id_.has_value()) { forget = std::move(pending_forget_id_); pending_forget_id_.reset(); return true; }
+    if (pending_list_paired_) { list = true; pending_list_paired_ = false; return true; }
+    return true;
+  }
   bool stopping() {
     std::lock_guard<std::mutex> lk(mu_);
     return stop_;
   }
   void wait_ms(int ms) {
     std::unique_lock<std::mutex> lk(mu_);
-    cv_.wait_for(lk, std::chrono::milliseconds(ms), [this] { return stop_ || pending_.has_value() || pending_boot_.has_value(); });
+    cv_.wait_for(lk, std::chrono::milliseconds(ms), [this] {
+      return stop_ || pending_.has_value() || pending_boot_.has_value() ||
+             pending_pairing_start_ || pending_pairing_cancel_ || pending_pairing_status_ ||
+             pending_list_paired_ || pending_forget_id_.has_value();
+    });
   }
 
   void run() {
@@ -199,9 +275,47 @@ class SocketSender final : public SysdConfigSender {
         if (!boot_ok) fail("sysd answered with an unknown value", false, Event::Setting::BootInto);
         continue;
       }
+      bool p_start = false, p_cancel = false, p_status = false, p_list = false;
+      std::optional<std::string> p_forget;
+      if (!take_pairing(p_start, p_cancel, p_status, p_list, p_forget)) return;
+      if (p_start) {
+        ws::v1::PairingWindowReply rep;
+        std::string err;
+        if (conn.start_pairing_window(rep, err)) push_pairing_window(rep);
+        else fail(err, false, Event::Setting::Pairing);
+        continue;
+      }
+      if (p_cancel) {
+        ws::v1::PairingWindowReply rep;
+        std::string err;
+        if (conn.cancel_pairing_window(rep, err)) push_pairing_window(rep);
+        else fail(err, false, Event::Setting::Pairing);
+        continue;
+      }
+      if (p_status) {
+        ws::v1::PairingWindowReply rep;
+        std::string err;
+        if (conn.get_pairing_status(rep, err)) push_pairing_window(rep);
+        continue;
+      }
+      if (p_list) {
+        ws::v1::PairedComputersReply rep;
+        std::string err;
+        if (conn.list_paired_computers(rep, err)) push_paired_computers(rep);
+        else fail(err, false, Event::Setting::Pairing);
+        continue;
+      }
+      if (p_forget) {
+        std::string err;
+        conn.forget_paired_computer(*p_forget, err);
+        ws::v1::PairedComputersReply rep;
+        if (conn.list_paired_computers(rep, err)) push_paired_computers(rep);
+        continue;
+      }
       ws::v1::ServerMessage m;
       if (conn.next_push(m, 100)) {
         if (m.has_config_reply()) report(m.config_reply().config());
+        else if (m.has_pairing_window_reply()) push_pairing_window(m.pairing_window_reply());
         continue;
       }
       // false: a timeout (nothing arrived) or a lost connection; tell them apart without consuming anything.
@@ -217,6 +331,11 @@ class SocketSender final : public SysdConfigSender {
   bool stop_{false};
   std::optional<ClockSourceMode> pending_;
   std::optional<BootRequest> pending_boot_;
+  bool pending_pairing_start_{false};
+  bool pending_pairing_cancel_{false};
+  bool pending_pairing_status_{false};
+  bool pending_list_paired_{false};
+  std::optional<std::string> pending_forget_id_;
   std::deque<Event> events_;
   std::thread thread_;
 };

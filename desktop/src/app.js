@@ -34,6 +34,8 @@ import { DeviceViewController } from "./device_view.js";
 import { DeviceView } from "./device_view_dom.js";
 import { LibraryViewController } from "./library_view.js";
 import { LibraryView } from "./library_view_dom.js";
+import { PairDialogController } from "./pair_dialog.js";
+import { PairDialogView } from "./pair_dialog_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -1854,9 +1856,11 @@ window.addEventListener("DOMContentLoaded", () => {
     let label;
     let hint;
     switch (st.status) {
-      case "paired":
-        label = localeMgr.tr("studio.conn.paired").replace("%s", st.model || "Velora");
+      case "paired": {
+        const model = (st.model || "Velora 73").toUpperCase();
+        label = localeMgr.tr("studio.conn.paired_title").replace("%s", model);
         break;
+      }
       case "unpaired":
         label = localeMgr.tr("studio.conn.unpaired");
         hint = localeMgr.tr("studio.offline.hint_unpaired");
@@ -1874,7 +1878,11 @@ window.addEventListener("DOMContentLoaded", () => {
         hint = localeMgr.tr("studio.offline.hint_unreachable");
     }
     if (connText) connText.textContent = label;
-    if (footerDev) footerDev.textContent = label;
+    if (footerDev) {
+      footerDev.textContent = paired
+        ? localeMgr.tr("studio.conn.paired").replace("%s", st.model || "Velora")
+        : label;
+    }
     if (hintEl && hint) hintEl.textContent = hint;
     const connEl = document.getElementById("connection-status");
     if (connEl) connEl.dataset.link = st.status;
@@ -1929,65 +1937,25 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Placeholder pairing dialog (the real one is Story 9.6): a minimal in-page input (window.prompt is not available in Tauri 2's webviews). A wrong code
-  // keeps it open with the reason; Cancel closes it and clicking the connection indicator while "unpaired" opens it again.
-  let pairDialogEl = null;
+  // Story 9.6: Pairing dialog
+  const pairDialogHost = document.getElementById("pair-dialog-host") || document.body;
+  const pairDialogCtl = new PairDialogController({
+    pairFn: (code, name) => window.veloraDevice.pair(code, name),
+    getModelName: () => (deviceStore.status && deviceStore.status.model) || "Velora 73",
+    localeMgr,
+  });
+  const pairDialogView = new PairDialogView({
+    doc: document,
+    host: pairDialogHost,
+    tr: (k) => localeMgr.tr(k),
+    controller: pairDialogCtl,
+  });
+
   function closePairDialog() {
-    if (pairDialogEl) pairDialogEl.remove();
-    pairDialogEl = null;
+    pairDialogCtl.close();
   }
   function openPairDialog() {
-    if (pairDialogEl) return;
-    const overlay = document.createElement("div");
-    overlay.className = "pair-dialog-backdrop";
-    const box = document.createElement("div");
-    box.className = "pair-dialog";
-    box.setAttribute("role", "dialog");
-    box.setAttribute("aria-modal", "true");
-    const label = document.createElement("label");
-    label.textContent = localeMgr.tr("studio.pair.prompt");
-    const input = document.createElement("input");
-    input.type = "text";
-    input.inputMode = "numeric";
-    input.autocomplete = "off";
-    input.maxLength = 12;
-    label.appendChild(input);
-    const err = document.createElement("div");
-    err.className = "pair-dialog-error";
-    err.setAttribute("role", "alert");
-    const row = document.createElement("div");
-    row.className = "pair-dialog-actions";
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "btn";
-    cancel.textContent = localeMgr.tr("studio.pair.cancel");
-    const ok = document.createElement("button");
-    ok.type = "button";
-    ok.className = "btn btn-primary";
-    ok.textContent = localeMgr.tr("studio.pair.ok");
-    row.append(cancel, ok);
-    box.append(label, err, row);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    pairDialogEl = overlay;
-    input.focus();
-    const submit = () => {
-      const code = input.value.trim();
-      if (!code) return;
-      ok.disabled = true;
-      const name = (navigator.platform || "Computer").slice(0, 60);
-      window.veloraDevice.pair(code, name).then(closePairDialog).catch((e) => {
-        ok.disabled = false;
-        err.textContent = localeMgr.tr("studio.pair.failed").replace("%s", String(e));
-        input.select();
-      });
-    };
-    ok.addEventListener("click", submit);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submit();
-      if (e.key === "Escape") closePairDialog();
-    });
-    cancel.addEventListener("click", closePairDialog);
+    pairDialogCtl.open();
   }
   document.getElementById("connection-status")?.addEventListener("click", () => {
     if (deviceStore.status && deviceStore.status.status === "unpaired") openPairDialog();

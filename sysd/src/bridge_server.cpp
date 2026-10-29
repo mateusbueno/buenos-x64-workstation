@@ -115,6 +115,12 @@ const std::vector<BridgeServer::MessageRule>& BridgeServer::message_rules() {
       {B::kStartPedalCalibration, "start_pedal_calibration", nullptr, R::kDenied, false},
       {B::kFinishPedalCalibration, "finish_pedal_calibration", nullptr, R::kDenied, false},
       {B::kCancelPedalCalibration, "cancel_pedal_calibration", nullptr, R::kDenied, false},
+      // Story 9.6: device-side pairing management (sysd UDS only, denied over TCP bridge)
+      {B::kStartPairingWindow, "start_pairing_window", nullptr, R::kDenied, false},
+      {B::kCancelPairingWindow, "cancel_pairing_window", nullptr, R::kDenied, false},
+      {B::kListPairedComputers, "list_paired_computers", nullptr, R::kDenied, false},
+      {B::kForgetPairedComputer, "forget_paired_computer", nullptr, R::kDenied, false},
+      {B::kGetPairingStatus, "get_pairing_status", nullptr, R::kDenied, false},
   };
   return t;
 }
@@ -639,6 +645,7 @@ void BridgeServer::handle_pair(Session& s, const B& m) {
     send_error(s, rid, ws::v1::ERROR_CODE_INVALID_COMMAND, "Hello.client_id is required to pair (1..64 of A-Z a-z 0-9 - _ .)", {{"reason", "client_id_required"}});
     return;
   }
+  window_.set_active_computer_name(m.pair_request().computer_name());
   switch (window_.attempt(m.pair_request().code())) {
     case PairingWindow::Result::kOk: {
       unsigned char raw[32];

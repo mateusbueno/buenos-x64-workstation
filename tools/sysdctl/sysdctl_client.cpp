@@ -188,6 +188,70 @@ bool Connection::cancel_pedal_calibration(std::uint64_t run_token, ws::v1::Pedal
   return pedal_reply(*this, std::move(m), out, err);
 }
 
+bool Connection::start_pairing_window(ws::v1::PairingWindowReply& out, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_start_pairing_window();
+  ws::v1::ServerMessage rep;
+  if (!call(std::move(m), rep, err)) return false;
+  if (!rep.has_pairing_window_reply()) {
+    err = rep.has_error() ? ws::v1::ErrorCode_Name(rep.error().code()) + ": " + rep.error().message() : "unexpected reply";
+    return false;
+  }
+  out = rep.pairing_window_reply();
+  return true;
+}
+
+bool Connection::cancel_pairing_window(ws::v1::PairingWindowReply& out, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_cancel_pairing_window();
+  ws::v1::ServerMessage rep;
+  if (!call(std::move(m), rep, err)) return false;
+  if (!rep.has_pairing_window_reply()) {
+    err = rep.has_error() ? ws::v1::ErrorCode_Name(rep.error().code()) + ": " + rep.error().message() : "unexpected reply";
+    return false;
+  }
+  out = rep.pairing_window_reply();
+  return true;
+}
+
+bool Connection::get_pairing_status(ws::v1::PairingWindowReply& out, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_get_pairing_status();
+  ws::v1::ServerMessage rep;
+  if (!call(std::move(m), rep, err)) return false;
+  if (!rep.has_pairing_window_reply()) {
+    err = rep.has_error() ? ws::v1::ErrorCode_Name(rep.error().code()) + ": " + rep.error().message() : "unexpected reply";
+    return false;
+  }
+  out = rep.pairing_window_reply();
+  return true;
+}
+
+bool Connection::list_paired_computers(ws::v1::PairedComputersReply& out, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_list_paired_computers();
+  ws::v1::ServerMessage rep;
+  if (!call(std::move(m), rep, err)) return false;
+  if (!rep.has_paired_computers_reply()) {
+    err = rep.has_error() ? ws::v1::ErrorCode_Name(rep.error().code()) + ": " + rep.error().message() : "unexpected reply";
+    return false;
+  }
+  out = rep.paired_computers_reply();
+  return true;
+}
+
+bool Connection::forget_paired_computer(const std::string& id, std::string& err) {
+  ws::v1::ClientMessage m;
+  m.mutable_forget_paired_computer()->set_id(id);
+  ws::v1::ServerMessage rep;
+  if (!call(std::move(m), rep, err)) return false;
+  if (!rep.has_ack()) {
+    err = rep.has_error() ? ws::v1::ErrorCode_Name(rep.error().code()) + ": " + rep.error().message() : "unexpected reply";
+    return false;
+  }
+  return true;
+}
+
 std::string format_pedal_result(const ws::v1::PedalCalibrationReply& r) {
   using R = ws::v1::PedalCalibrationResult;
   const std::string range = " (measured min " + std::to_string(r.min()) + ", max " + std::to_string(r.max()) + ")";

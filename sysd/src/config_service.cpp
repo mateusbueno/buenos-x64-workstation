@@ -1,6 +1,7 @@
 #include "velora/sysd/config_service.hpp"
 
 #include "velora/host/control_plane.hpp"  // check_protocol_version, min_protocol_version
+#include "velora/sysd/pairing.hpp"
 
 namespace velora::sysd {
 
@@ -33,6 +34,12 @@ std::uint64_t ConfigService::revision() const {
 ws::v1::Config ConfigService::config() const {
   std::lock_guard<std::mutex> lk(mu_);
   return store_.config();
+}
+
+void ConfigService::set_pairing(PairingWindow* window, PairedStore* paired) {
+  std::lock_guard<std::mutex> lk(mu_);
+  window_ = window;
+  paired_ = paired;
 }
 
 ws::v1::ServerMessage ConfigService::config_message(std::uint64_t request_id, bool not_durable) const {
@@ -141,6 +148,87 @@ void ConfigService::handle(ConnId c, const std::string& payload, std::vector<Out
           out.push_back(std::move(push));
         }
       }
+      return;
+    }
+    case B::kStartPairingWindow: {
+      if (!window_) {
+        error(c, msg.request_id(), ws::v1::ERROR_CODE_UNSUPPORTED_FEATURE, "pairing window not available in this sysd instance", {}, out);
+        return;
+      }
+      if (!window_->is_open()) {
+        std::string code;
+        if (!PairingWindow::random_code(code)) {
+          error(c, msg.request_id(), ws::v1::ERROR_CODE_INTERNAL, "no entropy for pairing code", {}, out);
+          return;
+        }
+        window_->open(code);
+      }
+      Outbound o;
+      o.to = c;
+      o.msg.set_request_id(msg.request_id());
+      o.msg.set_revision(store_.revision());
+      auto* w = o.msg.mutable_pairing_window_reply();
+      w->set_is_open(window_->is_open());
+      w->set_code(window_->code());
+      w->set_remaining_ms(window_->remaining_ms());
+      w->set_attempts_left(window_->attempts_left());
+      w->set_active_computer_name(window_->active_computer_name());
+      out.push_back(std::move(o));
+      return;
+    }
+    case B::kCancelPairingWindow: {
+      if (window_) window_->close();
+      Outbound o;
+      o.to = c;
+      o.msg.set_request_id(msg.request_id());
+      o.msg.set_revision(store_.revision());
+      auto* w = o.msg.mutable_pairing_window_reply();
+      w->set_is_open(false);
+      w->set_code("");
+      w->set_remaining_ms(0);
+      w->set_attempts_left(0);
+      out.push_back(std::move(o));
+      return;
+    }
+    case B::kGetPairingStatus: {
+      Outbound o;
+      o.to = c;
+      o.msg.set_request_id(msg.request_id());
+      o.msg.set_revision(store_.revision());
+      auto* w = o.msg.mutable_pairing_window_reply();
+      w->set_is_open(window_ ? window_->is_open() : false);
+      w->set_code(window_ ? window_->code() : "");
+      w->set_remaining_ms(window_ ? window_->remaining_ms() : 0);
+      w->set_attempts_left(window_ ? window_->attempts_left() : 0);
+      w->set_active_computer_name(window_ ? window_->active_computer_name() : "");
+      out.push_back(std::move(o));
+      return;
+    }
+    case B::kListPairedComputers: {
+      Outbound o;
+      o.to = c;
+      o.msg.set_request_id(msg.request_id());
+      o.msg.set_revision(store_.revision());
+      auto* rep = o.msg.mutable_paired_computers_reply();
+      if (paired_) {
+        for (const auto& pc : paired_->list()) {
+          auto* item = rep->add_computers();
+          item->set_id(pc.id);
+          item->set_name(pc.name);
+          item->set_last_connected_unix_s(pc.last_connected_unix_s);
+        }
+      }
+      out.push_back(std::move(o));
+      return;
+    }
+    case B::kForgetPairedComputer: {
+      if (paired_) paired_->remove(msg.forget_paired_computer().id());
+      Outbound o;
+      o.to = c;
+      o.msg.set_request_id(msg.request_id());
+      o.msg.set_revision(store_.revision());
+      o.msg.mutable_ack();
+      out.push_back(std::move(o));
       return;
     }
     case B::kHello:

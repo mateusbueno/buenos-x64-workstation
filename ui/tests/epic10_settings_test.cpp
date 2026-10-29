@@ -287,6 +287,11 @@ struct FakeSysd : SysdConfigSender {
   std::vector<std::pair<uint8_t, std::string>> boot_requests;
   void request_clock_source(ClockSourceMode m) override { requests.push_back(m); }
   void request_boot_into(uint8_t mode, const std::string& id) override { boot_requests.emplace_back(mode, id); }
+  void request_start_pairing() override {}
+  void request_cancel_pairing() override {}
+  void request_pairing_status() override {}
+  void request_list_paired_computers() override {}
+  void request_forget_computer(const std::string&) override {}
   void report_boot(uint8_t mode, const std::string& id, ClockSourceMode clock = ClockSourceMode::Internal) {
     Event e;
     e.kind = Event::Kind::Config;

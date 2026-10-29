@@ -19,6 +19,9 @@
 
 namespace velora::sysd {
 
+class PairingWindow;
+class PairedStore;
+
 using ConnId = std::uint64_t;
 // The TCP bridge (bridge_server.hpp) shares one ConfigService with the Unix socket server: its connection ids start here so the two never collide.
 constexpr ConnId kBridgeConnBase = ConnId{1} << 40;
@@ -41,6 +44,7 @@ class ConfigService {
   std::size_t subscribers() const;
   std::uint64_t revision() const;
   ws::v1::Config config() const;
+  void set_pairing(PairingWindow* window, PairedStore* paired);
 
  private:
   struct Conn {
@@ -53,6 +57,8 @@ class ConfigService {
   ConfigStore& store_;
   mutable std::mutex mu_;
   std::map<ConnId, Conn> conns_;
+  PairingWindow* window_{nullptr};
+  PairedStore* paired_{nullptr};
 };
 
 }  // namespace velora::sysd

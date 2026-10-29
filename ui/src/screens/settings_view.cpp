@@ -101,6 +101,8 @@ bool SettingsView::create(lv_obj_t* parent) {
   build_system_update_detail();
   create_picker_modal();
   create_boot_picker_modal();
+  action_sheet_.create(skeleton_.root_container());
+  action_sheet_.close();
 
   update_sidebar_ui();
   update_knob_cards_ui();
@@ -714,6 +716,9 @@ void SettingsView::select_section(SettingsSection section) {
   }
   if (computer_container_) {
     lv_obj_set_hidden(computer_container_, current_section_ != SettingsSection::Computer);
+    if (current_section_ == SettingsSection::Computer && sysd_) {
+      sysd_->request_list_paired_computers();
+    }
   }
   if (system_update_container_) {
     lv_obj_set_hidden(system_update_container_, current_section_ != SettingsSection::SystemUpdate);
@@ -856,6 +861,10 @@ void SettingsView::update_from_state(const ws::v1::State& state) {
 }
 
 void SettingsView::on_panel_event(const PanelEvent& ev) {
+  if (action_sheet_.is_open()) {
+    action_sheet_.on_panel_event(ev);
+    return;
+  }
   if (boot_picker_open_) {  // Story 8.9: the default Live Set picker
     const int32_t total = static_cast<int32_t>(boot_picker_ids_.size());
     if (ev.type == PanelEventType::Encoder && ev.id == MCU_CTRL_VALUE_ENCODER) {
@@ -1494,24 +1503,198 @@ void SettingsView::build_computer_detail() {
   computer_container_ = lv_obj_create(content);
   lv_obj_set_size(computer_container_, 764, 488);
   lv_obj_set_pos(computer_container_, 260, 0);
-  lv_obj_set_scrollable(computer_container_, false);
+  lv_obj_set_scrollable(computer_container_, true);
   lv_obj_set_style_bg_opa(computer_container_, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_border_width(computer_container_, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(computer_container_, sp.space_3, LV_PART_MAIN);
+  lv_obj_set_flex_flow(computer_container_, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(computer_container_, sp.space_3, LV_PART_MAIN);
 
-  lv_obj_t* card = create_setting_card_helper(computer_container_, 0, 96);
-  lv_obj_t* lbl_title = lv_label_create(card);
-  lv_label_set_text(lbl_title, tr("settings.computer.title").c_str());
-  lv_obj_add_style(lbl_title, Theme::style_text(), LV_PART_MAIN);
-  lv_obj_align(lbl_title, LV_ALIGN_TOP_LEFT, 8, 8);
+  // 1. Pair new computer
+  card_pair_new_ = create_setting_card_helper(computer_container_, 0, 72);
+  lv_obj_t* lbl_pair_title = lv_label_create(card_pair_new_);
+  lv_label_set_text(lbl_pair_title, tr("settings.computer.pair_new").c_str());
+  lv_obj_add_style(lbl_pair_title, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_pair_title, LV_ALIGN_TOP_LEFT, 8, 8);
 
-  lbl_computer_status_ = lv_label_create(card);
-  lv_label_set_text(lbl_computer_status_, tr("settings.computer.status").c_str());
-  lv_obj_add_style(lbl_computer_status_, Theme::style_text_muted(), LV_PART_MAIN);
-  lv_obj_set_style_text_color(lbl_computer_status_, p.muted, LV_PART_MAIN);
-  lv_obj_align(lbl_computer_status_, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+  lv_obj_t* lbl_pair_hint = lv_label_create(card_pair_new_);
+  lv_label_set_text(lbl_pair_hint, tr("settings.computer.pair_hint").c_str());
+  lv_obj_add_style(lbl_pair_hint, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_set_style_text_color(lbl_pair_hint, p.muted, LV_PART_MAIN);
+  lv_obj_align(lbl_pair_hint, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+
+  lv_obj_add_event_cb(card_pair_new_, [](lv_event_t* e) {
+    auto* self = static_cast<SettingsView*>(lv_event_get_user_data(e));
+    if (self) self->open_pairing_action_sheet();
+  }, LV_EVENT_CLICKED, this);
+
+  // 2. Paired computers list
+  lv_obj_t* lbl_paired_hdr = lv_label_create(computer_container_);
+  lv_label_set_text(lbl_paired_hdr, tr("settings.computer.paired_list").c_str());
+  lv_obj_add_style(lbl_paired_hdr, Theme::style_text_muted(), LV_PART_MAIN);
+  lv_obj_set_style_pad_top(lbl_paired_hdr, sp.space_2, LV_PART_MAIN);
+
+  computer_paired_list_ = lv_obj_create(computer_container_);
+  lv_obj_set_size(computer_paired_list_, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(computer_paired_list_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(computer_paired_list_, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(computer_paired_list_, 0, LV_PART_MAIN);
+  lv_obj_set_flex_flow(computer_paired_list_, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(computer_paired_list_, sp.space_2, LV_PART_MAIN);
+
+  rebuild_paired_computers_ui();
+
+  // 3. USB audio/MIDI status line
+  lv_obj_t* card_usb = create_setting_card_helper(computer_container_, 0, 56);
+  lbl_usb_status_ = lv_label_create(card_usb);
+  lv_label_set_text(lbl_usb_status_, tr("settings.computer.usb_status").c_str());
+  lv_obj_add_style(lbl_usb_status_, Theme::style_text(), LV_PART_MAIN);
+  lv_obj_align(lbl_usb_status_, LV_ALIGN_LEFT_MID, 8, 0);
 
   lv_obj_set_hidden(computer_container_, true);
+}
+
+void SettingsView::rebuild_paired_computers_ui() {
+  if (!computer_paired_list_) return;
+  lv_obj_clean(computer_paired_list_);
+  const auto& p = Theme::current();
+  const auto& sp = Theme::spacing();
+
+  if (paired_computers_.empty()) {
+    lv_obj_t* empty_lbl = lv_label_create(computer_paired_list_);
+    lv_label_set_text(empty_lbl, tr("settings.computer.no_paired").c_str());
+    lv_obj_add_style(empty_lbl, Theme::style_text_muted(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(empty_lbl, p.muted, LV_PART_MAIN);
+    return;
+  }
+
+  for (const auto& comp : paired_computers_) {
+    lv_obj_t* row = create_setting_card_helper(computer_paired_list_, 0, 56);
+    lv_obj_t* lbl_name = lv_label_create(row);
+    lv_label_set_text(lbl_name, comp.name.c_str());
+    lv_obj_add_style(lbl_name, Theme::style_text(), LV_PART_MAIN);
+    lv_obj_align(lbl_name, LV_ALIGN_TOP_LEFT, 8, 6);
+
+    std::string time_str;
+    if (comp.last_connected_unix_s > 0) {
+      char buf[64];
+      std::time_t t = static_cast<std::time_t>(comp.last_connected_unix_s);
+      std::tm tm_buf;
+#if defined(_WIN32)
+      localtime_s(&tm_buf, &t);
+#else
+      localtime_r(&t, &tm_buf);
+#endif
+      std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", &tm_buf);
+      time_str = tr("settings.computer.last_connected") + ": " + buf;
+    } else {
+      time_str = tr("settings.computer.last_connected_never");
+    }
+
+    lv_obj_t* lbl_time = lv_label_create(row);
+    lv_label_set_text(lbl_time, time_str.c_str());
+    lv_obj_add_style(lbl_time, Theme::style_text_muted(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(lbl_time, p.muted, LV_PART_MAIN);
+    lv_obj_align(lbl_time, LV_ALIGN_BOTTOM_LEFT, 8, -6);
+
+    // Forget button
+    lv_obj_t* btn_forget = lv_btn_create(row);
+    lv_obj_set_size(btn_forget, 90, 36);
+    lv_obj_align(btn_forget, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_set_style_bg_color(btn_forget, p.surface, LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn_forget, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(btn_forget, p.line_strong, LV_PART_MAIN);
+    lv_obj_t* lbl_btn = lv_label_create(btn_forget);
+    lv_label_set_text(lbl_btn, tr("settings.computer.forget").c_str());
+    lv_obj_set_style_text_color(lbl_btn, p.text, LV_PART_MAIN);
+    lv_obj_center(lbl_btn);
+
+    struct ForgetContext {
+      SettingsView* view;
+      std::string id;
+    };
+    auto* ctx = new ForgetContext{this, comp.id};
+    lv_obj_add_event_cb(btn_forget, [](lv_event_t* e) {
+      auto* c = static_cast<ForgetContext*>(lv_event_get_user_data(e));
+      if (c && c->view) {
+        c->view->forget_paired_computer(c->id);
+      }
+    }, LV_EVENT_CLICKED, ctx);
+    lv_obj_add_event_cb(btn_forget, [](lv_event_t* e) {
+      auto* c = static_cast<ForgetContext*>(lv_event_get_user_data(e));
+      delete c;
+    }, LV_EVENT_DELETE, ctx);
+  }
+}
+
+void SettingsView::open_pairing_action_sheet() {
+  action_sheet_.set_on_close([this]() {
+    cancel_pairing_action_sheet();
+  });
+  last_pairing_poll_ = std::chrono::steady_clock::now();
+  if (sysd_) {
+    sysd_->request_start_pairing();
+  } else {
+    // simulation fallback when sysd is not connected
+    int n = 100000 + (std::rand() % 900000);
+    active_pairing_code_ = std::to_string(n);
+  }
+  std::vector<ActionSheetOption> options;
+  options.push_back({"EXIT", tr("action_sheet.cancel"), [this]() {
+    cancel_pairing_action_sheet();
+  }, true});
+
+  std::string code_display = active_pairing_code_;
+  if (code_display.size() == 6) {
+    code_display = code_display.substr(0, 3) + " " + code_display.substr(3);
+  }
+  std::string body = code_display.empty() ? tr("settings.computer.pairing_wait") : code_display;
+  action_sheet_.open(tr("action_sheet.eyebrow.computer"), tr("settings.computer.pair_new"), options, body);
+}
+
+void SettingsView::cancel_pairing_action_sheet() {
+  if (action_sheet_.is_open()) {
+    action_sheet_.close();
+  }
+  if (sysd_) {
+    sysd_->request_cancel_pairing();
+  }
+}
+
+void SettingsView::update_pairing_action_sheet(const std::string& code, const std::string& computer_name, int64_t /*remaining_ms*/) {
+  active_pairing_code_ = code;
+  active_pairing_computer_ = computer_name;
+  if (!action_sheet_.is_open()) return;
+
+  std::string code_display = code;
+  if (code_display.size() == 6) {
+    code_display = code_display.substr(0, 3) + " " + code_display.substr(3);
+  }
+  std::string body = code_display;
+  if (!computer_name.empty()) {
+    body += "\n" + tr("settings.computer.client_connecting") + ": " + computer_name;
+  }
+  std::vector<ActionSheetOption> options;
+  options.push_back({"EXIT", tr("action_sheet.cancel"), [this]() {
+    cancel_pairing_action_sheet();
+  }, true});
+  action_sheet_.open(tr("action_sheet.eyebrow.computer"), tr("settings.computer.pair_new"), options, body);
+}
+
+void SettingsView::forget_paired_computer(const std::string& id) {
+  if (sysd_) {
+    sysd_->request_forget_computer(id);
+  }
+  auto it = std::remove_if(paired_computers_.begin(), paired_computers_.end(), [&](const auto& c) {
+    return c.id == id;
+  });
+  paired_computers_.erase(it, paired_computers_.end());
+  rebuild_paired_computers_ui();
+}
+
+void SettingsView::set_paired_computers(std::vector<SysdConfigSender::Event::PairedComputer> comps) {
+  paired_computers_ = std::move(comps);
+  rebuild_paired_computers_ui();
 }
 
 void SettingsView::build_system_update_detail() {
@@ -1574,6 +1757,13 @@ void SettingsView::update_conditional_rows() {
 
 void SettingsView::poll_sysd() {
   if (!sysd_) return;
+  if (action_sheet_.is_open()) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_pairing_poll_ >= std::chrono::milliseconds(500)) {
+      last_pairing_poll_ = now;
+      sysd_->request_pairing_status();
+    }
+  }
   SysdConfigSender::Event ev;
   while (sysd_->poll(ev)) {
     auto& c = SystemConfig::instance();
@@ -1595,6 +1785,17 @@ void SettingsView::poll_sysd() {
       applying_sysd_ = false;
       update_boot_default_label();
       if ((changed || boot_changed || first) && on_config_changed_) on_config_changed_(c);  // the first report always, so the rest of the ui shows sysd's value even when equal to the cache
+    } else if (ev.kind == SysdConfigSender::Event::Kind::PairingWindow) {
+      if (ev.pairing_is_open) {
+        update_pairing_action_sheet(ev.pairing_code, ev.pairing_active_computer_name, ev.pairing_remaining_ms);
+      } else {
+        if (action_sheet_.is_open()) {
+          action_sheet_.close();
+        }
+        if (sysd_) sysd_->request_list_paired_computers();
+      }
+    } else if (ev.kind == SysdConfigSender::Event::Kind::PairedComputers) {
+      set_paired_computers(std::move(ev.paired_computers));
     } else {
       // The change did not reach sysd (absent, refused): the control goes back to the last value sysd reported, and the player is told.
       applying_sysd_ = true;

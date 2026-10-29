@@ -14,6 +14,7 @@
 #include "velora/ui/widgets/segmented_control.hpp"
 #include "velora/ui/system_config.hpp"
 #include "velora/ui/sysd_config_sender.hpp"
+#include "velora/ui/components/action_sheet.hpp"
 
 namespace velora::ui {
 
@@ -130,6 +131,16 @@ class SettingsView {
   void calibrate_sustain();
   void calibrate_expression();
   void update_conditional_rows();
+
+  // Story 9.6: pairing management and Action Sheet
+  ActionSheet& action_sheet() noexcept { return action_sheet_; }
+  void open_pairing_action_sheet();
+  void cancel_pairing_action_sheet();
+  void update_pairing_action_sheet(const std::string& code, const std::string& computer_name, int64_t remaining_ms);
+  void forget_paired_computer(const std::string& id);
+  void set_paired_computers(std::vector<SysdConfigSender::Event::PairedComputer> comps);
+  const std::vector<SysdConfigSender::Event::PairedComputer>& paired_computers() const noexcept { return paired_computers_; }
+  void rebuild_paired_computers_ui();
 
   // Navigation / Selection
   void select_section(SettingsSection section);
@@ -305,6 +316,14 @@ class SettingsView {
   // Computer (Velora Studio) UI
   lv_obj_t* computer_container_{nullptr};
   lv_obj_t* lbl_computer_status_{nullptr};
+  ActionSheet action_sheet_;
+  std::vector<SysdConfigSender::Event::PairedComputer> paired_computers_;
+  lv_obj_t* computer_paired_list_{nullptr};
+  lv_obj_t* card_pair_new_{nullptr};
+  lv_obj_t* lbl_usb_status_{nullptr};
+  std::string active_pairing_code_;
+  std::string active_pairing_computer_;
+  std::chrono::steady_clock::time_point last_pairing_poll_{};
 
   // System & Update UI
   lv_obj_t* system_update_container_{nullptr};

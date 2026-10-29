@@ -140,7 +140,14 @@ Story 8.12 adds one additive error code to `library_api.proto`: `LIBRARY_ERROR_C
   `UNSUPPORTED_FEATURE` (43), `UPSTREAM_UNAVAILABLE` (44), `PAIRING_CODE_INVALID` (45), `PAIRING_CLOSED` (46); `STALE_REVISION` (47, Story 9.10, produced by the engine). Feature names negotiated in Hello: `params.v1`, `snapshots.v1`,
   `subscribe.v1`, `liveset.v1`, `config.v1`, `library.v1`, `pairing.v1`. The engine never produces the new messages or the codes 42..46.
 
-- Story 9.8 (additive; READ-ONLY, served by the **engine's** control plane, reached by Velora Studio through the sysd bridge): `GetLiveSetView {live_set_id}` (`ClientMessage.get_live_set_view = 63`, bridge feature `liveset.v1`, paired
+- Story 9.6: device-side pairing management (additive; served by `velora-sysd` over UDS for the device UI; refused with `INVALID_COMMAND` / `not_available_over_bridge` over the TCP bridge):
+  `StartPairingWindow` (`ClientMessage.start_pairing_window = 66`), `CancelPairingWindow` (`ClientMessage.cancel_pairing_window = 67`),
+  `ListPairedComputers` (`ClientMessage.list_paired_computers = 68`), `ForgetPairedComputer {id}` (`ClientMessage.forget_paired_computer = 69`),
+  `GetPairingStatus` (`ClientMessage.get_pairing_status = 70`).
+  Replies: `PairingWindowReply` (`ServerMessage.pairing_window_reply = 30`: `is_open`, `code`, `remaining_ms`, `attempts_left`, `active_computer_name`),
+  `PairedComputersReply` (`ServerMessage.paired_computers_reply = 31`: `repeated PairedComputerInfo computers {id, name, last_connected_unix_s}`).
+  Allows the on-device Settings UI to open pairing windows, show the active 6-digit code and computer name on an Action Sheet, list paired computers with last connected timestamps, and forget computers.
+
   clients only) answers `LiveSetViewReply` (`ServerMessage.live_set_view_reply = 29`): `live_set_id`, `name`, `dirty` (the device holds unsaved edits for it: the ◆), `sounding`, `factory`, exactly 8 `scenes`
   (`index`, `name`, `empty`), the Live Set's `parts` (`LiveSetViewPart`: `index`, `empty`, `on`, `engine_type_id`, `timbre_name`, `category` (category.proto id, 0 none), `volume`, `low_key`, `high_key`,
   `organ_registration` ("88 8000 000": nine drawbars as digits 0..8), `missing_library`), `part_count` (8, 16 on Pro) and `scene_count`. It is assembled from the stored Live Set or, when the edit

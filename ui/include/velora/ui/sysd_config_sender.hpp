@@ -16,9 +16,11 @@ class SysdConfigSender {
     enum class Kind : uint8_t {
       Config,  // sysd reported its config (at connect, after a change, or the reply to ours): `clock_source` is its value
       Failed,  // a request could not be delivered or sysd refused it: `error` says why; the ui reverts to its last known value
+      PairingWindow,   // Story 9.6: pairing window status / code / active computer
+      PairedComputers, // Story 9.6: list of paired computers
     };
     // Which request a Failed event is about (the ui reverts that control and says so).
-    enum class Setting : uint8_t { ClockSource, BootInto };
+    enum class Setting : uint8_t { ClockSource, BootInto, Pairing };
     Setting setting{Setting::ClockSource};
     // Config: sysd's Boot into (Story 8.9), when it reported one this ui knows: the mode as SystemConfig::boot_into (0 last sound, 1 start of setlist, 2 default Live Set)
     // and the default Live Set id ("" = none).
@@ -30,6 +32,19 @@ class SysdConfigSender {
     Kind kind{Kind::Config};
     ClockSourceMode clock_source{ClockSourceMode::Internal};
     std::string error;
+
+    // Story 9.6 pairing fields
+    struct PairedComputer {
+      std::string id;
+      std::string name;
+      int64_t last_connected_unix_s{0};
+    };
+    bool pairing_is_open{false};
+    std::string pairing_code;
+    int64_t pairing_remaining_ms{0};
+    int32_t pairing_attempts_left{0};
+    std::string pairing_active_computer_name;
+    std::vector<PairedComputer> paired_computers;
   };
 
   virtual ~SysdConfigSender() = default;
@@ -38,6 +53,12 @@ class SysdConfigSender {
   // Story 8.9: asks sysd to set Boot into (a SetConfig patch with only the boot_into fields: the mode, and the default Live Set id only when `default_live_set_id` is
   // not empty). `mode` is SystemConfig::boot_into. Never blocks; the outcome comes back through poll(). UI thread.
   virtual void request_boot_into(uint8_t mode, const std::string& default_live_set_id) = 0;
+  // Story 9.6: pairing requests (device Settings UI)
+  virtual void request_start_pairing() = 0;
+  virtual void request_cancel_pairing() = 0;
+  virtual void request_pairing_status() = 0;
+  virtual void request_list_paired_computers() = 0;
+  virtual void request_forget_computer(const std::string& id) = 0;
   // The next outcome / report, oldest first. UI thread; false when there is none.
   virtual bool poll(Event& out) = 0;
 };

@@ -129,11 +129,34 @@ void PairingWindow::open(const std::string& code) {
   opened_ms_ = now_();
   wrong_ = 0;
   closed_by_attempts_ = false;
+  active_computer_name_.clear();
 }
 
 void PairingWindow::close() {
   std::lock_guard<std::mutex> lk(mu_);
   open_ = false;
+}
+
+std::string PairingWindow::code() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return open_ ? code_ : std::string();
+}
+
+std::int64_t PairingWindow::remaining_ms() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  if (!open_) return 0;
+  const std::int64_t elapsed = now_() - opened_ms_;
+  return elapsed >= kWindowMs ? 0 : kWindowMs - elapsed;
+}
+
+void PairingWindow::set_active_computer_name(const std::string& name) {
+  std::lock_guard<std::mutex> lk(mu_);
+  active_computer_name_ = name;
+}
+
+std::string PairingWindow::active_computer_name() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return active_computer_name_;
 }
 
 bool PairingWindow::constant_time_equals(const std::string& a, const std::string& b) {

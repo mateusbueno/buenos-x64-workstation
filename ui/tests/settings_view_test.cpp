@@ -185,6 +185,35 @@ void test_settings_navigation_controller_integration() {
   std::cout << "[PASS] test_settings_navigation_controller_integration\n";
 }
 
+void test_settings_computer_section_and_pairing() {
+  SettingsView view(nullptr);
+  bool ok = view.create(lv_screen_active());
+  assert(ok);
+
+  view.select_section(SettingsSection::Computer);
+  assert(view.selected_section() == SettingsSection::Computer);
+
+  assert(!view.action_sheet().is_open());
+  view.open_pairing_action_sheet();
+  assert(view.action_sheet().is_open());
+
+  view.update_pairing_action_sheet("849201", "Studio Mac", 110000);
+  assert(view.action_sheet().is_open());
+
+  view.cancel_pairing_action_sheet();
+  assert(!view.action_sheet().is_open());
+
+  std::vector<SysdConfigSender::Event::PairedComputer> list;
+  list.push_back({"comp-1", "Studio Mac", 1700000000});
+  view.set_paired_computers(list);
+  assert(view.paired_computers().size() == 1);
+  assert(view.paired_computers()[0].name == "Studio Mac");
+
+  view.forget_paired_computer("comp-1");
+
+  std::cout << "[PASS] test_settings_computer_section_and_pairing\n";
+}
+
 int main() {
   lv_init();
   Locale::instance().initialize("", "en");
@@ -199,6 +228,7 @@ int main() {
   test_settings_view_picker_and_assign_global();
   test_settings_view_picker_and_assign_live_set();
   test_settings_navigation_controller_integration();
+  test_settings_computer_section_and_pairing();
 
   std::cout << "All SettingsView tests passed successfully!\n";
   return 0;
