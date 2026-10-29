@@ -29,3 +29,4 @@ node_modules/
 /tools/corpus/**/*.mp3
 /tools/corpus/**/*.wv
 /tools/corpus/**/*.sf2
+build-yocto-output/
