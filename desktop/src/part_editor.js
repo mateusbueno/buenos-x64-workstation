@@ -16,9 +16,8 @@
 // engine starts consuming the parameter. The read-back (GetPerformanceValues) confirms the STORED value, never that it sounds.
 //
 // ASSIGN note (A4): a part-scope parameter assigned to K1..K8 lands on State.encoders.selected_part (the unit's selected part, SelectPart is denied over the bridge), not on the
-// part being edited here. ZONE / ARPEGGIATOR (A3): the minimal additive commands that would make them editable are SetPartZone { part, optional low_key, high_key, octave, transpose,
-// keyboard_on } and SetPartArp { part, arp_* } as structural commands, with PartState gaining octave, transpose and the arp fields. Until then they are read-only (transpose is
-// -12..12 and the octave -3..3 on the unit).
+// part being edited here. ZONE / ARPEGGIATOR (Story 9.23): edited via additive structural commands SetPartZone { part, optional low_key, high_key, octave, transpose,
+// keyboard_on } and SetPartArp { part, arp_* }, with PartState carrying octave, transpose and arp fields.
 //
 // COMMAND TABLE (what a knob sends; proto/ws_v1.proto is the authority). `base_revision` (ClientMessage field 2) is carried on every one of them and IGNORED by the engine
 // until Story 9.10.
@@ -30,10 +29,10 @@
 //   structural  / master              (not shown in the Part Editor)          SetMasterParams { values: [{ param_id, value }] }
 //   structural  / part                part_output                             SetPartOutput { part, output }
 //   structural  / insert              insert_type, insert_bypass, insert_param_N, and add / remove / reorder   SetInsertChain { part, slots }   (always the FULL chain)
-//   structural  / part                timbre_ref                              none here: the timbre picker is Story 9.11 (hidden)
-//   structural  / part                arp_on .. arp_latch                     NONE: the engine has no arpeggiator command yet -> read-only with a reason, DEFERRED
+//   structural  / part                timbre_ref                              Story 9.11 timbre picker
+//   structural  / part                arp_on .. arp_latch                     SetPartArp { part, ... } (Story 9.23)
 //   builtin                           part volume                             SetPartVolume { part, volume }
-//   builtin                           low key, high key, keyboard on/off, octave, transpose   NONE (no zone command yet) -> read-only with a reason, DEFERRED
+//   builtin                           low key, high key, keyboard on/off, octave, transpose   SetPartZone { part, ... } (Story 9.23)
 //   builtin                           ASSIGN K1..K8                           SetAssignSlot { target: CURRENT_LIVE_SET, slot, param_id } / ClearAssignSlot { target, slot }
 // Everything is edited on the Live Set that SOUNDS (the engine has one live graph); a Live Set that is shown but not playing is read-only ("not playing on the Velora").
 
@@ -103,7 +102,8 @@ export function commandKind(def) {
   if (def.class === "performance") return def.name === SEND_PARAMS.reverb || def.name === SEND_PARAMS.delay ? "sends" : "perf";
   if (def.scope === "master") return "master";
   if (def.name === "part_output") return "output";
-  return null; // arp_*, timbre_ref: no engine command from Studio yet
+  if (def.name.startsWith("arp_")) return "arp";
+  return null; // timbre_ref: no engine command from Studio yet
 }
 
 // ---- knob rules --------------------------------------------------------------------------------------------------------------------------------------------
@@ -413,7 +413,13 @@ export function buildPartEditorModel(ctx) {
       return { value: num(perf.get(`${def.id}:${part}`), num(v, def.default)), pending: false };
     }
     if (kind === "output") return { value: pstate ? num(pstate.output, def.default) : def.default, pending: false };
-    if (kind === null) return { value: null, pending: false }; // arp: the State does not carry it yet
+    if (kind === "arp") {
+      if (!pstate) return { value: def.default, pending: false };
+      const v = pstate[def.name];
+      if (def.type === "bool") return { value: v ? 1 : 0, pending: false };
+      return { value: num(v, def.default), pending: false };
+    }
+    if (kind === null) return { value: null, pending: false }; // timbre_ref: the State does not carry it yet
     const live = perf.get(`${def.id}:${part}`);
     if (live !== undefined) return { value: live, pending: false };
     return { value: num(initial.get(`${def.id}:${part}`), def.default), pending: false };
@@ -445,17 +451,25 @@ export function buildPartEditorModel(ctx) {
   const volume = builtinKnob("vol", "part_volume", "studio.part_editor.volume", volumeDesc, volPending ? volPending.value : known && pstate ? num(pstate.volume, 0) : null,
     { group: "sound.main", readOnly: !editable, reason: editable ? "" : roReason, pending: !!volPending, command: "volume" });
 
-  const zoneKnobs = [];
-  const zoneRo = (name, desc, value) => {
-    const k = builtinKnob(`zone:${name}`, name, `studio.part_editor.zone_${name}`, desc, known ? value : null, { group: "zone.keyboard", readOnly: true, reason: REASON_NO_COMMAND, pending: false, command: null });
-    deferred.push({ id: name, key: k.key, reason: REASON_NO_COMMAND });
-    zoneKnobs.push(k);
+  const zoneKnob = (name, desc, pstateVal) => {
+    const key = `zone:${name}`;
+    const p = pending.get(key);
+    const val = p ? p.value : known ? (pstate && pstate.view_fields ? (desc.type === "bool" ? (pstateVal ? 1 : 0) : num(pstateVal, desc.default)) : desc.default) : null;
+    return builtinKnob(key, name, `studio.part_editor.zone_${name}`, desc, val, {
+      group: "zone.keyboard",
+      readOnly: !editable,
+      reason: editable ? "" : roReason,
+      pending: !!p,
+      command: "zone",
+    });
   };
-  zoneRo("low_key", { type: "int", unit: "note", min: 0, max: 127, default: 0 }, pstate && pstate.view_fields ? num(pstate.low_key, 0) : null);
-  zoneRo("high_key", { type: "int", unit: "note", min: 0, max: 127, default: 127 }, pstate && pstate.view_fields ? num(pstate.high_key, 127) : null);
-  zoneRo("keyboard", { type: "bool", unit: "flag", min: 0, max: 1, default: 1 }, pstate && pstate.view_fields ? (pstate.keyboard_on ? 1 : 0) : null);
-  zoneRo("octave", { type: "int", unit: "octave", min: -3, max: 3, default: 0 }, null);
-  zoneRo("transpose", { type: "int", unit: "semitone", min: -12, max: 12, default: 0 }, null);
+  const zoneKnobs = [
+    zoneKnob("low_key", { type: "int", unit: "note", min: 0, max: 127, default: 0 }, pstate ? pstate.low_key : null),
+    zoneKnob("high_key", { type: "int", unit: "note", min: 0, max: 127, default: 127 }, pstate ? pstate.high_key : null),
+    zoneKnob("keyboard", { type: "bool", unit: "flag", min: 0, max: 1, default: 1 }, pstate ? pstate.keyboard_on : null),
+    zoneKnob("octave", { type: "int", unit: "octave", min: -4, max: 4, default: 0 }, pstate ? pstate.octave : null),
+    zoneKnob("transpose", { type: "int", unit: "semitone", min: -12, max: 12, default: 0 }, pstate ? pstate.transpose : null),
+  ];
 
   // -- registry-driven groups per section --
   const sections = SECTION_ORDER.map((id) => ({ id, titleKey: SECTION_TITLE_KEYS[id], groups: [] }));
@@ -579,6 +593,8 @@ export const requests = {
   assign: (slot, paramId) => (paramId
     ? { body: { SetAssignSlot: { target: ASSIGN_TARGET_CURRENT_LIVE_SET, slot, param_id: paramId } } }
     : { body: { ClearAssignSlot: { target: ASSIGN_TARGET_CURRENT_LIVE_SET, slot } } }),
+  zone: (part, fields) => ({ body: { SetPartZone: { part, ...fields } } }),
+  arp: (part, fields) => ({ body: { SetPartArp: { part, ...fields } } }),
   getPerformanceValues: () => ({ body: { GetPerformanceValues: {} } }),
   getState: () => ({ body: { GetState: {} } }),
 };
@@ -948,6 +964,17 @@ export class PartEditorController {
         const del = reg.params.find((d) => d.name === SEND_PARAMS.delay);
         this.sender.submit(key, this._guard((part) => requests.perf(knob.paramId, part, this._val(key))), meta);
         this.sender.submit(`s:sends:${this.partIndex}`, this._guard((part) => requests.sends(part, this._val(`p:${rev.id}`), this._val(`p:${del.id}`))), { ...meta, aux: true });
+        break;
+      }
+      case "zone": {
+        const field = knob.id === "keyboard" ? "keyboard_on" : knob.id;
+        const val = knob.id === "keyboard" ? this._val(key) >= 0.5 : this._val(key);
+        this.sender.submit(`s:zone:${knob.id}`, this._guard((part) => requests.zone(part, { [field]: val })), meta);
+        break;
+      }
+      case "arp": {
+        const val = (knob.id === "arp_on" || knob.id === "arp_latch") ? this._val(key) >= 0.5 : this._val(key);
+        this.sender.submit(`s:arp:${knob.id}`, this._guard((part) => requests.arp(part, { [knob.id]: val })), meta);
         break;
       }
       default:

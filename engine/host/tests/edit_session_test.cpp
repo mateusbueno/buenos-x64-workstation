@@ -1722,7 +1722,55 @@ void test_write_tells_the_port() {
   rig.edits.reset();
 }
 
+void test_zone_and_arp_edits() {
+  Rig rig;
+  const lsp::LiveSet a = perfect(rig.lib, 10, "Perfect");
+  rig.start({a});
+  auto st = rig.state();
+  CHECK(!st.edits().current_dirty() && st.edits().change_count() == 0);
+
+  // Edit zone: low_key, high_key, octave, transpose, keyboard_on
+  auto mz = msg();
+  auto* z = mz.mutable_set_part_zone();
+  z->set_part(0);
+  z->set_low_key(36);
+  z->set_high_key(84);
+  z->set_octave(1);
+  z->set_transpose(2);
+  z->set_keyboard_on(false);
+  CHECK(rig.send(mz).has_ack());
+
+  rig.step(4);
+  st = rig.state();
+  const ws::v1::EditStatus& ez = st.edits();
+  CHECK(ez.current_dirty());
+  CHECK(find_item(ez, "part.zone", 0) && find_item(ez, "part.zone", 0)->text() == "Part 1 zone");
+  CHECK(find_item(ez, "part.octave", 0) && find_item(ez, "part.octave", 0)->text() == "Part 1 octave");
+  CHECK(find_item(ez, "part.transpose", 0) && find_item(ez, "part.transpose", 0)->text() == "Part 1 transpose");
+  CHECK(find_item(ez, "part.keyboard", 0) && find_item(ez, "part.keyboard", 0)->text() == "Part 1 keyboard");
+
+  // Edit arp:
+  auto ma = msg();
+  auto* arp = ma.mutable_set_part_arp();
+  arp->set_part(1);
+  arp->set_arp_on(true);
+  arp->set_arp_mode(1);
+  arp->set_arp_rate(2);
+  arp->set_arp_octaves(2);
+  arp->set_arp_gate(120);
+  arp->set_arp_swing(60);
+  arp->set_arp_latch(true);
+  CHECK(rig.send(ma).has_ack());
+
+  rig.step(4);
+  st = rig.state();
+  const ws::v1::EditStatus& ea = st.edits();
+  CHECK(ea.current_dirty());
+  CHECK(find_item(ea, "part.arp", 1) && find_item(ea, "part.arp", 1)->text() == "Part 2 arpeggiator");
+}
+
 int main() {
+  test_zone_and_arp_edits();
   test_fence_orders_after_earlier_events();
   test_fence_lane_full_and_timeout();
   test_dirty_flag_and_change_summary();

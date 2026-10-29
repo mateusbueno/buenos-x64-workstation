@@ -280,34 +280,37 @@ test("Enter opens a value entry: a good value applies, junk and out-of-range are
   assert.ok(r.host.all((e) => e.attrs["aria-live"] === "polite")[0].textContent.length > 0);
 });
 
-test("a read-only knob (no command yet) is aria-readonly with its reason and ignores keys, drag and wheel", async () => {
+test("a read-only knob is aria-readonly with its reason and ignores keys, drag and wheel", async () => {
   const r = await rig(0);
   const arp = r.slider("Mode");
-  assert.equal(arp.attrs["aria-readonly"], "true");
-  assert.equal(arp.title, "The Velora cannot take this edit from Studio yet.");
-  assert.equal(arp.attrs["aria-valuetext"], "—");
-  assert.ok(!("aria-valuenow" in arp.attrs));
-  const before = r.unit.log.length;
-  arp.focus();
-  const e = arp.fire("keydown", { key: "ArrowUp" });
-  assert.equal(e.prevented, undefined);
-  arp.fire("pointerdown", { button: 0, clientX: 0, clientY: 100 });
-  arp.fire("pointermove", { clientX: 0, clientY: 0 });
-  arp.fire("wheel", { deltaY: -100 });
-  await r.clock.advance(200);
-  assert.equal(r.unit.log.length, before);
+  assert.equal(arp.attrs["aria-readonly"], undefined);
+  assert.equal(arp.attrs["aria-valuenow"], "0");
   const low = r.slider("Low key");
-  assert.equal(low.attrs["aria-readonly"], "true");
+  assert.equal(low.attrs["aria-readonly"], undefined);
+  assert.equal(low.attrs["aria-valuenow"], "36");
   assert.equal(low.attrs["aria-valuetext"], "C2");
+
   // a Live Set that does not sound: the banner says why and every knob is read-only
   r.unit.sounding = false;
   r.ctl.onState(r.unit.state());
+  await r.clock.advance(200);
   const banner = r.host.all((e) => e.className === "pe-banner")[0];
   assert.equal(banner.hidden, false);
   assert.match(banner.textContent, /not playing on the Velora/);
   assert.ok(r.sliders().every((s) => s.attrs["aria-readonly"] === "true"));
   assert.ok(r.host.all((e) => e.tagName === "SELECT").every((s) => s.disabled));
   assert.equal(r.host.all((e) => e.className === "btn pe-add")[0].disabled, true);
+
+  const before = r.unit.log.length;
+  const roArp = r.slider("Mode");
+  roArp.focus();
+  const e = roArp.fire("keydown", { key: "ArrowUp" });
+  assert.equal(e.prevented, undefined);
+  roArp.fire("pointerdown", { button: 0, clientX: 0, clientY: 100 });
+  roArp.fire("pointermove", { clientX: 0, clientY: 0 });
+  roArp.fire("wheel", { deltaY: -100 });
+  await r.clock.advance(200);
+  assert.equal(r.unit.log.length, before);
 });
 
 test("State pushes update the knobs in place: same elements, focus kept; a new structure rebuilds and keeps the focus on the same knob", async () => {

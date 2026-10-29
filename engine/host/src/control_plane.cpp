@@ -254,6 +254,15 @@ void fill_from(const core::Snapshot& s, ws::v1::State* out, std::uint32_t part_c
     ps->set_engine_type_id(pc.engine_type);
     ps->set_part_state(static_cast<ws::v1::PartRunState>(static_cast<int>(pc.state)));
     ps->set_view_fields(true);
+    ps->set_octave(pc.octave);
+    ps->set_transpose(pc.transpose);
+    ps->set_arp_on(pc.arp.enabled);
+    ps->set_arp_mode(static_cast<std::uint32_t>(pc.arp.mode));
+    ps->set_arp_rate(static_cast<std::uint32_t>(pc.arp.rate));
+    ps->set_arp_octaves(pc.arp.octaves);
+    ps->set_arp_gate(pc.arp.gate_percent);
+    ps->set_arp_swing(pc.arp.swing_percent);
+    ps->set_arp_latch(pc.arp.latch);
     for (std::uint32_t i = 0; i < pc.insert_count; ++i) {
       ws::v1::InsertSlot* in = ps->add_inserts();
       in->set_type(static_cast<ws::v1::InsertType>(pc.inserts[i].type));
@@ -588,7 +597,7 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
   // changes). An accepted edit with base_revision is a Velora Studio edit (it keeps the revision, lights STUDIO); one without it is a change from elsewhere (it moves the revision).
   const auto bc = msg.body_case();
   const bool is_edit = (bc >= B::kSetInsertChain && bc <= B::kSetPerformanceParam) || bc == B::kSetPartTimbre || bc == B::kSetPartVolume || bc == B::kSetAssignSlot ||
-                       bc == B::kClearAssignSlot;
+                       bc == B::kClearAssignSlot || bc == B::kSetPartZone || bc == B::kSetPartArp;
   const bool studio_edit = is_edit && msg.base_revision() != 0;
   // Story 9.12: a Write that carries base_revision is judged like an edit (a Studio view that is older than the unit's Live Set must not persist values it never showed), but it is NOT an
   // edit: it never lights STUDIO, never counts as a Studio edit and never moves the revision. A Write without base_revision (the device UI) is accepted exactly as before.
@@ -762,7 +771,8 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
     bool structural = false;
     std::string blocked;
     const bool structural_msg = msg.body_case() == B::kSetInsertChain || msg.body_case() == B::kSetSendLevels || msg.body_case() == B::kSetPartOutput ||
-                                msg.body_case() == B::kSetMasterParams || msg.body_case() == B::kSetPartVolume;
+                                msg.body_case() == B::kSetMasterParams || msg.body_case() == B::kSetPartVolume ||
+                                msg.body_case() == B::kSetPartZone || msg.body_case() == B::kSetPartArp;
     const bool was_blocked = structural_msg && edit_handler_ && edit_handler_->structural_blocked(blocked);
     if (was_blocked) {  // refused like any other command: the shared tail below builds the error reply and counts the rejection
       f.details["reason"] = blocked;
@@ -803,6 +813,76 @@ ws::v1::ServerMessage ControlPlane::handle(const ws::v1::ClientMessage& msg, boo
           ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "part volume outside 0..1");
         }
         if (ok) work.parts[m.part()].volume = m.volume();
+        structural = true;
+        break;
+      }
+      case B::kSetPartZone: {
+        const auto& m = msg.set_part_zone();
+        ok = check_part(m.part(), f);
+        if (!ok) break;
+        core::PartCfg& pc = work.parts[m.part()];
+        const std::uint32_t low = m.has_low_key() ? m.low_key() : pc.low_key;
+        const std::uint32_t high = m.has_high_key() ? m.high_key() : pc.high_key;
+        if (low > 127 || high > 127 || low > high) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "zone low/high key must be in 0..127 and low_key <= high_key");
+          break;
+        }
+        if (m.has_octave() && (m.octave() < -4 || m.octave() > 4)) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "octave must be in -4..4");
+          break;
+        }
+        if (m.has_transpose() && (m.transpose() < -12 || m.transpose() > 12)) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "transpose must be in -12..12");
+          break;
+        }
+        if (m.has_low_key()) pc.low_key = static_cast<std::uint8_t>(m.low_key());
+        if (m.has_high_key()) pc.high_key = static_cast<std::uint8_t>(m.high_key());
+        if (m.has_octave()) pc.octave = static_cast<std::int8_t>(m.octave());
+        if (m.has_transpose()) pc.transpose = static_cast<std::int8_t>(m.transpose());
+        if (m.has_keyboard_on()) pc.keyboard_on = m.keyboard_on() ? 1 : 0;
+        structural = true;
+        break;
+      }
+      case B::kSetPartArp: {
+        const auto& m = msg.set_part_arp();
+        ok = check_part(m.part(), f);
+        if (!ok) break;
+        core::ArpConfig& arp = work.parts[m.part()].arp;
+        if (m.has_arp_mode() && m.arp_mode() > 4) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "arp_mode must be in 0..4");
+          break;
+        }
+        if (m.has_arp_rate() && m.arp_rate() > 7) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "arp_rate must be in 0..7");
+          break;
+        }
+        if (m.has_arp_octaves() && (m.arp_octaves() < 1 || m.arp_octaves() > 4)) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "arp_octaves must be in 1..4");
+          break;
+        }
+        if (m.has_arp_gate() && (!std::isfinite(m.arp_gate()) || m.arp_gate() < 1.0f || m.arp_gate() > 200.0f)) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "arp_gate must be in 1..200");
+          break;
+        }
+        if (m.has_arp_swing() && (!std::isfinite(m.arp_swing()) || m.arp_swing() < 50.0f || m.arp_swing() > 75.0f)) {
+          f.details["part"] = std::to_string(m.part());
+          ok = fail(f, ws::v1::ERROR_CODE_OUT_OF_RANGE, "arp_swing must be in 50..75");
+          break;
+        }
+        if (m.has_arp_on()) arp.enabled = m.arp_on();
+        if (m.has_arp_mode()) arp.mode = static_cast<core::ArpMode>(m.arp_mode());
+        if (m.has_arp_rate()) arp.rate = static_cast<core::ArpRate>(m.arp_rate());
+        if (m.has_arp_octaves()) arp.octaves = static_cast<std::uint8_t>(m.arp_octaves());
+        if (m.has_arp_gate()) arp.gate_percent = m.arp_gate();
+        if (m.has_arp_swing()) arp.swing_percent = m.arp_swing();
+        if (m.has_arp_latch()) arp.latch = m.arp_latch();
         structural = true;
         break;
       }

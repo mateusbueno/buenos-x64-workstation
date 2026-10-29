@@ -373,14 +373,15 @@ test("every registry parameter maps onto a command or is deferred; the table nam
   assert.equal(kinds.get("insert_param_3"), "insert");
   assert.equal(kinds.get("reverb_time"), "master");
   assert.equal(kinds.get("tempo_bpm"), "perf");
-  for (const n of ["arp_on", "arp_mode", "arp_rate", "arp_octaves", "arp_gate", "arp_swing", "arp_latch", "timbre_ref"]) assert.equal(kinds.get(n), null, n);
+  for (const n of ["arp_on", "arp_mode", "arp_rate", "arp_octaves", "arp_gate", "arp_swing", "arp_latch"]) assert.equal(kinds.get(n), "arp", n);
+  assert.equal(kinds.get("timbre_ref"), null, "timbre_ref");
   // the bridge's message table (sysd/src/bridge_server.cpp) routes every command the editor sends to the engine for a paired client
   const src = fs.readFileSync(new URL("../../sysd/src/bridge_server.cpp", import.meta.url), "utf8");
   const allowed = new Set([...src.matchAll(/\{B::k\w+, "(\w+)", "[\w.]+", R::kEngine, false\}/g)].map((m) => m[1]));
   const snake = (n) => n.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
   const sample = [
     requests.perf(100, 0, 1), requests.sends(0, 0.1, 0.2), requests.output(0, 1), requests.master(530, 1), requests.chain(0, []), requests.volume(0, 0.5),
-    requests.assign(1, 100), requests.assign(1, 0), requests.getPerformanceValues(),
+    requests.assign(1, 100), requests.assign(1, 0), requests.zone(0, { low_key: 36, high_key: 84 }), requests.arp(0, { arp_on: true, arp_rate: 2 }), requests.getPerformanceValues(),
   ];
   for (const r of sample) assert.ok(allowed.has(snake(Object.keys(r.body)[0])), Object.keys(r.body)[0]);
   assert.ok(allowed.size > 30);
@@ -394,6 +395,8 @@ test("request bodies are the JSON the Rust client maps onto ClientMessage", () =
   assert.deepEqual(requests.volume(0, 0.4), { body: { SetPartVolume: { part: 0, volume: 0.4 } } });
   assert.deepEqual(requests.assign(2, 100), { body: { SetAssignSlot: { target: 1, slot: 2, param_id: 100 } } });
   assert.deepEqual(requests.assign(2, 0), { body: { ClearAssignSlot: { target: 1, slot: 2 } } });
+  assert.deepEqual(requests.zone(0, { low_key: 36, high_key: 84 }), { body: { SetPartZone: { part: 0, low_key: 36, high_key: 84 } } });
+  assert.deepEqual(requests.arp(0, { arp_on: true, arp_rate: 2 }), { body: { SetPartArp: { part: 0, arp_on: true, arp_rate: 2 } } });
 });
 
 // ---- the sender -------------------------------------------------------------------------------------------------------------------------------------------------
@@ -699,19 +702,29 @@ test("read-only: a Live Set that does not sound, an unavailable engine, and the 
   const r = rig();
   await r.open(0);
   const m = r.ctl.model();
-  const arp = byId(m, "arp_mode");
-  assert.equal(arp.readOnly, true);
-  assert.equal(arp.reason, "studio.part_editor.ro_no_command");
-  assert.equal(arp.value, null); // the State does not carry the arpeggiator: no value is invented
-  assert.equal(r.ctl.edit(arp.key, 1), null);
-  const ids = m.deferred.map((d) => d.id);
-  for (const n of ["arp_on", "arp_mode", "arp_rate", "arp_octaves", "arp_gate", "arp_swing", "arp_latch", "low_key", "high_key", "keyboard", "octave", "transpose"]) assert.ok(ids.includes(n), n);
-  assert.ok(m.deferred.every((d) => d.reason === "studio.part_editor.ro_no_command"));
+  // Arp and zone controls are now editable when sounding
+  assert.equal(byId(m, "arp_mode").readOnly, false);
+  assert.equal(byId(m, "low_key").readOnly, false);
   assert.equal(byId(m, "low_key").value, 36);
   assert.equal(byId(m, "high_key").value, 96);
   assert.equal(byId(m, "keyboard").value, 1);
-  assert.equal(r.ctl.edit(byId(m, "low_key").key, 40), null);
-  assert.equal(r.unit.log.filter((l) => l[0] !== "GetPerformanceValues").length, 0);
+  assert.equal(byId(m, "octave").value, 0);
+  assert.equal(byId(m, "transpose").value, 0);
+
+  // A parameter with no command is deferred
+  const deferredReg = {
+    ...REGISTRY,
+    params: [
+      ...REGISTRY.params,
+      { id: 9999, name: "deferred_param", class: "structural", type: "float", scope: "part", unit: "", min: 0, max: 10, default: 5, enum: null, cc: -1, assignable: false, localeKey: "", section: "sound", engine: "any", group: "sound.main", hideEngines: [] },
+    ],
+  };
+  const mDef = buildPartEditorModel({ registry: deferredReg, partIndex: 0, engine: "sample", state: r.unit.state(), editable: true, live: true });
+  const defKnob = byId(mDef, "deferred_param");
+  assert.equal(defKnob.readOnly, true);
+  assert.equal(defKnob.reason, "studio.part_editor.ro_no_command");
+  assert.ok(mDef.deferred.some((d) => d.id === "deferred_param"));
+
   // not sounding
   r.unit.sounding = false;
   r.ctl.onState(r.unit.state());
@@ -933,10 +946,10 @@ test("A1: only the knobs no engine plays are marked inert (organ / FM amp attack
   assert.equal(unit.consumes(0, 400), true);
 });
 
-test("A3: the zone placeholders use the unit's ranges (transpose -12..12, octave -3..3)", () => {
+test("the zone controls use the engine's ranges (transpose -12..12, octave -4..4)", () => {
   const m = buildPartEditorModel({ registry: REGISTRY, partIndex: 0, engine: "sample", editable: false });
   const k = (id) => byId(m, id);
-  assert.deepEqual([k("transpose").min, k("transpose").max, k("octave").min, k("octave").max], [-12, 12, -3, 3]);
+  assert.deepEqual([k("transpose").min, k("transpose").max, k("octave").min, k("octave").max], [-12, 12, -4, 4]);
 });
 
 test("VA: the generic amp attack / release are not shown, the VA amp envelope sits in Amp envelope + EQ", () => {
@@ -945,4 +958,93 @@ test("VA: the generic amp attack / release are not shown, the VA amp envelope si
   assert.deepEqual(amp, ["va_amp_attack", "va_amp_decay", "va_amp_sustain", "va_amp_release"]);
   assert.ok(!byId(m, "part_attack") && !byId(m, "part_release"));
   assert.ok(byId(buildPartEditorModel({ registry: REGISTRY, partIndex: 0, engine: "fm", editable: false }), "part_attack"));
+});
+
+test("Story 9.23: editing zone knobs sends SetPartZone with base_revision and updates model", async () => {
+  const r = rig();
+  await r.open(0);
+  const baseRev = r.unit.liveRevision;
+
+  // Edit low_key
+  assert.equal(r.ctl.edit("zone:low_key", 40), 40);
+  assert.equal(byId(r.ctl.model(), "low_key").pending, true);
+  await r.clock.advance(160);
+  const zLog1 = r.unit.log.filter((l) => l[0] === "SetPartZone");
+  assert.equal(zLog1.length, 1);
+  assert.deepEqual(zLog1[0], ["SetPartZone", { part: 0, low_key: 40 }, baseRev]);
+  assert.equal(r.unit.parts[0].low_key, 40);
+  assert.equal(byId(r.ctl.model(), "low_key").value, 40);
+
+  // Edit octave
+  assert.equal(r.ctl.edit("zone:octave", -2), -2);
+  await r.clock.advance(160);
+  const zLog2 = r.unit.log.filter((l) => l[0] === "SetPartZone");
+  assert.equal(zLog2.length, 2);
+  assert.deepEqual(zLog2[1], ["SetPartZone", { part: 0, octave: -2 }, baseRev]);
+  assert.equal(r.unit.parts[0].octave, -2);
+  assert.equal(byId(r.ctl.model(), "octave").value, -2);
+
+  // Edit transpose
+  assert.equal(r.ctl.edit("zone:transpose", 7), 7);
+  await r.clock.advance(160);
+  const zLog3 = r.unit.log.filter((l) => l[0] === "SetPartZone");
+  assert.equal(zLog3.length, 3);
+  assert.deepEqual(zLog3[2], ["SetPartZone", { part: 0, transpose: 7 }, baseRev]);
+  assert.equal(r.unit.parts[0].transpose, 7);
+
+  // Edit keyboard
+  assert.equal(r.ctl.edit("zone:keyboard", 0), 0);
+  await r.clock.advance(160);
+  const zLog4 = r.unit.log.filter((l) => l[0] === "SetPartZone");
+  assert.equal(zLog4.length, 4);
+  assert.deepEqual(zLog4[3], ["SetPartZone", { part: 0, keyboard_on: false }, baseRev]);
+  assert.equal(r.unit.parts[0].keyboard_on, false);
+});
+
+test("Story 9.23: editing arpeggiator knobs sends SetPartArp with base_revision and updates model", async () => {
+  const r = rig();
+  await r.open(0);
+  const baseRev = r.unit.liveRevision;
+
+  const arpOn = byId(r.ctl.model(), "arp_on");
+  assert.equal(r.ctl.edit(arpOn.key, 1), 1);
+  assert.equal(byId(r.ctl.model(), "arp_on").pending, true);
+  await r.clock.advance(160);
+  const aLog1 = r.unit.log.filter((l) => l[0] === "SetPartArp");
+  assert.equal(aLog1.length, 1);
+  assert.deepEqual(aLog1[0], ["SetPartArp", { part: 0, arp_on: true }, baseRev]);
+  assert.equal(r.unit.parts[0].arp_on, true);
+  assert.equal(byId(r.ctl.model(), "arp_on").value, 1);
+
+  // Edit arp_rate (enum index 2: sixteenth)
+  const arpRate = byId(r.ctl.model(), "arp_rate");
+  assert.equal(r.ctl.edit(arpRate.key, 2), 2);
+  await r.clock.advance(160);
+  const aLog2 = r.unit.log.filter((l) => l[0] === "SetPartArp");
+  assert.equal(aLog2.length, 2);
+  assert.deepEqual(aLog2[1], ["SetPartArp", { part: 0, arp_rate: 2 }, baseRev]);
+  assert.equal(r.unit.parts[0].arp_rate, 2);
+  assert.equal(byId(r.ctl.model(), "arp_rate").value, 2);
+
+  // Edit arp_gate (float 76%)
+  const arpGate = byId(r.ctl.model(), "arp_gate");
+  assert.equal(r.ctl.edit(arpGate.key, 76), 76);
+  await r.clock.advance(160);
+  const aLog3 = r.unit.log.filter((l) => l[0] === "SetPartArp");
+  assert.equal(aLog3.length, 3);
+  assert.deepEqual(aLog3[2], ["SetPartArp", { part: 0, arp_gate: 76 }, baseRev]);
+  assert.equal(r.unit.parts[0].arp_gate, 76);
+});
+
+test("Story 9.23: stale revision on SetPartZone / SetPartArp triggers stale state and reverts", async () => {
+  const r = rig();
+  await r.open(0);
+  // Unit changes underneath (moves revision)
+  r.unit.deviceChange();
+
+  assert.equal(r.ctl.edit("zone:low_key", 50), 50);
+  await r.clock.advance(160);
+  assert.ok(r.ctl.stale);
+  assert.equal(byId(r.ctl.model(), "low_key").value, 36); // reverted to confirmed
+  assert.equal(byId(r.ctl.model(), "low_key").readOnly, true);
 });

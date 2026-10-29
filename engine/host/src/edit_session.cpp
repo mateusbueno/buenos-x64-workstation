@@ -521,6 +521,48 @@ void EditSession::on_structural(const ws::v1::ClientMessage& msg) {
       else ls.mutable_parts(static_cast<int>(m.part()))->set_volume(m.volume());
       break;
     }
+    case B::kSetPartZone: {
+      const auto& m = msg.set_part_zone();
+      if (!part_ok(m.part())) return;
+      lsp::ScenePart* sp = scene_part_mut(ls, scene, m.part());
+      lsp::Part* bp = ls.mutable_parts(static_cast<int>(m.part()));
+      if (m.has_low_key()) {
+        if (sp && sp->has_low_key()) sp->set_low_key(m.low_key());
+        else bp->set_low_key(m.low_key());
+      }
+      if (m.has_high_key()) {
+        if (sp && sp->has_high_key()) sp->set_high_key(m.high_key());
+        else bp->set_high_key(m.high_key());
+      }
+      if (m.has_octave()) {
+        if (sp && sp->has_octave()) sp->set_octave(m.octave());
+        else bp->set_octave(m.octave());
+      }
+      if (m.has_transpose()) {
+        if (sp && sp->has_transpose()) sp->set_transpose(m.transpose());
+        else bp->set_transpose(m.transpose());
+      }
+      if (m.has_keyboard_on()) {
+        if (sp && sp->has_keyboard_on()) sp->set_keyboard_on(m.keyboard_on());
+        else bp->set_keyboard_on(m.keyboard_on());
+      }
+      break;
+    }
+    case B::kSetPartArp: {
+      const auto& m = msg.set_part_arp();
+      if (!part_ok(m.part())) return;
+      lsp::ScenePart* sp = scene_part_mut(ls, scene, m.part());
+      lsp::Part* bp = ls.mutable_parts(static_cast<int>(m.part()));
+      lsp::ArpSettings* target = (sp && sp->has_arp()) ? sp->mutable_arp() : bp->mutable_arp();
+      if (m.has_arp_on()) target->set_enabled(m.arp_on());
+      if (m.has_arp_mode()) target->set_pattern(static_cast<lsp::ArpPattern>(m.arp_mode() + 1));
+      if (m.has_arp_rate()) target->set_rate(static_cast<lsp::ArpRate>(m.arp_rate() + 1));
+      if (m.has_arp_octaves()) target->set_octave_range(m.arp_octaves());
+      if (m.has_arp_gate()) target->set_gate(m.arp_gate());
+      if (m.has_arp_swing()) target->set_swing(m.arp_swing());
+      if (m.has_arp_latch()) target->set_hold(m.arp_latch());
+      break;
+    }
     case B::kSetMasterParams:
       for (const ws::v1::ParamValue& pv : msg.set_master_params().values()) store_master_value(ls, scene, static_cast<std::uint32_t>(pv.param_id()), pv.value());
       break;

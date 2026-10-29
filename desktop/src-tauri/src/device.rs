@@ -1358,6 +1358,43 @@ mod tests {
     }
 
     #[test]
+    fn zone_and_arp_commands_deserialize_with_base_revision() {
+        let mz: ClientMessage = serde_json::from_value(serde_json::json!({
+            "base_revision": 42,
+            "body": {
+                "SetPartZone": {
+                    "part": 1,
+                    "low_key": 36,
+                    "high_key": 84,
+                    "octave": -1,
+                    "transpose": 2,
+                    "keyboard_on": false
+                }
+            }
+        })).unwrap();
+        assert_eq!(mz.base_revision, 42);
+        assert!(matches!(mz.body, Some(CBody::SetPartZone(ref z)) if z.part == 1 && z.low_key == Some(36) && z.high_key == Some(84) && z.octave == Some(-1) && z.transpose == Some(2) && z.keyboard_on == Some(false)));
+
+        let ma: ClientMessage = serde_json::from_value(serde_json::json!({
+            "base_revision": 43,
+            "body": {
+                "SetPartArp": {
+                    "part": 2,
+                    "arp_on": true,
+                    "arp_mode": 1,
+                    "arp_rate": 3,
+                    "arp_octaves": 2,
+                    "arp_gate": 120,
+                    "arp_swing": 60,
+                    "arp_latch": true
+                }
+            }
+        })).unwrap();
+        assert_eq!(ma.base_revision, 43);
+        assert!(matches!(ma.body, Some(CBody::SetPartArp(ref a)) if a.part == 2 && a.arp_on == Some(true) && a.arp_mode == Some(1) && a.arp_rate == Some(3) && a.arp_octaves == Some(2) && a.arp_gate == Some(120.0) && a.arp_swing == Some(60.0) && a.arp_latch == Some(true)));
+    }
+
+    #[test]
     fn timbre_assignment_and_library_requests_map_to_the_wire() {
         // the picker's assignment is an ordinary ws.v1 edit (SetPartTimbre with base_revision), sent as the page's JSON through device_request
         let m: ClientMessage = serde_json::from_value(serde_json::json!({"base_revision": 12, "body": {"SetPartTimbre": {"part": 2, "library_id": "lib-a", "instrument_key": "k1"}}})).unwrap();

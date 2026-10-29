@@ -1683,7 +1683,172 @@ static void test_base_revision_and_stale_edits() {
   CHECK(rig.plane.consume_studio_echo(0, 99.0f) == false);
 }
 
+static void test_zone_and_arp_control() {
+  Live L("zone_arp");
+  Client c;
+  CHECK(L.connect(c));
+  ws::v1::ServerMessage r;
+
+  // 1. Valid SetPartZone
+  ws::v1::ClientMessage mz;
+  mz.set_request_id(++g_rid);
+  auto* z = mz.mutable_set_part_zone();
+  z->set_part(1);
+  z->set_low_key(36);
+  z->set_high_key(84);
+  z->set_octave(2);
+  z->set_transpose(-5);
+  z->set_keyboard_on(false);
+  CHECK(c.call(mz, r) && r.has_ack());
+  const core::Snapshot* snap = L.rig.br->snapshots().current();
+  CHECK(snap->parts[1].low_key == 36 && snap->parts[1].high_key == 84);
+  CHECK(snap->parts[1].octave == 2 && snap->parts[1].transpose == -5);
+  CHECK(snap->parts[1].keyboard_on == false);
+
+  // Check get_state returns updated values
+  CHECK(c.call(get_state(), r) && r.has_state());
+  CHECK(r.state().parts(1).low_key() == 36 && r.state().parts(1).high_key() == 84);
+  CHECK(r.state().parts(1).octave() == 2 && r.state().parts(1).transpose() == -5);
+  CHECK(r.state().parts(1).keyboard_on() == false);
+
+  // 2. Valid SetPartArp
+  ws::v1::ClientMessage ma;
+  ma.set_request_id(++g_rid);
+  auto* a = ma.mutable_set_part_arp();
+  a->set_part(1);
+  a->set_arp_on(true);
+  a->set_arp_mode(2);
+  a->set_arp_rate(3);
+  a->set_arp_octaves(4);
+  a->set_arp_gate(150);
+  a->set_arp_swing(65);
+  a->set_arp_latch(true);
+  CHECK(c.call(ma, r) && r.has_ack());
+  snap = L.rig.br->snapshots().current();
+  CHECK(snap->parts[1].arp.enabled == true);
+  CHECK(static_cast<int>(snap->parts[1].arp.mode) == 2);
+  CHECK(static_cast<int>(snap->parts[1].arp.rate) == 3);
+  CHECK(snap->parts[1].arp.octaves == 4);
+  CHECK(snap->parts[1].arp.gate_percent == 150.0f);
+  CHECK(snap->parts[1].arp.swing_percent == 65.0f);
+  CHECK(snap->parts[1].arp.latch == true);
+
+  // Check get_state returns updated arp values
+  CHECK(c.call(get_state(), r) && r.has_state());
+  CHECK(r.state().parts(1).arp_on() == true);
+  CHECK(r.state().parts(1).arp_mode() == 2);
+  CHECK(r.state().parts(1).arp_rate() == 3);
+  CHECK(r.state().parts(1).arp_octaves() == 4);
+  CHECK(r.state().parts(1).arp_gate() == 150);
+  CHECK(r.state().parts(1).arp_swing() == 65);
+  CHECK(r.state().parts(1).arp_latch() == true);
+
+  // 3. Validation errors
+  auto expect_err = [&](const ws::v1::ClientMessage& m, ws::v1::ErrorCode code) {
+    CHECK(c.call(m, r) && is_err(r, code));
+  };
+  // Zone validations:
+  // low_key > 127
+  mz.Clear(); mz.set_request_id(++g_rid);
+  mz.mutable_set_part_zone()->set_part(1);
+  mz.mutable_set_part_zone()->set_low_key(128);
+  expect_err(mz, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // high_key > 127
+  mz.Clear(); mz.set_request_id(++g_rid);
+  mz.mutable_set_part_zone()->set_part(1);
+  mz.mutable_set_part_zone()->set_high_key(128);
+  expect_err(mz, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // low_key > high_key
+  mz.Clear(); mz.set_request_id(++g_rid);
+  mz.mutable_set_part_zone()->set_part(1);
+  mz.mutable_set_part_zone()->set_low_key(80);
+  mz.mutable_set_part_zone()->set_high_key(40);
+  expect_err(mz, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // octave < -4 or > 4
+  mz.Clear(); mz.set_request_id(++g_rid);
+  mz.mutable_set_part_zone()->set_part(1);
+  mz.mutable_set_part_zone()->set_octave(-5);
+  expect_err(mz, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+  mz.mutable_set_part_zone()->set_octave(5);
+  expect_err(mz, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // transpose < -12 or > 12
+  mz.Clear(); mz.set_request_id(++g_rid);
+  mz.mutable_set_part_zone()->set_part(1);
+  mz.mutable_set_part_zone()->set_transpose(-13);
+  expect_err(mz, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+  mz.mutable_set_part_zone()->set_transpose(13);
+  expect_err(mz, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // part >= 8
+  mz.Clear(); mz.set_request_id(++g_rid);
+  mz.mutable_set_part_zone()->set_part(8);
+  expect_err(mz, ws::v1::ERROR_CODE_INVALID_PART);
+
+  // Arp validations:
+  // arp_mode > 4
+  ma.Clear(); ma.set_request_id(++g_rid);
+  ma.mutable_set_part_arp()->set_part(1);
+  ma.mutable_set_part_arp()->set_arp_mode(5);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // arp_rate > 7
+  ma.Clear(); ma.set_request_id(++g_rid);
+  ma.mutable_set_part_arp()->set_part(1);
+  ma.mutable_set_part_arp()->set_arp_rate(8);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // arp_octaves < 1 or > 4
+  ma.Clear(); ma.set_request_id(++g_rid);
+  ma.mutable_set_part_arp()->set_part(1);
+  ma.mutable_set_part_arp()->set_arp_octaves(0);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+  ma.mutable_set_part_arp()->set_arp_octaves(5);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // arp_gate < 1 or > 200
+  ma.Clear(); ma.set_request_id(++g_rid);
+  ma.mutable_set_part_arp()->set_part(1);
+  ma.mutable_set_part_arp()->set_arp_gate(0);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+  ma.mutable_set_part_arp()->set_arp_gate(201);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // arp_swing < 50 or > 75
+  ma.Clear(); ma.set_request_id(++g_rid);
+  ma.mutable_set_part_arp()->set_part(1);
+  ma.mutable_set_part_arp()->set_arp_swing(49);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+  ma.mutable_set_part_arp()->set_arp_swing(76);
+  expect_err(ma, ws::v1::ERROR_CODE_OUT_OF_RANGE);
+
+  // part >= 8
+  ma.Clear(); ma.set_request_id(++g_rid);
+  ma.mutable_set_part_arp()->set_part(8);
+  expect_err(ma, ws::v1::ERROR_CODE_INVALID_PART);
+
+  // 4. Stale base_revision rejection
+  const std::uint64_t current_ls_rev = L.rig.plane.live_set_revision();
+  const std::uint64_t stale_rev = current_ls_rev == 0 ? 999 : current_ls_rev - 1;
+
+  mz.Clear(); mz.set_request_id(++g_rid);
+  mz.set_base_revision(stale_rev);
+  mz.mutable_set_part_zone()->set_part(0);
+  mz.mutable_set_part_zone()->set_octave(1);
+  expect_err(mz, ws::v1::ERROR_CODE_STALE_REVISION);
+
+  ma.Clear(); ma.set_request_id(++g_rid);
+  ma.set_base_revision(stale_rev);
+  ma.mutable_set_part_arp()->set_part(0);
+  ma.mutable_set_part_arp()->set_arp_on(true);
+  expect_err(ma, ws::v1::ERROR_CODE_STALE_REVISION);
+}
+
 int main() {
+  test_zone_and_arp_control();
   test_base_revision_and_stale_edits();
   test_dev_config();
   test_handshake();

@@ -65,6 +65,8 @@ const std::vector<BridgeServer::MessageRule>& BridgeServer::message_rules() {
       {B::kSetPerformanceParam, "set_performance_param", "params.v1", R::kEngine, false},
       {B::kSetPartTimbre, "set_part_timbre", "params.v1", R::kEngine, false},
       {B::kSetPartVolume, "set_part_volume", "params.v1", R::kEngine, false},
+      {B::kSetPartZone, "set_part_zone", "params.v1", R::kEngine, false},
+      {B::kSetPartArp, "set_part_arp", "params.v1", R::kEngine, false},
       // state
       {B::kGetState, "get_state", "snapshots.v1", R::kEngine, false},
       {B::kGetPerformanceValues, "get_performance_values", "snapshots.v1", R::kEngine, false},

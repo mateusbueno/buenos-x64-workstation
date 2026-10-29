@@ -49,6 +49,7 @@ export class FakeUnit {
     }
     this.parts = engines.map((e, i) => ({
       part: i, timbre_ref: 100 + i, inserts: [], output: 0, send_reverb: 0.25, send_delay: 0.1, volume: 0.7, keyboard_on: true, low_key: 36, high_key: 96,
+      octave: 0, transpose: 0, arp_on: false, arp_mode: 0, arp_rate: 1, arp_octaves: 1, arp_gate: 50, arp_swing: 50, arp_latch: false,
       engine_type_id: e, part_state: empties.includes(i) ? 1 : 0, view_fields: true, empty: empties.includes(i), timbre: null,
     }));
     // Story 9.11: the timbres installed on the unit (what Studio's picker lists through the Library API) and the libraries that exist (a timbre whose library is not in `installed` is
@@ -140,7 +141,7 @@ export class FakeUnit {
       if (c) return this.err(c, "injected");
     }
     const writeJudged = name === "WriteLiveSet" && (msg.base_revision || 0) !== 0; // Story 9.12: a Write is judged like an edit, but is not one
-    const edit = ["SetInsertChain", "SetSendLevels", "SetPartOutput", "SetMasterParams", "SetPerformanceParam", "SetPartTimbre", "SetPartVolume", "SetAssignSlot", "ClearAssignSlot"].includes(name);
+    const edit = ["SetInsertChain", "SetSendLevels", "SetPartOutput", "SetMasterParams", "SetPerformanceParam", "SetPartTimbre", "SetPartVolume", "SetAssignSlot", "ClearAssignSlot", "SetPartZone", "SetPartArp"].includes(name);
     const base = msg.base_revision || 0;
     if ((edit || writeJudged) && base !== 0 && base !== this.liveRevision) {
       this.staleRejected++;
@@ -163,7 +164,9 @@ export class FakeUnit {
   noteChange(name, b) {
     const item = { SetPartVolume: { key: "part.volume", part: b.part }, SetSendLevels: { key: "part.send_reverb", part: b.part }, SetPartOutput: { key: "part.output", part: b.part },
       SetInsertChain: { key: "part.inserts", part: b.part }, SetPartTimbre: { key: "part.timbre", part: b.part }, SetPerformanceParam: { key: "part.param", part: b.part, param_id: b.param_id },
-      SetMasterParams: { key: "master.param", param_id: b.values && b.values[0] && b.values[0].param_id }, SetAssignSlot: { key: "assign.slot", slot: b.slot - 1 }, ClearAssignSlot: { key: "assign.slot", slot: b.slot - 1 } }[name];
+      SetMasterParams: { key: "master.param", param_id: b.values && b.values[0] && b.values[0].param_id }, SetAssignSlot: { key: "assign.slot", slot: b.slot - 1 }, ClearAssignSlot: { key: "assign.slot", slot: b.slot - 1 },
+      SetPartZone: b.octave !== undefined ? { key: "part.octave", part: b.part } : b.transpose !== undefined ? { key: "part.transpose", part: b.part } : b.keyboard_on !== undefined ? { key: "part.keyboard", part: b.part } : { key: "part.zone", part: b.part },
+      SetPartArp: { key: "part.arp", part: b.part } }[name];
     if (!item) return false;
     const same = (x) => x.key === item.key && x.part === item.part && x.param_id === item.param_id && x.slot === item.slot;
     if (this.changes.some(same)) return false;
@@ -331,6 +334,40 @@ export class FakeUnit {
         this.assignMap[b.slot - 1] = 0;
         this.bump();
         return this.ack();
+      case "SetPartZone": {
+        if (!this.partOk(b.part)) return this.err(CODE.INVALID_PART);
+        const p = this.parts[b.part];
+        const low = b.low_key !== undefined ? b.low_key : p.low_key;
+        const high = b.high_key !== undefined ? b.high_key : p.high_key;
+        if (low < 0 || low > 127 || high < 0 || high > 127 || low > high) return this.err(CODE.OUT_OF_RANGE);
+        if (b.octave !== undefined && (b.octave < -4 || b.octave > 4)) return this.err(CODE.OUT_OF_RANGE);
+        if (b.transpose !== undefined && (b.transpose < -12 || b.transpose > 12)) return this.err(CODE.OUT_OF_RANGE);
+        if (b.low_key !== undefined) p.low_key = b.low_key;
+        if (b.high_key !== undefined) p.high_key = b.high_key;
+        if (b.octave !== undefined) p.octave = b.octave;
+        if (b.transpose !== undefined) p.transpose = b.transpose;
+        if (b.keyboard_on !== undefined) p.keyboard_on = !!b.keyboard_on;
+        this.bump();
+        return this.ack();
+      }
+      case "SetPartArp": {
+        if (!this.partOk(b.part)) return this.err(CODE.INVALID_PART);
+        const p = this.parts[b.part];
+        if (b.arp_mode !== undefined && (b.arp_mode < 0 || b.arp_mode > 4)) return this.err(CODE.OUT_OF_RANGE);
+        if (b.arp_rate !== undefined && (b.arp_rate < 0 || b.arp_rate > 7)) return this.err(CODE.OUT_OF_RANGE);
+        if (b.arp_octaves !== undefined && (b.arp_octaves < 1 || b.arp_octaves > 4)) return this.err(CODE.OUT_OF_RANGE);
+        if (b.arp_gate !== undefined && (b.arp_gate < 1 || b.arp_gate > 200)) return this.err(CODE.OUT_OF_RANGE);
+        if (b.arp_swing !== undefined && (b.arp_swing < 50 || b.arp_swing > 75)) return this.err(CODE.OUT_OF_RANGE);
+        if (b.arp_on !== undefined) p.arp_on = !!b.arp_on;
+        if (b.arp_mode !== undefined) p.arp_mode = b.arp_mode;
+        if (b.arp_rate !== undefined) p.arp_rate = b.arp_rate;
+        if (b.arp_octaves !== undefined) p.arp_octaves = b.arp_octaves;
+        if (b.arp_gate !== undefined) p.arp_gate = b.arp_gate;
+        if (b.arp_swing !== undefined) p.arp_swing = b.arp_swing;
+        if (b.arp_latch !== undefined) p.arp_latch = !!b.arp_latch;
+        this.bump();
+        return this.ack();
+      }
       default: return this.err(CODE.INVALID_COMMAND, name);
     }
   }
