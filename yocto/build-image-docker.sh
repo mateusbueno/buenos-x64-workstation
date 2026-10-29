@@ -87,6 +87,9 @@ kas checkout yocto/kas/build-dev.yml
 echo "==> Running kas build for target velora-image-dev..."
 kas build yocto/kas/build-dev.yml
 
+echo "==> Running bitbake for target velora-bundle-dev..."
+kas shell yocto/kas/build-dev.yml -c "bitbake velora-bundle-dev"
+
 DEPLOY_DIR="$KAS_BUILD_DIR/tmp/deploy/images/rock-5b"
 if [ -d "$DEPLOY_DIR" ]; then
     echo "==> Copying build artifacts to /out..."

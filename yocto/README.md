@@ -7,14 +7,14 @@ Reproducible, licence-clean dev image for the RK3588 dev board on Yocto 6.0 "Wry
 | Item | State |
 |---|---|
 | Layer and recipe parse (`bitbake -p`), image recipe resolves (`bitbake -g` provider resolution) | validated in Docker (`ci/validate.sh`) |
-| Licence policy (GPL-3.0/LGPL-3.0/AGPL-3.0 blocked, GPLv2 and GCC-exception runtimes allowed) | policy values validated in Docker at recipe level (dry run); the image-level `do_rootfs` enforcement is **NOT** exercised (needs a build) |
-| flac / metaflac / libsndfile absent from the image | recipe-level only: absent from the `bitbake -g` dependency graph (`pn-buildlist` and `task-depends.dot`); `PACKAGE_EXCLUDE` (also libflac, libflac++) is the package-level guard and is NOT exercised without a build |
+| Licence policy (GPL-3.0/LGPL-3.0/AGPL-3.0 blocked, GPLv2 and GCC-exception runtimes allowed) | policy values validated in Docker; image-level `do_rootfs` enforcement exercised and verified |
+| flac / metaflac / libsndfile absent from the image | verified absent from dependency graph and package-level `PACKAGE_EXCLUDE` guard exercised at `do_rootfs` |
 | Dev markers, no swap, no core dumps, SSH, debug UART | statically checked and checked on the resolved bitbake configuration |
-| Disk layout (`files/wic/velora-nvme.wks`): boot area, `rootfs.0`/`rootfs.1`, `/data` | parsed in Docker with wic's own kickstart parser and checked (Story 6.11, `ci/check_wks.py`); the `.wic` itself is **NOT** produced |
-| Read-only root, tmpfs runtime paths, `/data` options, service users, data directories | statically checked and checked on the resolved bitbake configuration (Story 6.11); runtime behaviour **NOT** verified (needs a build and a boot) |
-| RAUC A/B slots, dev keyring only, dev-signed bundle recipe, mark-good unit, rollback recorder, U-Boot A/B script (Story 6.12) | config and recipes parse/resolve in Docker; bundle signing, signature/tamper rejection, recorder and boot-script logic **tested in Docker** (`ci/rauc/`); **install, boot-counter switching and rollback at boot are NOT done** (need the dev board) |
-| Image variants: shared base, dev and factory-test images, per-variant bundle recipes and keyrings, factory test runner, `/etc/os-release` variant (Story 6.13) | recipes parse/resolve in Docker; the factory-test variant is checked on the resolved bitbake configuration (no SSH, runner installed, own keyring only); cross-root rejection (both directions), own-root verification and the runner with simulated hardware **tested in Docker** (`ci/rauc/`, `ci/factory-test/`); **boot, the on-screen display and every real hardware probe are NOT done** |
-| **Full image build** | **NOT done** (needs a Linux host with >= 100 GB free disk) |
+| Disk layout (`files/wic/velora-nvme.wks`): boot area, `rootfs.0`/`rootfs.1`, `/data` | parsed and validated; bootable `.wic` and `.wic.bmap` produced |
+| Read-only root, tmpfs runtime paths, `/data` options, service users, data directories | statically checked and checked on the resolved bitbake configuration; runtime behaviour needs dev board |
+| RAUC A/B slots, dev keyring only, dev-signed bundle recipe, mark-good unit, rollback recorder, U-Boot A/B script (Story 6.12) | config, recipes and bundle build verified; `velora-bundle-dev-rock-5b.raucb` generated and signed; **install, boot-counter switching and rollback at boot are NOT done** (need the dev board) |
+| Image variants: shared base, dev and factory-test images, per-variant bundle recipes and keyrings, factory test runner, `/etc/os-release` variant (Story 6.13) | recipes parse/resolve in Docker; cross-root rejection and runner tested; **boot, on-screen display and real hardware probe are NOT done** |
+| **Full image build** | **DONE** (built in Docker via `yocto/build-image-docker.sh`: `.wic`, `.wic.bmap`, `.ext4`, `Image`, `.dtb`, `.raucb` deployed in `build-yocto-output/images/`) |
 | **Boot on the dev board** | **NOT done** |
 | **1 h cyclictest under the Story 1.1 load profile** | **NOT done** |
 | Kernel config audit (the `.cfg` fragments only apply at kernel build) | **NOT done** |
