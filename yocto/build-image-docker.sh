@@ -54,7 +54,7 @@ docker run --rm \
     "$IMAGE_NAME" bash -c '
 set -euo pipefail
 PROJ=/work/proj
-mkdir -p "$PROJ/yocto"
+mkdir -p "$PROJ/yocto" "$PROJ/.yocto-work/build"
 rsync -a --delete --exclude .yocto-work /src/yocto/ "$PROJ/yocto/"
 cd "$PROJ"
 
