@@ -102,6 +102,9 @@ if(Python3_Interpreter_FOUND)
   # Story 8.2: Production release signing, per-root update bundles, and release record traceability.
   add_test(NAME release_sign_selftest
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/release-sign/velora_release_sign.py --self-test)
+  # Story 8.4: Build-time MCU firmware manifest verifier.
+  add_test(NAME mcu_manifest_selftest
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/mcu-manifest/verify_mcu_manifest.py --self-test)
   # Story 9.5: Velora Studio desktop app shell and Rust ws.v1 type link
   find_program(CARGO_EXECUTABLE cargo HINTS "$ENV{HOME}/.cargo/bin")
   if(CARGO_EXECUTABLE)

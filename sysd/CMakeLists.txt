@@ -6,7 +6,8 @@ add_library(velora_sysd_service STATIC
   src/config_service.cpp
   src/config_server.cpp
   src/pairing.cpp
-  src/bridge_server.cpp)
+  src/bridge_server.cpp
+  src/mcu_boot_checker.cpp)
 add_library(velora::sysd_service ALIAS velora_sysd_service)
 target_include_directories(velora_sysd_service PUBLIC include)
 target_link_libraries(velora_sysd_service PUBLIC velora_control velora_library_api Threads::Threads)
@@ -45,3 +46,9 @@ add_executable(sysd_bridge_tests tests/bridge_test.cpp)
 target_link_libraries(sysd_bridge_tests PRIVATE velora_sysd_service velora_sysdctl_client)
 add_test(NAME sysd_bridge_tests COMMAND sysd_bridge_tests)
 set_tests_properties(sysd_bridge_tests PROPERTIES TIMEOUT 180)
+
+# Story 8.4: MCU firmware manifest in the A/B image and boot-time version check / dual-bank reflash.
+add_executable(sysd_mcu_boot_checker_test tests/mcu_boot_checker_test.cpp)
+target_link_libraries(sysd_mcu_boot_checker_test PRIVATE velora_sysd_service)
+add_test(NAME sysd_mcu_boot_checker_test COMMAND sysd_mcu_boot_checker_test)
+set_tests_properties(sysd_mcu_boot_checker_test PROPERTIES TIMEOUT 60)
