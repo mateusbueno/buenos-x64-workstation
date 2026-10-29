@@ -2,6 +2,8 @@ SUMMARY = "Velora system policy: data directories (AD-9), no swap, no core dumps
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COREBASE}/meta/COPYING.MIT;md5=3da9cfbcb788c80a0384361b4de20420"
 
+FILESEXTRAPATHS:prepend := "${THISDIR}/../../../..:"
+
 SRC_URI = " \
     file://50-velora-sysctl.conf \
     file://10-velora-coredump.conf \
@@ -9,6 +11,7 @@ SRC_URI = " \
     file://10-velora-journal.conf \
     file://20-velora-wired.network \
     file://10-velora-data.conf \
+    file://THIRD_PARTY_NOTICES.md \
 "
 S = "${UNPACKDIR}"
 
@@ -30,8 +33,11 @@ do_install() {
     # Mask swap.target. Individual .swap units/generators (fstab, GPT) are covered by the kernel having no swap (CONFIG_SWAP off) and by no swap entry in fstab/wks.
     install -d ${D}${sysconfdir}/systemd/system
     ln -sf /dev/null ${D}${sysconfdir}/systemd/system/swap.target
+    install -d ${D}${datadir}/licenses/velora
+    install -m 0644 ${UNPACKDIR}/THIRD_PARTY_NOTICES.md ${D}${datadir}/licenses/velora/THIRD_PARTY_NOTICES.md
 }
 
 FILES:${PN} = "${sysconfdir}"
+FILES:${PN} += "${datadir}/licenses/velora"
 # the tmpfiles.d entries name these users
 RDEPENDS:${PN} += "velora-service-users"

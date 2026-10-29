@@ -61,7 +61,10 @@ for src, dst in (
     need(f"{src} installed to its destination", REC, r"install -m 0644 \$\{UNPACKDIR\}/" + re.escape(src) + " " + dst)
     need(f"{src} listed in SRC_URI", REC, r"file://" + re.escape(src))
 need("swap.target symlink to /dev/null", REC, r"ln -sf /dev/null \$\{D\}\$\{sysconfdir\}/systemd/system/swap\.target")
+need("THIRD_PARTY_NOTICES.md listed in SRC_URI", REC, r"file://THIRD_PARTY_NOTICES\.md")
+need("THIRD_PARTY_NOTICES.md installed to /usr/share/licenses/velora", REC, r"install -m 0644 \$\{UNPACKDIR\}/THIRD_PARTY_NOTICES\.md \$\{D\}\$\{datadir\}/licenses/velora/THIRD_PARTY_NOTICES\.md")
 need("FILES covers sysconfdir", REC, r'^FILES:\$\{PN\} = "\$\{sysconfdir\}"')
+need("FILES covers /usr/share/licenses/velora", REC, r'^FILES:\$\{PN\} \+= "\$\{datadir\}/licenses/velora"$')
 need("kernel fragment owns CONFIG_EXPERT", f"{M}/recipes-kernel/linux/files/velora-dev.cfg", r"^CONFIG_EXPERT=y$")
 # bounded RAM journal
 need("journal volatile", f"{CFG}/10-velora-journal.conf", r"^Storage=volatile$")

@@ -430,6 +430,35 @@ html, body {
   display: block;
 }
 
+/* About & Third-Party Notices Modal (Story 11.12) */
+.about-modal {
+  width: 44rem;
+  max-width: 90vw;
+  max-height: 85vh;
+}
+.about-subheading {
+  margin: 0 0 var(--spacing-2) 0;
+  font-size: var(--font-desktop-section-label);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.about-notices-box {
+  margin: 0;
+  padding: var(--spacing-3);
+  max-height: 24rem;
+  overflow-y: auto;
+  background-color: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-desktop-body);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Export Modal & Tables (Story 9.18) */
 .export-modal {
   width: 44rem;

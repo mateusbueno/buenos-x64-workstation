@@ -73,6 +73,7 @@
           <button type="button" class="sidebar-item" id="side-firmware" data-i18n="studio.sidebar.firmware">Firmware</button>
           <button type="button" class="sidebar-item" id="side-backups" data-i18n="studio.sidebar.backups">Backups</button>
           <button type="button" class="sidebar-item" id="side-settings" data-i18n="studio.sidebar.settings">Settings</button>
+          <button type="button" class="sidebar-item" id="side-about" data-i18n="studio.about.title">About Velora Studio</button>
         </section>
       </nav>
 
@@ -648,9 +649,28 @@
           <option value="pt-BR" data-i18n="studio.settings.lang_pt_br">Português (Brasil)</option>
         </select>
       </div>
+
+      <div class="setting-group">
+        <button type="button" class="btn" id="btn-open-about" data-i18n="studio.about.btn_open">About &amp; Third-Party Notices</button>
+      </div>
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-primary" id="btn-close-settings" data-i18n="studio.settings.close">Close</button>
+    </div>
+  </dialog>
+
+  <!-- About & Third-Party Notices Modal (Story 11.12) -->
+  <dialog class="modal about-modal" id="about-modal" aria-labelledby="about-title">
+    <div class="modal-header">
+      <h2 class="modal-title" id="about-title" data-i18n="studio.about.title">About Velora Studio</h2>
+      <button type="button" class="btn" id="btn-close-about-x" aria-label="Close" data-i18n="studio.about.close">Close</button>
+    </div>
+    <div class="modal-body">
+      <h3 class="about-subheading" id="about-notices-heading" data-i18n="studio.about.third_party_notices">Third-Party Notices</h3>
+      <pre class="about-notices-box" id="about-notices-content" tabindex="0" aria-labelledby="about-notices-heading"></pre>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-primary" id="btn-close-about" data-i18n="studio.about.close">Close</button>
     </div>
   </dialog>
 

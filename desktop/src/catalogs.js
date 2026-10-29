@@ -786,7 +786,11 @@ export const CATALOGS = {
     "studio.device.diagnostics_failed": "Failed to export diagnostics: %s",
     "studio.device.offline_title": "No Velora connected",
     "studio.device.offline_body": "Connect your Velora via USB to inspect hardware status, storage breakdown, and diagnostics.",
-    "studio.device.offline_hint": "Device information is only available when a Velora is paired."
+    "studio.device.offline_hint": "Device information is only available when a Velora is paired.",
+    "studio.about.title": "About Velora Studio",
+    "studio.about.btn_open": "About & Third-Party Notices",
+    "studio.about.third_party_notices": "Third-Party Notices",
+    "studio.about.close": "Close"
   },
   es: {
     "studio.title_bar.app_name": "Velora Studio",
@@ -1573,7 +1577,11 @@ export const CATALOGS = {
     "studio.device.diagnostics_failed": "Error al exportar diagnóstico: %s",
     "studio.device.offline_title": "No hay ningún Velora conectado",
     "studio.device.offline_body": "Conecte su Velora por USB para ver el estado del hardware, almacenamiento y diagnósticos.",
-    "studio.device.offline_hint": "La información del dispositivo solo está disponible cuando un Velora está emparejado."
+    "studio.device.offline_hint": "La información del dispositivo solo está disponible cuando un Velora está emparejado.",
+    "studio.about.title": "Acerca de Velora Studio",
+    "studio.about.btn_open": "Acerca de y avisos de terceros",
+    "studio.about.third_party_notices": "Avisos de software de terceros",
+    "studio.about.close": "Cerrar"
   },
   "pt-BR": {
     "studio.title_bar.app_name": "Velora Studio",
@@ -2360,6 +2368,10 @@ export const CATALOGS = {
     "studio.device.diagnostics_failed": "Falha ao exportar diagnóstico: %s",
     "studio.device.offline_title": "Nenhum Velora conectado",
     "studio.device.offline_body": "Conecte seu Velora via USB para inspecionar o status do hardware, armazenamento e diagnósticos.",
-    "studio.device.offline_hint": "As informações do dispositivo só estão disponíveis quando um Velora estiver emparelhado."
+    "studio.device.offline_hint": "As informações do dispositivo só estão disponíveis quando um Velora estiver emparelhado.",
+    "studio.about.title": "Sobre o Velora Studio",
+    "studio.about.btn_open": "Sobre e avisos de terceiros",
+    "studio.about.third_party_notices": "Avisos de software de terceiros",
+    "studio.about.close": "Fechar"
   }
 };

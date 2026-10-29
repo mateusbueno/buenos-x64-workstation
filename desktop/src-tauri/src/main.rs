@@ -1057,6 +1057,11 @@ async fn device_send_firmware_update(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn get_third_party_notices() -> String {
+    include_str!("../../../THIRD_PARTY_NOTICES.md").to_string()
+}
+
 fn make_device_handle() -> DeviceHandle {
     let app: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let app2 = app.clone();
@@ -1166,6 +1171,7 @@ fn main() {
             device_inspect_firmware_bundle,
             device_send_firmware_update,
             device_cancel_firmware_update,
+            get_third_party_notices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");
@@ -1281,5 +1287,17 @@ mod tests {
         let algo = dev.live_sets[0].parts[1].engine.as_ref().unwrap()
             .params.iter().find(|p| p.param_id == 1000).unwrap();
         assert_eq!(algo.value, 16.0);
+    }
+
+    #[test]
+    fn test_third_party_notices_embedded() {
+        let notices = get_third_party_notices();
+        assert!(!notices.is_empty());
+        assert!(notices.contains("# Third-Party Notices"));
+        assert!(notices.contains("## 1. sfizz 1.2.3"));
+        assert!(notices.contains("## 2. Abseil C++"));
+        assert!(notices.contains("## 5. Protocol Buffers"));
+        assert!(notices.contains("## 6. SQLite"));
+        assert!(notices.contains("## 8. LVGL 9.6.0"));
     }
 }

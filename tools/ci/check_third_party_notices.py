@@ -153,6 +153,31 @@ def check(root):
     if not notices:
         errors.append("THIRD_PARTY_NOTICES.md missing or empty")
     errors += check_vendored_sfizz(root)
+    yocto_recipe = os.path.join(
+        root,
+        "yocto",
+        "meta-velora",
+        "recipes-core",
+        "velora-system-config",
+        "velora-system-config_1.0.bb",
+    )
+    if os.path.exists(yocto_recipe):
+        with open(yocto_recipe, encoding="utf-8") as fh:
+            rec_text = fh.read()
+        if "file://THIRD_PARTY_NOTICES.md" not in rec_text or "${datadir}/licenses/velora/THIRD_PARTY_NOTICES.md" not in rec_text:
+            errors.append("velora-system-config_1.0.bb: THIRD_PARTY_NOTICES.md must be installed into /usr/share/licenses/velora/")
+    studio_main = os.path.join(root, "desktop", "src-tauri", "src", "main.rs")
+    if os.path.exists(studio_main):
+        with open(studio_main, encoding="utf-8") as fh:
+            main_text = fh.read()
+        if 'include_str!("../../../THIRD_PARTY_NOTICES.md")' not in main_text or "get_third_party_notices" not in main_text:
+            errors.append("desktop/src-tauri/src/main.rs: get_third_party_notices must embed THIRD_PARTY_NOTICES.md")
+    studio_html = os.path.join(root, "desktop", "src", "index.html")
+    if os.path.exists(studio_html):
+        with open(studio_html, encoding="utf-8") as fh:
+            html_text = fh.read()
+        if 'id="about-modal"' not in html_text or 'id="about-notices-content"' not in html_text:
+            errors.append("desktop/src/index.html: About modal must display third-party notices (#about-modal / #about-notices-content)")
     for c in manifest["components"]:
         if "vendored_dir" in c and not os.path.isdir(os.path.join(root, c["vendored_dir"])):
             errors.append(f"{c['name']}: vendored_dir {c['vendored_dir']} does not exist")

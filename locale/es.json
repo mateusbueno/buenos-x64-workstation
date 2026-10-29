@@ -1202,5 +1202,9 @@
   "studio.device.diagnostics_failed": "Error al exportar diagnóstico: %s",
   "studio.device.offline_title": "No hay ningún Velora conectado",
   "studio.device.offline_body": "Conecte su Velora por USB para ver el estado del hardware, almacenamiento y diagnósticos.",
-  "studio.device.offline_hint": "La información del dispositivo solo está disponible cuando un Velora está emparejado."
+  "studio.device.offline_hint": "La información del dispositivo solo está disponible cuando un Velora está emparejado.",
+  "studio.about.title": "Acerca de Velora Studio",
+  "studio.about.btn_open": "Acerca de y avisos de terceros",
+  "studio.about.third_party_notices": "Avisos de software de terceros",
+  "studio.about.close": "Cerrar"
 }

@@ -1,7 +1,7 @@
 
 ## Deferred from: code review of spec-11-12 (2026-10-19)
 
-- Install `THIRD_PARTY_NOTICES.md` in the image and show it in Velora Studio's About (Story 11.12 AC2, first Then). Dependency recorded in Story 11.12 text; still needs an image-build task and a Studio About screen. Until then the obligation is unmet for any shipped binary.
+- **RESOLVED (2026-10-29):** Installed `THIRD_PARTY_NOTICES.md` into the Yocto image at `/usr/share/licenses/velora/THIRD_PARTY_NOTICES.md` via `yocto/meta-velora/recipes-core/velora-system-config/velora-system-config_1.0.bb` and exposed `THIRD_PARTY_NOTICES.md` in Velora Studio's About modal (`#about-modal` in `desktop/src/index.html` backed by `get_third_party_notices` in `desktop/src-tauri/src/main.rs`), verified by `yocto/ci/static_checks.py`, `tools/ci/check_third_party_notices.py`, and `desktop/tests/catalogs.test.js`.
 
 ## Founder decisions (2026-10-19) — applied
 

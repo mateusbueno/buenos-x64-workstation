@@ -65,9 +65,9 @@ Note: `Defaults.cpp` lacks a per-file SPDX header; upstream `LICENSE` (BSD-2-Cla
 ## Follow-ups (not blocking this story)
 
 1. Story 1.13: vendor only the files above; keep this table in sync; consider replacing ghc::filesystem with `std::filesystem` (C++20) to drop one dependency.
-2. Velora Studio About screen and the image's `/usr/share/licenses` copy of `THIRD_PARTY_NOTICES.md` are wired in the stories that build those surfaces; this story supplies the content.
+2. Velora Studio About screen (`#about-modal` in `desktop/src/index.html`, `get_third_party_notices` in `desktop/src-tauri/src/main.rs`) and the image's `/usr/share/licenses/velora/THIRD_PARTY_NOTICES.md` (`velora-system-config_1.0.bb`) are wired and verified by CI (`yocto/ci/static_checks.py` and `tools/ci/check_third_party_notices.py`).
 3. Re-run the check whenever Story 1.13 changes the vendored set. The CI script verifies the manifest file list against the table above, notice headings against pinned versions, and any file under `vendor_dirs` against the list.
-4. Open item (AC2, first Then): install `THIRD_PARTY_NOTICES.md` in the image and show it in Velora Studio's About. Tracked in `deferred-work.md`.
+4. Resolved (AC2, first Then, 2026-10-29): `THIRD_PARTY_NOTICES.md` is installed in the Yocto image and shown in Velora Studio's About modal.
 
 ## Vendoring conditions for Story 1.13
 

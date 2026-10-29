@@ -48,3 +48,26 @@ test("placeholder sequences (%d / %s) are identical in en, es and pt-BR", () => 
     for (const lang of ["es", "pt-BR"]) assert.equal(seq(CATALOGS[lang][k]), seq(CATALOGS.en[k]), `${lang}: ${k}`);
   }
 });
+
+// Story 11.12: Velora Studio About modal embeds THIRD_PARTY_NOTICES.md and exposes localized About keys.
+test("About modal and loadThirdPartyNotices wire THIRD_PARTY_NOTICES.md", async () => {
+  const { loadThirdPartyNotices } = await import("../src/app.js");
+  const noticesFile = fs.readFileSync(new URL("../../THIRD_PARTY_NOTICES.md", import.meta.url), "utf8");
+  const loaded = await loadThirdPartyNotices(async (cmd) => {
+    assert.equal(cmd, "get_third_party_notices");
+    return noticesFile;
+  });
+  assert.equal(loaded, noticesFile);
+  assert.ok(loaded.includes("# Third-Party Notices"));
+  assert.ok(loaded.includes("## 1. sfizz 1.2.3"));
+  assert.ok(loaded.includes("## 8. LVGL 9.6.0"));
+
+  const fallback = await loadThirdPartyNotices(null);
+  assert.ok(fallback.includes("THIRD_PARTY_NOTICES.md"));
+
+  const html = fs.readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  assert.ok(html.includes('id="about-modal"'));
+  assert.ok(html.includes('id="about-notices-content"'));
+  assert.ok(html.includes('id="btn-open-about"'));
+  assert.ok(html.includes('id="side-about"'));
+});

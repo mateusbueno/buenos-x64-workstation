@@ -277,6 +277,20 @@ export class FocusManager {
   }
 }
 
+export async function loadThirdPartyNotices(invokeFn) {
+  if (typeof invokeFn === "function") {
+    try {
+      const text = await invokeFn("get_third_party_notices");
+      if (typeof text === "string" && text.trim().length > 0) {
+        return text;
+      }
+    } catch (_) {
+      // Fall back below when running outside the Tauri runtime.
+    }
+  }
+  return "# Third-Party Notices\n\nSee THIRD_PARTY_NOTICES.md in the Velora distribution.";
+}
+
 function announce(message, isWarning = false) {
   const liveRegion = document.getElementById("live-region");
   if (liveRegion) {
@@ -345,6 +359,8 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Settings Modal Controls
   const modal = document.getElementById("settings-modal");
+  const aboutModal = document.getElementById("about-modal");
+  const aboutNoticesContent = document.getElementById("about-notices-content");
   const restoreModal = document.getElementById("restore-modal");
   const backdrop = document.getElementById("modal-backdrop");
   const themeSelect = document.getElementById("theme-select");
@@ -379,15 +395,35 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const closeModals = () => {
     if (modal) modal.classList.remove("active");
+    if (aboutModal) aboutModal.classList.remove("active");
     if (restoreModal) restoreModal.classList.remove("active");
     if (backdrop) backdrop.classList.remove("active");
+  };
+
+  const openAbout = async () => {
+    if (!aboutModal) return;
+    if (modal) modal.classList.remove("active");
+    aboutModal.classList.add("active");
+    if (backdrop) backdrop.classList.add("active");
+    if (aboutNoticesContent && !aboutNoticesContent.textContent) {
+      const invokeFn = window.__TAURI__?.core?.invoke
+        ? (cmd) => window.__TAURI__.core.invoke(cmd)
+        : null;
+      aboutNoticesContent.textContent = await loadThirdPartyNotices(invokeFn);
+    }
+    const closeBtn = document.getElementById("btn-close-about");
+    if (closeBtn) closeBtn.focus();
   };
 
   document.getElementById("btn-open-settings")?.addEventListener("click", openSettings);
   document.getElementById("side-settings")?.addEventListener("click", openSettings);
   document.getElementById("btn-offline-settings")?.addEventListener("click", openSettings);
+  document.getElementById("btn-open-about")?.addEventListener("click", openAbout);
+  document.getElementById("side-about")?.addEventListener("click", openAbout);
   document.getElementById("btn-close-settings")?.addEventListener("click", closeModals);
   document.getElementById("btn-close-settings-x")?.addEventListener("click", closeModals);
+  document.getElementById("btn-close-about")?.addEventListener("click", closeModals);
+  document.getElementById("btn-close-about-x")?.addEventListener("click", closeModals);
   document.getElementById("btn-close-restore-x")?.addEventListener("click", closeModals);
   document.getElementById("btn-cancel-restore")?.addEventListener("click", closeModals);
   backdrop?.addEventListener("click", closeModals);
@@ -395,6 +431,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const isAnyModalOpen = () => {
     return Boolean(
       (modal && modal.classList.contains("active")) ||
+      (aboutModal && aboutModal.classList.contains("active")) ||
       (restoreModal && restoreModal.classList.contains("active")) ||
       (backdrop && backdrop.classList.contains("active")) ||
       document.querySelector(".modal-dialog-container")
