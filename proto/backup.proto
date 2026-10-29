@@ -25,3 +25,52 @@ message VeloraBackup {
   repeated string favorites = 8;      // Live Set UUIDv4 strings
   repeated velora.liveset.v1.LiveSet live_sets = 9;
 }
+
+// Story 9.18: Partial exports (.velorasets, .veloratimbre)
+enum ExportScope {
+  EXPORT_SCOPE_UNSPECIFIED = 0;
+  EXPORT_SCOPE_SETS = 1;
+  EXPORT_SCOPE_TIMBRES = 2;
+  EXPORT_SCOPE_BUNDLE = 3;
+}
+
+message ExportItemManifest {
+  string id = 1;                      // Live Set UUID or timbre key
+  string name = 2;                    // Display name
+  string category = 3;                // Category display name
+  uint64 size_bytes = 4;              // Byte size (0 for reference-only factory/partner timbres)
+  bool is_reference_only = 5;         // True for factory and partner timbres
+  string item_type = 6;               // "live_set" | "timbre"
+  string library_id = 7;
+  string instrument_key = 8;
+}
+
+message ExportTimbrePayload {
+  string library_id = 1;
+  string instrument_key = 2;
+  string name = 3;
+  string category = 4;
+  bool is_reference_only = 5;         // True for factory/partner timbres
+  bytes bundle_data = 6;              // Lossless formatlib bundle bytes (user timbres only; never factory)
+}
+
+message VeloraSetsExport {
+  uint32 format_version = 1;          // FormatVersion (AD-12: N=1)
+  string device_model = 2;            // e.g. "Velora 73"
+  string firmware_version = 3;        // e.g. "1.4.0"
+  string export_time = 4;             // ISO-8601 UTC timestamp
+  ExportScope scope = 5;              // EXPORT_SCOPE_SETS or EXPORT_SCOPE_BUNDLE
+  repeated ExportItemManifest manifest = 6;
+  repeated velora.liveset.v1.LiveSet live_sets = 7;
+  repeated ExportTimbrePayload timbres = 8; // In bundle scope
+}
+
+message VeloraTimbreExport {
+  uint32 format_version = 1;          // FormatVersion (AD-12: N=1)
+  string device_model = 2;            // e.g. "Velora 73"
+  string firmware_version = 3;        // e.g. "1.4.0"
+  string export_time = 4;             // ISO-8601 UTC timestamp
+  repeated ExportItemManifest manifest = 5;
+  repeated ExportTimbrePayload timbres = 6;
+}
+

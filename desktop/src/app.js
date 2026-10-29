@@ -26,6 +26,8 @@ import { TimbrePickerController } from "./timbre_picker.js";
 import { TimbrePickerView } from "./timbre_picker_dom.js";
 import { WriteController, foldName } from "./write_to_velora.js";
 import { WriteBannerView, WriteDialogView, announceText } from "./write_to_velora_dom.js";
+import { ExportController, EXPORT_SCOPE } from "./export_dialog.js";
+import { ExportDialogView } from "./export_dialog_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -1696,6 +1698,154 @@ window.addEventListener("DOMContentLoaded", () => {
     window.__TAURI__.core.invoke("device_status").then(applyDeviceStatus).catch(() => {});
     window.__TAURI__.core.invoke("device_state").then((st) => { if (st) { deviceStore.state = st; onDeviceState(st); } }).catch(() => {});
   }
+
+  // Backup, Restore and Export actions (Story 9.16, 9.17, 9.18)
+  const exportHost = document.getElementById("export-dialog-host") || document.body;
+  let exportCtl = null;
+  let exportView = null;
+
+  async function openExportDialog({ scope = EXPORT_SCOPE.BUNDLE, preselectLiveSetId = null, preselectTimbreKey = null } = {}) {
+    let currentLiveSets = [];
+    let currentTimbres = [];
+
+    // Try to get live sets from state or device
+    if (window.__TAURI__?.core?.invoke) {
+      try {
+        const state = await window.__TAURI__.core.invoke("get_current_device_state");
+        if (state && Array.isArray(state.live_sets)) {
+          currentLiveSets = state.live_sets;
+        }
+      } catch (e) {
+        // fallback
+      }
+      try {
+        const timbresResp = await window.__TAURI__.core.invoke("device_library_timbres");
+        if (timbresResp && Array.isArray(timbresResp.timbres)) {
+          currentTimbres = timbresResp.timbres;
+        }
+      } catch (e) {
+        // fallback
+      }
+    }
+
+    if (currentLiveSets.length === 0 && deviceStore?.state?.live_sets) {
+      currentLiveSets = deviceStore.state.live_sets;
+    }
+
+    const defaultExt = scope === EXPORT_SCOPE.TIMBRES ? ".veloratimbre" : ".velorasets";
+    const defaultName = `Export_${new Date().toISOString().slice(0, 10)}${defaultExt}`;
+
+    if (!exportCtl) {
+      exportCtl = new ExportController({
+        liveSets: currentLiveSets,
+        timbres: currentTimbres,
+        onExport: async (params) => {
+          const footerBackup = document.getElementById("footer-backup-status");
+          const originalFooter = footerBackup ? footerBackup.textContent : "";
+          if (footerBackup) {
+            footerBackup.textContent = localeMgr.tr("studio.export.running_footer").replace("%s", "0 B").replace("%s", "...");
+          }
+          try {
+            const target = params.target_path || defaultName;
+            const fullParams = {
+              target_path: target,
+              scope: params.scope,
+              live_set_ids: params.live_set_ids,
+              timbre_keys: params.timbre_keys,
+              user_bundles: {},
+            };
+            if (window.__TAURI__?.core?.invoke) {
+              const res = await window.__TAURI__.core.invoke("export_selection", { params: fullParams });
+              exportCtl.finishExport({
+                fileName: res.file_name,
+                liveSetCount: res.live_set_count,
+                timbreCount: res.timbre_count,
+              });
+              exportView.close();
+            } else {
+              exportCtl.finishExport({
+                fileName: target,
+                liveSetCount: params.live_set_ids.length,
+                timbreCount: params.timbre_keys.length,
+              });
+              exportView.close();
+            }
+          } catch (err) {
+            announce(localeMgr.tr("studio.export.announced_failed").replace("%s", String(err)), true);
+            exportCtl.cancelExport();
+          } finally {
+            if (footerBackup) footerBackup.textContent = originalFooter;
+          }
+        },
+        onCancel: () => {
+          if (window.__TAURI__?.core?.invoke) {
+            window.__TAURI__.core.invoke("cancel_export").catch(() => {});
+          }
+        },
+        onAnnounce: (msg) => {
+          announce(msg);
+        },
+      });
+
+      exportView = new ExportDialogView({
+        doc: document,
+        host: exportHost,
+        tr: (k, ...args) => {
+          let s = localeMgr.tr(k);
+          for (const a of args) {
+            s = s.replace(/%[ds]/, a);
+          }
+          return s;
+        },
+        controller: exportCtl,
+        restore: document.getElementById("btn-export") || document.getElementById("main-region"),
+      });
+
+      exportCtl.onChange = () => {
+        exportView.render();
+      };
+    } else {
+      exportCtl.setAvailableData({ liveSets: currentLiveSets, timbres: currentTimbres });
+    }
+
+    exportCtl.open({
+      scope,
+      preselectLiveSetId,
+      preselectTimbreKey,
+      targetPath: defaultName,
+    });
+    exportView.open();
+  }
+
+  document.getElementById("btn-export")?.addEventListener("click", () => {
+    openExportDialog({ scope: EXPORT_SCOPE.BUNDLE });
+  });
+
+  document.getElementById("btn-offline-export")?.addEventListener("click", () => {
+    openExportDialog({ scope: EXPORT_SCOPE.BUNDLE });
+  });
+
+  // Context menu right-click on Live Set or Timbre
+  document.addEventListener("contextmenu", (e) => {
+    const liveSetRow = e.target.closest && e.target.closest("[data-live-set-id]");
+    if (liveSetRow) {
+      e.preventDefault();
+      const lsId = liveSetRow.getAttribute("data-live-set-id");
+      openExportDialog({ scope: EXPORT_SCOPE.SETS, preselectLiveSetId: lsId });
+      return;
+    }
+    const partStrip = e.target.closest && e.target.closest("[data-part-index]");
+    if (partStrip) {
+      const partIdx = parseInt(partStrip.getAttribute("data-part-index"), 10);
+      const activeLs = liveCtl?.model;
+      const part = activeLs?.parts && activeLs.parts[partIdx];
+      if (part && part.timbre && part.timbre.library_id) {
+        e.preventDefault();
+        const timbreKey = `${part.timbre.library_id}:${part.timbre.instrument_key || ""}`;
+        openExportDialog({ scope: EXPORT_SCOPE.TIMBRES, preselectTimbreKey: timbreKey });
+      }
+    }
+  });
 
   // Backup and Restore actions
   document.getElementById("btn-backup")?.addEventListener("click", () => {

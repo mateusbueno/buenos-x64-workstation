@@ -35,8 +35,10 @@ pub use velora::backup::v1 as backup_v1;
 
 pub mod backup_restore;
 pub mod device;
+pub mod export_import;
 
 use backup_restore::*;
+use export_import::*;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -431,6 +433,37 @@ fn perform_restore_cmd(
     Ok(result)
 }
 
+#[tauri::command]
+fn estimate_export_size(
+    params: ExportEstimateParams,
+    state: State<AppState>,
+) -> Result<ExportEstimateResult, String> {
+    let dev = state.device.lock().unwrap();
+    Ok(compute_export_estimate(&dev.live_sets, &params))
+}
+
+#[tauri::command]
+fn export_selection(
+    params: ExportSelectionParams,
+    state: State<AppState>,
+) -> Result<ExportResult, String> {
+    let dev = state.device.lock().unwrap();
+    let export_time = chrono_now();
+    perform_export(
+        &dev.live_sets,
+        &dev.device_model,
+        &dev.firmware_version,
+        export_time,
+        params,
+    )
+}
+
+#[tauri::command]
+fn cancel_export() -> Result<(), String> {
+    request_cancel();
+    Ok(())
+}
+
 // ---- device connection (Foundation: Velora Studio device connection) --------------------------------------------------------------------------------
 // The real link to a unit through the sysd bridge. The simulated device above stays as the offline fallback: the UI follows this status only once a device
 // address is configured (`device_connect`, or the VELORA_DEVICE=host:port environment variable at startup).
@@ -588,6 +621,9 @@ fn main() {
             device_state,
             device_request,
             device_library_timbres,
+            estimate_export_size,
+            export_selection,
+            cancel_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");

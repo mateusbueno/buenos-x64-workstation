@@ -240,7 +240,7 @@ development_status:
   9-15-library-transfer-to-the-unit: backlog
   9-16-backup-to-a-velorabackup-file: done
   9-17-restore-with-merge-or-replace-and-offline-backup-editing: done
-  9-18-export-selected-live-sets-and-timbres-individually-or-as-a-b: backlog
+  9-18-export-selected-live-sets-and-timbres-individually-or-as-a-b: done
   9-19-import-partial-exports-with-per-item-merge-decisions: backlog
   9-20-send-firmware-from-velora-studio: backlog
   9-21-device-view-and-diagnostics-export: backlog

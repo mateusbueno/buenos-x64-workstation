@@ -358,6 +358,101 @@ html, body {
   display: block;
 }
 
+/* Export Modal & Tables (Story 9.18) */
+.export-modal {
+  width: 44rem;
+  max-width: 90vw;
+  max-height: 85vh;
+}
+.export-modal.active, dialog.export-modal[open], dialog.export-modal {
+  display: flex;
+}
+.export-scopes {
+  display: flex;
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-3);
+}
+.export-scopes .scope-button {
+  flex: 1;
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-desktop-sm);
+  cursor: pointer;
+  font-weight: 500;
+  text-align: center;
+}
+.export-scopes .scope-button.active {
+  background: var(--surface-active);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.export-table-container {
+  max-height: 20rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-desktop-sm);
+}
+.export-table {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.export-thead, .export-row {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-2) var(--spacing-3);
+}
+.export-thead {
+  background: var(--surface);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.export-row {
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.export-row:focus {
+  outline: 2px solid var(--accent);
+  background: var(--surface-focus);
+}
+.export-row:last-child {
+  border-bottom: none;
+}
+.col-select { width: 3rem; flex-shrink: 0; }
+.col-name { flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-cat { flex: 1.2; color: var(--muted); }
+.col-size { width: 6rem; text-align: right; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.badge-locked {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-desktop-sm);
+  background: var(--surface);
+  color: var(--muted);
+  margin-left: var(--spacing-2);
+}
+.export-estimate-line {
+  margin-top: var(--spacing-3);
+  font-weight: 500;
+  color: var(--text);
+}
+.export-warning {
+  margin-top: var(--spacing-2);
+  color: #f59e0b;
+  font-size: 0.875rem;
+}
+.export-warning.warn-space {
+  color: #ef4444;
+}
+.export-progress-text {
+  font-weight: 600;
+  color: var(--accent);
+  margin-right: auto;
+}
+
+
 .modal-header {
   display: flex;
   align-items: center;

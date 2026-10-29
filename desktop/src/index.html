@@ -36,6 +36,7 @@
 
       <div class="actions-section">
         <button type="button" class="btn" id="btn-import" data-i18n="studio.title_bar.btn_import">Import</button>
+        <button type="button" class="btn" id="btn-export" data-i18n="studio.title_bar.btn_export">Export…</button>
         <button type="button" class="btn" id="btn-backup" data-i18n="studio.title_bar.btn_backup">Backup</button>
         <button type="button" class="btn" id="btn-restore" data-i18n="studio.restore.btn_confirm">Restore</button>
         <button type="button" class="btn btn-primary" id="btn-write" data-i18n="studio.title_bar.btn_write" disabled title="Connect a Velora">Write to Velora</button>
@@ -84,6 +85,7 @@
           <div class="offline-hint" data-i18n="studio.offline.hint">No device detected on USB ports.</div>
           <div class="offline-actions">
             <button type="button" class="btn" id="btn-open-backup-file" data-i18n="studio.offline.open_backup">Open Backup (.velorabackup)</button>
+            <button type="button" class="btn" id="btn-offline-export" data-i18n="studio.title_bar.btn_export">Export…</button>
             <button type="button" class="btn" id="btn-offline-import" data-i18n="studio.title_bar.btn_import">Import</button>
             <button type="button" class="btn" id="btn-offline-settings" data-i18n="studio.sidebar.settings">Settings</button>
           </div>
@@ -679,6 +681,8 @@
       <button type="button" class="btn btn-primary" id="btn-confirm-restore" data-i18n="studio.restore.btn_confirm">Restore</button>
     </div>
   </dialog>
+
+  <div id="export-dialog-host" class="export-dialog-host"></div>
 
   <script type="module" src="./app.js"></script>
 </body>
