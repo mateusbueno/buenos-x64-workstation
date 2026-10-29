@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-18-2026 19:03
-last_updated: 10-28-2026 18:29
+last_updated: 10-28-2026 22:03
 project: Ladiani Velora 73
 project_key: NOKEY
 tracking_system: file-system
@@ -193,7 +193,7 @@ development_status:
   6-17-som-swap-re-provisioning: backlog
   epic-6-retrospective: optional
 
-  epic-7: in-progress
+  epic-7: done
   7-1-single-tempo-and-transport-clock-on-the-rt-plane: done
   7-2-event-processor-framework-and-arpeggiator-note-generation: done
   7-3-swing-latch-and-arpeggiator-performance-behaviour: done
@@ -203,7 +203,7 @@ development_status:
   7-7-clock-source-setting-and-din-usb-clock-inputs: done
   7-8-top-bar-tempo-clock-source-and-clock-lost-display: done
   7-9-arpeggiator-timing-acceptance-on-the-board: done
-  epic-7-retrospective: optional
+  epic-7-retrospective: done
 
   epic-8: backlog
   8-1-sysd-as-the-sole-installer-from-a-usb-a-stick: backlog
