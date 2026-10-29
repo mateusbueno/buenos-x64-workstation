@@ -36,6 +36,7 @@ import { LibraryViewController } from "./library_view.js";
 import { LibraryView } from "./library_view_dom.js";
 import { PairDialogController } from "./pair_dialog.js";
 import { PairDialogView } from "./pair_dialog_dom.js";
+import { ConnectionBannerController, ConnectionBannerView } from "./connection_banner.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -1842,6 +1843,30 @@ window.addEventListener("DOMContentLoaded", () => {
     // Story 9.11: the timbres installed on the unit (Library API through the bridge, read-only): { timbres: [{ library_id, library_name, instrument_key, name, category }], total, truncated }.
     libraryTimbres() { return window.__TAURI__.core.invoke("device_library_timbres"); },
   };
+  const connBannerEl = document.getElementById("connection-banner");
+  const connBannerCtl = new ConnectionBannerController({
+    reconnectFn: () => {
+      const st = deviceStore.status;
+      if (st && st.host && st.port) {
+        return window.veloraDevice.connect(st.host, st.port);
+      }
+    },
+    updateFirmwareFn: () => {
+      openDeviceView("firmware");
+    },
+    getModelName: () => (deviceStore.status && deviceStore.status.model) || "Velora 73",
+    localeMgr,
+    announceFn: (msg, isWarn) => announce(msg, isWarn),
+  });
+  const connBannerView = connBannerEl
+    ? new ConnectionBannerView({
+        doc: document,
+        el: connBannerEl,
+        controller: connBannerCtl,
+        tr: (k) => localeMgr.tr(k),
+      })
+    : null;
+
   let pairPromptedFor = null;
   function applyDeviceStatus(st) {
     if (!st || !st.configured) return; // no real device configured: the simulation stays
@@ -1873,9 +1898,12 @@ window.addEventListener("DOMContentLoaded", () => {
         label = localeMgr.tr("studio.conn.connecting");
         hint = localeMgr.tr("studio.offline.hint_connecting");
         break;
-      default:
-        label = localeMgr.tr("studio.conn.no_device");
+      default: {
+        const model = st.model || "Velora 73";
+        label = localeMgr.tr("studio.conn.disconnected").replace("%s", model);
         hint = localeMgr.tr("studio.offline.hint_unreachable");
+        break;
+      }
     }
     if (connText) connText.textContent = label;
     if (footerDev) {
@@ -1886,6 +1914,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (hintEl && hint) hintEl.textContent = hint;
     const connEl = document.getElementById("connection-status");
     if (connEl) connEl.dataset.link = st.status;
+    connBannerCtl.setStatus(st);
     const becameConnected = paired && (!isConnected || !wasLinked);
     const wasPaired = deviceLinkPaired;
     isConnected = paired;
