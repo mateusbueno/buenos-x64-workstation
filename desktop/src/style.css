@@ -45,6 +45,58 @@ html, body {
   outline-offset: 2px;
 }
 
+/* Accessibility: High contrast support (prefers-contrast: more or data-contrast="more") */
+@media (prefers-contrast: more) {
+  :root, [data-theme] {
+    --line: var(--line-strong) !important;
+  }
+}
+
+:root[data-contrast="more"],
+[data-theme][data-contrast="more"] {
+  --line: var(--line-strong) !important;
+}
+
+/* Accessibility: 200% zoom and reflow at 1280x800 without horizontal scroll (WCAG 1.4.10) */
+@media (max-width: 1280px) {
+  html, body {
+    min-width: 0 !important;
+    overflow-x: hidden;
+  }
+
+  .app-container {
+    min-width: 0 !important;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  .app-body {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  .main-area {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .editor-container, .setlists-view, .device-view {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+}
+
+@media (max-width: 960px) {
+  .app-body {
+    grid-template-columns: minmax(160px, 12rem) 1fr;
+  }
+  .pe-sections {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 /* App window container enforcing 1280x800 min size */
 .app-container {
   display: grid;

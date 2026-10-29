@@ -145,34 +145,121 @@ class ThemeManager {
   }
 }
 
-class FocusManager {
-  constructor() {
-    this.regions = [
-      document.getElementById("sidebar-region"),
-      document.getElementById("main-region"),
-      document.getElementById("footer-region")
-    ].filter(Boolean);
-
-    this.currentRegionIndex = 0;
+export class FocusManager {
+  constructor(doc = (typeof document !== "undefined" ? document : null)) {
+    this.doc = doc;
+    this.currentRegionIndex = -1;
     this.init();
   }
 
-  init() {
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "F6") {
-        e.preventDefault();
-        this.cycleRegion(e.shiftKey ? -1 : 1);
-      }
-    });
+  getRegions() {
+    const doc = this.doc || (typeof document !== "undefined" ? document : null);
+    if (!doc) return [];
+
+    const isVisible = (el) => {
+      if (!el) return false;
+      if (el.hidden || el.style?.display === "none") return false;
+      if (el.closest?.("[hidden]") || el.closest?.('[style*="display: none"]')) return false;
+      return true;
+    };
+
+    const regions = [];
+
+    // 1. Sidebar
+    const sidebar = doc.getElementById("sidebar-region");
+    if (isVisible(sidebar)) regions.push(sidebar);
+
+    // If Device View is open
+    const deviceView = doc.getElementById("device-view");
+    if (isVisible(deviceView)) {
+      regions.push(deviceView);
+      const footer = doc.getElementById("footer-region");
+      if (isVisible(footer)) regions.push(footer);
+      return regions;
+    }
+
+    // If Setlists View is open
+    const setlistsView = doc.getElementById("setlists-view");
+    if (isVisible(setlistsView)) {
+      regions.push(setlistsView);
+      const footer = doc.getElementById("footer-region");
+      if (isVisible(footer)) regions.push(footer);
+      return regions;
+    }
+
+    // Story 9.22 F6 landmark cycling: sidebar → Live Set → scenes → parts → editor → footer
+    // 2. Live Set
+    const liveSet = doc.getElementById("live-set-header") || doc.querySelector?.(".editor-header") || null;
+    if (isVisible(liveSet)) regions.push(liveSet);
+
+    // 3. Scenes
+    const scenes = doc.getElementById("live-scenes");
+    if (isVisible(scenes)) regions.push(scenes);
+
+    // 4. Parts
+    const liveParts = doc.getElementById("live-part-grid");
+    const editorParts = doc.getElementById("editor-part-strips");
+    if (isVisible(liveParts)) {
+      regions.push(liveParts);
+    } else if (isVisible(editorParts)) {
+      regions.push(editorParts);
+    }
+
+    // 5. Editor
+    const realEditor = doc.getElementById("real-part-editor");
+    const studioEditor = doc.getElementById("studio-part-editor");
+    if (isVisible(realEditor)) {
+      regions.push(realEditor);
+    } else if (isVisible(studioEditor)) {
+      regions.push(studioEditor);
+    }
+
+    // 6. Footer
+    const footer = doc.getElementById("footer-region");
+    if (isVisible(footer)) regions.push(footer);
+
+    return regions;
   }
 
-  cycleRegion(direction) {
-    if (this.regions.length === 0) return;
-    this.currentRegionIndex = (this.currentRegionIndex + direction + this.regions.length) % this.regions.length;
-    const target = this.regions[this.currentRegionIndex];
+  init() {
+    if (typeof window !== "undefined" && window.addEventListener) {
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "F6") {
+          e.preventDefault();
+          this.cycleRegion(e.shiftKey ? -1 : 1);
+        }
+      });
+    }
+  }
+
+  cycleRegion(direction = 1) {
+    const regions = this.getRegions();
+    if (regions.length === 0) return null;
+
+    const doc = this.doc || (typeof document !== "undefined" ? document : null);
+    const activeEl = doc?.activeElement;
+    const activeIdx = activeEl
+      ? regions.findIndex((r) => r === activeEl || (typeof r.contains === "function" && r.contains(activeEl)))
+      : -1;
+
+    let nextIdx;
+    if (activeIdx !== -1) {
+      nextIdx = (activeIdx + direction + regions.length) % regions.length;
+    } else if (this.currentRegionIndex !== -1) {
+      nextIdx = (this.currentRegionIndex + direction + regions.length) % regions.length;
+    } else {
+      nextIdx = direction >= 0 ? 0 : regions.length - 1;
+    }
+
+    this.currentRegionIndex = nextIdx;
+    const target = regions[this.currentRegionIndex];
     if (target) {
+      if (!target.hasAttribute("tabindex")) {
+        target.setAttribute("tabindex", "-1");
+      }
       target.focus();
     }
+    return target;
   }
 }
 
@@ -194,6 +281,7 @@ function announce(message, isWarning = false) {
 }
 
 // App Initialization
+if (typeof window !== "undefined") {
 window.addEventListener("DOMContentLoaded", () => {
   const localeMgr = new LocaleManager();
   const themeMgr = new ThemeManager();
@@ -2125,3 +2213,4 @@ window.addEventListener("DOMContentLoaded", () => {
     inputImportFile.value = "";
   });
 });
+}
