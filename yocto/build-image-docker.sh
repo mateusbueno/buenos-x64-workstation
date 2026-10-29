@@ -48,6 +48,7 @@ docker run --rm \
     --name velora-yocto-build-run \
     -v "$VOLUME_NAME":/work \
     -v "$REPO_ROOT/yocto":/src/yocto:ro \
+    -v "$REPO_ROOT/THIRD_PARTY_NOTICES.md":/src/THIRD_PARTY_NOTICES.md:ro \
     -v "$KEYS_DIR":/certs/rauc:ro \
     -v "$SSH_KEY":/certs/id_ed25519.pub:ro \
     -v "$OUT_DIR":/out \
@@ -56,6 +57,11 @@ set -euo pipefail
 PROJ=/work/proj
 mkdir -p "$PROJ/yocto" "$PROJ/.yocto-work/build"
 rsync -a --delete --exclude .yocto-work /src/yocto/ "$PROJ/yocto/"
+if [ -f /src/THIRD_PARTY_NOTICES.md ]; then
+    cp /src/THIRD_PARTY_NOTICES.md "$PROJ/THIRD_PARTY_NOTICES.md"
+    mkdir -p "$PROJ/yocto/meta-velora/recipes-core/velora-system-config/files"
+    cp /src/THIRD_PARTY_NOTICES.md "$PROJ/yocto/meta-velora/recipes-core/velora-system-config/files/THIRD_PARTY_NOTICES.md"
+fi
 cd "$PROJ"
 
 export KAS_WORK_DIR="$PROJ"
