@@ -8,7 +8,8 @@ add_library(velora_sysd_service STATIC
   src/pairing.cpp
   src/bridge_server.cpp
   src/mcu_boot_checker.cpp
-  src/update_installer.cpp)
+  src/update_installer.cpp
+  src/usb_gadget_manager.cpp)
 add_library(velora::sysd_service ALIAS velora_sysd_service)
 target_include_directories(velora_sysd_service PUBLIC include)
 target_link_libraries(velora_sysd_service PUBLIC velora_control velora_library_api Threads::Threads)
@@ -59,3 +60,10 @@ add_executable(sysd_update_installer_test tests/update_installer_test.cpp)
 target_link_libraries(sysd_update_installer_test PRIVATE velora_sysd_service)
 add_test(NAME sysd_update_installer_test COMMAND sysd_update_installer_test)
 set_tests_properties(sysd_update_installer_test PROPERTIES TIMEOUT 60)
+
+# Story 9.1: USB-C gadget composition and security invariants.
+add_executable(sysd_usb_gadget_test tests/usb_gadget_test.cpp)
+target_link_libraries(sysd_usb_gadget_test PRIVATE velora_sysd_service)
+add_test(NAME sysd_usb_gadget_test COMMAND sysd_usb_gadget_test)
+set_tests_properties(sysd_usb_gadget_test PROPERTIES TIMEOUT 60)
+

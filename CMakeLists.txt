@@ -108,6 +108,13 @@ if(Python3_Interpreter_FOUND)
   # Story 8.4: Build-time MCU firmware manifest verifier.
   add_test(NAME mcu_manifest_selftest
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/mcu-manifest/verify_mcu_manifest.py --self-test)
+  # Story 9.1: USB-C gadget composition and security invariants gate.
+  add_test(NAME check_usb_gadget
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_usb_gadget.py
+                   --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME check_usb_gadget_selftest
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/check_usb_gadget.py
+                   --self-test)
   # Story 8.14: Kernel LTS migration plan CI check.
   add_test(NAME kernel_lts_plan_check
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_kernel_lts_plan.py --today 2026-10-29)
