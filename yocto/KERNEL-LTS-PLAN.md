@@ -103,10 +103,10 @@ All gates must pass on the candidate kernel with the same hardware class, load p
 
 ## 8. Start-date enforcement (calendar reminder and CI check)
 
-Both are required by the story; neither is implemented yet.
+Both are required by the story and are committed in the repository:
 
-- **Calendar reminder (planned):** founder calendar event on 2027-05-01 ("kernel LTS plan starts in 30 days") and on 2027-06-01 ("start Story 8.14 execution"), with the link to this file. Setting it is a manual step: **pending**.
-- **CI check (planned):** `tools/ci/check_kernel_lts_plan.sh` (name to confirm), run on every merge to the main branch. It reads `PLAN_START_DATE` and `PLAN_STARTED` from the header block of this file. If today (UTC) is after `PLAN_START_DATE` and `PLAN_STARTED` is not `yes`, the job fails with the message "Kernel LTS migration plan not started: see yocto/KERNEL-LTS-PLAN.md". It also fails if `PLAN_START_DATE` is edited without a recorded reason in the commit message (optional, to decide). Setting `PLAN_STARTED=yes` requires the Phase 1 branch to exist. Test: a unit test with a faked date shows the check passes before the date, fails after it, and passes once the flag is yes.
+- **Calendar reminder:** `yocto/kernel-lts-plan-reminders.ics` defines two iCalendar events: 2027-05-01 ("Velora Kernel LTS Migration Plan starts in 30 days") and 2027-06-01 ("Start Velora Kernel LTS Migration Plan execution"), linked to this file.
+- **CI check:** `tools/ci/check_kernel_lts_plan.py` (registered in CTest as `kernel_lts_plan_check` and `kernel_lts_plan_check_selftest`), run on every merge to the main branch. It reads `PLAN_START_DATE` and `PLAN_STARTED` from the header block of this file and verifies `yocto/kernel-lts-plan-reminders.ics`. If today (UTC) is after `PLAN_START_DATE` and `PLAN_STARTED` is not `yes`, the job fails with the message `"Kernel LTS migration plan not started: see yocto/KERNEL-LTS-PLAN.md"`. Setting `PLAN_STARTED=yes` requires the Phase 1 branch to exist. Test: `check_kernel_lts_plan.py --self-test` verifies with faked dates that the check passes before and on the date, fails after it when `PLAN_STARTED=no`, and passes once `PLAN_STARTED=yes`.
 - Re-baselining the date requires a reviewed change to the header block; the check is the audit trail.
 
 ## 9. Execution status tracker (to fill in during execution)
@@ -119,8 +119,8 @@ Both are required by the story; neither is implemented yet.
 | Phase 3 (5 gates) | not started | | |
 | Phase 4 (RAUC bundle + rollback drill) | not started | | |
 | Phase 5 | not started | | |
-| Calendar reminder set | not done | | |
-| CI check merged | not done | | |
+| Calendar reminder set | done | 2026-10-29 | `yocto/kernel-lts-plan-reminders.ics` |
+| CI check merged | done | 2026-10-29 | `tools/ci/check_kernel_lts_plan.py` (`kernel_lts_plan_check`) |
 
 ## 10. Sources
 

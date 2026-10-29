@@ -105,6 +105,11 @@ if(Python3_Interpreter_FOUND)
   # Story 8.4: Build-time MCU firmware manifest verifier.
   add_test(NAME mcu_manifest_selftest
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/mcu-manifest/verify_mcu_manifest.py --self-test)
+  # Story 8.14: Kernel LTS migration plan CI check.
+  add_test(NAME kernel_lts_plan_check
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_kernel_lts_plan.py --today 2026-10-29)
+  add_test(NAME kernel_lts_plan_check_selftest
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/ci/check_kernel_lts_plan.py --self-test)
   # Story 9.5: Velora Studio desktop app shell and Rust ws.v1 type link
   find_program(CARGO_EXECUTABLE cargo HINTS "$ENV{HOME}/.cargo/bin")
   if(CARGO_EXECUTABLE)

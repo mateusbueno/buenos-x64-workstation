@@ -1,0 +1,22 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Ladiani//Velora Kernel LTS Migration Plan//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:velora-kernel-lts-plan-30d-warning@ladiani.com
+DTSTAMP:20261029T120000Z
+DTSTART;VALUE=DATE:20270501
+DTEND;VALUE=DATE:20270502
+SUMMARY:Velora Kernel LTS Migration Plan starts in 30 days (Story 8.14)
+DESCRIPTION:Review yocto/KERNEL-LTS-PLAN.md and reserve the RK3588 dev board for Phase 0/1 starting 2027-06-01 (6 months before Linux 6.18 LTS EOL baseline 2027-12).
+END:VEVENT
+BEGIN:VEVENT
+UID:velora-kernel-lts-plan-start@ladiani.com
+DTSTAMP:20261029T120000Z
+DTSTART;VALUE=DATE:20270601
+DTEND;VALUE=DATE:20270602
+SUMMARY:Start Velora Kernel LTS Migration Plan execution (Story 8.14)
+DESCRIPTION:Execute Phase 0 and Phase 1 of yocto/KERNEL-LTS-PLAN.md and set PLAN_STARTED=yes once the Phase 1 branch exists. CI check tools/ci/check_kernel_lts_plan.py enforces this date.
+END:VEVENT
+END:VCALENDAR
