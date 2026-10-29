@@ -1,5 +1,5 @@
 #include "velora/ui/font_manager.hpp"
-#include "velora/ui/fonts/dejavu_sans_data.hpp"
+#include "velora/ui/fonts/lato_data.hpp"
 
 #include <iostream>
 
@@ -25,9 +25,9 @@ bool FontManager::initialize() {
   if (initialized_) return true;
 
 #if LV_USE_TINY_TTF
-  lv_font_t* f14 = lv_tiny_ttf_create_data(kDejaVuSansData, kDejaVuSansSize, 14);
-  lv_font_t* f18 = lv_tiny_ttf_create_data(kDejaVuSansData, kDejaVuSansSize, 18);
-  lv_font_t* f24 = lv_tiny_ttf_create_data(kDejaVuSansData, kDejaVuSansSize, 24);
+  lv_font_t* f14 = lv_tiny_ttf_create_data(kLatoRegularData, kLatoRegularSize, 14);
+  lv_font_t* f18 = lv_tiny_ttf_create_data(kLatoRegularData, kLatoRegularSize, 18);
+  lv_font_t* f24 = lv_tiny_ttf_create_data(kLatoRegularData, kLatoRegularSize, 24);
 
   if (f14) font_14_ = f14;
   if (f18) font_18_ = f18;

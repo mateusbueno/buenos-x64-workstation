@@ -67,7 +67,7 @@ add_library(velora_ui
   src/system_config.cpp
   src/navigation_controller.cpp
   src/font_manager.cpp
-  src/fonts/dejavu_sans_data.cpp
+  src/fonts/lato_data.cpp
   src/widgets/hint_bar.cpp
   src/widgets/list_row.cpp
   src/widgets/segmented_control.cpp

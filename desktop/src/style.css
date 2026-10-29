@@ -1,5 +1,21 @@
 @import "./tokens.css";
 
+@font-face {
+  font-family: 'Lato';
+  src: url('./fonts/Lato-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Lato';
+  src: url('./fonts/Lato-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -496,11 +512,11 @@ html, body {
 }
 .export-warning {
   margin-top: var(--spacing-2);
-  color: #f59e0b;
+  color: var(--warn);
   font-size: 0.875rem;
 }
 .export-warning.warn-space {
-  color: #ef4444;
+  color: var(--warn);
 }
 .export-progress-text {
   font-weight: 600;
@@ -523,14 +539,14 @@ html, body {
   font-size: 0.875rem;
 }
 .banner-error {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-  border: 1px solid #ef4444;
+  background: var(--raised);
+  color: var(--warn);
+  border: 1px solid var(--line-strong);
 }
 .banner-warning {
-  background: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
-  border: 1px solid #f59e0b;
+  background: var(--raised);
+  color: var(--warn);
+  border: 1px solid var(--line-strong);
 }
 .import-table-container {
   max-height: 22rem;
@@ -586,8 +602,9 @@ html, body {
   font-size: 0.75rem;
 }
 .badge-collision {
-  background: rgba(245, 158, 11, 0.2);
-  color: #f59e0b;
+  background: var(--raised);
+  color: var(--warn);
+  border: 1px solid var(--line);
   font-size: 0.75rem;
   padding: 0.1rem 0.4rem;
   border-radius: var(--radius-desktop-sm);
@@ -2747,7 +2764,7 @@ nav.jump a:hover {
   color: var(--text);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-desktop-lg);
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 16px 32px var(--line-strong);
   width: min(44rem, 90vw);
   max-height: 85vh;
   display: flex;

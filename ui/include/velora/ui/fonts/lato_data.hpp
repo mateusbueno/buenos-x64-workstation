@@ -4,7 +4,7 @@
 
 namespace velora::ui {
 
-extern const uint8_t kDejaVuSansData[];
-extern const size_t kDejaVuSansSize;
+extern const uint8_t kLatoRegularData[];
+extern const size_t kLatoRegularSize;
 
 }  // namespace velora::ui

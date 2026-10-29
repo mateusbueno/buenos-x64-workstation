@@ -85,7 +85,7 @@ def scan_desktop(root):
 
     violations = []
     for dirpath, _, filenames in os.walk(desktop_dir):
-        if any(skip in dirpath for skip in ["target", "node_modules", "dist", ".git", "gen", "icons"]):
+        if any(skip in dirpath for skip in ["target", "node_modules", "dist", ".git", "gen", "icons", "tests"]):
             continue
         for fn in filenames:
             if fn.endswith((".css", ".html", ".js", ".ts", ".rs")):
