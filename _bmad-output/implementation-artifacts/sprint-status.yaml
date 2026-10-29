@@ -205,9 +205,9 @@ development_status:
   7-9-arpeggiator-timing-acceptance-on-the-board: done
   epic-7-retrospective: done
 
-  epic-8: backlog
+  epic-8: in-progress
   8-1-sysd-as-the-sole-installer-from-a-usb-a-stick: backlog
-  8-2-production-release-signing-and-per-root-update-bundles: backlog
+  8-2-production-release-signing-and-per-root-update-bundles: done
   8-3-install-flow-on-the-device: backlog
   8-4-mcu-firmware-manifest-in-the-a-b-image-and-boot-time-version: backlog
   8-5-format-versions-n-n-1-and-migrations-only-after-the-slot-is: done

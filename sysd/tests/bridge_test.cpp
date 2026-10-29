@@ -1627,6 +1627,61 @@ void test_firmware_update_flow() {
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   CHECK(!std::filesystem::exists(staging_dir + "/fw-partial-drop.raucb"));
+
+  // 6. Story 8.2: Production unit rejects dev and factory-test update bundles and accepts prod-signed bundles
+  {
+    Rig prod_rig;
+    std::string prod_ready_ver;
+    prod_rig.window->open("333333");
+    CHECK(prod_rig.start([&](sd::BridgeOptions& bo) {
+      bo.update_staging_dir = prod_rig.tmp.path + "/prod_staging";
+      bo.trusted_update_root = "prod";
+      bo.on_firmware_ready = [&](const std::string& ver) { prod_ready_ver = ver; };
+    }));
+    Client cp;
+    CHECK(cp.connect_to(prod_rig.port()));
+    cp.hello({"update.v1"}, "mac-fw-prod");
+    CHECK(!pair_with(cp, "333333").empty());
+
+    auto send_single_chunk = [&](std::uint64_t req_id, const std::string& tid, const std::string& payload) {
+      ws::v1::ClientMessage m;
+      m.set_request_id(req_id);
+      auto* s = m.mutable_stage_firmware_chunk();
+      s->set_transfer_id(tid);
+      s->set_bundle_version("1.6.0");
+      s->set_total_bytes(payload.size());
+      s->set_chunk_offset(0);
+      s->set_chunk_data(payload);
+      s->set_chunk_sha256(sd::sha256_hex(payload));
+      s->set_is_last_chunk(true);
+      cp.send(m);
+      ws::v1::ServerMessage rep;
+      CHECK(cp.recv(rep) == 1);
+      return rep;
+    };
+
+    // Dev-signed bundle rejected on prod unit
+    auto rep_dev = send_single_chunk(301, "fw-dev-on-prod", "VELORA-RAUCB-V1\nroot=dev\npayload_bytes");
+    CHECK(rep_dev.has_error() && rep_dev.error().code() == ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE);
+    CHECK(rep_dev.error().details().at("reason") == "wrong_root");
+    CHECK(rep_dev.error().details().at("expected_root") == "prod");
+    CHECK(rep_dev.error().details().at("bundle_root") == "dev");
+    CHECK(prod_ready_ver.empty());
+    CHECK(!std::filesystem::exists(prod_rig.tmp.path + "/prod_staging/fw-dev-on-prod.raucb"));
+
+    // Factory-test-signed bundle rejected on prod unit
+    auto rep_ft = send_single_chunk(302, "fw-ft-on-prod", "VELORA-RAUCB-V1\nroot=factory-test\npayload_bytes");
+    CHECK(rep_ft.has_error() && rep_ft.error().code() == ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE);
+    CHECK(rep_ft.error().details().at("reason") == "wrong_root");
+    CHECK(rep_ft.error().details().at("expected_root") == "prod");
+    CHECK(rep_ft.error().details().at("bundle_root") == "factory-test");
+    CHECK(prod_ready_ver.empty());
+
+    // Prod-signed bundle accepted on prod unit
+    auto rep_prod = send_single_chunk(303, "fw-prod-on-prod", "VELORA-RAUCB-V1\nroot=prod\npayload_bytes");
+    CHECK(rep_prod.has_stage_firmware_chunk_reply() && rep_prod.stage_firmware_chunk_reply().completed());
+    CHECK(prod_ready_ver == "1.6.0");
+  }
 }
 
 int main() {

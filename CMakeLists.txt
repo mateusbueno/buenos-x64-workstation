@@ -99,6 +99,9 @@ if(Python3_Interpreter_FOUND)
   # Story 8.5: the compatibility corpus gate (tests/compat) is not vacuous: a planted unreadable / unclaimed file (Live Set, library, ASSIGN map, config JSON) must fail the engine / ui gates and be named.
   add_test(NAME compat_gate_selftest
            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/compat/add_release.py --self-test --gate $<TARGET_FILE:compat_corpus_test> --gate-config $<TARGET_FILE:compat_config_test>)
+  # Story 8.2: Production release signing, per-root update bundles, and release record traceability.
+  add_test(NAME release_sign_selftest
+           COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/release-sign/velora_release_sign.py --self-test)
   # Story 9.5: Velora Studio desktop app shell and Rust ws.v1 type link
   find_program(CARGO_EXECUTABLE cargo HINTS "$ENV{HOME}/.cargo/bin")
   if(CARGO_EXECUTABLE)

@@ -803,6 +803,27 @@ void BridgeServer::handle_update(Session& s, const ws::v1::ClientMessage& m) {
         send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE, "signature verification failed", {{"reason", "bad_signature"}});
         return;
       }
+      if (!opt_.trusted_update_root.empty()) {
+        std::string bundle_root;
+        if (content.find("root=prod") != std::string::npos || content.find("\"root\":\"prod\"") != std::string::npos ||
+            content.find("\"root\": \"prod\"") != std::string::npos || content.find("CN=Velora Prod RAUC") != std::string::npos) {
+          bundle_root = "prod";
+        } else if (content.find("root=factory-test") != std::string::npos || content.find("\"root\":\"factory-test\"") != std::string::npos ||
+                   content.find("\"root\": \"factory-test\"") != std::string::npos || content.find("CN=Velora Factory-Test RAUC") != std::string::npos) {
+          bundle_root = "factory-test";
+        } else if (content.find("root=dev") != std::string::npos || content.find("\"root\":\"dev\"") != std::string::npos ||
+                   content.find("\"root\": \"dev\"") != std::string::npos || content.find("CN=Velora Dev RAUC") != std::string::npos) {
+          bundle_root = "dev";
+        }
+        if (bundle_root != opt_.trusted_update_root) {
+          cleanup_update_staging(s, true);
+          send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_BAD_SIGNATURE, "update bundle signed by untrusted root",
+                     {{"reason", "wrong_root"},
+                      {"expected_root", opt_.trusted_update_root},
+                      {"bundle_root", bundle_root.empty() ? "unknown" : bundle_root}});
+          return;
+        }
+      }
       if (content.find("INCOMPATIBLE") != std::string::npos) {
         cleanup_update_staging(s, true);
         send_error(s, rid, ws::v1::ERROR_CODE_UPDATE_INCOMPATIBLE, "firmware update incompatible with this hardware", {{"reason", "incompatible"}});

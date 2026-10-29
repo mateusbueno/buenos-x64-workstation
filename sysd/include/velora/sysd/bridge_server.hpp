@@ -44,6 +44,7 @@ struct BridgeOptions {
   std::string model = "Velora";
   std::string firmware_version = "0.1.0-dev";
   std::string update_staging_dir = "/data/update/.staging";
+  std::string trusted_update_root;  // Story 8.2: when set ("prod", "factory-test", "dev"), bundles signed by any other root are rejected
   std::function<void(const std::string& version)> on_firmware_ready;
   bool dev_bypass_pairing = false;  // DEV ONLY: every client is paired, model "DEV HOST"
   std::size_t max_clients = 8;
