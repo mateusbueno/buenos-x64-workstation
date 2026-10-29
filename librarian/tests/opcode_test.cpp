@@ -70,6 +70,9 @@ struct Env {
   explicit Env(const char* name) {
     dir = fs::temp_directory_path() / (std::string("velora_opcode_") + name + "_" + std::to_string(::getpid()));
     fs::remove_all(dir);
+    fs::create_directories(dir);
+    std::error_code ec;
+    dir = fs::canonical(dir, ec);
     src = dir / "src";
     root = dir / "data";
     fs::create_directories(src / "samples");
@@ -284,7 +287,7 @@ void test_unsupported_features() {
       {"effect send", "<region> sample=samples/a.wav key=60 effect1=50\n", "effect1", 1},
       {"lfo", "<group>\nlfo01_freq=3\n<region> sample=samples/a.wav key=60\n", "lfo01_freq", 2},
       {"eg", "<region> sample=samples/a.wav key=60\neg01_time1=0.1\n", "eg01_time1", 2},
-      {"width_oncc", "<region> sample=samples/a.wav key=60 width_oncc1=100\n", "width_oncc1", 1},
+      {"sw_vel", "<region> sample=samples/a.wav key=60 sw_vel=previous\n", "sw_vel", 1},
       {"amplitude_stepcc", "<region> sample=samples/a.wav key=60 amplitude_stepcc1=100\n", "amplitude_stepcc1", 1},
       {"effect header", "<effect>\ntype=lofi\n<region> sample=samples/a.wav key=60\n", "<effect>", 1},
       {"set_cc above 127", "<control>\nset_cc200=100\n<region> sample=samples/a.wav key=60\n", "set_cc200", 2},
@@ -319,8 +322,8 @@ void test_unsupported_features() {
   write_file(e.src / "Bad.sfz", "<region> sample=samples/eight.wav key=60\n");
   const ImportResult a = import_sfz(e.opts("Bad.sfz"));
   CHECK(a.status == Status::kSkipped && a.reason_code == ReasonCode::kUnsupportedFeatures && offends(a, "sample", 1));
-  write_file(e.src / "samples/song.flac", "fLaC................................................");
-  write_file(e.src / "Bad.sfz", "<region> sample=samples/song.flac key=60\n");
+  write_file(e.src / "samples/song.mp3", "ID3.................................................");
+  write_file(e.src / "Bad.sfz", "<region> sample=samples/song.mp3 key=60\n");
   const ImportResult f = import_sfz(e.opts("Bad.sfz"));
   CHECK(f.status == Status::kSkipped && f.reason_code == ReasonCode::kUnsupportedFeatures && offends(f, "sample", 1));
   CHECK(nothing_written(e));

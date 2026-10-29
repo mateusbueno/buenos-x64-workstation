@@ -723,7 +723,6 @@
   "studio.pair.prompt": "Introduzca el código de emparejamiento que muestra su Velora:",
   "studio.live_set.announce_part_plain": "Parte %d seleccionada: %s",
   "studio.live_set.engine_unavailable": "Motor no disponible",
-  "studio.sidebar.manage_setlists": "Gestionar listas",
   "studio.setlists.title": "Listas de repertorio",
   "studio.setlists.close": "Cerrar",
   "studio.setlists.new_setlist": "Nueva lista",

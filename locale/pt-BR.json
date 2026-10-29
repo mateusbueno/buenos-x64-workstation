@@ -723,7 +723,6 @@
   "studio.pair.prompt": "Digite o código de pareamento exibido no seu Velora:",
   "studio.live_set.announce_part_plain": "Parte %d selecionada: %s",
   "studio.live_set.engine_unavailable": "Motor indisponível",
-  "studio.sidebar.manage_setlists": "Gerenciar setlists",
   "studio.setlists.title": "Setlists",
   "studio.setlists.close": "Fechar",
   "studio.setlists.new_setlist": "Novo setlist",
