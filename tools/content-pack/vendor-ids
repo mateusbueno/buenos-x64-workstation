@@ -9,3 +9,8 @@
 # register entry; factory-test and production packs refuse it. Real vendor ids are random (version 4) UUIDs.
 # The register binds an id to a library NAME and a name to an id; there is no source column. Names compare trimmed, space-collapsed and ASCII case-folded.
 # Only random (version 4) ids are accepted; the dev range above cannot appear here (the tool refuses a register that lists it).
+3f1d6a52-9b7e-4c1a-8d2e-5a6b7c8d9e0f	Velora Factory Piano	Mateus Bueno	2026-10-29
+6c8a2d14-5e3b-4f90-9a1c-7b8d2e4f1a02	Velora Factory Pipes	Mateus Bueno	2026-10-29
+a19f3e72-4c8b-4d19-8e22-3d5b7f9a1c44	Velora Factory Strings	Mateus Bueno	2026-10-29
+8b4e1c90-2d7a-4e55-b103-9c4f6a8d2e11	Velora Factory Keys	Mateus Bueno	2026-10-29
+d4e8b210-6f3c-4a91-9e05-2b7c8d1f3a60	Velora Factory FM & VA	Mateus Bueno	2026-10-29
