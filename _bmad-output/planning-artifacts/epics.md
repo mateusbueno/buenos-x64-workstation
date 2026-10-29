@@ -6527,49 +6527,53 @@ So that the organ can be judged against the real instrument, objectively and in 
 **Then** 3–5 named keyboardists with organ experience have agreed in writing to take part (date window around first playable units, compensation, consent to use anonymised results)
 **And** contact data is kept under the same LGPD rules as Story 11.3
 
-### Story 11.15: Final typeface licensed and delivered by a designer
+### Story 11.15: Final typeface adopted: Lato (SIL OFL), verified and licensed for embedding
 
 As the founder,
-I want a type designer to deliver the final typeface (custom or licensed) meeting the UX acceptance criteria and licensed for LVGL embedding and desktop,
-So that the stand-in fonts on the device, Velora Studio and the panel can be replaced by our own face.
+I want to adopt Lato 400/700 (SIL Open Font License 1.1) as the final typeface after verifying it against the UX acceptance criteria and confirming the license for LVGL embedding and desktop,
+So that the stand-in fonts on the device, Velora Studio and the panel are replaced by a face we can ship without royalties and without commissioning a type designer.
 
 **Covers:** EXT13 (typeface), UX-DR110 (handoff part)
 
 **Runs on:** Business (no device)
 
+**Decision (2026-10-29):** the founder chose Lato over a commissioned or separately licensed face. Jost and Urbanist were tested and rejected (x-height 0.46 em and missing glyphs; missing glyphs and no fractions or tabular figures). The files (`Lato-Regular.ttf`, `Lato-Bold.ttf`) and the OFL text are stored in `ui/assets/fonts/lato/`, the notice is section 9 of `THIRD_PARTY_NOTICES.md`, and DESIGN.md and the generated tokens name Lato. The logo is drawn geometry (Story 11.16) and is not set in this face.
+
 **Acceptance Criteria:**
 
-**Given** a commissioned designer and a signed brief stating the acceptance criteria from DESIGN.md › Deferred
-**When** the typeface is delivered
-**Then** a checklist signed by the founder confirms: distinct I / l / 1 and 0 / O; x-height ≥0.5 em; open apertures; tabular numerals and ⅓ ⅔ ⅗ glyphs; weights ≥400 for device UI text (300 allowed only for the wordmark); full Latin-1 + Latin Extended-A with accented capitals (Á Ç Ê Õ Ñ) fitting a 1.2 line box
-**And** the font files (OTF/TTF, and variable font if provided) are stored with version numbers
+**Given** the Lato files stored with their version and checksums
+**When** they are checked against DESIGN.md › Deferred
+**Then** a checklist signed by the founder confirms: distinct I / l / 1 and 0 / O (visual check at 16–20 px); x-height ≥0.5 em (measured 0.506); open apertures (visual check); tabular numerals and ⅓ ⅔ ⅗ glyphs; weights ≥400 for device UI text; full Latin-1 + Latin Extended-A with accented capitals (Á Ç Ê Õ Ñ) fitting a 1.2 line box (measured 1.10 em)
+**And** the measured values are recorded in the checklist
 
-**Given** the delivered font
-**When** its license is reviewed
-**Then** the written license permits embedding as rasterised/subsetted glyphs in the LVGL firmware on every shipped unit (unlimited units), bundling in the Velora Studio desktop app on macOS/Windows/Linux, use on the printed/engraved panel and in marketing, without per-unit royalties
-**And** the license is stored and the font is added to the third-party/asset notices if required
+**Given** the SIL OFL 1.1 license of Lato, which reserves the font name "Lato"
+**When** the license is reviewed for the intended uses
+**Then** a written conclusion (founder or counsel) confirms that embedding as rasterised/subsetted glyphs in the LVGL firmware on every shipped unit, bundling in Velora Studio on macOS/Windows/Linux, use on the printed/engraved panel and in marketing are permitted without per-unit royalties
+**And** it states whether the subsetted LVGL glyph files must be renamed under the Reserved Font Name clause, and the license text stays in the third-party notices
 
-### Story 11.16: Final logo, symbol, app icon and avatar delivered by a designer
+### Story 11.16: Final logo, symbol, app icon and avatar produced in-house and signed off
 
 As the founder,
-I want the final symbol, wordmark, model mark, panel lockup, boot artwork, desktop app icon and social avatar delivered by a designer,
+I want the final symbol, wordmark, model mark, panel lockup, boot artwork, desktop app icon and social avatar produced from the chosen direction and signed off,
 So that the product, app and channels carry one finished brand.
 
 **Covers:** EXT13 (logo, app icon), UX-DR111, UX-DR112 (delivery part)
 
 **Runs on:** Business (no device)
 
+**Decision (2026-10-29):** no outside designer is commissioned. The artwork is drawn as geometry by `logo/build_logo.py` (symbol S1, wordmark T3, model mark V1) and the delivery files are built by `logo/make_assets.py` under `_bmad-output/planning-artifacts/ux-designs/ux-buenos-x64-workstation-2026-10-18/logo/`. Delivered: outlined SVG masters (`outlined/`), PDF masters (`pdf/`), PNGs (`png/`), `app-icon/ladiani.icns`, `ladiani.ico` and Linux PNGs (16, 32 and ≤32 px sizes use the simplified symbol), and boot artwork with 72 pull-out frames at 1024×600 plus the static frame (`boot/`). Evidence for sign-off: `verification/logo-contexts-sheet.png`.
+
 **Acceptance Criteria:**
 
 **Given** the design direction in DESIGN.md (symbol S1 drawbar "L", wordmark LADIANI T3, model mark VELORA V1) and the trademark result of Story 11.1
-**When** the designer delivers
+**When** the files are reviewed
 **Then** vector files (SVG/PDF) exist for the symbol (with simplified versions that read at 32 px and 16 px), the LADIANI wordmark, the VELORA model mark, the panel lockup in the panel ink and legend colours, and boot-screen artwork with the drawbar pull-out animation frames at 1024×600
-**And** the founder's sign-off confirms each works engraved or silkscreened on aluminum, on the dark boot screen, as a tiny icon and as a round avatar
+**And** the founder's sign-off, recorded against `verification/logo-contexts-sheet.png`, confirms each works engraved or silkscreened on aluminum, on the dark boot screen, as a tiny icon and as a round avatar
 
 **Given** the symbol
 **When** the app icon and avatar are delivered
-**Then** the desktop app icon set (macOS .icns sizes, Windows .ico sizes, Linux PNG sizes) and social avatars (round crop) for the handles of Story 11.2 are stored
-**And** the copyright in all delivered artwork is assigned to the company in writing, and the decision to file the figurative mark at INPI (Story 11.1) is recorded
+**Then** the desktop app icon set (macOS .icns, Windows .ico, Linux PNG sizes) and social avatars (round crop) for the handles of Story 11.2 are stored
+**And** a written statement records who authored the artwork and that the company owns it (confirmed with the trademark attorney of Story 11.1, since no outside designer assigned rights), and the decision to file the figurative mark at INPI (Story 11.1) is recorded
 
 ### Story 11.17: Factory library content plan and source delivery
 
@@ -6626,7 +6630,7 @@ So that the first ~100 units reach musicians without a dealer and with the after
 ### Story 11.19: Brand assets integration: final typeface, app icon and boot artwork
 
 As a keyboardist,
-I want the finished Ladiani typeface, app icon and boot artwork on the unit and in Velora Studio,
+I want the adopted Lato typeface, app icon and boot artwork on the unit and in Velora Studio,
 So that the instrument and its app look like one finished product instead of a prototype with stand-ins.
 
 **Covers:** UX-DR110 (integration), UX-DR111 (integration), UX-DR112 (integration), UX-DR5 (font ascent recheck), UX-DR97 (recheck), UX-DR89 (static boot frame)
@@ -6635,9 +6639,9 @@ So that the instrument and its app look like one finished product instead of a p
 
 **Acceptance Criteria:**
 
-**Given** the licensed typeface delivered in Story 11.15 and the stand-in fonts used since Epic 2
+**Given** the Lato files adopted in Story 11.15 (`ui/assets/fonts/lato/`) and the stand-in fonts used since Epic 2
 **When** the fonts are swapped in the LVGL font build and in Velora Studio
-**Then** the LVGL glyph subsets (Latin-1 + Latin Extended-A, tabular numerals, ⅓ ⅔ ⅗) are regenerated from the licensed files at every token size, weights ≥400 are used for device UI text (300 only for the wordmark), and Studio bundles the licensed font files with the license notice
+**Then** the LVGL glyph subsets (Latin-1 + Latin Extended-A, tabular numerals, ⅓ ⅔ ⅗) are regenerated from the Lato files at every token size (under the naming rule concluded in Story 11.15), weights ≥400 are used for device UI text (300 only for the wordmark), and Studio bundles the Lato font files with the license notice
 **And** the type tokens (sizes and line-heights) are regenerated from the new face's metrics and the change is recorded in DESIGN.md
 
 **Given** the new face

@@ -1,3 +1,5 @@
+**SUPERSEDED 2026-10-29 — Story 11.16 is produced in-house; no designer is commissioned. Kept for reference only.**
+
 **DRAFT FOR FOUNDER — does not satisfy Story 11.16 acceptance criteria**
 
 # Story 11.16 — Logo, symbol, app icon and avatar designer brief (draft)

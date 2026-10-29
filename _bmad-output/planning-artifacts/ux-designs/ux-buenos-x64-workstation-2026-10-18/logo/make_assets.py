@@ -40,15 +40,26 @@ def pdfs():
 
 def icons():
     out = os.path.join(HERE, "app-icon"); os.makedirs(out, exist_ok=True)
-    p = lambda s: os.path.join(PNG, f"ladiani-app-icon-{s}x{s}.png")
+    full = lambda s: os.path.join(PNG, f"ladiani-app-icon-{s}x{s}.png")
+    # DESIGN.md: the symbol simplifies at small sizes (1 tall + 2 short at 32 px, 1 tall + 1 short at 16 px),
+    # so icon sizes up to 32 px use the favicon masters instead of the 5-bar app icon.
+    small = {16: os.path.join(PNG, "ladiani-favicon-16-16x16.png"), 32: os.path.join(PNG, "ladiani-favicon-32-32x32.png")}
+    def p(s):
+        return small.get(s, full(s))
     with tempfile.TemporaryDirectory() as tmp:
         iset = os.path.join(tmp, "Ladiani.iconset"); os.makedirs(iset)
         for base, s, s2 in [(16, 16, 32), (32, 32, 64), (128, 128, 256), (256, 256, 512), (512, 512, 1024)]:
             shutil.copy(p(s), f"{iset}/icon_{base}x{base}.png")
             shutil.copy(p(s2), f"{iset}/icon_{base}x{base}@2x.png")
         subprocess.run(["iconutil", "-c", "icns", iset, "-o", f"{out}/ladiani.icns"], check=True)
-    Image.open(p(256)).convert("RGBA").save(
-        f"{out}/ladiani.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    # Pillow drops sizes it must resample from a single image, so build each ICO frame explicitly.
+    f24 = Image.open(os.path.join(PNG, "ladiani-favicon-32-32x32.png")).convert("RGBA")
+    f24 = Image.open(os.path.join(PNG, "ladiani-favicon-32-64x64.png")).convert("RGBA").resize((24, 24), Image.LANCZOS)
+    frames = [Image.open(p(s)).convert("RGBA") for s in (16, 32, 64, 128, 256)]
+    frames.insert(1, f24)
+    frames.insert(3, Image.open(full(1024)).convert("RGBA").resize((48, 48), Image.LANCZOS))
+    frames.sort(key=lambda i: i.width)
+    frames[-1].save(f"{out}/ladiani.ico", sizes=[(i.width, i.height) for i in frames], append_images=frames[:-1])
     lin = os.path.join(out, "linux"); os.makedirs(lin, exist_ok=True)
     for s in (16, 32, 48, 64, 128, 256, 512):
         src = Image.open(p(1024)).convert("RGBA") if s == 48 else Image.open(p(s))

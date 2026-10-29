@@ -1,3 +1,5 @@
+**SUPERSEDED 2026-10-29 — Story 11.15 now adopts Lato (SIL OFL); no designer is commissioned. Kept for reference only.**
+
 **DRAFT FOR FOUNDER — does not satisfy Story 11.15 acceptance criteria**
 
 # Story 11.15 — Typeface designer brief (draft)
