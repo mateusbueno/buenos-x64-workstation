@@ -43,6 +43,8 @@ PACKAGE_EXCLUDE = "flac metaflac libflac libflac++ libsndfile1 libsndfile1-bin"
 # Story 6.12: the stock meta-rauc mark-good unit (wanted by multi-user.target, waits only for boot-complete.target) is not wanted; ours is
 # velora-rauc-mark-good, gated on the engine, ui and sysd readiness targets.
 BAD_RECOMMENDATIONS += "rauc-mark-good"
+# kbd-keymaps recommends kbd-keymaps-pine (GPL-3.0-or-later); blocked by INCOMPATIBLE_LICENSE
+BAD_RECOMMENDATIONS += "kbd-keymaps-pine"
 
 # Story 6.12: the plain ext4 rootfs image is what the RAUC bundle ships for slot rootfs (RAUC_IMAGE_FSTYPE in the bundle recipe).
 IMAGE_FSTYPES += "ext4"
