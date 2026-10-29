@@ -153,7 +153,7 @@ development_status:
   5-1-full-sfz-v1-opcode-subset-in-the-importer: done
   5-2-sample-engine-plays-keyswitches-cc-crossfades-and-basic-filt: done
   5-3-sf2-import-into-the-same-instrument-model: done
-  5-4-reference-corpus-imports-and-plays-with-mapping-intact: in-progress
+  5-4-reference-corpus-imports-and-plays-with-mapping-intact: done
   5-5-category-model-localized-labels-and-auto-suggestion: done
   5-6-librarian-libraries-catalog-import-api-and-atomic-publish: done
   5-7-import-preflight-batch-scan-free-space-and-duplicates: done
