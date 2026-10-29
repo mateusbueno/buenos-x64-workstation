@@ -13,9 +13,10 @@
   <!-- Toast notification -->
   <div id="toast-notice" class="toast-notice" role="alert" aria-live="assertive"></div>
 
-  <!-- Hidden file inputs for backup open/restore -->
+  <!-- Hidden file inputs for backup open/restore and sound libraries -->
   <input type="file" id="backup-file-input" accept=".velorabackup" class="sr-only" tabindex="-1">
   <input type="file" id="restore-file-input" accept=".velorabackup" class="sr-only" tabindex="-1">
+  <input type="file" id="library-file-input" accept=".sfz,.sf2" multiple class="sr-only" tabindex="-1">
 
   <div class="app-container">
     <!-- Title Bar -->
@@ -59,6 +60,8 @@
 
         <section class="sidebar-section">
           <h2 class="sidebar-heading" data-i18n="studio.sidebar.library">LIBRARY</h2>
+          <!-- Story 9.14: opens Library Management view on computer and connected device -->
+          <button type="button" class="sidebar-item manage" id="sidebar-manage-library" data-i18n="studio.sidebar.manage_library">Manage library</button>
           <div id="sidebar-livesets-list">
             <div class="sidebar-item empty-hint" data-i18n="studio.sidebar.empty_library">Library unavailable offline</div>
           </div>
@@ -96,6 +99,9 @@
 
         <!-- Story 9.21: the Device view (shown from DEVICE sidebar items; built by device_view_dom.js) -->
         <section class="device-view" id="device-view" aria-label="Device View" hidden></section>
+
+        <!-- Story 9.14: the Library Management view (built by library_view_dom.js) -->
+        <section class="library-view" id="library-view" tabindex="-1" aria-label="Library Management" hidden></section>
 
         <!-- Live Set Part Editor Container -->
         <div class="editor-container" id="editor-container" style="display: none;">
@@ -687,6 +693,7 @@
 
   <div id="export-dialog-host" class="export-dialog-host"></div>
   <div id="import-dialog-host" class="import-dialog-host"></div>
+  <div id="convert-dialog-host" class="convert-dialog-host"></div>
   <input type="file" id="input-import-file" accept=".velorasets,.veloratimbre" style="display: none;" />
 
   <script type="module" src="./app.js"></script>

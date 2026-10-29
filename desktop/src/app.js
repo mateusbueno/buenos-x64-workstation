@@ -32,6 +32,8 @@ import { ImportController, COLLISION_ACTION } from "./import_dialog.js";
 import { ImportDialogView } from "./import_dialog_dom.js";
 import { DeviceViewController } from "./device_view.js";
 import { DeviceView } from "./device_view_dom.js";
+import { LibraryViewController } from "./library_view.js";
+import { LibraryView } from "./library_view_dom.js";
 
 
 // FM 32 Algorithms metadata per Yamaha/DX standard & engine/core/fm_tables.hpp
@@ -182,6 +184,15 @@ export class FocusManager {
     const setlistsView = doc.getElementById("setlists-view");
     if (isVisible(setlistsView)) {
       regions.push(setlistsView);
+      const footer = doc.getElementById("footer-region");
+      if (isVisible(footer)) regions.push(footer);
+      return regions;
+    }
+
+    // If Library View is open
+    const libraryView = doc.getElementById("library-view");
+    if (isVisible(libraryView)) {
+      regions.push(libraryView);
       const footer = doc.getElementById("footer-region");
       if (isVisible(footer)) regions.push(footer);
       return regions;
@@ -352,6 +363,7 @@ window.addEventListener("DOMContentLoaded", () => {
       if (setlistsUi.view) { setlistsUi.view.setLabels(); setlistsUi.view.render(); } // Story 9.13: the Setlists view follows the language
       if (writeUi.banner) writeUi.banner.setLabels(); // Story 9.12
       if (deviceUi.view) { deviceUi.view.setLabels(); } // Story 9.21: Device view follows the language
+      if (libraryUi.view) { libraryUi.view.setLabels(); } // Story 9.14: Library view follows the language
     });
   }
 
@@ -725,7 +737,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Render Full Studio Part Editor
   function renderEditor() {
-    if (setlistsUi.open || deviceUi.open) return;
+    if (setlistsUi.open || deviceUi.open || libraryUi.open) return;
     if (pairedReal()) {
       renderPairedEditor(); // Story 9.8 / 9.9: the real Live Set view and the real Part Editor (the simulated editor stays for offline)
       return;
@@ -1026,7 +1038,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderPairedEditor() {
-    if (setlistsUi.open || deviceUi.open) return; // the Setlists view (Story 9.13) or Device view (Story 9.21) owns the main area until a Live Set is chosen or it is closed
+    if (setlistsUi.open || deviceUi.open || libraryUi.open) return; // the Setlists view (Story 9.13), Device view (Story 9.21) or Library view (Story 9.14) owns the main area until a Live Set is chosen or it is closed
     buildLiveGrids();
     setGridLabels(liveEls.scenes, liveEls.parts, tr); // follows a language change
     document.getElementById("offline-empty-card").style.display = "none";
@@ -1072,7 +1084,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderPartEditor() {
-    if (!pairedReal() || setlistsUi.open || peEls.host.hidden || partEditorCtl.partIndex < 0) return;
+    if (!pairedReal() || setlistsUi.open || libraryUi.open || peEls.host.hidden || partEditorCtl.partIndex < 0) return;
     ensurePartEditorView().render(partEditorCtl.model());
   }
 
@@ -1188,7 +1200,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   function openTimbrePicker(i) {
     const m = liveCtl.model;
-    if (!pairedReal() || !m || setlistsUi.open || timbrePick.ctl.isOpen) return;
+    if (!pairedReal() || !m || setlistsUi.open || libraryUi.open || timbrePick.ctl.isOpen) return;
     const p = m.parts[i];
     if (!p || p.status !== "empty") return;
     if (!m.sounding) {
@@ -1462,6 +1474,7 @@ window.addEventListener("DOMContentLoaded", () => {
   function selectLiveSet(id) {
     closeSetlistsView(false); // choosing a Live Set in the sidebar goes back to the Live Set view
     closeDeviceView(false); // choosing a Live Set also closes the Device view
+    closeLibraryView(false); // choosing a Live Set also closes the Library view
     liveCtl.select(id).then(() => updateSidebarMarkers());
     updateSidebarMarkers();
   }
@@ -1503,6 +1516,7 @@ window.addEventListener("DOMContentLoaded", () => {
   function openSetlistsView() {
     if (!pairedReal()) return;
     if (deviceUi.open) hideDeviceView();
+    if (libraryUi.open) hideLibraryView();
     ensureSetlistsView();
     setlistsUi.open = true;
     document.getElementById("offline-empty-card").style.display = "none";
@@ -1564,9 +1578,10 @@ window.addEventListener("DOMContentLoaded", () => {
   function openDeviceView(section = "overview") {
     ensureDeviceView();
     if (!deviceUi.open) {
-      deviceUi.previousView = setlistsUi.open ? "setlists" : "editor";
+      deviceUi.previousView = setlistsUi.open ? "setlists" : (libraryUi.open ? "library" : "editor");
     }
     if (setlistsUi.open) hideSetlistsView();
+    if (libraryUi.open) hideLibraryView();
     deviceUi.open = true;
     document.getElementById("offline-empty-card").style.display = "none";
     liveEls.container.style.display = "none";
@@ -1588,6 +1603,8 @@ window.addEventListener("DOMContentLoaded", () => {
     hideDeviceView();
     if (deviceUi.previousView === "setlists") {
       openSetlistsView();
+    } else if (deviceUi.previousView === "library") {
+      openLibraryView();
     } else {
       renderEditor();
     }
@@ -1600,11 +1617,114 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("side-firmware")?.addEventListener("click", () => openDeviceView("firmware"));
   document.getElementById("side-backups")?.addEventListener("click", () => openDeviceView("backups"));
 
+  // ---- Library view (Story 9.14) -------------------------------------------------------------------------------------------------------------------------
+  // Left sidebar > LIBRARY > "Manage library" opens the Library view in the main area: on-computer converted sound libraries, on-device libraries, and SFZ/SF2 conversion dialog.
+  const libraryUi = { open: false, previousView: "editor", view: null };
+  const libraryCtl = new LibraryViewController({
+    invoke: (cmd, args) => {
+      if (window.__TAURI__?.core?.invoke) {
+        return window.__TAURI__.core.invoke(cmd, args);
+      }
+      return Promise.reject(new Error("Tauri not available"));
+    },
+    onAnnounce: (msg) => quietAnnounce(typeof msg === "object" ? tr(msg.key, ...msg.args) : msg),
+    tr: (key, ...args) => tr(key, ...args),
+    onChange: () => {
+      if (libraryUi.view) {
+        libraryUi.view.render();
+        libraryUi.view.renderDialog();
+      }
+    },
+    onError: (err) => quietAnnounce(err),
+  });
+
+  function ensureLibraryView() {
+    if (libraryUi.view) return;
+    libraryUi.view = new LibraryView({
+      doc: document,
+      host: document.getElementById("library-view"),
+      dialogHost: document.getElementById("convert-dialog-host"),
+      tr: (key, ...args) => tr(key, ...args),
+      controller: libraryCtl,
+      announce: quietAnnounce,
+      onBack: () => closeLibraryView(true),
+    });
+  }
+
+  function openLibraryView() {
+    ensureLibraryView();
+    if (!libraryUi.open) {
+      libraryUi.previousView = setlistsUi.open ? "setlists" : (deviceUi.open ? "device" : "editor");
+    }
+    if (setlistsUi.open) hideSetlistsView();
+    if (deviceUi.open) hideDeviceView();
+    libraryUi.open = true;
+    document.getElementById("offline-empty-card").style.display = "none";
+    liveEls.container.style.display = "none";
+    libraryUi.view.show();
+    if (pairedReal()) {
+      if (deviceCtl.storage.libraries.length > 0) {
+        libraryCtl.setDeviceLibraries(deviceCtl.storage.libraries);
+      } else {
+        deviceCtl.loadStorage().then(() => {
+          libraryCtl.setDeviceLibraries(deviceCtl.storage.libraries);
+        }).catch(() => {});
+      }
+    } else {
+      libraryCtl.setDeviceLibraries([]);
+    }
+    libraryCtl.loadComputerLibraries().catch(() => {});
+  }
+
+  function hideLibraryView() {
+    if (!libraryUi.open) return;
+    libraryUi.open = false;
+    if (libraryUi.view) libraryUi.view.hide();
+  }
+
+  function closeLibraryView(focusSidebar) {
+    if (!libraryUi.open) return;
+    hideLibraryView();
+    if (libraryUi.previousView === "setlists") {
+      openSetlistsView();
+    } else if (libraryUi.previousView === "device") {
+      openDeviceView();
+    } else {
+      renderEditor();
+    }
+    if (focusSidebar) {
+      document.getElementById("sidebar-manage-library")?.focus();
+    }
+  }
+
+  document.getElementById("sidebar-manage-library")?.addEventListener("click", openLibraryView);
+
+  const libraryFileInput = document.getElementById("library-file-input");
+  libraryFileInput?.addEventListener("change", (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      libraryCtl.openConvertDialog(files.map(f => f.path || f.name));
+      libraryUi.view?.renderDialog();
+    }
+    e.target.value = "";
+  });
+
+  if (typeof window !== "undefined" && window.__TAURI__?.event?.listen) {
+    window.__TAURI__.event.listen("converter://progress", (event) => {
+      libraryCtl.onProgressEvent(event.payload);
+    });
+  }
+
   // What every State push does for the view: the model follows it at once; the sidebar follows the setlists' revision (throttled) and the sounding Live Set; and the
   // first time a Live Set sounds with nothing selected, that one is shown.
   function onDeviceState(st) {
     if (!st || !pairedReal()) return;
     deviceCtl.setDeviceState(st);
+    if (st.sound_libraries || st.libraries) {
+      libraryCtl.setDeviceLibraries(st.sound_libraries || st.libraries);
+    } else if (deviceCtl.storage.libraries.length > 0) {
+      libraryCtl.setDeviceLibraries(deviceCtl.storage.libraries);
+    }
     liveCtl.onState(st);
     partEditorCtl.onState(st);
     writeUi.ctl.onState(st); // Story 9.12: an open Write dialog follows it; an unconfirmed Write is judged by it after a reconnect
@@ -1787,6 +1907,7 @@ window.addEventListener("DOMContentLoaded", () => {
       if (pe.view) { pe.view.clear(); pe.view = null; }
       hideSetlistsView(); // the Setlists view is disabled without a paired device
       setlistsCtl.reset();
+      libraryCtl.setDeviceLibraries([]);
       sidebar.setlists = [];
       sidebar.all = [];
       sidebar.entries.clear();

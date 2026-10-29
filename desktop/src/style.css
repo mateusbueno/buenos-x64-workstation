@@ -2451,3 +2451,206 @@ nav.jump a:hover {
   font-size: var(--font-desktop-body);
 }
 
+/* Story 9.14: Library View and SFZ/SF2 Converter styles */
+.library-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--spacing-4);
+  gap: var(--spacing-3);
+  overflow-y: auto;
+}
+
+.library-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--spacing-3);
+}
+
+.library-header-title {
+  margin: 0;
+  font-size: var(--font-desktop-title);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.library-tabs {
+  display: flex;
+  gap: var(--spacing-2);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--spacing-1);
+}
+
+.library-tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-desktop-body);
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.library-tab-btn:hover {
+  color: var(--text);
+}
+
+.library-tab-btn.active,
+.library-tab-btn[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.library-tab-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.library-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-8) var(--spacing-4);
+  background-color: var(--card-bg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-desktop-md);
+  text-align: center;
+  gap: var(--spacing-3);
+}
+
+.library-empty-icon {
+  font-size: 2.5rem;
+}
+
+.library-empty-text {
+  max-width: 32rem;
+  color: var(--muted);
+  font-size: var(--font-desktop-body);
+  margin: 0;
+}
+
+.library-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--card-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-md);
+  overflow: hidden;
+}
+
+.library-table th {
+  text-align: left;
+  padding: var(--spacing-2) var(--spacing-3);
+  color: var(--muted);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  background-color: var(--bg);
+}
+
+.library-table td {
+  padding: var(--spacing-2) var(--spacing-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: var(--font-desktop-body);
+}
+
+.library-row:last-child td {
+  border-bottom: none;
+}
+
+.library-cell-name {
+  font-weight: 600;
+}
+
+.badge-category {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--radius-full);
+  font-size: var(--font-desktop-section-label);
+  font-weight: 600;
+}
+
+.badge-suggested {
+  margin-left: var(--spacing-2);
+  padding: 0.1rem 0.4rem;
+  background-color: color-mix(in srgb, var(--muted) 20%, transparent);
+  color: var(--muted);
+  border-radius: var(--radius-desktop-sm);
+  font-size: 0.75rem;
+}
+
+/* Modal Converter Dialog */
+.convert-dialog {
+  background-color: var(--card-bg);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-desktop-lg);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+  width: min(44rem, 90vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.convert-tasks-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--spacing-2) 0;
+}
+
+.convert-tasks-table th,
+.convert-tasks-table td {
+  padding: var(--spacing-2);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.select-category {
+  background-color: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-desktop-sm);
+  padding: var(--spacing-1) var(--spacing-2);
+  font-size: var(--font-desktop-body);
+}
+
+.conversion-progress-box {
+  margin-top: var(--spacing-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.progress-bar {
+  width: 100%;
+  height: 0.6rem;
+  background-color: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.progress-status-text {
+  font-size: var(--font-desktop-body);
+  color: var(--muted);
+}
+
+

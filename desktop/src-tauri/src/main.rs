@@ -34,6 +34,7 @@ pub use velora::liveset::v1 as liveset_v1;
 pub use velora::backup::v1 as backup_v1;
 
 pub mod backup_restore;
+pub mod converter;
 pub mod device;
 pub mod export_import;
 
@@ -646,6 +647,77 @@ async fn export_diagnostics(
     save_diagnostics_export(file_path, content, dev).await
 }
 
+#[tauri::command]
+async fn converter_suggest_categories(
+    names: Vec<String>,
+) -> Result<Vec<converter::SuggestedCategory>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(converter::suggest_categories_batch(&names))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn converter_list_libraries(
+    cache_dir: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Vec<converter::ConvertedLibraryInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = cache_dir.map(std::path::PathBuf::from).unwrap_or_else(|| {
+            let app_data = app.path().app_data_dir().ok();
+            converter::get_converted_libraries_root(app_data.as_deref())
+        });
+        converter::list_converted_libraries(&root)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn converter_delete_library(
+    library_id: String,
+    cache_dir: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = cache_dir.map(std::path::PathBuf::from).unwrap_or_else(|| {
+            let app_data = app.path().app_data_dir().ok();
+            converter::get_converted_libraries_root(app_data.as_deref())
+        });
+        converter::delete_converted_library(&library_id, &root)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn converter_cancel_conversion() -> Result<(), String> {
+    converter::request_cancel();
+    Ok(())
+}
+
+#[tauri::command]
+async fn converter_start_conversion(
+    tasks: Vec<converter::ConversionTask>,
+    cache_dir: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Vec<converter::ConversionProgress>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = cache_dir.map(std::path::PathBuf::from).unwrap_or_else(|| {
+            let app_data = app.path().app_data_dir().ok();
+            converter::get_converted_libraries_root(app_data.as_deref())
+        });
+        let app_clone = app.clone();
+        let sink = move |prog: converter::ConversionProgress| {
+            let _ = app_clone.emit("converter://progress", &prog);
+        };
+        converter::convert_libraries_batch(&tasks, &root, &sink)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn make_device_handle() -> DeviceHandle {
     let app: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let app2 = app.clone();
@@ -743,6 +815,11 @@ fn main() {
             read_import_manifest,
             execute_import,
             cancel_import,
+            converter_suggest_categories,
+            converter_list_libraries,
+            converter_start_conversion,
+            converter_cancel_conversion,
+            converter_delete_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Velora Studio application");
