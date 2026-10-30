@@ -318,7 +318,7 @@ development_status:
   epic-14: in-progress
   14-1-decision-clean-room-record-and-patent-search-before-the-desi: done
   14-2-modeled-tine-voice-in-the-engine-core: done
-  14-3-modeled-reed-voice-in-the-engine-core: backlog
+  14-3-modeled-reed-voice-in-the-engine-core: done
   14-4-continuous-touch-release-and-half-pedal: backlog
   14-5-modeled-electric-piano-voices-in-the-shared-pool-with-a-64-v: backlog
   14-6-objective-comparison-against-the-development-references: backlog

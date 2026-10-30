@@ -99,10 +99,11 @@ class EpVoice {
     prev_tip_disp_ = 0.0f;
     release_noise_samples_ = 0;
     current_level_ = 1.0f;
+    noise_seed_ = 1234567u + note * 10139u + velocity_ * 31337u;
   }
 
   void stop(uint8_t release_velocity = 64) noexcept {
-    if (!active_ || state_ == VoiceState::kReleasing) return;
+    if (!active_ || state_ == VoiceState::kReleasing || stealing_) return;
     if (pedal_held_) {
       state_ = VoiceState::kSustained;
       return;
@@ -166,13 +167,16 @@ class EpVoice {
         float phase = static_cast<float>(hammer_sample_idx_) / static_cast<float>(hammer_duration_);
         float shape = std::sin(kPi * phase);
         f_h = hammer_impulse_ * shape * shape;
-        hammer_sample_idx_++;
       }
 
       // Attack transient noise
       float attack_noise = 0.0f;
       if (hammer_sample_idx_ < hammer_duration_ + 32 && att_noise_gain > 0.0001f) {
         attack_noise = next_noise() * att_noise_gain * (1.0f - static_cast<float>(hammer_sample_idx_) / static_cast<float>(hammer_duration_ + 32));
+      }
+
+      if (hammer_sample_idx_ < hammer_duration_ + 32) {
+        hammer_sample_idx_++;
       }
 
       // 2. Resonator bank update
@@ -192,22 +196,29 @@ class EpVoice {
         tip_displacement += yn * mode_phase_[m];
       }
 
-      // 3. Transducer (Electromagnetic Variable Reluctance Pickup)
+      // 3. Transducer (Pickup)
       float tip_velocity = tip_displacement - prev_tip_disp_;
       prev_tip_disp_ = tip_displacement;
 
-      // Variable reluctance magnetic gap: smooth soft-limiting at minimal gap distance
-      float gap = 1.0f - (tip_displacement - y0);
-      float d_eff = gap;
-      if (gap < 0.25f) {
-        d_eff = 0.18f + 0.07f * std::tanh((gap - 0.18f) / 0.07f);
+      float out_val = 0.0f;
+      if (params_.instrument_type == EpInstrumentType::kReed) {
+        // Electrostatic Variable Capacitance Pickup (Reed)
+        // Polynomial non-linear displacement current: i(t) ~ v_tip * (1 + 2.2*xi + 3.2*xi^2 + 4*xi^3)
+        float xi = (tip_displacement - y0) * 1.8f;
+        float poly = 1.0f + 2.2f * xi + 3.2f * xi * xi + 4.0f * xi * xi * xi;
+        poly = std::clamp(poly, -4.0f, 6.0f);
+        float current = tip_velocity * poly * (pu_level * 2.5f);
+        out_val = std::tanh(current);
+      } else {
+        // Electromagnetic Variable Reluctance Pickup (Tine)
+        float gap = 1.0f - (tip_displacement - y0);
+        float d_eff = gap;
+        if (gap < 0.25f) {
+          d_eff = 0.18f + 0.07f * std::tanh((gap - 0.18f) / 0.07f);
+        }
+        float emf = (tip_velocity / (d_eff * d_eff)) * (pu_level * 2.8f);
+        out_val = std::tanh(emf);
       }
-
-      // Induced EMF e(t) proportional to v_tip / (d_eff^2)
-      float emf = (tip_velocity / (d_eff * d_eff)) * (pu_level * 2.8f);
-
-      // Soft non-linear saturation (warm tube/magnetic growl, zero harsh clipping)
-      float out_val = std::tanh(emf);
 
       // 4. Release felt scrape noise
       if (release_noise_samples_ > 0) {
@@ -254,18 +265,26 @@ class EpVoice {
     float f1 = 440.0f * std::pow(2.0f, (effective_note - 69.0f) / 12.0f);
     fundamental_hz_ = f1;
 
-    // Clamped-free Euler-Bernoulli cantilever mode ratios:
-    // r1 = 1.000, r2 ~ 6.267, r3 ~ 17.548, r4 ~ 34.387
-    // Dispersion slightly lowers r2 for tine tone-bar coupling
+    // Modal configuration
+    bool is_reed = (params_.instrument_type == EpInstrumentType::kReed);
     float decay_param = std::clamp(params_.decay_rate, 0.0f, 1.0f);
     float coupling = std::clamp(params_.tone_bar_coupling, 0.0f, 1.0f);
 
-    float ratios[kNumModes] = {
-      1.0f,
-      6.267f * (1.0f - 0.05f * coupling),
-      17.548f * (1.0f - 0.03f * coupling),
-      34.387f
-    };
+    float ratios[kNumModes];
+    if (is_reed) {
+      // Flat steel reed with tip solder mass: lower mode 2 ratio (~5.65) and compressed mode 3 (~16.2)
+      ratios[0] = 1.0f;
+      ratios[1] = 5.65f * (1.0f - 0.04f * coupling);
+      ratios[2] = 16.20f * (1.0f - 0.03f * coupling);
+      ratios[3] = 32.50f;
+    } else {
+      // Clamped-free Euler-Bernoulli cantilever tine mode ratios:
+      // r1 = 1.000, r2 ~ 6.267, r3 ~ 17.548, r4 ~ 34.387
+      ratios[0] = 1.0f;
+      ratios[1] = 6.267f * (1.0f - 0.05f * coupling);
+      ratios[2] = 17.548f * (1.0f - 0.03f * coupling);
+      ratios[3] = 34.387f;
+    }
 
     mode_phase_[0] = 1.0f;
     mode_phase_[1] = -0.7f;
@@ -273,7 +292,9 @@ class EpVoice {
     mode_phase_[3] = -0.2f;
 
     // Fundamental decay time scales with register: lower notes ring longer (5.0s to 12.0s)
-    float reg_decay = 7.0f * (1.0f - 0.4f * (static_cast<float>(note_ - 28) / 72.0f));
+    float note_offset = std::max(0.0f, static_cast<float>(note_) - 28.0f);
+    float reg_decay = is_reed ? 4.8f * (1.0f - 0.45f * (note_offset / 72.0f))
+                              : 7.0f * (1.0f - 0.4f * (note_offset / 72.0f));
     float t60_f1 = reg_decay * (0.6f + 0.8f * (1.0f - decay_param));
 
     float nyquist = 0.5f * sample_rate_;
@@ -282,8 +303,8 @@ class EpVoice {
       float fm = f1 * ratios[m];
       mode_freq_hz_[m] = fm;
 
-      // Band-limit: if mode exceeds 0.45 * Nyquist, suppress it completely to prevent aliasing
-      if (fm >= 0.45f * nyquist) {
+      // Band-limit: if mode exceeds 0.90 * Nyquist, suppress it completely to prevent aliasing
+      if (fm >= 0.90f * nyquist) {
         amp_[m] = 0.0f;
         damp_[m] = 0.0f;
         release_damp_[m] = 0.0f;
@@ -293,8 +314,8 @@ class EpVoice {
 
       // Smooth roll-off near Nyquist (band-limiting filter)
       float bandwidth_gain = 1.0f;
-      if (fm > 0.35f * nyquist) {
-        bandwidth_gain = 0.5f * (1.0f + std::cos(kPi * (fm - 0.35f * nyquist) / (0.10f * nyquist)));
+      if (fm > 0.75f * nyquist) {
+        bandwidth_gain = 0.5f * (1.0f + std::cos(kPi * (fm - 0.75f * nyquist) / (0.15f * nyquist)));
       }
 
       float omega = kTwoPi * fm / sample_rate_;
@@ -304,16 +325,16 @@ class EpVoice {
       float t60_m = 0.0f;
       if (m == 0) {
         t60_m = t60_f1;
-        amp_[m] = 0.08f;
+        amp_[m] = is_reed ? 0.09f : 0.08f;
       } else if (m == 1) {
-        t60_m = 0.28f * (1.0f - 0.3f * decay_param);  // chime clang
-        amp_[m] = 0.05f * bandwidth_gain;
+        t60_m = (is_reed ? 0.16f : 0.28f) * (1.0f - 0.3f * decay_param);  // chime clang
+        amp_[m] = (is_reed ? 0.065f : 0.05f) * bandwidth_gain;
       } else if (m == 2) {
-        t60_m = 0.08f * (1.0f - 0.4f * decay_param);
-        amp_[m] = 0.025f * bandwidth_gain;
+        t60_m = (is_reed ? 0.05f : 0.08f) * (1.0f - 0.4f * decay_param);
+        amp_[m] = (is_reed ? 0.02f : 0.025f) * bandwidth_gain;
       } else {
-        t60_m = 0.035f * (1.0f - 0.4f * decay_param);
-        amp_[m] = 0.012f * bandwidth_gain;
+        t60_m = (is_reed ? 0.02f : 0.035f) * (1.0f - 0.4f * decay_param);
+        amp_[m] = (is_reed ? 0.010f : 0.012f) * bandwidth_gain;
       }
 
       damp_[m] = std::exp(-3.0f / (t60_m * sample_rate_));

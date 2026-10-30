@@ -89,6 +89,7 @@ static int usage() {
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
                "                     [--vibrato off|v1|v2|v3|c1|c2|c3] [--leakage 0..1] [--rotary off|slow|fast|stop]\n"
                "       FM engine:    --syx <file.syx> [--voice-slot 1..32] [--negative feedback|algo|gain]\n"
+               "       EP engine:    [--ep-type tine|reed]\n"
                "       routing (parts = channels 0..7): [--part-output P:main|aux] [--send P:REVERB[:DELAY]] [--inserts P:type[!],...]\n"
                "                     (type: rotary chorus_phaser ep_amp eq compressor, '@p1/p2/..' = normalised params, '!' = bypassed)\n"
                "                     [--master-level DB] [--master-eq LOW_DB:MID_DB:MID_HZ:HIGH_DB[!]]\n"
@@ -110,7 +111,8 @@ static int usage() {
 
 int main(int argc, char** argv) {
   std::string midi, events_path, out, engine = "test-tone", bundle_path, instrument_key, interp = "hermite";
-  std::string syx_path, negative_opt;
+  std::string syx_path, negative_opt, ep_type = "tine";
+  bool ep_type_given = false;
   std::uint64_t voice_slot = 1;
   bool voice_slot_given = false;
   bool voice_threads_given = false, voices_given = false, sample_opts = false, drawbars_given = false;
@@ -607,6 +609,9 @@ int main(int argc, char** argv) {
       double c = 0;
       if (!parse_double(v, -4800.0, 4800.0, c)) { std::fprintf(stderr, "error: invalid --detune-cents\n"); return 2; }
       opt.detune_cents = static_cast<float>(c);
+    } else if (a == "--ep-type" && val(v)) {
+      ep_type = v;
+      ep_type_given = true;
     } else if (a == "--syx" && val(v)) {
       syx_path = v;
     } else if (a == "--voice-slot" && val(v)) {
@@ -776,6 +781,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: --percussion, --key-click, --vibrato, --leakage and --rotary need --engine organ\n");
     return 2;
   }
+  if (ep_type_given && engine != "ep") {
+    std::fprintf(stderr, "error: --ep-type needs --engine ep\n");
+    return 2;
+  }
   if (engine == "fm") {
     if (syx_path.empty()) {
       std::fprintf(stderr, "error: --engine fm needs --syx\n");
@@ -818,8 +827,27 @@ int main(int argc, char** argv) {
     }
     opt.engine = EngineKind::kFm;
   } else if (engine == "ep") {
+    if (!syx_path.empty() || voice_slot_given || !negative_opt.empty()) {
+      std::fprintf(stderr, "error: --syx, --voice-slot and --negative need --engine fm\n");
+      return 2;
+    }
+    if (drawbars_given || percussion_given || key_click_given || vibrato_given || leakage_given || rotary_given) {
+      std::fprintf(stderr, "error: organ options cannot be used with --engine ep\n");
+      return 2;
+    }
+    if (sample_opts || !bundle_path.empty() || !instrument_key.empty()) {
+      std::fprintf(stderr, "error: sample options cannot be used with --engine ep\n");
+      return 2;
+    }
     opt.engine = EngineKind::kEp;
-    opt.ep_params = velora::core::create_default_tine_parameters();
+    if (ep_type == "reed") {
+      opt.ep_params = velora::core::create_default_reed_parameters();
+    } else if (ep_type == "tine") {
+      opt.ep_params = velora::core::create_default_tine_parameters();
+    } else {
+      std::fprintf(stderr, "error: unknown --ep-type '%s' (tine or reed)\n", ep_type.c_str());
+      return 2;
+    }
   } else {
     if (!syx_path.empty() || voice_slot_given || !negative_opt.empty()) {
       std::fprintf(stderr, "error: --syx, --voice-slot and --negative need --engine fm\n");

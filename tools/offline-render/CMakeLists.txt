@@ -1214,13 +1214,13 @@ add_custom_target(update-fm-goldens
   COMMAND ${CMAKE_SOURCE_DIR}/tools/oracle/render-fm-oracle.sh ${_fm_suite}/golden/fm_envelope_decay_release.syx 1 ${_fm_suite}/golden/fm_envelope_decay_release.mid ${_fm_suite}/golden/fm_envelope_decay_release.wav
   DEPENDS fm-fixture-gen)
 
-# Story 14.2: Modeled EP (tine) golden offline render tests
+# Story 14.2 & 14.3: Modeled EP (tine and reed) golden offline render tests
 set(_ep_suite ${CMAKE_CURRENT_SOURCE_DIR}/tests/ep_suite)
-add_test(NAME offline_render_ep_clean COMMAND ${CMAKE_COMMAND} -E rm -f ${_out}/tine_key_sweep.wav ${_out}/tine_velocity_sweep.wav)
+add_test(NAME offline_render_ep_clean COMMAND ${CMAKE_COMMAND} -E rm -f ${_out}/tine_key_sweep.wav ${_out}/tine_velocity_sweep.wav ${_out}/reed_key_sweep.wav ${_out}/reed_velocity_sweep.wav)
 set_tests_properties(offline_render_ep_clean PROPERTIES FIXTURES_SETUP ep_clean)
 
 add_test(NAME offline_render_tine_key_sweep
-         COMMAND velora-offline-render --engine ep
+         COMMAND velora-offline-render --engine ep --ep-type tine
                  --midi ${_ep_suite}/golden/tine_key_sweep.mid
                  --out ${_out}/tine_key_sweep.wav)
 set_tests_properties(offline_render_tine_key_sweep PROPERTIES FIXTURES_REQUIRED ep_clean FIXTURES_SETUP ep_key_ready)
@@ -1230,7 +1230,7 @@ add_test(NAME null_test_tine_key_sweep
 set_tests_properties(null_test_tine_key_sweep PROPERTIES FIXTURES_REQUIRED ep_key_ready PASS_REGULAR_EXPRESSION "overall: PASS")
 
 add_test(NAME offline_render_tine_velocity_sweep
-         COMMAND velora-offline-render --engine ep
+         COMMAND velora-offline-render --engine ep --ep-type tine
                  --midi ${_ep_suite}/golden/tine_velocity_sweep.mid
                  --out ${_out}/tine_velocity_sweep.wav)
 set_tests_properties(offline_render_tine_velocity_sweep PROPERTIES FIXTURES_REQUIRED ep_clean FIXTURES_SETUP ep_vel_ready)
@@ -1238,3 +1238,23 @@ set_tests_properties(offline_render_tine_velocity_sweep PROPERTIES FIXTURES_REQU
 add_test(NAME null_test_tine_velocity_sweep
          COMMAND velora-null-test --case ${_ep_suite}/golden/tine_velocity_sweep.case --candidate ${_out}/tine_velocity_sweep.wav)
 set_tests_properties(null_test_tine_velocity_sweep PROPERTIES FIXTURES_REQUIRED ep_vel_ready PASS_REGULAR_EXPRESSION "overall: PASS")
+
+add_test(NAME offline_render_reed_key_sweep
+         COMMAND velora-offline-render --engine ep --ep-type reed
+                 --midi ${_ep_suite}/golden/reed_key_sweep.mid
+                 --out ${_out}/reed_key_sweep.wav)
+set_tests_properties(offline_render_reed_key_sweep PROPERTIES FIXTURES_REQUIRED ep_clean FIXTURES_SETUP ep_reed_key_ready)
+
+add_test(NAME null_test_reed_key_sweep
+         COMMAND velora-null-test --case ${_ep_suite}/golden/reed_key_sweep.case --candidate ${_out}/reed_key_sweep.wav)
+set_tests_properties(null_test_reed_key_sweep PROPERTIES FIXTURES_REQUIRED ep_reed_key_ready PASS_REGULAR_EXPRESSION "overall: PASS")
+
+add_test(NAME offline_render_reed_velocity_sweep
+         COMMAND velora-offline-render --engine ep --ep-type reed
+                 --midi ${_ep_suite}/golden/reed_velocity_sweep.mid
+                 --out ${_out}/reed_velocity_sweep.wav)
+set_tests_properties(offline_render_reed_velocity_sweep PROPERTIES FIXTURES_REQUIRED ep_clean FIXTURES_SETUP ep_reed_vel_ready)
+
+add_test(NAME null_test_reed_velocity_sweep
+         COMMAND velora-null-test --case ${_ep_suite}/golden/reed_velocity_sweep.case --candidate ${_out}/reed_velocity_sweep.wav)
+set_tests_properties(null_test_reed_velocity_sweep PROPERTIES FIXTURES_REQUIRED ep_reed_vel_ready PASS_REGULAR_EXPRESSION "overall: PASS")

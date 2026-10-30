@@ -117,26 +117,37 @@ void EpEngine::render(float* left, float* right, uint32_t frames) noexcept {
 }
 
 void EpEngine::render_split(float* const* left, float* const* right, uint32_t frames) noexcept {
-  for (uint32_t p = 0; p < kPartCount; ++p) {
-    if (left[p]) std::memset(left[p], 0, frames * sizeof(float));
-    if (right[p]) std::memset(right[p], 0, frames * sizeof(float));
-  }
+  uint32_t offset = 0;
+  while (frames > 0) {
+    uint32_t chunk = std::min(frames, kBlockFrames);
 
-  uint32_t processed = 0;
-  while (processed < frames) {
-    uint32_t block = std::min(frames - processed, kBlockFrames);
+    for (uint32_t c = 0; c < kSplitChannels; ++c) {
+      if (!left[c] && !right[c]) continue;
 
-    for (auto& v : voices_) {
-      if (v.is_active()) {
-        uint32_t p = v.channel() % kPartCount;
-        if (left[p] && right[p]) {
-          v.render_block(left[p] + processed, right[p] + processed, block);
+      std::fill_n(scratch_left_.data(), chunk, 0.0f);
+      std::fill_n(scratch_right_.data(), chunk, 0.0f);
+      bool has_channel_voices = false;
+
+      for (auto& v : voices_) {
+        if (v.is_active() && (v.channel() % kPartCount) == c) {
+          v.render_block(scratch_left_.data(), scratch_right_.data(), chunk);
+          has_channel_voices = true;
+        }
+      }
+
+      if (has_channel_voices) {
+        if (left[c]) {
+          for (uint32_t i = 0; i < chunk; ++i) left[c][offset + i] += scratch_left_[i];
+        }
+        if (right[c]) {
+          for (uint32_t i = 0; i < chunk; ++i) right[c][offset + i] += scratch_right_[i];
         }
       }
     }
 
-    processed += block;
-    frame_clock_ += block;
+    offset += chunk;
+    frames -= chunk;
+    frame_clock_ += chunk;
   }
 }
 
@@ -149,11 +160,12 @@ bool EpEngine::voice_info(uint32_t slot, VoiceInfo& out) const noexcept {
   out.level = v.current_level();
   out.state = v.state();
   out.channel = v.channel();
+  out.note = v.note();
   return true;
 }
 
 bool EpEngine::begin_steal_fade(uint32_t slot, uint32_t ramp_frames) noexcept {
-  if (slot >= voices_.size() || !voices_[slot].is_active()) {
+  if (slot >= voices_.size() || !voices_[slot].is_active() || voices_[slot].is_steal_fading()) {
     return false;
   }
   voices_[slot].begin_steal_fade(ramp_frames);
@@ -196,40 +208,6 @@ uint32_t EpEngine::active_voice_count() const noexcept {
     if (v.is_active()) ++count;
   }
   return count;
-}
-
-uint32_t EpEngine::allocate_voice_slot(uint32_t channel, uint32_t note) noexcept {
-  (void)channel;
-  (void)note;
-
-  // 1. Find inactive slot
-  for (uint32_t i = 0; i < voices_.size(); ++i) {
-    if (!voices_[i].is_active()) return i;
-  }
-
-  // 2. Find releasing voice with lowest level or oldest
-  uint32_t best_releasing = voices_.size();
-  float lowest_rel_level = 1e9f;
-  for (uint32_t i = 0; i < voices_.size(); ++i) {
-    if (voices_[i].state() == VoiceState::kReleasing) {
-      if (voices_[i].current_level() < lowest_rel_level) {
-        lowest_rel_level = voices_[i].current_level();
-        best_releasing = i;
-      }
-    }
-  }
-  if (best_releasing < voices_.size()) return best_releasing;
-
-  // 3. Fallback: steal oldest active voice
-  uint32_t oldest_slot = 0;
-  uint64_t oldest_time = ~0ULL;
-  for (uint32_t i = 0; i < voices_.size(); ++i) {
-    if (voices_[i].start_time() < oldest_time) {
-      oldest_time = voices_[i].start_time();
-      oldest_slot = i;
-    }
-  }
-  return oldest_slot;
 }
 
 }  // namespace velora::core
