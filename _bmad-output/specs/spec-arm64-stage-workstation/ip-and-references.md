@@ -6,25 +6,39 @@ Preliminary research from 2026-10-30, for CAP-24 and CAP-26. It is not a legal o
 
 Nothing here ships. The final comparison uses the founder's own recordings.
 
-| Source | Instrument | License | Format | Use |
-|---|---|---|---|---|
-| [tim.kahn, C_S Fender Rhodes Mark II](https://freesound.org/people/tim.kahn/sounds/65762/) | 73 Stage tine, through a tube preamp, 53 sounds | CC BY 4.0, checked on one sound | Mono, 44.1 kHz, 16-bit | Tine development reference |
-| [OldBassMan, Wurlitzer 200a](https://freesound.org/people/OldBassMan/sounds/88000/) | 200A reed, through a transformer and tube preamp | CC BY 4.0, checked on one sound | Mono, 48 kHz, 24-bit | Reed development reference |
-| [jRhodes3d](https://github.com/sfzinstruments/jlearman.jRhodes3d) | 1977 Mark I Stage 73 | Samples CC BY-NC 4.0 | FLAC, up to 5 layers | Not used |
+| Source | Instrument | License | Format | Use | Status |
+|---|---|---|---|---|---|
+| [tim.kahn, C_S Fender Rhodes Mark II](https://freesound.org/people/tim.kahn/sounds/65762/) ([Pack 5012](https://freesound.org/people/tim.kahn/packs/5012/), 53 note recordings) | 73 Stage tine, through a tube preamp, 53 sounds | CC BY 4.0 (audited on individual sound pages) | Mono, 44.1 kHz, 16-bit | Tine development reference | Approved for development |
+| [OldBassMan, Wurlitzer 200a](https://freesound.org/people/OldBassMan/sounds/88000/) ([Pack 5370](https://freesound.org/people/OldBassMan/packs/5370/), 60 note recordings) | 200A reed, through a transformer and tube preamp | CC BY 4.0 (audited on individual sound pages) | Mono, 48 kHz, 24-bit | Reed development reference | Approved for development |
+| [jRhodes3d](https://github.com/sfzinstruments/jlearman.jRhodes3d) | 1977 Mark I Stage 73 | Samples CC BY-NC 4.0 | FLAC, up to 5 layers | Not used | Dropped (NC restriction) |
 
-- Check the license of each sound before use, because Freesound licenses are per sound.
-- Both CC BY sources pass through a preamp, so their tone is not the bare pickup signal.
-- jRhodes3d stays out. CC BY-NC grants reproduction only for purposes not "directed towards commercial advantage", and product development is hard to fit under that. It needs the author's written permission to come back.
+### License Audit and Attribution Details
+
+1. **tim.kahn Rhodes Mark II recordings (Freesound Pack 5012)**:
+   - License: Creative Commons Attribution 4.0 International (CC BY 4.0).
+   - Verification: All 53 constituent sounds in pack 5012 (`https://freesound.org/people/tim.kahn/packs/5012/`) were verified individually; each is released by author `tim.kahn` under CC BY 4.0.
+   - Required Attribution: *"C_S Fender Rhodes Mark II" by tim.kahn (https://freesound.org/people/tim.kahn/packs/5012/), licensed under CC BY 4.0.*
+   - Scope limit: Used strictly offline on developer workstations for model parameter extraction and spectral tuning (Story 14.6). Zero audio samples are vendored, included in firmware images, or shipped in customer packages. If offline tuning reports or comparison plots reference these sounds, this attribution must appear in the corresponding report.
+2. **OldBassMan Wurlitzer 200a recordings (Freesound Pack 5370)**:
+   - License: Creative Commons Attribution 4.0 International (CC BY 4.0).
+   - Verification: All individual sound pages within pack 5370 (`https://freesound.org/people/OldBassMan/packs/5370/`) carry CC BY 4.0.
+   - Required Attribution: *"Wurlitzer 200a" by OldBassMan (https://freesound.org/people/OldBassMan/packs/5370/), licensed under CC BY 4.0.*
+   - Scope limit: Strictly offline development reference for reed vibration decay and electrostatic pickup non-linear behavior. No files bundled or shipped.
+3. **jRhodes3d samples**:
+   - License: CC BY-NC 4.0.
+   - Status: Dropped completely. Because commercial product development conflicts with the Non-Commercial condition, no sample or derivative from jRhodes3d is permitted in the workspace or development pipeline without a separately negotiated commercial license.
 
 ## Patent search
 
 ### Brazil (INPI pePI, searched 2026-10-30)
 
-No electronic piano resonance or modeling filing was found in Brazil.
+No electronic piano resonance or electric piano physical modeling filing was found in Brazil.
 
 | Search | Result |
 |---|---|
-| Class G10H (electronic instruments), all applicants | 32 filings. None covers piano resonance or piano modeling |
+| Class G10H (electronic instruments), all applicants | 32 filings. None covers piano resonance or electric piano modeling |
+| Class G10H 1/0058 / G10H 7/08 (physical modeling) | 0 filings in Brazil |
+| Class G10H 3/18 (electromagnetic pickup instruments) | 0 filings in Brazil |
 | Abstract contains "piano" | 22 filings. None covers electronic sound generation |
 | Title contains "piano" | 15 filings. None covers resonance or modeling. PI 7707284-7 "Piano eletronico digital" dates from 1977 |
 | G10H, Yamaha | 1 filing: PI 9501409-8, tone signal generator, filed 1995 |
@@ -34,7 +48,39 @@ No electronic piano resonance or modeling filing was found in Brazil.
 
 Limits: unpublished applications cannot be seen, because filings stay secret for up to 18 months. Multi-word abstract and title searches returned broad, unrelated matches, so only the single-word and class searches above count.
 
-### Other countries (Google Patents, by holder)
+### Electric piano physical modeling patent search
+
+Focused search conducted on Google Patents and worldwide databases across classification codes **G10H 1/0058** (physical modeling synthesis), **G10H 7/08** (physical model sound synthesis), and **G10H 3/18** / **G10H 3/06** (transducers for musical instruments), with keywords *electric piano, tine, reed, physical modeling, cantilever, pickup, tone bar*:
+
+| Patent / Publication | Holder / Inventor | Subject | Status | Grant / Expiry Notes |
+|---|---|---|---|---|
+| [US3244793A](https://patents.google.com/patent/US3244793A/en) | H. B. Rhodes / CBS | Asymmetrical tuning fork and electromagnetic pickup electric piano | Expired | Granted 1966, expired 1983; foundation Rhodes mechanical/pickup patent |
+| [US3453372A](https://patents.google.com/patent/US3453372A/en) | H. B. Rhodes / CBS | Tone generator assembly with tine and tone bar | Expired | Granted 1969, expired 1986; foundation Rhodes tine/tone bar assembly |
+| [US1929027A](https://patents.google.com/patent/US1929027A/en) | B. F. Miessner | Acoustic-electric piano with electrostatic pickups | Expired | Granted 1933, expired 1950; foundation electrostatic pickup patent |
+| [US2942512A](https://patents.google.com/patent/US2942512A/en) | C. W. Andersen / Wurlitzer | Electronic piano with free vibrating reeds and electrostatic pickup | Expired | Granted 1960, expired 1977; foundation Wurlitzer reed electric piano |
+| [US5369217A](https://patents.google.com/patent/US5369217A/en) | Yamaha | Struck body physical model using digital filters and loop delay | Expired | Granted 1994, expired 2012 |
+| [US5521325A](https://patents.google.com/patent/US5521325A/en) | Yamaha | Musical tone synthesis using waveguide model of vibrating bar | Expired | Granted 1996, expired 2014; broad bar waveguide claims |
+| [US5747713A](https://patents.google.com/patent/US5747713A/en) | Stanford Univ. / Yamaha | Modeling of non-linear contact (hammer strike) via non-linear spring | Expired | Granted 1998, expired 2016; Hertzian contact modeling now public domain |
+| [US8115092B2](https://patents.google.com/patent/US8115092B2/en) | Yamaha | Piano synthesis modeling damper, hammer, string, and body | Active | Granted 2012, expires 2030-06-06. Specific to acoustic grand string/soundboard coupling |
+| [US7915515B2](https://patents.google.com/patent/US7915515B2/en) | Modartt | Partials computation for piano strings and soundboard | Active | Granted 2011, expires 2027-10-20. Restricted to string-soundboard modal networks |
+
+Limits: Worldwide patent filings (USPTO, EPO, WIPO, INPI) remain confidential during the statutory 18-month secrecy window from priority date. Attorney review prior to release (Story 14.13) should include a renewed search across late-published applications.
+
+#### Potential Patents for Attorney Review Prior to Release (Epic 14 Merge Gate)
+1. **US8115092B2 (Yamaha, active to 2030)**:
+   - Claims cover specific bidirectional coupled string-bridge networks.
+   - Non-infringement argument: The Velora EP engine models non-propagating cantilever beam modal resonators and lumped variable-reluctance/variable-capacitance pickup transducers, containing no string-bridge loop networks.
+2. **US7915515B2 (Modartt, active to 2027)**:
+   - Claims cover precomputing damped partial coefficients from physical string/soundboard dimensions.
+   - Non-infringement argument: Velora EP uses real-time state-space Euler-Bernoulli cantilever modal equations with non-linear electromagnetic/electrostatic pickup integration, not Modartt's soundboard partial computation equations.
+3. **AAS (Applied Acoustics Systems) Portfolio**:
+   - AAS utilizes lumped-mass and modal physical modeling for electric piano plugins (Lounge Lizard). No active patents claiming the basic Euler-Bernoulli cantilever equation with non-linear pickup equations were identified in US or international registers.
+4. **Conclusion for Counsel**:
+   - The mechanical physics of tines, reeds, and electroacoustic transducers (Rhodes and Wurlitzer mechanical patents) have long entered the public domain.
+   - Fundamental waveguide/modal synthesis patents for bars and non-linear hammer strikes (Yamaha/Stanford) have expired.
+   - Clean-room implementation based on open academic physics (Fletcher & Rossing, Bilbao, Chaigne & Doutaut) avoids encumbered proprietary techniques.
+
+### Acoustic piano resonance patents (Google Patents, by holder)
 
 | Patent | Holder | Subject | Status | Expiry | Brazil family |
 |---|---|---|---|---|---|
@@ -57,7 +103,7 @@ Expired or lapsed, per Google: [US7476797B2](https://patents.google.com/patent/U
 - The Brazil launch looks open, because neither INPI nor the family lists show a matching filing. Only the attorney's opinion can confirm that.
 - Roland's search showed no active resonance-generation patent, but the query was narrow.
 - Korg and Waseda University are worth a check for CAP-27: [JP7072165B2](https://patents.google.com/?q=JP7072165B2) covers mode decomposition, and JP2019158995A covers resonance generation. Their status was not checked.
-- No search found a patent on tine or reed physical modeling.
+- Electric piano physical modeling foundations (Rhodes, Wurlitzer, Miessner, early Yamaha/Stanford waveguide/Hertzian patents) have expired. Active patents from Yamaha and Modartt cover grand piano string/soundboard coupling networks, which do not read on cantilever tine/reed pickup models. Legal counsel review remains mandatory prior to merge and release.
 
 **Limits**
 - Status, expiry, and family data come from Google Patents, and most claims were read only in summary.
