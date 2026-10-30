@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-18-2026 19:03
-last_updated: 10-28-2026 22:03
+last_updated: 10-29-2026 22:02
 project: Ladiani Velora 73
 project_key: NOKEY
 tracking_system: file-system
@@ -296,7 +296,7 @@ development_status:
   12-12-part-surface-sound-section-for-va-timbres: done
   12-13-velora-studio-part-editor-sound-sections-for-fm-and-va: done
   12-14-fm-and-va-firmware-update-reaches-shipped-v1-units: done
-  epic-12-retrospective: optional
+  epic-12-retrospective: done
 
   epic-13: done
   13-1-decision-sfz-scope-for-the-reference-corpus: done
@@ -390,3 +390,16 @@ action_items:
     owner: "process owner"
     status: done
     ref: "_bmad-output/implementation-artifacts/epic-13-retro-2026-10-28.md"
+  - id: "epic-12-retro-item-12-physical-rk3588-dev-board-real-time-audi"
+    epic: 12
+    action: "Physical RK3588 Dev Board Real-Time Audio Bring-Up (Stories 1.1, 1.2,
+      1.11, 1.22)"
+    owner: "dev with hardware"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-12-retro-2026-10-29.md"
+  - id: "epic-12-retro-item-13-automated-physical-power-cut-relay-harne"
+    epic: 12
+    action: "Automated Physical Power-Cut Relay Harness (Story 8.13)"
+    owner: "hardware QA lead"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-12-retro-2026-10-29.md"
