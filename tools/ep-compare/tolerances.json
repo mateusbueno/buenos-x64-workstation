@@ -1,0 +1,43 @@
+{
+  "preamp_disclaimer": "Development references pass through a tube/transformer preamp (as recorded in Story 14.1 / ip-and-references.md); bare transducer model does not include analog preamp coloration. Zero reference audio is bundled or shipped in the product.",
+  "committed_notes": [28, 45, 60, 69, 84],
+  "note_names": {
+    "28": "E1",
+    "45": "A2",
+    "60": "C4",
+    "69": "A4",
+    "84": "C6"
+  },
+  "tine": {
+    "mode_ratios": {
+      "mode2": {"nominal": 6.11, "tolerance_pct": 3.0},
+      "mode3": {"nominal": 17.28, "tolerance_pct": 5.0}
+    },
+    "decay_times_seconds": {
+      "28": {"nominal": 7.00, "tolerance_pct": 15.0},
+      "45": {"nominal": 6.34, "tolerance_pct": 15.0},
+      "60": {"nominal": 5.76, "tolerance_pct": 15.0},
+      "69": {"nominal": 5.41, "tolerance_pct": 15.0},
+      "84": {"nominal": 4.82, "tolerance_pct": 15.0}
+    },
+    "velocity_dynamic_range_db": {
+      "min_dynamic_range_db": 30.0
+    }
+  },
+  "reed": {
+    "mode_ratios": {
+      "mode2": {"nominal": 5.54, "tolerance_pct": 3.0},
+      "mode3": {"nominal": 15.95, "tolerance_pct": 5.0}
+    },
+    "decay_times_seconds": {
+      "28": {"nominal": 4.80, "tolerance_pct": 15.0},
+      "45": {"nominal": 4.29, "tolerance_pct": 15.0},
+      "60": {"nominal": 3.84, "tolerance_pct": 15.0},
+      "69": {"nominal": 3.57, "tolerance_pct": 15.0},
+      "84": {"nominal": 3.12, "tolerance_pct": 15.0}
+    },
+    "velocity_dynamic_range_db": {
+      "min_dynamic_range_db": 30.0
+    }
+  }
+}

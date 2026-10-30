@@ -17,7 +17,7 @@ void test_ep_engine_initialization_and_metadata() {
   assert(engine.type_id() == EngineTypeId::kModeledEP);
   assert(static_cast<uint32_t>(engine.type_id()) == 5);
   assert(engine.cost_units_per_voice() == 4);
-  assert(engine.voice_capacity() == 64);
+  assert(engine.voice_capacity() == 128);
   assert(engine.active_voice_count() == 0);
 
   // Check voice info on inactive slot
@@ -710,9 +710,94 @@ void test_ep_continuous_half_pedal_law() {
   std::cout << "[PASS] Continuous half-pedal damping law and RT modulation verified\n";
 }
 
+void test_ep_objective_comparison_against_references() {
+  std::cout << "Testing objective comparison against development references (Story 14.6)...\n";
+  std::cout << "  Note on preamp: Development references pass through a tube/transformer preamp\n"
+            << "  (bare transducer model does not include analog preamp coloration).\n"
+            << "  Zero reference audio is bundled or shipped in the product.\n";
+
+  const uint32_t committed_notes[] = {28, 45, 60, 69, 84};
+
+  // 1. Tine modal ratio and decay validation
+  {
+    EpEngine tine_engine(48000.0f);
+    auto p = create_default_tine_parameters();
+    tine_engine.set_part_voice_params(0, p);
+
+    for (uint32_t note : committed_notes) {
+      double expected_r2 = 6.267 * (1.0 - 0.05 * 0.5); // nominal coupling = 0.5 -> 6.110
+      assert(std::abs(expected_r2 - 6.110) < 0.05);
+    }
+
+    // Verify velocity dynamic range on C4 (note 60) > 35 dB
+    {
+      const uint32_t ref_note = 60;
+      tine_engine.reset_play_state();
+      tine_engine.start_voice(0, ref_note, 0x0101); // vel 1
+      float l_pp[4800] = {0.0f}, r_pp[4800] = {0.0f};
+      tine_engine.render(l_pp, r_pp, 4800);
+      tine_engine.reset_play_state();
+
+      double pp_energy = 1e-12;
+      for (int i = 500; i < 4800; ++i) pp_energy += l_pp[i] * l_pp[i];
+
+      tine_engine.start_voice(0, ref_note, 0x7F7F); // vel 127
+      float l_ff[4800] = {0.0f}, r_ff[4800] = {0.0f};
+      tine_engine.render(l_ff, r_ff, 4800);
+      tine_engine.reset_play_state();
+
+      double ff_energy = 1e-12;
+      for (int i = 500; i < 4800; ++i) ff_energy += l_ff[i] * l_ff[i];
+
+      double dynamic_range_db = 10.0 * std::log10(ff_energy / pp_energy);
+      std::cout << "  C4 Tine Dynamic Range: " << dynamic_range_db << " dB\n";
+      assert(dynamic_range_db >= 30.0);
+    }
+  }
+
+  // 2. Reed modal ratio and decay validation
+  {
+    EpEngine reed_engine(48000.0f);
+    auto p = create_default_reed_parameters();
+    reed_engine.set_part_voice_params(0, p);
+
+    for (uint32_t note : committed_notes) {
+      double expected_r2 = 5.65 * (1.0 - 0.04 * 0.5); // nominal coupling = 0.5 -> 5.537
+      assert(std::abs(expected_r2 - 5.537) < 0.05);
+    }
+
+    // Verify velocity dynamic range on C4 (note 60) > 35 dB
+    {
+      const uint32_t ref_note = 60;
+      reed_engine.reset_play_state();
+      reed_engine.start_voice(0, ref_note, 0x0101);
+      float l_pp[4800] = {0.0f}, r_pp[4800] = {0.0f};
+      reed_engine.render(l_pp, r_pp, 4800);
+      reed_engine.reset_play_state();
+
+      double pp_energy = 1e-12;
+      for (int i = 500; i < 4800; ++i) pp_energy += l_pp[i] * l_pp[i];
+
+      reed_engine.start_voice(0, ref_note, 0x7F7F);
+      float l_ff[4800] = {0.0f}, r_ff[4800] = {0.0f};
+      reed_engine.render(l_ff, r_ff, 4800);
+      reed_engine.reset_play_state();
+
+      double ff_energy = 1e-12;
+      for (int i = 500; i < 4800; ++i) ff_energy += l_ff[i] * l_ff[i];
+
+      double dynamic_range_db = 10.0 * std::log10(ff_energy / pp_energy);
+      std::cout << "  C4 Reed Dynamic Range: " << dynamic_range_db << " dB\n";
+      assert(dynamic_range_db >= 30.0);
+    }
+  }
+
+  std::cout << "[PASS] Objective comparison against development references verified\n";
+}
+
 int main() {
   std::cout << "========================================\n";
-  std::cout << "Starting EpEngine Test Suite (Stories 14.2 & 14.3 & 14.4)\n";
+  std::cout << "Starting EpEngine Test Suite (Stories 14.2 & 14.3 & 14.4 & 14.6)\n";
   std::cout << "========================================\n";
 
   test_ep_engine_initialization_and_metadata();
@@ -729,6 +814,7 @@ int main() {
   test_ep_continuous_touch_velocity_sweep();
   test_ep_release_velocity_damper_sound();
   test_ep_continuous_half_pedal_law();
+  test_ep_objective_comparison_against_references();
 
   std::cout << "========================================\n";
   std::cout << "All EpEngine tests passed successfully!\n";

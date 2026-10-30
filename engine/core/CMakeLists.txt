@@ -108,6 +108,8 @@ add_executable(ep_engine_tests tests/ep_engine_test.cpp)
 target_link_libraries(ep_engine_tests PRIVATE velora_core)
 target_compile_definitions(ep_engine_tests PRIVATE VELORA_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_test(NAME ep_engine_tests COMMAND ep_engine_tests)
+add_test(NAME ep_objective_comparison
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/ep-compare/ep_compare.py --verify --report)
 
 # Story 9.9 follow-up: registry part parameters inside the FM / VA / sample engines and the per-part tone stage (mapping, audible effect, defaults unchanged, smoothing,
 # EQ stability, parallel equivalence, allocation-free flood). The allocation hook is process wide; the RTSan build of the same file is in the RTSan block below.
