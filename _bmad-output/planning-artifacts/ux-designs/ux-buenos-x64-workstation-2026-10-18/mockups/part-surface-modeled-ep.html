@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora 73 — Part surface: Modeled Electric Piano Sound</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#ecebe8;font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#151515}
+.wrap{max-width:1180px;margin:auto;padding:28px 16px 60px}
+h1{font-size:22px;font-weight:500;margin:0 0 6px}
+h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#4d4d4d;margin:38px 0 6px}
+p{color:#4d4d4d;max-width:920px;margin:0 0 12px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media (max-width:760px){.pair{grid-template-columns:1fr}}
+figure{margin:0}
+figcaption{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:0 0 4px 2px}
+.frame{background:linear-gradient(180deg,#d4d7da,#b4b8bc 60%,#a3a7ab);padding:10px;border-radius:12px}
+.scr{aspect-ratio:1024/600;width:100%;border-radius:6px;overflow:hidden;position:relative;container-type:inline-size;font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif;background:var(--bg);color:var(--text)}
+.s{--u:calc(100cqw/1024);position:absolute;inset:0;display:grid;grid-template-rows:calc(56*var(--u)) calc(432*var(--u)) calc(56*var(--u)) calc(56*var(--u))}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:calc(12*var(--u));padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(15*var(--u));letter-spacing:.25em;text-transform:uppercase;min-width:0}
+.bar .ttl{color:var(--text);font-size:calc(19*var(--u));letter-spacing:0;text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.bar .ttl small{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-right:calc(10*var(--u))}
+.bar .r{display:flex;align-items:center;gap:calc(8*var(--u));flex:none}
+.mm{font-size:calc(20*var(--u));font-weight:700;letter-spacing:.06em;color:var(--accent);border-bottom:calc(2*var(--u)) solid var(--accent);line-height:1.2;margin-right:calc(8*var(--u));white-space:nowrap}
+.sq{width:calc(56*var(--u));height:calc(56*var(--u));display:flex;align-items:center;justify-content:center;font-size:calc(24*var(--u));color:var(--text);border-radius:calc(8*var(--u))}
+.stat{display:flex;align-items:center;padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(14*var(--u));letter-spacing:.06em;text-transform:uppercase;gap:calc(14*var(--u));min-width:0}
+.hint{display:flex;gap:calc(26*var(--u));align-items:center;padding:0 calc(22*var(--u));background:var(--surface);color:var(--muted);font-size:calc(14*var(--u));letter-spacing:.06em;border-top:calc(1*var(--u)) solid var(--line);min-width:0}
+.hint span{white-space:nowrap}
+.hint b{color:var(--text);font-weight:400;border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(5*var(--u));padding:calc(2*var(--u)) calc(7*var(--u));margin-right:calc(6*var(--u))}
+.body{display:grid;grid-template-columns:calc(224*var(--u)) 1fr;gap:calc(14*var(--u));padding:calc(8*var(--u)) calc(22*var(--u));min-height:0}
+.list{display:flex;flex-direction:column;gap:calc(4*var(--u))}
+.sec{min-height:calc(56*var(--u));height:calc(56*var(--u));display:flex;align-items:center;padding:0 calc(14*var(--u));border-radius:calc(8*var(--u));font-size:calc(19*var(--u));background:var(--surface);border:calc(3*var(--u)) solid transparent;min-width:0}
+.sec span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sec.on{background:var(--raised);border-color:var(--accent)}
+.pane{display:flex;flex-direction:column;gap:calc(8*var(--u));min-width:0;min-height:0}
+.fields{flex:1;min-height:0;display:flex;flex-direction:column;gap:calc(8*var(--u))}
+.g{display:grid;gap:calc(8*var(--u));min-width:0}
+.cell{background:var(--surface);border-radius:calc(8*var(--u));border:calc(3*var(--u)) solid transparent;min-height:calc(56*var(--u));height:calc(56*var(--u));padding:calc(2*var(--u)) calc(10*var(--u));display:flex;flex-direction:column;justify-content:center;min-width:0;overflow:hidden}
+.cell small{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+.cell b{font-weight:400;font-size:calc(19*var(--u));line-height:1.2;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell.hl{background:var(--raised);border-color:var(--accent)}
+.cell.wide{flex-direction:row;align-items:center;justify-content:space-between;gap:calc(12*var(--u))}
+.cell.wide .nt{font-size:calc(14*var(--u));letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cell.wide .lb{display:flex;flex-direction:column;flex:none}
+.seg{display:flex;border:calc(1*var(--u)) solid var(--line-strong);border-radius:calc(5*var(--u));overflow:hidden;min-width:0}
+.seg span{flex:1;min-height:calc(56*var(--u));display:flex;align-items:center;justify-content:center;font-size:calc(16*var(--u));padding:0 calc(6*var(--u));text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;background:var(--surface);color:var(--text)}
+.seg span+span{border-left:calc(1*var(--u)) solid var(--line-strong)}
+.seg span.on{background:var(--accent);color:var(--on-accent)}
+.seg.hl{outline:calc(3*var(--u)) solid var(--accent);outline-offset:calc(2*var(--u))}
+.card{background:var(--surface);border-radius:calc(8*var(--u));padding:calc(8*var(--u)) calc(12*var(--u));display:flex;flex-direction:column;gap:calc(6*var(--u));min-width:0}
+.card>small{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--muted);line-height:1.2}
+.msg{background:var(--surface);border-radius:calc(8*var(--u));padding:calc(16*var(--u)) calc(18*var(--u));display:flex;flex-direction:column;gap:calc(8*var(--u))}
+.msg .w{font-size:calc(12*var(--u));letter-spacing:.12em;text-transform:uppercase;color:var(--warn)}
+.msg h4{margin:0;font-size:calc(22*var(--u));font-weight:400;line-height:1.2}
+.msg p{margin:0;font-size:calc(16*var(--u));line-height:1.3;color:var(--text);max-width:none}
+.notes{background:#fff;border:1px solid #d6d4cf;border-radius:8px;padding:10px 14px 10px 30px;font-size:13px;color:#3d3d3d;margin:10px 0}
+table{border-collapse:collapse;background:#fff;font-size:13px;color:#3d3d3d;margin:8px 0;width:100%}
+td,th{border:1px solid #d6d4cf;padding:6px 9px;text-align:left;vertical-align:top}
+th{background:#f4f3f0;font-weight:600}
+
+.t-stage{--bg:#0b0d0c;--surface:#151917;--raised:#202622;--line:#2b322e;--line-strong:#5a6860;--text:#e7ebe8;--muted:#88938c;--accent:#9fbaa8;--on-accent:#0b0d0c;--warn:#cdb86c;}
+.t-studio{--bg:#f2f4f2;--surface:#e3e8e4;--raised:#ffffff;--line:#cbd4cd;--line-strong:#728a77;--text:#131714;--muted:#5a635c;--accent:#466853;--on-accent:#f2f4f2;--warn:#725f1e;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Velora 73: Part surface, Modeled Electric Piano Sound section</h1>
+<p>Drawn at 1024 × 600 in the Stage and Studio themes. Adheres strictly to Velora Design Tokens, WCAG 2.1 AA contrast, touch target minimums (≥56 px), and generic nomenclature (NFR29: always show category <code>E.PIANO</code> and timbre name, never proprietary trademarks).</p>
+
+<h2>Parameter Grouping & Encoder Mapping</h2>
+<table>
+<tr><th>Group</th><th>Parameter</th><th>ID</th><th>Type / Range</th><th>Default</th><th>ASSIGN Encoder</th><th>Description</th></tr>
+<tr><td rowspan="3"><b>Model</b></td><td><code>ep_model_type</code></td><td>1300</td><td>Enum: Tine (0) / Reed (1)</td><td>Tine</td><td>K1</td><td>Physical modeling resonator archetype</td></tr>
+<tr><td><code>ep_decay_rate</code></td><td>1306</td><td>Float: 0.00 .. 1.00</td><td>0.50</td><td>K7</td><td>Fundamental decay and energy damping rate</td></tr>
+<tr><td><code>ep_tone_bar_coupling</code></td><td>1307</td><td>Float: 0.00 .. 1.00</td><td>0.50</td><td>K8</td><td>Acoustic tone bar resonance coupling</td></tr>
+<tr><td rowspan="2"><b>Hammer</b></td><td><code>ep_hammer_hardness</code></td><td>1301</td><td>Float: 0.00 .. 1.00</td><td>0.50</td><td>K2</td><td>Strike tip stiffness & high-mode energy</td></tr>
+<tr><td><code>ep_attack_noise</code></td><td>1305</td><td>Float: 0.00 .. 1.00</td><td>0.30</td><td>K6</td><td>Mechanical strike contact thud & click level</td></tr>
+<tr><td rowspan="2"><b>Pickup</b></td><td><code>ep_pickup_position</code></td><td>1302</td><td>Float: 0.00 .. 1.00</td><td>0.50</td><td>K3</td><td>Transducer alignment (even vs odd harmonic bark)</td></tr>
+<tr><td><code>ep_pickup_level</code></td><td>1303</td><td>Float: 0.00 .. 1.00</td><td>0.70</td><td>K4</td><td>Pickup pre-gain & electromagnetic drive</td></tr>
+<tr><td><b>Damper</b></td><td><code>ep_damper_noise</code></td><td>1304</td><td>Float: 0.00 .. 1.00</td><td>0.30</td><td>K5</td><td>Damper felt scrape & release noise level</td></tr>
+<tr><td><b>Panel</b></td><td><code>part_brightness</code></td><td>1100</td><td>Int: 0 .. 127</td><td>64</td><td>Knob 2 (Fixed)</td><td>Live continuous hammer brightness offset</td></tr>
+</table>
+
+<h2>1 · Model Group (Stage Theme & Studio Theme)</h2>
+<div class="pair">
+<figure><figcaption>Stage theme — Model Group</figcaption>
+<div class="frame"><div class="scr t-stage" role="group" aria-label="Part surface Sound, ep, Model, stage"><div class="s">
+<div class="bar"><span class="ttl"><small>PART 1</small>73 Stage Pure · <small style="margin:0">E.PIANO</small></span><span class="r"><span class="mm">KNOBS PART 1</span><span class="sq" aria-label="Part on/off">⏻</span><span class="sq" aria-label="Add to Favorites">★</span></span></div>
+<div class="body">
+<div class="list"><div class="sec"><span>Timbre</span></div><div class="sec on"><span>Sound</span></div><div class="sec"><span>Envelope & EQ</span></div><div class="sec"><span>Zone & keyboard</span></div><div class="sec"><span>Level & output</span></div><div class="sec"><span>Effects</span></div><div class="sec"><span>Arpeggiator</span></div></div>
+<div class="pane">
+<div class="seg hl" role="radiogroup" aria-label="Sound group"><span class="on">Model</span><span class="">Hammer</span><span class="">Pickup</span><span class="">Damper</span></div>
+<div class="fields">
+<div class="card"><small>Instrument Model</small><div class="seg" role="radiogroup" aria-label="Instrument Model"><span class="on">Tine</span><span class="">Reed</span></div></div>
+<div class="g" style="grid-template-columns:1fr 1fr;"><div class="cell hl" tabindex="-1"><small>Decay Rate</small><b>0.50</b></div><div class="cell" tabindex="-1"><small>Tone Bar Coupling</small><b>0.50</b></div></div>
+<div class="cell wide" tabindex="-1"><div class="lb"><small>Brightness · KNOB 2</small><b>64</b></div><span class="nt">→ hammer stiffness & high-mode brightness</span></div>
+</div>
+</div>
+</div>
+<div class="stat"><span>Sound · Model · 1 / 4</span><span style="margin-left:auto">Brightness knob always works</span></div>
+<div class="hint"><span><b>VALUE</b>choose group</span><span><b>WRITE</b>open group</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Playing keys still sounds</span></div>
+</div></div></div>
+</figure>
+
+<figure><figcaption>Studio theme — Model Group</figcaption>
+<div class="frame"><div class="scr t-studio" role="group" aria-label="Part surface Sound, ep, Model, studio"><div class="s">
+<div class="bar"><span class="ttl"><small>PART 1</small>73 Stage Pure · <small style="margin:0">E.PIANO</small></span><span class="r"><span class="mm">KNOBS PART 1</span><span class="sq" aria-label="Part on/off">⏻</span><span class="sq" aria-label="Add to Favorites">★</span></span></div>
+<div class="body">
+<div class="list"><div class="sec"><span>Timbre</span></div><div class="sec on"><span>Sound</span></div><div class="sec"><span>Envelope & EQ</span></div><div class="sec"><span>Zone & keyboard</span></div><div class="sec"><span>Level & output</span></div><div class="sec"><span>Effects</span></div><div class="sec"><span>Arpeggiator</span></div></div>
+<div class="pane">
+<div class="seg hl" role="radiogroup" aria-label="Sound group"><span class="on">Model</span><span class="">Hammer</span><span class="">Pickup</span><span class="">Damper</span></div>
+<div class="fields">
+<div class="card"><small>Instrument Model</small><div class="seg" role="radiogroup" aria-label="Instrument Model"><span class="on">Tine</span><span class="">Reed</span></div></div>
+<div class="g" style="grid-template-columns:1fr 1fr;"><div class="cell hl" tabindex="-1"><small>Decay Rate</small><b>0.50</b></div><div class="cell" tabindex="-1"><small>Tone Bar Coupling</small><b>0.50</b></div></div>
+<div class="cell wide" tabindex="-1"><div class="lb"><small>Brightness · KNOB 2</small><b>64</b></div><span class="nt">→ hammer stiffness & high-mode brightness</span></div>
+</div>
+</div>
+</div>
+<div class="stat"><span>Sound · Model · 1 / 4</span><span style="margin-left:auto">Brightness knob always works</span></div>
+<div class="hint"><span><b>VALUE</b>choose group</span><span><b>WRITE</b>open group</span><span><b>EXIT</b>back</span><span style="margin-left:auto">Playing keys still sounds</span></div>
+</div></div></div>
+</figure>
+</div>
+
+<h2>2 · Not-Available State (kEngineNotAvailable)</h2>
+<p>When a Live Set with a modeled electric piano part opens on firmware where the modeled engine is not present or licensed, the part reports <code>PartState::kEngineNotAvailable</code>, remains silent, preserves stored parameters, and clearly displays an informational banner.</p>
+<div class="pair">
+<figure><figcaption>Stage theme — Engine Not Available</figcaption>
+<div class="frame"><div class="scr t-stage" role="group" aria-label="Part surface Sound, ep, Not Available, stage"><div class="s">
+<div class="bar"><span class="ttl"><small>PART 1</small>73 Stage Pure · <small style="margin:0">E.PIANO</small></span><span class="r"><span class="mm">KNOBS PART 1</span><span class="sq" aria-label="Part on/off">⏻</span><span class="sq" aria-label="Add to Favorites">★</span></span></div>
+<div class="body">
+<div class="list"><div class="sec"><span>Timbre</span></div><div class="sec on"><span>Sound</span></div><div class="sec"><span>Envelope & EQ</span></div><div class="sec"><span>Zone & keyboard</span></div><div class="sec"><span>Level & output</span></div><div class="sec"><span>Effects</span></div><div class="sec"><span>Arpeggiator</span></div></div>
+<div class="pane">
+<div class="msg" style="flex:1;justify-content:center;">
+<span class="w">⚠ Engine Not Available</span>
+<h4>Sound engine not present on this device</h4>
+<p>This part contains modeled electric piano parameters that are preserved in this Live Set. The part remains silent until opened on a compatible device or firmware.</p>
+</div>
+</div>
+</div>
+<div class="stat"><span>Sound · Not Available</span><span style="margin-left:auto">Part silent · data preserved</span></div>
+<div class="hint"><span><b>EXIT</b>back</span><span style="margin-left:auto">Other parts continue playing</span></div>
+</div></div></div>
+</figure>
+
+<figure><figcaption>Studio theme — Engine Not Available</figcaption>
+<div class="frame"><div class="scr t-studio" role="group" aria-label="Part surface Sound, ep, Not Available, studio"><div class="s">
+<div class="bar"><span class="ttl"><small>PART 1</small>73 Stage Pure · <small style="margin:0">E.PIANO</small></span><span class="r"><span class="mm">KNOBS PART 1</span><span class="sq" aria-label="Part on/off">⏻</span><span class="sq" aria-label="Add to Favorites">★</span></span></div>
+<div class="body">
+<div class="list"><div class="sec"><span>Timbre</span></div><div class="sec on"><span>Sound</span></div><div class="sec"><span>Envelope & EQ</span></div><div class="sec"><span>Zone & keyboard</span></div><div class="sec"><span>Level & output</span></div><div class="sec"><span>Effects</span></div><div class="sec"><span>Arpeggiator</span></div></div>
+<div class="pane">
+<div class="msg" style="flex:1;justify-content:center;">
+<span class="w">⚠ Engine Not Available</span>
+<h4>Sound engine not present on this device</h4>
+<p>This part contains modeled electric piano parameters that are preserved in this Live Set. The part remains silent until opened on a compatible device or firmware.</p>
+</div>
+</div>
+</div>
+<div class="stat"><span>Sound · Not Available</span><span style="margin-left:auto">Part silent · data preserved</span></div>
+<div class="hint"><span><b>EXIT</b>back</span><span style="margin-left:auto">Other parts continue playing</span></div>
+</div></div></div>
+</figure>
+</div>
+
+</div>
+</body>
+</html>

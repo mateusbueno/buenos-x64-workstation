@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Velora Studio — Part Editor: Modeled Electric Piano Sound</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#ecebe8;font:14px/1.45 -apple-system,"Helvetica Neue",Arial,sans-serif;color:#151515}
+.wrap{max-width:1000px;margin:auto;padding:28px 16px 60px}
+h1{font-size:22px;font-weight:500;margin:0 0 6px}
+h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#4d4d4d;margin:38px 0 6px}
+p{color:#4d4d4d;max-width:900px;margin:0 0 12px}
+figure{margin:0 0 18px}
+figcaption{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#4d4d4d;margin:0 0 4px 2px}
+.notes{background:#fff;border:1px solid #d6d4cf;border-radius:8px;padding:10px 14px 10px 30px;font-size:13px;color:#3d3d3d;margin:10px 0}
+.win{width:900px;max-width:100%;overflow-x:auto;border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.25);background:var(--bg);color:var(--text);font-family:"Gill Sans","Gill Sans MT",Calibri,sans-serif}
+.title{display:flex;align-items:center;gap:.7em;padding:.5em .9em;background:var(--surface);border-bottom:1px solid var(--line);font-size:.75em;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;flex-wrap:wrap}
+.title .conn{margin-left:auto;color:var(--accent);letter-spacing:.06em}
+.ed{container-type:inline-size;padding:.9em 1.1em 1.2em}
+.scroll{max-height:900px;overflow-y:auto;overflow-x:hidden}
+.hd{display:flex;align-items:baseline;gap:.8em;flex-wrap:wrap;margin-bottom:.6em}
+.hd b{font-size:.875em;font-weight:400}
+.hd small{font-size:.6875em;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.strips{display:grid;grid-template-columns:repeat(auto-fit,minmax(7em,1fr));gap:.4em;margin-bottom:.9em}
+.st{background:var(--surface);border:2px solid transparent;border-radius:8px;padding:.45em .6em;font-size:.75em;display:flex;flex-direction:column;gap:.15em;min-width:0}
+.st.sel{background:var(--raised);border-color:var(--accent)}
+.st .c{font-size:.85em;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.st .n{font-size:1.1em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sec{border-top:1px solid var(--line);padding:.8em 0 .2em}
+.sec>h3{margin:0 0 .6em;font-size:.6875em;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.cards{display:grid;gap:.7em;grid-template-columns:1fr}
+@container (min-width:30em){.cards{grid-template-columns:repeat(2,1fr)}}
+@container (min-width:52em){.cards{grid-template-columns:repeat(4,1fr)}}
+.card{background:var(--surface);border-radius:8px;padding:.6em .7em .7em;min-width:0;display:flex;flex-direction:column;gap:.5em}
+.card h4{margin:0;font-size:.6875em;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.f{display:grid;gap:.2em;font-size:.8125em;min-width:0}
+.f>span:first-child{font-size:.85em;letter-spacing:.06em;color:var(--muted)}
+.f select,.f input[type=range]{width:100%;accent-color:var(--accent)}
+.rg{display:flex;align-items:center;gap:.5em}
+.rg input{flex:1;min-width:0}
+.rg output{width:2.4em;text-align:right;font-variant-numeric:tabular-nums}
+.inert{border:1px dashed var(--warn);padding:.8em;border-radius:8px;background:rgba(205,184,108,.05)}
+.inert h4{color:var(--warn);margin:0 0 .4em;font-size:.75em;text-transform:uppercase;letter-spacing:.1em}
+.inert p{margin:0;font-size:.8em;color:var(--text)}
+
+.t-stage{--bg:#0b0d0c;--surface:#151917;--raised:#202622;--line:#2b322e;--line-strong:#5a6860;--text:#e7ebe8;--muted:#88938c;--accent:#9fbaa8;--on-accent:#0b0d0c;--warn:#cdb86c;}
+.t-studio{--bg:#f2f4f2;--surface:#e3e8e4;--raised:#ffffff;--line:#cbd4cd;--line-strong:#728a77;--text:#131714;--muted:#5a635c;--accent:#466853;--on-accent:#f2f4f2;--warn:#725f1e;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Velora Studio — Part Editor: Modeled Electric Piano Sound</h1>
+<p>The Part Editor adapts the Modeled Electric Piano parameters directly from the versioned parameter registry (<code>desktop/src/params_registry.js</code>). Reflows seamlessly across 4 columns (≥ 52em), 2 columns (≥ 30em), and 1 column (&lt; 30em).</p>
+
+<h2>1 · Desktop Part Editor (Studio Light Theme)</h2>
+<figure>
+<figcaption>Velora Studio — Studio Theme (Light)</figcaption>
+<div class="win t-studio">
+<div class="title">
+<span>VELORA STUDIO</span>
+<span class="conn">● VELORA 73 · CONNECTED VIA USB · PAIRED</span>
+</div>
+<div class="ed scroll">
+<div class="hd">
+<b>PART 1</b>
+<small>73 Stage Pure · E.PIANO</small>
+</div>
+<div class="strips">
+<div class="st sel"><span class="c">E.PIANO</span><span class="n">73 Stage Pure</span></div>
+<div class="st"><span class="c">ORGAN</span><span class="n">Jazz B3 Fast</span></div>
+<div class="st"><span class="c">SYNTH</span><span class="n">Analog Strings</span></div>
+<div class="st"><span class="c">PIANO</span><span class="n">Concert Grand</span></div>
+</div>
+<div class="sec">
+<h3>Part 1 · Sound (Modeled Electric Piano)</h3>
+<div class="cards">
+<div class="card">
+<h4>Model</h4>
+<label class="f"><span>Model Type</span>
+<select><option selected>Tine</option><option>Reed</option></select>
+</label>
+<label class="f"><span>Decay Rate</span>
+<div class="rg"><input type="range" min="0" max="1" step="0.01" value="0.50"><output>0.50</output></div>
+</label>
+<label class="f"><span>Tone Bar Coupling</span>
+<div class="rg"><input type="range" min="0" max="1" step="0.01" value="0.50"><output>0.50</output></div>
+</label>
+</div>
+
+<div class="card">
+<h4>Hammer</h4>
+<label class="f"><span>Hammer Hardness</span>
+<div class="rg"><input type="range" min="0" max="1" step="0.01" value="0.50"><output>0.50</output></div>
+</label>
+<label class="f"><span>Attack Noise</span>
+<div class="rg"><input type="range" min="0" max="1" step="0.01" value="0.30"><output>0.30</output></div>
+</label>
+</div>
+
+<div class="card">
+<h4>Pickup</h4>
+<label class="f"><span>Pickup Position</span>
+<div class="rg"><input type="range" min="0" max="1" step="0.01" value="0.50"><output>0.50</output></div>
+</label>
+<label class="f"><span>Pickup Level</span>
+<div class="rg"><input type="range" min="0" max="1" step="0.01" value="0.70"><output>0.70</output></div>
+</label>
+</div>
+
+<div class="card">
+<h4>Damper</h4>
+<label class="f"><span>Damper Noise</span>
+<div class="rg"><input type="range" min="0" max="1" step="0.01" value="0.30"><output>0.30</output></div>
+</label>
+</div>
+</div>
+</div>
+</div>
+</div>
+</figure>
+
+<h2>2 · Unbound / Not-Available State (kEngineNotAvailable)</h2>
+<p>When an electric piano part is loaded on a unit where the physical modeling engine is not present, Velora Studio displays the inert fallback state: parameters are displayed as read-only, stored safely in the Live Set message, and tagged with an advisory explanation.</p>
+<figure>
+<figcaption>Velora Studio — Not Available State</figcaption>
+<div class="win t-stage">
+<div class="title">
+<span>VELORA STUDIO</span>
+<span class="conn" style="color:var(--warn)">● VELORA 73 · OFFLINE ENGINE FALLBACK</span>
+</div>
+<div class="ed">
+<div class="inert">
+<h4>Engine Not Available On Device</h4>
+<p>This part uses the modeled electric piano engine which is not available on the connected unit. Stored parameters are safely retained and will not be overwritten.</p>
+</div>
+</div>
+</div>
+</figure>
+
+</div>
+</body>
+</html>

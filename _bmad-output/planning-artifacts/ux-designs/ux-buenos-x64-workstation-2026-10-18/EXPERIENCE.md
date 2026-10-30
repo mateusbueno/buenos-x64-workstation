@@ -55,7 +55,7 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Setlist | Launcher | Choose, create and reorder setlists and their Live Sets; create a Live Set; edit setlist tags | [key-screens-device.html §1](mockups/key-screens-device.html) |
 | Setlist Browser | Launcher; Top Bar setlist context on Performance | Search across setlists and Live Sets; jump off-script; long press a Live Set → Action Sheet `★ Add to Favorites`. Chips: ★ Favorites, Recent, Setlists, All Live Sets, then user tags | [key-screens-device.html §1b](mockups/key-screens-device.html) |
 | Library | Launcher; Part › Change timbre | Find and assign a timbre by search, favorites, recent, category; long press a timbre → Action Sheet `★ Add to Favorites` | [key-screens-device.html §2](mockups/key-screens-device.html) |
-| Part | Part Strip card body on Performance; **VALUE push** on Performance (opens the knob-target part) | One part's timbre, sound, zone, level, effects and arpeggiator | FM and VA Sound: [part-surface-fm-va.html](mockups/part-surface-fm-va.html); Organ Sound: [part-surface-organ.html](mockups/part-surface-organ.html); other sections spine-only |
+| Part | Part Strip card body on Performance; **VALUE push** on Performance (opens the knob-target part) | One part's timbre, sound, zone, level, effects and arpeggiator | Modeled Electric Piano Sound: [part-surface-modeled-ep.html](mockups/part-surface-modeled-ep.html); FM and VA Sound: [part-surface-fm-va.html](mockups/part-surface-fm-va.html); Organ Sound: [part-surface-organ.html](mockups/part-surface-organ.html); other sections spine-only |
 | Effects | Launcher; `REV` in the Performance Status Bar | Part inserts, sends, master, outputs | [effects-surface.html](mockups/effects-surface.html) |
 | Scenes | Launcher; long press a Scene Tile | Create, name and order the up-to-8 scenes | spine-only |
 | Write | WRITE hold (Interaction Primitives) | Confirm scope and name of a save | [key-screens-device.html §4](mockups/key-screens-device.html) |
@@ -83,7 +83,7 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Section | Fields |
 |---|---|
 | Timbre | Name, category; **Change timbre** → Library ("CHOOSE TIMBRE FOR PART n"); ★ adds the current timbre to Favorites |
-| Sound | Engine parameters (organ: drawbars, percussion, key click, vibrato/chorus scanner, leakage, rotary — mockup in [part-surface-organ.html](mockups/part-surface-organ.html); sample, FM, VA: their engine set); Brightness |
+| Sound | Engine parameters (organ: drawbars, percussion, key click, vibrato/chorus scanner, leakage, rotary — mockup in [part-surface-organ.html](mockups/part-surface-organ.html); modeled EP: model, hammer hardness, pickup position, pickup level, damper noise, attack noise, decay rate, tone bar coupling — mockup in [part-surface-modeled-ep.html](mockups/part-surface-modeled-ep.html); sample, FM, VA: their engine set); Brightness |
 | Envelope & EQ | Attack, Release (plus the engine's other envelope stages); EQ Low, Mid, Mid freq, High |
 | Zone & keyboard | Low key, High key (splits and layers, CAP-7); Octave / transpose; Keyboard on/off for this part |
 | Level & output | Volume; Output Main / Aux (AD-28) |
@@ -104,6 +104,40 @@ Two surfaces, one mental model (Setlist → Live Set → Scenes → Parts) and o
 | Tempo | The Live Set tempo (shared by all parts) when Clock source is Internal; read-only with the source shown when following DIN or USB clock |
 
 The Live Set holds the initial arpeggiator values; **each scene stores Arp on/off and all arpeggiator parameters** (Tempo stays the Live Set's), so a scene can start, stop or reshape the arpeggiator. On clock loss the arpeggiator keeps running at the last received tempo.
+
+**Modeled Electric Piano Sound Section (Story 14.8, FR125, UX-DR115, UX-DR60; mockups in [mockups/part-surface-modeled-ep.html](mockups/part-surface-modeled-ep.html) and [mockups/studio-part-editor-modeled-ep.html](mockups/studio-part-editor-modeled-ep.html)):**
+- **Header:** Always displays part number, timbre name (e.g. `73 Stage Pure`, `Suitcase Warm`), and category short label `E.PIANO` in accent caps. Never displays proprietary trademarks or internal engine type names (NFR29).
+- **Navigation & Layout:** Follows list-left (Timbre, Sound [active], Envelope & EQ, Zone & keyboard, Level & output, Effects, Arpeggiator) / fields-right layout. The fields pane organizes parameters into 4 groups selectable via Segmented Control or VALUE navigation: `Model`, `Hammer`, `Pickup`, `Damper`.
+- **Parameter Specification:**
+  | Group | Parameter | Range | Unit | Default | ASSIGN | Description |
+  |---|---|---|---|---|---|---|
+  | **Model** | Model Type | Tine (0) / Reed (1) | enum | Tine | K1 | Physical modeling archetype (cantilever bar vs tuned reed) |
+  | **Model** | Decay Rate | 0.00 – 1.00 | ratio | 0.50 | K7 | Free oscillation decay rate & energy loss |
+  | **Model** | Tone Bar Coupling | 0.00 – 1.00 | ratio | 0.50 | K8 | Acoustic tone bar resonance coupling |
+  | **Hammer** | Hammer Hardness | 0.00 – 1.00 | ratio | 0.50 | K2 | Strike tip stiffness and high-mode excitation |
+  | **Hammer** | Attack Noise | 0.00 – 1.00 | ratio | 0.30 | K6 | Mechanical hammer contact click & knock level |
+  | **Pickup** | Pickup Position | 0.00 – 1.00 | ratio | 0.50 | K3 | Transducer offset relative to pole (harmonic bark) |
+  | **Pickup** | Pickup Level | 0.00 – 1.00 | ratio | 0.70 | K4 | Transducer pre-gain & saturation drive |
+  | **Damper** | Damper Noise | 0.00 – 1.00 | ratio | 0.30 | K5 | Felt scrape & damping transient noise level |
+  | **Panel** | Brightness | 0 – 127 | step | 64 | Knob 2 | Live real-time continuous hammer brightness offset |
+- **Multilingual Labels (English / Español / Português):**
+  | Parameter ID | EN Label | ES Label | PT-BR Label |
+  |---|---|---|---|
+  | `ep_model_type` (1300) | Model (Tine / Reed) | Modelo (Tine / Reed) | Modelo (Tine / Reed) |
+  | `ep_hammer_hardness` (1301) | Hammer hardness | Dureza del martillo | Dureza do martelo |
+  | `ep_pickup_position` (1302) | Pickup position | Posición de pastilla | Posição do captador |
+  | `ep_pickup_level` (1303) | Pickup level | Nivel de pastilla | Nível do captador |
+  | `ep_damper_noise` (1304) | Damper noise | Ruido de apagador | Ruído do abafador |
+  | `ep_attack_noise` (1305) | Attack noise | Ruido de ataque | Ruído de ataque |
+  | `ep_decay_rate` (1306) | Decay rate | Decaimiento | Decaimento |
+  | `ep_tone_bar_coupling` (1307) | Tone bar coupling | Acoplamiento de barra | Acoplamento da barra |
+- **Not-Available State (`kEngineNotAvailable`):**
+  When a Live Set containing modeled electric piano parts is opened on a unit where the physical modeling engine is not present:
+  - Part surface Sound section displays an informational card:
+    * EN: "Engine Not Available · Sound engine not present on this device. Parameters are preserved and part remains silent."
+    * ES: "Motor No Disponible · Motor de sonido no presente en este dispositivo. Los parámetros se conservan y la parte permanece en silencio."
+    * PT-BR: "Motor Não Disponível · Motor de som não presente neste dispositivo. Os parâmetros são preservados e a parte permanece em silêncio."
+  - Audio rendering for this part is completely muted; no CPU or voice slots are allocated; stored protobuf payload is retained byte-for-byte upon Write or backup.
 
 **Effects** (topology fixed by AD-28; effect types per engines.md; mockup in [mockups/effects-surface.html](mockups/effects-surface.html)).
 

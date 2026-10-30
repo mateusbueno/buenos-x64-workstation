@@ -605,7 +605,7 @@ Large mode drops Scene Tile sub-labels and Part Strip categories and keeps every
 
 → [mockups/key-screen-performance.html](mockups/key-screen-performance.html), [mockups/key-screen-drawbars-categories.html](mockups/key-screen-drawbars-categories.html), [mockups/key-screens-device.html](mockups/key-screens-device.html) (§1 Setlist, §1b Setlist Browser, §2 Library, §3 Import, §4 Write, §5 Settings, §6 Boot).
 
-**Velora Studio (desktop).** Title bar · body (sidebar `{spacing.desktop-sidebar}` + main) · Studio Footer. Main stacks Live Set header, 8 Scene Tiles, 8 Studio Part Strips and a four-column Part Editor (Sound · Amp envelope + EQ · Effects inserts + sends · Zone & keyboard + Arpeggiator + Assign), gutter `{spacing.desktop-gutter}`. At ≥ 150% text size or zoom the Part Editor reflows to 2 columns, then 1; nothing scrolls horizontally at 200%. → [mockups/key-screen-studio.html](mockups/key-screen-studio.html).
+**Velora Studio (desktop).** Title bar · body (sidebar `{spacing.desktop-sidebar}` + main) · Studio Footer. Main stacks Live Set header, 8 Scene Tiles, 8 Studio Part Strips and a four-column Part Editor (Sound · Amp envelope + EQ · Effects inserts + sends · Zone & keyboard + Arpeggiator + Assign), gutter `{spacing.desktop-gutter}`. At ≥ 150% text size or zoom the Part Editor reflows to 2 columns, then 1; nothing scrolls horizontally at 200%. → [mockups/key-screen-studio.html](mockups/key-screen-studio.html), [mockups/studio-part-editor-modeled-ep.html](mockups/studio-part-editor-modeled-ep.html). Modeled EP Part surface on-device: [mockups/part-surface-modeled-ep.html](mockups/part-surface-modeled-ep.html).
 
 **Physical panel (layout A).** Left: lockup, MASTER, ROTARY STOP and S/F; pitch and mod wheels on the left below. Mixer zone: 9 faders (1–8 + REV) with the DRAWBARS/MIXER toggle, 8 part/scene buttons with the PARTS/SCENES toggle. Center: 7" display. Navigation column: LIVE SET ◀ ▶, SCENE ◀ ▶, VALUE encoder, then a row of three buttons EXIT · MENU · WRITE (MENU in the middle). Right: 8 encoders in two rows (DELAY, BRIGHTNESS, ATTACK, RELEASE / LOW, MID, MID FREQ, HIGH) with the PART/ALL/ASSIGN toggle. The VALUE encoder has a push switch. MASTER is an analog level potentiometer with a Ø20 mm knob. The headphone jack sits on the front face under the wheels, and the power button sits on the rear panel. **Pro tier (16 parts):** two banks of 8 (A/B) toggled by a bank button; part buttons and faders act on the active bank; details deferred to Pro. → [mockups/panel-v2.html](mockups/panel-v2.html) (the mock shows two LEDs on the knob toggle; the approved version is 3-state PART/ALL/ASSIGN).
 
@@ -653,7 +653,7 @@ Visual specs; behavior lives in EXPERIENCE.md Component Patterns. Tokens in fron
 | **Studio Title Bar** | App name, connection status in ok (`● VELORA 73 · CONNECTED VIA USB · PAIRED`), buttons Import, Backup, Primary Button "Write to Velora". |
 | **Studio Sidebar** | Sections SETLISTS (nested Live Sets), LIBRARY (by category), DEVICE (storage, firmware, backups); active item raised with accent left edge. |
 | **Studio Part Strip** | `PART n` + LED, name, category in accent, level meter, `VOL n` and key range; organ parts show the registration; empty parts "+ Add timbre". |
-| **Part Editor** | Four sections divided by hairlines, each titled in `{typography.desktop-section-label}`; envelope drawn as an accent polyline; insert/send chains as rows with a dashed "+ Add insert". |
+| **Part Editor** | Four sections divided by hairlines, each titled in `{typography.desktop-section-label}`; envelope drawn as an accent polyline; insert/send chains as rows with a dashed "+ Add insert". Modeled Electric Piano Sound section draws Model, Hammer, Pickup, Damper cards per [mockups/studio-part-editor-modeled-ep.html](mockups/studio-part-editor-modeled-ep.html); unbound engines display `studio.part_editor.inert_section` notice with preserved parameters. |
 | **Studio Knob** | Raised disc with accent value arc, label in caps, value below; keyboard focus shows a 2 px accent ring at 2 px offset. |
 | **Primary Button** | Accent fill, on-accent text; one per window. |
 | **Studio Footer** | Status line in muted: unsaved scope (`UNSAVED: SCENE 2`, ◆ in warn), `● LIVE EDIT ON`, write/transfer progress, last backup time → [mockups/studio-footer-dialog-banner.html](mockups/studio-footer-dialog-banner.html). |
@@ -673,14 +673,14 @@ Visual specs; behavior lives in EXPERIENCE.md Component Patterns. Tokens in fron
 |---|---|
 | One accent fill per area (current scene, active chip, confirm) | Use accent, warn or ok decoratively |
 | Keep warn/ok strictly semantic, always with a glyph or text | Introduce orange or red brand accents |
-| Show category (short label) under timbre names | Show engine type (Sample / VA / Tonewheel) as the sub-label |
+| Show category (short label) under timbre names | Show engine type (Sample / VA / Tonewheel / Modeled EP) as the sub-label |
 | Dim off states with `muted` at full opacity + shape (hollow dot, OFF tag) | Apply opacity to text, especially over accent fills |
 | Mark current/now with ▶ or a `NOW` tag as well as accent | Use accent text as the only marker of a state |
 | Pickup ghost in warn with bg keylines and a ▲/▼ chevron on every screen | Different ghost colors per screen, or a ghost that relies on hue over a fill |
 | `line-strong` for any border that identifies a control or empty slot | `line` hairlines as the only cue for a control |
 | Text ≥ 4.5:1, boundaries ≥ 3:1; touch targets ≥ 56 px, ≥ 12 px apart on Performance | Light-theme text below AA; tiny or crowded tap targets |
 | Brushed aluminum finish that hides wear; legends on a matte band | Finishes that show scratches; legends on bare specular aluminum |
-| English panel legends; ROTARY | "Leslie", "Hammond", "DX7" or any third-party trademark |
+| English panel legends; ROTARY | "Leslie", "Hammond", "DX7", "Rhodes", "Wurlitzer" or any third-party trademark |
 | Single toggle buttons with an LED per state | Button pairs for one mode |
 | Model names uppercase spaced, subordinate to LADIANI | A model mark that competes with the brand lockup |
 | Final logo and typeface drawn by a designer | Ship the system-font stand-ins |
