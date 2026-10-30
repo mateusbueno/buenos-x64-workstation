@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-18-2026 19:03
-last_updated: 10-29-2026 22:02
+last_updated: 10-30-2026 09:18
 project: Ladiani Velora 73
 project_key: NOKEY
 tracking_system: file-system
@@ -274,8 +274,8 @@ development_status:
   11-12-license-check-of-the-vendored-sfizz-parser-and-dependencies: done
   11-13-hammond-m-solo-drawbar-cc-nrpn-numbers-for-automated-organ-a: backlog
   11-14-tonewheel-b-3-and-rotary-cabinet-reference-recordings-and-ab: backlog
-  11-15-final-typeface-adopted-lato-ofl-verified-and-licensed: done
-  11-16-final-logo-symbol-app-icon-and-avatar-delivered-by-a-designe: done
+  11-15-final-typeface-adopted-lato-sil-ofl-verified-and-licensed-fo: done
+  11-16-final-logo-symbol-app-icon-and-avatar-produced-in-house-and: done
   11-17-factory-library-content-plan-and-source-delivery: done
   11-18-direct-sales-channel-for-the-first-100-units: backlog
   11-19-brand-assets-integration-final-typeface-app-icon-and-boot-ar: done
@@ -301,7 +301,7 @@ development_status:
   epic-13: done
   13-1-decision-sfz-scope-for-the-reference-corpus: done
   13-2-importer-value-rules-and-inert-opcodes: done
-  13-3-sample-end-first-legato-triggers-and-release-key: done
+  13-3-sample-end-first-legato-triggers-and-release_key: done
   13-4-velocity-and-amplitude-model: done
   13-5-cc-at-voice-start-and-sfizz-pseudo-ccs: done
   13-6-choke-groups-and-polyphony-limits: done
@@ -310,10 +310,40 @@ development_status:
   13-9-region-eq-and-lfo-eg-modulation-conditional: done
   13-10-random-layer-parity-with-the-null-oracle: done
   13-11-sf2-libraries-in-the-reference-corpus: done
-  13-12-allow-relative-sample-paths-within-library-root: done
+  13-12-allow-relative-sample-paths-within-the-library-root: done
   13-13-flac-sample-support-in-the-importer: done
   13-14-remaining-corpus-opcodes: done
   epic-13-retrospective: done
+
+  epic-14: backlog
+  14-1-decision-clean-room-record-and-patent-search-before-the-desi: backlog
+  14-2-modeled-tine-voice-in-the-engine-core: backlog
+  14-3-modeled-reed-voice-in-the-engine-core: backlog
+  14-4-continuous-touch-release-and-half-pedal: backlog
+  14-5-modeled-electric-piano-voices-in-the-shared-pool-with-a-64-v: backlog
+  14-6-objective-comparison-against-the-development-references: backlog
+  14-7-modeled-electric-piano-timbres-in-the-versioned-formats: backlog
+  14-8-design-story-modeled-electric-piano-sound-section: backlog
+  14-9-part-surface-sound-section-for-modeled-electric-pianos: backlog
+  14-10-velora-studio-part-editor-section-for-modeled-electric-piano: backlog
+  14-11-init-and-factory-modeled-electric-piano-timbres: backlog
+  14-12-final-reference-recordings-and-blind-panel: backlog
+  14-13-modeled-electric-piano-firmware-reaches-shipped-units: backlog
+  epic-14-retrospective: optional
+
+  epic-15: backlog
+  15-1-decision-resonance-method-and-patent-position: backlog
+  15-2-resonance-data-in-the-signed-library-bundle: backlog
+  15-3-offline-tool-derives-resonance-data-from-recordings: backlog
+  15-4-undamped-strings-ring-with-the-pedal-down: backlog
+  15-5-silently-held-keys-and-continuous-half-pedal: backlog
+  15-6-resonance-cost-in-the-shared-pool: backlog
+  15-7-resonance-survives-seamless-switching: backlog
+  15-8-design-story-resonance-amount-control: backlog
+  15-9-resonance-amount-on-the-part-surface-and-in-velora-studio: backlog
+  15-10-factory-pianos-gain-resonance-and-pass-the-panel: backlog
+  15-11-resonance-firmware-reaches-shipped-units: backlog
+  epic-15-retrospective: optional
 action_items:
   - id: "epic-13-retro-item-1-story-allow-or-rewrite-sample-paths-that"
     epic: 13
