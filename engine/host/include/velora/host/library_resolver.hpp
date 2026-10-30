@@ -41,12 +41,16 @@ inline constexpr const char* kBundleFileName = "bundle.vlb";
 inline constexpr const char* kProtectedBundleFileName = "bundle.vlrp";  // Story 6.5: a protected (format 3) bundle installed by the librarian
 inline constexpr const char* kWrappedKeyFileName = "wrapped-key.bin";  // beside it: the wrapped_key_v1 blob delivered with the pack
 
-// Story 12.9: Built-in engine timbres identity
+// Story 12.9 & Story 14.11: Built-in engine timbres identity
 inline constexpr const char* kBuiltinLibraryId = "00000000-0000-0000-0000-000000000001";
 inline constexpr const char* kInitFmInstrumentKey = "init-fm";
 inline constexpr const char* kInitVaInstrumentKey = "init-va";
+inline constexpr const char* kInitTineInstrumentKey = "init-tine";
+inline constexpr const char* kInitReedInstrumentKey = "init-reed";
 inline constexpr const char* kInitFmName = "Init FM";
 inline constexpr const char* kInitVaName = "Init VA";
+inline constexpr const char* kInitTineName = "Init Tine";
+inline constexpr const char* kInitReedName = "Init Reed";
 
 enum class ResolveStatus : std::uint8_t {
   kOk = 0,

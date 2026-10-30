@@ -107,6 +107,12 @@ std::vector<uint8_t> ParametricBundle::serialize() const {
       pack_va_voice(t.va_parameters, s);
       put_u32(payload, kVaPackedVoiceSize);
       payload.insert(payload.end(), raw, raw + kVaPackedVoiceSize);
+    } else if (t.engine_type_id == kEngineTypeEp) {
+      uint8_t raw[kEpPackedVoiceSize]{};
+      std::span<uint8_t, kEpPackedVoiceSize> s(raw, kEpPackedVoiceSize);
+      pack_ep_voice(t.ep_parameters, s);
+      put_u32(payload, kEpPackedVoiceSize);
+      payload.insert(payload.end(), raw, raw + kEpPackedVoiceSize);
     } else {
       put_u32(payload, 0);
     }
@@ -187,6 +193,9 @@ Result<ParametricBundle> ParametricBundle::deserialize(std::span<const uint8_t> 
     } else if (t.engine_type_id == kEngineTypeVa && param_len == kVaPackedVoiceSize) {
       std::span<const uint8_t, kVaPackedVoiceSize> s(p, kVaPackedVoiceSize);
       if (!unpack_va_voice(s, t.va_parameters)) return Error::kCorruptManifest;
+    } else if (t.engine_type_id == kEngineTypeEp && param_len == kEpPackedVoiceSize) {
+      std::span<const uint8_t, kEpPackedVoiceSize> s(p, kEpPackedVoiceSize);
+      if (!unpack_ep_voice(s, t.ep_parameters)) return Error::kCorruptManifest;
     }
     p += param_len;
     bundle.timbres_.push_back(std::move(t));

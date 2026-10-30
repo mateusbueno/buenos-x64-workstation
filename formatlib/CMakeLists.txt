@@ -65,7 +65,9 @@ add_library(velora_format STATIC
   src/locale_catalog.cpp
   src/sysex_6op.cpp
   src/va_format.cpp
+  src/ep_format.cpp
   src/factory_fm_va.cpp
+  src/factory_ep.cpp
   src/parametric_bundle.cpp)
 add_library(velora::format ALIAS velora_format)
 target_include_directories(velora_format PUBLIC include PRIVATE src)

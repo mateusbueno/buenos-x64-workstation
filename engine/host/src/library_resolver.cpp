@@ -121,6 +121,24 @@ ResolveResult LibraryResolver::resolve(std::string_view library_id,
       res.builtin_info.name = kInitVaName;
       return res;
     }
+    if (key.value() == kInitTineInstrumentKey) {
+      res.status = ResolveStatus::kOk;
+      res.library_id = std::string(library_id);
+      res.bundle_dir = "builtin";
+      res.is_builtin = true;
+      res.builtin_info.key = kInitTineInstrumentKey;
+      res.builtin_info.name = kInitTineName;
+      return res;
+    }
+    if (key.value() == kInitReedInstrumentKey) {
+      res.status = ResolveStatus::kOk;
+      res.library_id = std::string(library_id);
+      res.bundle_dir = "builtin";
+      res.is_builtin = true;
+      res.builtin_info.key = kInitReedInstrumentKey;
+      res.builtin_info.name = kInitReedName;
+      return res;
+    }
     res.status = ResolveStatus::kMissingInstrument;
     return res;
   }

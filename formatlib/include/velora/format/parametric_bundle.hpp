@@ -12,6 +12,7 @@
 #include "velora/format/hash.hpp"
 #include "velora/format/sysex_6op.hpp"
 #include "velora/format/va_format.hpp"
+#include "velora/format/ep_format.hpp"
 
 namespace velora::format {
 
@@ -20,6 +21,7 @@ inline constexpr uint32_t kEngineTypeSample = 1;
 inline constexpr uint32_t kEngineTypeOrgan = 2;
 inline constexpr uint32_t kEngineTypeFm = 3;
 inline constexpr uint32_t kEngineTypeVa = 4;
+inline constexpr uint32_t kEngineTypeEp = 5;
 
 // One parametric timbre in the bundle.
 struct ParametricTimbre {
@@ -29,6 +31,7 @@ struct ParametricTimbre {
   uint32_t engine_type_id{kEngineTypeFm};
   FmVoiceParameters fm_parameters;
   VaVoiceParameters va_parameters;
+  EpVoiceParameters ep_parameters;
 
   friend bool operator==(const ParametricTimbre&, const ParametricTimbre&) = default;
 };

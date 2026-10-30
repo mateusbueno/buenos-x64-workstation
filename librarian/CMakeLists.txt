@@ -144,6 +144,11 @@ add_executable(story_12_9_test tests/story_12_9_test.cpp)
 target_link_libraries(story_12_9_test PRIVATE velora_librarian_service velora_host velora_ui)
 add_test(NAME story_12_9_test COMMAND story_12_9_test)
 
+# Story 14.11: Init and factory modeled electric piano timbres
+add_executable(story_14_11_test tests/story_14_11_test.cpp)
+target_link_libraries(story_14_11_test PRIVATE velora_librarian_service velora_host velora_ui velora_core velora_format)
+add_test(NAME story_14_11_test COMMAND story_14_11_test)
+
 # Service tests over a real UDS client, the idle-safe Recent write rule, crash injection in the service, and the LibraryClient.
 add_executable(librarian_service_test tests/library_service_test.cpp)
 target_link_libraries(librarian_service_test PRIVATE velora_librarian_service)
