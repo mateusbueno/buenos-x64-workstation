@@ -177,6 +177,7 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
   std::map<std::string, std::size_t> unique_of;               // key -> index into `uniques`
   std::vector<int> part_unique(static_cast<std::size_t>(ls.parts_size()), -1);  // the unique a sample part loads, -1 = none
   std::uint32_t sample_parts = 0, organ_parts = 0, fm_parts = 0, va_parts = 0;
+  std::map<std::uint32_t, std::uint32_t> custom_parts;
 
   for (int i = 0; i < ls.parts_size(); ++i) {
     if (cancelled()) return failure(LiveSetLoadStatus::kCancelled);
@@ -250,6 +251,7 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
       ++va_parts;
       rep.state = pc.state = core::PartState::kReady;
     } else {
+      ++custom_parts[et];
       rep.state = pc.state = core::PartState::kReady;
     }
   }
@@ -400,6 +402,13 @@ LiveSetLoadResult LiveSetLoader::stage(const lsp::LiveSet& ls, const StageContro
     cfg.floors[cfg.floor_count++] = {static_cast<std::uint32_t>(EngineTypeId::kVa), options_.va_floor_voices};
   }
   cfg.waive_va_floor = va_parts == 0;  // no VA part: the floor is zero
+
+  for (const auto& [cid, floor_v] : options_.custom_floor_voices) {
+    auto it = custom_parts.find(cid);
+    if (it != custom_parts.end() && it->second > 0 && available(cid) && cfg.floor_count < cfg.floors.size()) {
+      cfg.floors[cfg.floor_count++] = {cid, floor_v};
+    }
+  }
 
   staged->live_set = ls;
   res.status = LiveSetLoadStatus::kOk;

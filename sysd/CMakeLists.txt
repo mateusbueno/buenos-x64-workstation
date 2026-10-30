@@ -67,3 +67,10 @@ target_link_libraries(sysd_usb_gadget_test PRIVATE velora_sysd_service)
 add_test(NAME sysd_usb_gadget_test COMMAND sysd_usb_gadget_test)
 set_tests_properties(sysd_usb_gadget_test PROPERTIES TIMEOUT 60)
 
+# Story 8.6: A firmware update adds a new engine on a v1 unit (update install, registry, arbiter floors, offline render null test, rollback).
+add_executable(sysd_engine_firmware_update_test tests/engine_firmware_update_test.cpp)
+target_link_libraries(sysd_engine_firmware_update_test PRIVATE velora_sysd_service)
+add_test(NAME sysd_engine_firmware_update_test COMMAND sysd_engine_firmware_update_test)
+set_tests_properties(sysd_engine_firmware_update_test PROPERTIES TIMEOUT 120)
+
+

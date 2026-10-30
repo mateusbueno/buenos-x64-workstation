@@ -33,6 +33,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -142,6 +143,7 @@ struct LiveSetLoaderOptions {
   std::uint32_t fm_floor_voices = core::VoiceArbiter::kFmFloorVoices;
   std::uint32_t va_floor_voices = core::VoiceArbiter::kVaFloorVoices;
   std::uint32_t steal_ramp_frames = core::VoiceArbiter::kStealRampFrames;
+  std::map<std::uint32_t, std::uint32_t> custom_floor_voices{};
   // Quiescence guard. The reservation (VoiceArbiter::reserve()) must not run while the audio callback renders. When set, the loader asks this
   // before it touches anything and refuses with kNotQuiesced when it returns true. engine-host answers "the audio stream is running";
   // the offline renderer renders on the calling thread, so it is never rendering during a load. Unset = the caller guarantees quiescence.
