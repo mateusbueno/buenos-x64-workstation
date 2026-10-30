@@ -23,7 +23,8 @@ add_library(velora_host STATIC
   src/keybed_reader.cpp
   src/panel_reader.cpp
   src/pedal_processor.cpp
-  src/virtual_panel_map.cpp)
+  src/virtual_panel_map.cpp
+  src/alsa_midi_input.cpp)
 add_library(velora::host ALIAS velora_host)
 target_include_directories(velora_host PUBLIC include)
 # velora_format_verify (Story 6.5): the resolver VERIFIES protected bundles (Ed25519 signature, hash list, index). It holds no cipher: the decrypting code is only in
@@ -485,4 +486,11 @@ add_executable(migration_runner_test tests/migration_runner_test.cpp)
 target_link_libraries(migration_runner_test PRIVATE velora_control)
 add_test(NAME migration_runner_test COMMAND migration_runner_test)
 set_tests_properties(migration_runner_test PROPERTIES TIMEOUT 120)
+
+# Story 1.20: Timestamped event path from a USB MIDI keyboard (ALSA DLL, fixed delay, 1-hour sub-block soak, unplug release).
+add_executable(usb_midi_timestamp_tests tests/usb_midi_timestamp_test.cpp)
+target_link_libraries(usb_midi_timestamp_tests PRIVATE velora_host velora_core)
+add_test(NAME usb_midi_timestamp_tests COMMAND usb_midi_timestamp_tests)
+set_tests_properties(usb_midi_timestamp_tests PROPERTIES TIMEOUT 120)
+
 

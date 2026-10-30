@@ -55,7 +55,7 @@ development_status:
   1-17-streaming-from-nvme-ahead-of-the-playhead: in-progress
   1-18-parallel-voice-render-on-the-three-isolated-cores: done
   1-19-voice-pool-arbiter-with-the-sample-floor: done
-  1-20-timestamped-event-path-from-a-usb-midi-keyboard: backlog
+  1-20-timestamped-event-path-from-a-usb-midi-keyboard: done
   1-21-in-ram-diagnostics-counters-and-latency-histogram: done
   1-22-24-hour-soak-gate-on-the-dev-board: backlog
   1-23-milestone-1-investor-demo-proving-nfr1-nfr4: backlog
