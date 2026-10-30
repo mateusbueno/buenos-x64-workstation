@@ -8,10 +8,17 @@
 | Organ, objective | Scripted MIDI sequences with identical drawbar, percussion, and rotary settings, played on the reference and on the unit. Compare spectrum, key click, percussion decay, and leakage | Within tolerances derived from the reference |
 | Organ, subjective | Blind ABX with a panel of 3–5 professional keyboardists | The panel cannot reliably tell the two apart, or the mean rating is ≥4/5 |
 | FM | Null test against a reference implementation, used only as a test oracle and never shipped | Residual below tolerance |
+| Modeled EP, objective | Scripted notes across keys and velocities, compared against recordings of the reference tine and reed instruments: partial frequencies, decay times, and spectrum over velocity | Within tolerances derived from the reference |
+| Modeled EP, subjective | Blind ABX against the same recordings, with a panel of 3–5 professional keyboardists | The panel cannot reliably tell the two apart, or the mean rating is ≥4/5 |
+| Piano resonance, objective | Scripted pedal-down, silently-held-key, and half-pedal renders. Partial tuning and decay are compared against the same piano's source recordings | Within tolerances derived from the recordings |
+| Piano resonance, subjective | Blind rating of resonance on and off by a panel of 3–5 professional keyboardists | Mean rating of resonance on is ≥4/5 |
+| Piano resonance, off | Null test of resonance off against the same instrument without resonance data | Bit-identical |
 
 **Organ references:**
 - The Hammond M-solo, which is MIDI-driven, sends and receives CC/NRPN, and is used for automated A/B renders.
 - Recordings of a real tonewheel B-3 through a real rotary speaker cabinet. Recommended.
+
+**Modeled EP references:** openly licensed recordings guide development and never ship. The final objective and ABX comparisons use the founder's own recordings of a real tine and a real reed instrument.
 
 ## SFZ v1 opcode subset
 

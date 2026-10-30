@@ -105,3 +105,24 @@ Epic 11 runs in parallel from month 0. Its intro lists each gate with its target
 ## Status
 
 All five checks pass. epics.md keeps `status: draft` and `stepsCompleted: [1, 2, 3]` until the founder selects **[C] Complete Workflow**.
+
+---
+
+## Addendum, 2026-10-30: Epics 14 and 15
+
+Scope: 2 new epics, 24 stories, FR123–FR127, NFR53–NFR57, AR48–AR51, UX-DR115–UX-DR116, EXT16–EXT18. Stories of Epics 1–13 were not re-validated.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | FR coverage | **PASS**: every new requirement appears in a **Covers:** line, and acceptance criteria address each FR |
+| 2 | Architecture implementation | **PASS**: no starter template; new formats are added only by the story that needs them |
+| 3 | Story quality | **PASS** after fixes: balanced Given/When/Then, **Covers:** and **Runs on:** in every story |
+| 4 | Epic structure | **PASS**: both epics deliver player value. Overlap in the block path is incidental, and the split keeps the patent and fidelity risks apart |
+| 5 | Dependency validation | **PASS** after fixes: no story depends on a later one, and external gates are **Blocked by:** lines |
+
+Fixes applied during validation:
+- Reworded the gates in 14.1 and 15.1 so they do not reference later stories.
+- Replaced CAP and AD references in **Covers:** with FR numbers (FR31, FR49, FR79).
+- Removed NFR8 from Epics 14 and 15, because it names only the FM and VA floors. FR123 holds the electric piano floor.
+- Added **Blocked by:** lines for EXT16, EXT17, and the RK3588 bring-up.
+- Made the Story 15.11 upgrade check testable: existing Live Sets open with resonance off and render identically.

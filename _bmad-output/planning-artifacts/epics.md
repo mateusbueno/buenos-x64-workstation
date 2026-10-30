@@ -10,13 +10,14 @@ inputDocuments:
   - _bmad-output/specs/spec-arm64-stage-workstation/acceptance-tests.md
   - _bmad-output/specs/spec-arm64-stage-workstation/go-to-market.md
   - _bmad-output/specs/spec-arm64-stage-workstation/glossary.md
+  - _bmad-output/specs/spec-arm64-stage-workstation/ip-and-references.md
   - _bmad-output/planning-artifacts/architecture/architecture-buenos-x64-workstation-2026-10-17/ARCHITECTURE-SPINE.md
   - _bmad-output/planning-artifacts/architecture/architecture-buenos-x64-workstation-2026-10-17/HARDWARE-INTERFACES.md
   - _bmad-output/planning-artifacts/ux-designs/ux-buenos-x64-workstation-2026-10-18/DESIGN.md
   - _bmad-output/planning-artifacts/ux-designs/ux-buenos-x64-workstation-2026-10-18/EXPERIENCE.md
   - _bmad-output/research/pesquisa-tecladistas-brasil.md
 notes:
-  - The SPEC stands in for the PRD. CAP-1..CAP-23 are the functional requirements; Constraints, performance-targets.md, acceptance-tests.md and Non-goals feed the NFRs.
+  - The SPEC stands in for the PRD. CAP-1..CAP-27 are the functional requirements; Constraints, performance-targets.md, acceptance-tests.md and Non-goals feed the NFRs.
   - pesquisa-tecladistas-brasil.md is a market survey design that has not been run yet; it feeds External Dependencies, not requirements.
 ---
 
@@ -235,6 +236,14 @@ Source conventions: the SPEC (`SPEC.md` + companions) stands in for the PRD, so 
 
 - FR122 (CAP-22, AD-31): Velora Studio exports and imports partial content: individual or selected Live Sets and Live Set bundles (the selected Live Sets plus the timbres they use, to move a repertoire to another Velora) as a versioned `.velorasets` file, and individual or selected timbres as a versioned `.veloratimbre` file, each with a manifest declaring its scope; full backups stay `.velorabackup`. User-imported (SFZ/SF2) timbres are exported with their audio as lossless formatlib bundle data; factory and partner timbres are never exported (encrypted per device, AD-14) and travel only as `library_id`/`instrument_key` references, so on import a part whose library is not installed shows "Missing library". Studio shows a size estimate before export and warns when a bundle with large user timbres is big. Import merges per item on a collision: Skip, Replace, or Keep both (the copy gets a new ID, AD-10). Export reads published state and `librarian` commands; import reaches the device only as control-thread and `librarian` commands, never as direct file writes.
 
+**Modeled electric piano and piano resonance (CAP-24 to CAP-27, firmware after v1)**
+
+- FR123 (CAP-24): A modeled tine and reed electric piano engine runs inside the shared voice pool with a floor of ≥64 voices and reaches shipped units by firmware update. Its timbres appear under E.Piano, never by engine type.
+- FR124 (CAP-24): The modeled electric piano responds continuously to touch: a velocity sweep shows no layer steps, release velocity shapes the damper sound, and half-pedal follows the existing pedal law.
+- FR125 (CAP-25): A player voices a modeled electric piano (hammer hardness, pickup position, pickup level, damper noise, attack noise) on the Part surface and in the Velora Studio Part Editor. Values survive Write, a power cycle, and backup and restore.
+- FR126 (CAP-26): A factory sample piano with resonance data sounds undamped strings with the pedal down, responds on silently held keys, and moves continuously through half-pedal. A resonance amount parameter runs from off to full, per part.
+- FR127 (CAP-27): An offline tool derives resonance data from a piano library's own source recordings, with no note-by-note tuning. Identical recordings produce identical data, and the data ships in the signed library bundle.
+
 ### NonFunctional Requirements
 
 **Performance**
@@ -318,6 +327,11 @@ Source conventions: the SPEC (`SPEC.md` + companions) stands in for the PRD, so 
 - NFR50 (GTM): Timeline from work start: Milestone 1 investor demo at month 6 (dev board: 256 voices, 1 TB, ≤5 ms, 0 dropouts / 24 h); first playable units (samples, organ, effects on prototype hardware) at month 12; v1 launch at month 18 (~100 units, direct sales).
 - NFR51 (Constraints): Release is date-driven: v1 requires sample engine, organ and effects; FM and VA may follow by firmware.
 - NFR52 (Non-goals): v1 excludes: Kronos compatibility, sequencer, >8 parts, Bluetooth/Wi-Fi, user-accessible NVMe, x86_64 product, partner library store, retail distribution for the first ~100 units, SFZ scripting/effect buses, motorized faders, sampling.
+- NFR53 (acceptance-tests): The modeled electric piano passes its objective comparison and blind ABX protocols, and piano resonance passes its objective comparison and blind panel rating (mean ≥4/5).
+- NFR54 (Constraints, CAP-1): With resonance off, sample output is bit-identical to the same instrument without resonance data.
+- NFR55 (Constraints): The modeled electric piano and piano resonance ship by firmware after v1 and never move the v1 date or become v1 acceptance items.
+- NFR56 (Constraints): A preliminary patent search runs before either model's design closes, and neither ships until an attorney's freedom-to-operate opinion clears it (`ip-and-references.md`).
+- NFR57 (Constraints): Models derive only from published literature and own measurements, never from a competing product. Third-party reference recordings never ship, and names stay generic (Tine, Reed).
 
 ### Additional Requirements
 
@@ -400,6 +414,13 @@ Source conventions: the SPEC (`SPEC.md` + companions) stands in for the PRD, so 
 
 - AR47 (Deferred): Partner licensing/activation server (post-launch); Pro sequencer internals; sampling / line-in into engines; lossless float codec (when float >20% of library); multi-library dedup and quotas (when >500 GB test libraries); MCU family chosen by partners by month 7.
 
+**Modeled electric piano and piano resonance**
+
+- AR48 (AD-7, CAP-24): The modeled electric piano gets a new stable reserved engine type ID, compiled into the engine binary like every other engine.
+- AR49 (AD-5, AD-6, AD-22, CAP-26): Resonance runs per part in the parallel shared-generator phase, has no voices, cannot be stolen, and is charged as a Live Set cost feature only while a part uses it. Confirm whether the AD-22 reservation order needs an amendment.
+- AR50 (AD-23, CAP-20): A resonance tail finishes on the generation that started it.
+- AR51 (AD-22, Epic 12 retro): Voice and resonance costs are accepted only on the target board, which depends on the open RK3588 bring-up.
+
 ### External Dependencies & Business Tasks
 
 Non-software work that gates or informs epics. Each item has an owner outside the software build or is a decision input.
@@ -419,6 +440,9 @@ Non-software work that gates or informs epics. Each item has an owner outside th
 - EXT13 (DESIGN Deferred): Commission a type/logo designer for the final typeface (licensed for LVGL embedding and desktop), the final symbol/wordmark/model mark, the desktop app icon and social avatar (see UX-DR for acceptance criteria).
 - EXT14 (Constraints, GTM): Founder produces the factory library content (factory piano, organ presets, other categories) — no sample-production partner for v1.
 - EXT15 (GTM): Direct-sales channel for the first ~100 units (storefront, payment, logistics, warranty/service in Brazil); retail partners after scale.
+- EXT16 (NFR56, `ip-and-references.md`): Hire a patent attorney for the freedom-to-operate opinion on CAP-24 and CAP-26, for Brazil first and for each export market after that.
+- EXT17 (acceptance-tests, CAP-24): Record a real tine and a real reed instrument as final references, with written permission, and recruit the 3–5 keyboardist panel.
+- EXT18 (`ip-and-references.md`): Confirm the license of every Freesound sound used as a development reference and keep attribution records.
 
 ### UX Design Requirements
 
@@ -581,6 +605,11 @@ Non-software work that gates or informs epics. Each item has an owner outside th
 
 - UX-DR114: Studio Selection List (DESIGN.md `studio-selection-list`) and partial export/import states (EXPERIENCE.md) — checkbox rows with name, category and size, header select-all, Bundle scope listing used timbres locked with factory/partner rows tagged "Reference only"; export size estimate and large-bundle warning; export/import progress and results in the Footer; per-item Skip / Replace / Keep both with "Apply to all"; missing library listed after import; import failure messages; live regions for export and import results.
 
+**Modeled electric piano and piano resonance**
+
+- UX-DR115: Modeled electric piano Sound section on the Part surface and in the Studio Part Editor, showing the voicing parameters of FR125 in the existing Sound section pattern.
+- UX-DR116: Resonance amount control on the Part surface and in the Studio Part Editor, shown only for instruments with resonance data, with the off state stated plainly.
+
 ### FR Coverage Map
 
 - FR1: Epic 1 - Deep library with stage latency
@@ -705,6 +734,11 @@ Non-software work that gates or informs epics. Each item has an owner outside th
 - FR120: Epic 1 - Deep library with stage latency
 - FR121: Epic 12 - FM and VA engines (post-launch)
 - FR122: Epic 9 - Velora Studio and USB
+- FR123: Epic 14 - Modeled electric piano (post-launch)
+- FR124: Epic 14 - Modeled electric piano (post-launch)
+- FR125: Epic 14 - Modeled electric piano (post-launch)
+- FR126: Epic 15 - Resonant sample pianos (post-launch)
+- FR127: Epic 15 - Resonant sample pianos (post-launch)
 
 
 ## Epic List
@@ -788,6 +822,18 @@ The reference corpus (Salamander, VSCO2, Sonatina, Karoryfer, a Pianobook select
 Scope decision (Story 13.1, ratified by the founder 2026-10-28; `_bmad-output/planning-artifacts/sfz-scope-decision.md`): tiers of Stories 13.2-13.8 and 13.10 in scope; the region EQ and LFO/EG tier (Story 13.9) deferred and conditional on measured need after 13.8 (taken up on measured need in the Story 13.9 run, partly: region EQ, `amplfo`/`pitchlfo`/`fillfo`, `pitcheg`/`fileg`; the generic `lfoNN`/`egNN` matrix stays deferred). No story is cancelled by the proposal; if 13.9 ends out of scope it is cancelled and its files stay skipped in the manifest with that reason.
 
 **FRs covered:** FR18 (extension), FR20, FR22
+
+### Epic 14: Modeled electric piano (post-launch)
+
+A keyboardist receives modeled tine and reed electric pianos by firmware update, plays them with continuous touch response, and voices them on the Part surface and in Velora Studio.
+
+**FRs covered:** FR123, FR124, FR125
+
+### Epic 15: Resonant sample pianos (post-launch)
+
+A keyboardist hears the factory sample pianos' strings answer each other, with the pedal down, on silently held keys, and through half-pedal, by firmware update. Resonance data comes from the libraries' own recordings.
+
+**FRs covered:** FR126, FR127
 
 ## Epic 1: Deep library with stage latency
 
@@ -7406,3 +7452,619 @@ So that the reference corpus libraries pass import.
 **Then** supported opcodes are mapped into the engine or safely handled according to the ratified scope decision
 **And** the corpus import failure rate drops accordingly
 
+## Epic 14: Modeled electric piano (post-launch)
+
+A keyboardist receives modeled tine and reed electric pianos by firmware update, plays them with continuous touch response, and voices them on the Part surface and in Velora Studio.
+
+**FRs covered:** FR123, FR124, FR125
+
+**Also covers:** NFR53, NFR55, NFR56, NFR57, AR48, AR51, UX-DR115. External dependencies: EXT16, EXT17, EXT18.
+
+### Story 14.1: Decision: clean-room record and patent search before the design closes
+
+As the founder,
+I want the sources, reference material and patent position of the modeled electric piano on record before its design closes,
+So that the engine is not built on material or methods we cannot ship.
+
+**Covers:** NFR56, NFR57, EXT16 (preliminary search), EXT18
+
+**Runs on:** Founder and attorney (no code)
+
+**Acceptance Criteria:**
+
+**Given** `ip-and-references.md`
+**When** this story closes
+**Then** a clean-room record in `engine/core/engines/ep/CLEAN-ROOM.md` lists the sources used (published literature, own measurements) and states that no competing product was disassembled, reverse engineered or given to the implementing agent as context
+**And** the record is kept with the code and reviewed before any later Epic 14 merge
+
+**Given** the Freesound references in `ip-and-references.md`
+**When** each sound is selected for development use
+**Then** its license is checked on its own page and recorded with its attribution, and any sound without an attribution or public-domain license is dropped
+
+**Given** the preliminary patent search
+**When** the planned tine and reed model is compared with it
+**Then** a search by holder and classification for electric piano modeling is added to `ip-and-references.md`
+**And** any patent that may read on the planned model is listed for the attorney before this story closes
+
+### Story 14.2: Modeled tine voice in the engine core
+
+As a keyboardist,
+I want a modeled tine electric piano voice,
+So that the Velora has an electric piano computed from a model, with no samples.
+
+**Covers:** FR123 (tine DSP), NFR57, AR48
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** the single engine interface (AD-7)
+**When** the engine is implemented in `engine/core/engines/ep/`
+**Then** it has a new stable reserved engine type ID, never reused, and it is compiled into the engine binary
+**And** a voice models the hammer strike, the vibrating tine and tone bar, the electromagnetic pickup, and the damper
+**And** tuning across keys E1–E7 is within a tolerance stated with the test
+
+**Given** the RT-safety discipline (AD-3)
+**When** a voice renders a 64-frame block
+**Then** it allocates nothing, takes no locks and passes the RTSan render test in CI
+**And** the engine declares a per-voice cost in cost units, marked as an estimate until measured on the target hardware, and exposes steal metadata
+
+**Given** the offline renderer (Story 1.9)
+**When** a committed tine test suite renders (key sweep and velocity sweep)
+**Then** two runs are bit-identical and the renders are stored as golden files
+**And** a test keeps aliasing at the top key and top velocity below a threshold recorded with the test
+
+### Story 14.3: Modeled reed voice in the engine core
+
+As a keyboardist,
+I want a modeled reed electric piano voice,
+So that both classic electric piano families are available from one engine.
+
+**Covers:** FR123 (reed DSP), NFR57
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** the engine from Story 14.2
+**When** an instrument selects the reed type
+**Then** a voice models the hammer strike, the vibrating reed, the electrostatic pickup, and the damper
+**And** tuning across keys E1–E7 is within a tolerance stated with the test
+
+**Given** the same engine
+**When** tine and reed notes play at once on different parts
+**Then** both render correctly, and the tine golden files of Story 14.2 are unchanged
+
+**Given** the offline renderer
+**When** a committed reed test suite renders (key sweep and velocity sweep)
+**Then** two runs are bit-identical, the renders are stored as golden files, and the RT-safety checks of Story 14.2 pass
+
+### Story 14.4: Continuous touch, release and half-pedal
+
+As a keyboardist,
+I want the modeled electric piano to follow my touch with no steps,
+So that soft and hard playing change the tone the way the real instruments do.
+
+**Covers:** FR124, NFR57
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** a tine or reed timbre
+**When** a velocity sweep renders from 1 to 127 on a sampled set of keys
+**Then** level and spectral brightness change monotonically, with no step above a threshold recorded with the test
+
+**Given** a held note
+**When** it is released at low and at high release velocity
+**Then** the damper sound differs measurably between the two
+
+**Given** the existing half-pedal law (Story 3.11)
+**When** the pedal moves through its half-pedal zone during a sustained note
+**Then** damping changes continuously and follows that law
+**And** no pedal or release handling allocates or blocks on the audio path
+
+### Story 14.5: Modeled electric piano voices in the shared pool with a 64-voice floor
+
+As a keyboardist,
+I want modeled electric piano parts to share the voice pool and always get at least 64 voices,
+So that a layer with it never starves the other parts.
+
+**Covers:** FR123 (pool), FR6, FR7, AR51
+
+**Blocked by:** Epic 12 retro item 12 (RK3588 bring-up), for the voice budget only
+
+**Runs on:** Mac (arbiter logic); prototype unit or dev board (voice budget)
+
+**Acceptance Criteria:**
+
+**Given** a Live Set with a modeled electric piano part
+**When** it loads
+**Then** the arbiter reserves the floor (≥64 voices at the declared cost) after the existing reservations, and only when such a part is present
+**And** voices are allocated and stolen only by the arbiter under the existing whole-Live-Set rules
+
+**Given** unit tests in `engine/core`
+**When** scripted scenarios run (electric piano layered over a 256-voice piano, sustain pedal down, organ present)
+**Then** victims match the expected order, and no engine drops below its floor
+
+**Given** the target hardware (RK3588, 3 isolated A76 cores)
+**When** the cost per voice is measured with the densest test timbre
+**Then** the measured cost replaces the Mac estimate, and a render of 64 modeled voices plus the existing floors and all effects of an 8-part Live Set completes within the block budget with zero xruns over 1 h
+**And** if the budget cannot be met, the result is reported with the measured headroom before any floor is changed
+
+### Story 14.6: Objective comparison against the development references
+
+As the founder,
+I want the model measured against recordings of the real instruments,
+So that tuning work follows numbers, not only listening.
+
+**Covers:** NFR53 (objective, development references), EXT18
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** the licensed references recorded in Story 14.1
+**When** the same keys and velocities render from the model
+**Then** an offline tool compares partial frequencies, decay times, and spectrum over velocity, and reports them per key
+
+**Given** those reports
+**When** the founder sets tolerances from the references
+**Then** the tolerances are recorded with the tool, and the comparison runs in the test suite on a committed subset of notes
+
+**Given** the references pass through a preamp
+**When** results are read
+**Then** the report states that limit
+**And** no reference audio is added to the product or to any shipped bundle
+
+### Story 14.7: Modeled electric piano timbres in the versioned formats
+
+As a keyboardist,
+I want my electric piano voicing saved with my timbres and Live Sets,
+So that the sound I set up comes back exactly.
+
+**Covers:** FR125 (persistence), FR14, FR49, FR58
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** the voicing parameters (hammer hardness, pickup position, pickup level, damper noise, attack noise) and the instrument type
+**When** they are stored
+**Then** they use the existing versioned formats without migration, readers accept N and N−1, and unknown fields are preserved
+
+**Given** a saved timbre
+**When** it passes through Write, a restart, and a backup and restore
+**Then** every value returns unchanged, and a render before and after is bit-identical
+
+**Given** firmware without this engine
+**When** a Live Set with a modeled electric piano part opens
+**Then** the part shows the not-available state, stays silent, and keeps its data
+
+### Story 14.8: Design story: modeled electric piano Sound section
+
+As a keyboardist,
+I want the electric piano's controls drawn in the same language as the other Sound sections,
+So that voicing it feels familiar.
+
+**Covers:** UX-DR115, UX-DR60
+
+**Runs on:** Design (no code)
+
+**Acceptance Criteria:**
+
+**Given** DESIGN.md and EXPERIENCE.md
+**When** this story closes
+**Then** the Sound section for the Part surface and the Studio Part Editor is specified with fields, ranges, units, default values, encoder mapping, and the not-available state, in English, PT-BR and ES
+**And** the section shows the category and timbre name, never an engine type
+
+### Story 14.9: Part surface Sound section for modeled electric pianos
+
+As a keyboardist,
+I want to voice the electric piano on the unit,
+So that I can shape it on stage without a computer.
+
+**Covers:** FR125 (Part surface), UX-DR115
+
+**Runs on:** Mac (UI); prototype unit (touch and encoders)
+
+**Acceptance Criteria:**
+
+**Given** a part with a modeled electric piano timbre
+**When** the Part surface opens
+**Then** the Sound section from Story 14.8 appears, and each control changes the sound with no audible zipper noise
+
+**Given** a voicing change
+**When** it is written
+**Then** it survives a power cycle, and ASSIGN can map each voicing parameter to an encoder
+
+**Given** a UI crash during editing
+**When** the UI restarts
+**Then** sound never stops (process isolation)
+
+### Story 14.10: Velora Studio Part Editor section for modeled electric pianos
+
+As a keyboardist,
+I want to voice the electric piano in Velora Studio,
+So that I can prepare sounds on the computer, with or without the unit connected.
+
+**Covers:** FR125 (Studio), UX-DR115
+
+**Runs on:** Mac (Studio); prototype unit (live edit)
+
+**Acceptance Criteria:**
+
+**Given** a connected unit
+**When** a voicing control changes in Studio
+**Then** the unit follows it live, and the Part surface shows the same value
+
+**Given** no connected unit
+**When** a backup with a modeled electric piano timbre opens in Studio
+**Then** the values can be edited offline, and Write to Velora applies them on the next connection
+
+### Story 14.11: Init and factory modeled electric piano timbres
+
+As a keyboardist,
+I want ready-made tine and reed sounds in the Library,
+So that I can play them right after the update.
+
+**Covers:** FR123 (Library), FR58, NFR29, NFR57
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** the engine and the formats
+**When** the factory timbres install
+**Then** at least 6 tine and 4 reed timbres, plus one Init timbre of each type, appear under E.Piano with generic names and carry no third-party trademark
+
+**Given** the sampled electric pianos
+**When** the factory timbres install
+**Then** the sampled timbres stay installed and unchanged
+
+**Given** each factory timbre
+**When** an 8-part Live Set stores and recalls it
+**Then** its timbre, zone and effects return correctly, and it renders with the existing amp, drive and modulation effects
+
+### Story 14.12: Final reference recordings and blind panel
+
+As the founder,
+I want the model tested blind against recordings of the real instruments,
+So that "high fidelity" is proved by players.
+
+**Covers:** NFR53, EXT17
+
+**Blocked by:** EXT17 (real instruments, written permission, and panel)
+
+**Runs on:** Founder and panel; offline renders
+
+**Acceptance Criteria:**
+
+**Given** a real tine and a real reed instrument, used with written permission
+**When** they are recorded
+**Then** the recordings cover the keys and velocities of the comparison suite, and their rights are recorded
+
+**Given** those recordings
+**When** the objective comparison of Story 14.6 runs against them
+**Then** results fall within tolerances derived from them
+
+**Given** a panel of 3–5 professional keyboardists
+**When** a blind ABX runs against the same recordings
+**Then** the panel cannot reliably tell the two apart, or the mean rating is ≥4/5
+**And** a failed result is reported with the findings, and the release does not proceed
+
+### Story 14.13: Modeled electric piano firmware reaches shipped units
+
+As a keyboardist who already owns a Velora 73,
+I want to install the update that adds the modeled electric piano and keep everything I had,
+So that my instrument gains new sounds without losing a Live Set.
+
+**Covers:** FR123, FR45, FR49, NFR1, NFR4, NFR12, NFR55, NFR56
+
+**Blocked by:** EXT16 (freedom-to-operate opinion), Epic 12 retro item 12 (RK3588 bring-up)
+
+**Runs on:** Production v1 unit (release acceptance)
+
+**Acceptance Criteria:**
+
+**Given** the release candidate
+**When** the release is prepared
+**Then** the attorney's freedom-to-operate opinion clears the engine for each market it ships to, and the blind panel of Story 14.12 passed
+
+**Given** a production unit with user content
+**When** the signed bundle installs from Velora Studio and from USB-A
+**Then** the unit restarts on the new slot, and every existing Live Set opens and plays identically in an automated render comparison
+
+**Given** the updated unit
+**When** an 8-part Live Set with all engines and effects runs
+**Then** latency stays ≤5 ms under full load, a 24 h soak shows zero xruns and underruns, and the ≥64 floor is reached
+
+**Given** 100 random power cuts during installation
+**When** the unit restarts
+**Then** it boots every time on the previous or the new firmware, and after a rollback a Live Set with a modeled electric piano part shows that part as not available with its data preserved
+**And** release notes in EN, PT-BR and ES use generic names only
+
+## Epic 15: Resonant sample pianos (post-launch)
+
+A keyboardist hears the factory sample pianos' strings answer each other, with the pedal down, on silently held keys, and through half-pedal, by firmware update. Resonance data comes from the libraries' own recordings.
+
+**FRs covered:** FR126, FR127
+
+**Also covers:** NFR53, NFR54, NFR55, NFR56, NFR57, AR49, AR50, AR51, UX-DR116. External dependency: EXT16.
+
+### Story 15.1: Decision: resonance method and patent position
+
+As the founder,
+I want the resonance method chosen with its patent position on record,
+So that the work starts on a design we can ship.
+
+**Covers:** NFR56, NFR57, AR49, EXT16
+
+**Blocked by:** EXT16 (attorney engaged for the Brazil review)
+
+**Runs on:** Founder and attorney; architecture note
+
+**Acceptance Criteria:**
+
+**Given** `ip-and-references.md`
+**When** the candidate resonance methods are compared with the listed patents
+**Then** the chosen method and its reasons are recorded, and each market's status is stated: clear, open, or blocked
+**And** this story closes only after an attorney's review covers Brazil, and any export market stays out of scope until it is cleared
+
+**Given** the unchecked items in `ip-and-references.md`
+**When** this story closes
+**Then** the Korg and Waseda filings and the patents with unconfirmed Brazil status are checked and recorded
+
+**Given** the architecture spine
+**When** the method is fixed
+**Then** the fit with AD-5, AD-6, AD-22 and AD-23 is checked, and any needed amendment is made through the architecture workflow
+
+### Story 15.2: Resonance data in the signed library bundle
+
+As the vendor,
+I want a piano's resonance data to ship inside its signed bundle,
+So that it installs, verifies and updates like the rest of the library.
+
+**Covers:** FR127 (format), FR31, FR49
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** the bundle format
+**When** a versioned optional resonance section is added
+**Then** bundles without it load unchanged, and readers accept N and N−1
+
+**Given** a bundle with resonance data
+**When** it is tampered with
+**Then** it is rejected at load, like any other tampered bundle
+
+**Given** a bundle with resonance data on firmware that does not support it
+**When** it loads
+**Then** the instrument plays normally and the section is ignored
+
+### Story 15.3: Offline tool derives resonance data from recordings
+
+As the vendor,
+I want a tool that derives resonance data from a library's own recordings,
+So that no one tunes 88 notes by hand.
+
+**Covers:** FR127, NFR57
+
+**Runs on:** Mac (offline tool)
+
+**Acceptance Criteria:**
+
+**Given** the source recordings of a piano library
+**When** the tool runs
+**Then** it writes resonance data for every key in the library, in the format of Story 15.2, with no manual per-note input
+**And** two runs on the same recordings produce byte-identical data
+
+**Given** a key with a damaged or missing recording
+**When** the tool runs
+**Then** it reports the key and fails, or fills it only by a stated rule recorded in the output
+
+**Given** the data for a test key
+**When** it is compared with the source recording
+**Then** partial frequencies and decay times fall within tolerances stated with the test
+
+### Story 15.4: Undamped strings ring with the pedal down
+
+As a keyboardist,
+I want a sample piano's strings to ring together with the pedal down,
+So that the piano sounds open and alive under my hands.
+
+**Covers:** FR126 (pedal), NFR54, AR49
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** a factory piano with resonance data and resonance at full
+**When** notes play with the pedal down
+**Then** undamped strings of that part ring from those notes, and the output differs from the dry render
+
+**Given** resonance off, or an instrument with no resonance data
+**When** any test renders
+**Then** output is bit-identical to the same instrument without resonance data, and the sample null test passes unchanged
+
+**Given** the block model (AD-5, AD-6)
+**When** resonance renders
+**Then** it runs per part in the shared-generator phase, voices write only their own state, and it stays deterministic with 1 and 3 worker threads
+**And** it allocates nothing, takes no locks and passes the RTSan render test
+
+**Given** two parts with resonance
+**When** they play at once
+**Then** neither part's resonance is excited by the other
+
+### Story 15.5: Silently held keys and continuous half-pedal
+
+As a keyboardist,
+I want silently held keys to answer what I play, and half-pedal to move smoothly,
+So that pedal technique works on the Velora as it does on a piano.
+
+**Covers:** FR126 (held keys, half-pedal)
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** keys held silently with the pedal up
+**When** other notes play
+**Then** the held strings respond, and the strings of keys not held stay damped
+
+**Given** a sustained resonance
+**When** the pedal moves slowly through its half-pedal zone
+**Then** damping changes continuously, follows the existing pedal law, and produces no click or step above a threshold recorded with the test
+
+**Given** a damper released while strings ring
+**When** the pedal comes up
+**Then** the resonance decays naturally and no note hangs
+
+### Story 15.6: Resonance cost in the shared pool
+
+As a keyboardist,
+I want resonance to be counted fairly in the shared budget,
+So that it never breaks a Live Set or takes voices by surprise.
+
+**Covers:** AR49, AR51, FR6
+
+**Blocked by:** Epic 12 retro item 12 (RK3588 bring-up), for the budget only
+
+**Runs on:** Mac (arbiter logic); prototype unit or dev board (budget)
+
+**Acceptance Criteria:**
+
+**Given** a Live Set with no part using resonance
+**When** it loads
+**Then** the reservation and every floor match the same Live Set on earlier firmware
+
+**Given** a part using resonance
+**When** the Live Set loads
+**Then** its cost is charged as a Live Set cost feature, resonance holds no voices, and it can never be stolen
+
+**Given** the target hardware
+**When** cost is measured with the pedal down and all strings ringing on the densest factory piano
+**Then** the measured cost replaces the Mac estimate, and an 8-part Live Set with all floors and effects completes within the block budget with zero xruns over 1 h
+**And** if the budget cannot be met, the result is reported with the measured headroom before any floor is changed
+
+### Story 15.7: Resonance survives seamless switching
+
+As a keyboardist,
+I want the ringing strings to finish naturally when I change scene or Live Set,
+So that a song change never cuts the tail.
+
+**Covers:** AR50, FR79
+
+**Runs on:** Mac
+
+**Acceptance Criteria:**
+
+**Given** resonance ringing on a part
+**When** a scene, a Live Set, or a setlist changes
+**Then** the tail finishes on the generation that started it, with no gap or truncation in an automated render
+
+**Given** a new Live Set that also uses resonance
+**When** the switch happens during a tail
+**Then** the old tail and the new resonance overlap correctly, and the old resources release only after the tail ends
+
+### Story 15.8: Design story: resonance amount control
+
+As a keyboardist,
+I want the resonance control to be easy to find and clear about its state,
+So that I always know whether it is on.
+
+**Covers:** UX-DR116
+
+**Runs on:** Design (no code)
+
+**Acceptance Criteria:**
+
+**Given** DESIGN.md and EXPERIENCE.md
+**When** this story closes
+**Then** the control for the Part surface and the Studio Part Editor is specified with range, default, off state and encoder mapping, in English, PT-BR and ES
+**And** the control appears only for instruments with resonance data, with no disabled placeholder for other instruments
+
+### Story 15.9: Resonance amount on the Part surface and in Velora Studio
+
+As a keyboardist,
+I want to set resonance per part, on the unit or in Studio,
+So that I can match it to the song.
+
+**Covers:** FR126 (amount), UX-DR116
+
+**Runs on:** Mac (UI and Studio); prototype unit (touch and encoders)
+
+**Acceptance Criteria:**
+
+**Given** a part with a factory piano that has resonance data
+**When** the amount moves from off to full
+**Then** resonance follows with no zipper noise, and off gives the bit-identical output of Story 15.4
+
+**Given** a saved amount
+**When** it passes through Write, a power cycle, and a backup and restore
+**Then** it returns unchanged, and readers accept N and N−1
+
+**Given** a user-imported SFZ or SF2 instrument
+**When** its part opens
+**Then** no resonance control appears
+
+**Given** a connected unit
+**When** the amount changes in Studio
+**Then** the unit follows it live, and with no unit the value can be edited offline
+
+### Story 15.10: Factory pianos gain resonance and pass the panel
+
+As the founder,
+I want the Factory Grand and the Studio Upright to ship with proved resonance,
+So that the feature reaches players at the promised quality.
+
+**Covers:** FR127 (factory data), NFR53
+
+**Runs on:** Mac (offline); founder and panel
+
+**Acceptance Criteria:**
+
+**Given** the source recordings of the Factory Grand and the Studio Upright
+**When** the tool of Story 15.3 runs
+**Then** both signed bundles carry resonance data, with no change to their sample audio
+
+**Given** scripted pedal-down, silently-held-key and half-pedal renders
+**When** partial tuning and decay are compared with the source recordings
+**Then** results fall within tolerances derived from those recordings
+
+**Given** a panel of 3–5 professional keyboardists
+**When** they rate resonance on and off blind
+**Then** the mean rating of resonance on is ≥4/5
+**And** a failed result is reported with the findings, and the release does not proceed
+
+### Story 15.11: Resonance firmware reaches shipped units
+
+As a keyboardist who already owns a Velora 73,
+I want to install the resonance update and keep everything I had,
+So that my pianos improve without touching my setlists.
+
+**Covers:** FR126, FR45, FR49, NFR1, NFR4, NFR12, NFR54, NFR55, NFR56
+
+**Blocked by:** EXT16 (freedom-to-operate opinion), Epic 12 retro item 12 (RK3588 bring-up)
+
+**Runs on:** Production v1 unit (release acceptance)
+
+**Acceptance Criteria:**
+
+**Given** the release candidate
+**When** the release is prepared
+**Then** the attorney's freedom-to-operate opinion clears resonance for each market it ships to, and the panel of Story 15.10 passed
+
+**Given** a production unit with user content
+**When** the firmware and the updated piano bundles install
+**Then** every existing Live Set opens with resonance off and plays identically in an automated render comparison
+
+**Given** the updated unit
+**When** an 8-part Live Set with resonance, all engines and all effects runs
+**Then** latency stays ≤5 ms under full load, and a 24 h soak shows zero xruns and underruns
+
+**Given** 100 random power cuts during installation
+**When** the unit restarts
+**Then** it boots every time on the previous or the new firmware, and no library is partly updated
+**And** release notes in EN, PT-BR and ES use generic names only

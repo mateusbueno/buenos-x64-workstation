@@ -21,3 +21,5 @@
 - **ASSIGN:** the encoder mode that maps the 8 encoders to user-chosen parameters, saved per Live Set and seeded from a global default.
 - **Pickup:** after a recall, a non-motorized fader changes nothing until it crosses the stored value.
 - **Boot into:** the setting for what is playable after power-on: last sound used, start of setlist, or default Live Set.
+- **Modeled electric piano:** an engine that computes tine or reed electric piano tone from a physical model, with no samples.
+- **Piano resonance:** a modeled layer on a sample piano that adds string resonance, driven by pedal position and played notes.

@@ -9,6 +9,7 @@ companions:
   - acceptance-tests.md
   - go-to-market.md
   - rejected-approaches.md
+  - ip-and-references.md
   - glossary.md
   - ../../planning-artifacts/architecture/architecture-buenos-x64-workstation-2026-10-17/ARCHITECTURE-SPINE.md
   - ../../planning-artifacts/architecture/architecture-buenos-x64-workstation-2026-10-17/HARDWARE-INTERFACES.md
@@ -25,6 +26,8 @@ sources:
 ## Why
 
 This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps sample memory at about 2.2 GB, and the factory autoload alone takes about 2 GB, even in Virtual Memory mode. Korg's successor, the Nautilus, ships with the same cap of about 2 GB. The cap cannot be lifted, because the Kronos synth engine is a closed i386 kernel module (see `rejected-approaches.md`). So the founder will build an own commercial ARM64 stage keyboard, launching in Brazil first. Its differentiator is a sample engine that streams libraries from NVMe at sizes far beyond RAM. It is sold at the price of a Nord Electro 6D or a Yamaha YC73, and it adds a USB audio interface, which Nord does not offer. An investor is interested and brings partners for the physical build. The first units may be hand-built, but quality must be good enough to scale.
+
+On top of that differentiator sits an opportunity for the keys players the product is built for. Recordings fix an electric piano's response into velocity layers, and they cannot hold how a real piano's undamped strings answer each other. Two owned models close those gaps: a modeled electric piano and modeled resonance on the sample pianos.
 
 ## Capabilities
 
@@ -97,6 +100,18 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - **CAP-23**
   - **intent:** A player can map the 8 encoders to parameters of their choice per Live Set (ASSIGN mode).
   - **success:** In ASSIGN, each encoder controls its mapped parameter in the current Live Set, and turning one shows the K1–K8 names for 3 s. A new Live Set starts from the global default map, which the user can edit. The map survives Write and a power cycle.
+- **CAP-24**
+  - **intent:** A player can play modeled tine and reed electric pianos whose tone responds continuously to touch, with no velocity layers.
+  - **success:** The engine sustains ≥64 voices inside the shared pool and reaches shipped units by firmware update. Its timbres appear under E.Piano, never by engine type. A velocity sweep shows no layer steps, and the timbres pass the modeled EP protocol in `acceptance-tests.md`.
+- **CAP-25**
+  - **intent:** A player can voice a modeled electric piano to taste: hammer, pickup, and damper character.
+  - **success:** The voicing parameters listed in `engines.md` are editable on the Part surface and in the Velora Studio Part Editor. They change the sound audibly, and they survive Write, a power cycle, and a backup and restore.
+- **CAP-26**
+  - **intent:** A player hears a sample piano's strings answer each other: undamped strings ring with the pedal down, silently held keys respond to played notes, and half-pedal moves continuously between the two.
+  - **success:** On a factory piano with resonance data, a resonance amount parameter runs from off to full. The instrument passes the piano resonance protocol in `acceptance-tests.md`. With resonance off, output is bit-identical to the same instrument without resonance data.
+- **CAP-27**
+  - **intent:** The vendor can derive a piano's resonance data from that library's own recordings, with no note-by-note hand tuning.
+  - **success:** An offline tool produces the resonance data for the Factory Grand and the Studio Upright from their source recordings, and the result ships inside the signed library bundle. Rerunning it on the same recordings produces identical data.
 
 ## Constraints
 
@@ -118,6 +133,12 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - The keybed is a Fatar 73SW (semi-weighted) from the partner's stock of ~100 units, and keybed scanning plus transport must fit inside the 5 ms latency budget.
 - The enclosure follows `mechanical.md`: 1164.2 mm wide, a flat brushed-aluminum top, a painted steel bottom, 25 mm plastic end cheeks, and the pitch and mod wheels in an 80 mm block left of the keybed. Note names follow C4 = MIDI 60, so the keys span E1–E7.
 - Power comes from an external off-the-shelf Inmetro-compliant supply through a locking 5.5 × 2.5 mm DC plug. The supercapacitor hold-up stays inside the unit.
+- The modeled electric piano and piano resonance ship by firmware after v1. Neither may move the v1 date or become a v1 acceptance item.
+- Resonance off leaves the sample path bit-identical, so CAP-1 and the sample null test stay valid.
+- A preliminary patent search runs before either model's design closes, and neither model ships until an attorney's freedom-to-operate opinion clears it. Clean-room rules cover copyright, not patents.
+- Third-party reference recordings never ship in the product. Development uses the attribution-licensed recordings in `ip-and-references.md`, and non-commercial material stays out without the author's written permission.
+- Models derive from published literature and the founder's own measurements, never from disassembling or reverse engineering a competing product.
+- Modeled electric pianos carry generic names (Tine, Reed). Marketing and UI never use "Rhodes" or "Wurlitzer".
 - Release is date-driven. v1 requires the sample engine, the organ, and the effects, while FM and VA may follow by firmware. Voice pool, patch format, UI, and the engine API support all four engines from day one.
 - v1 retail price sits between R$ 17,990 and R$ 19,990, so the BOM and the tax structure must leave margin at that price.
 - The founder supplies the factory library content, so no sample-production partner is assumed for v1.
@@ -137,11 +158,17 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - Retail distribution for the first ~100 units, which are sold direct.
 - SFZ scripting and SFZ effect buses.
 - Motorized faders in v1, which are reserved for the Pro tier.
+- A fully modeled acoustic piano. Acoustic pianos stay sample-based (see `rejected-approaches.md`).
+- Removing the sampled electric pianos from the factory plan.
+- Resonance on user-imported SFZ or SF2 instruments in its first release.
+- Resonance that crosses parts of a Live Set.
+- Modeling una corda, lid position, or microphone placement.
 
 ## Success signal
 
 - **Milestone 1 (month 6, investor demo):** on an RK3588 dev board, the sample engine plays 256 stereo voices streamed from a library of up to 1 TB, at ≤5 ms latency, with zero dropouts over 24 h.
 - **v1 (month 18):** a production unit boots in ≤10 s, plays the factory piano and the organ with its rotary speaker live on stage, and records into a laptop over USB-C. The first ~100 units sell direct at R$ 17,990–19,990.
+- **Modeled keys (firmware after v1):** a shipped unit updates and plays a modeled tine and reed electric piano and a Factory Grand with resonance in one 8-part Live Set, with no dropouts, and both pass their blind panel protocols.
 
 ## Assumptions
 
@@ -151,6 +178,8 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - The 73SW shares the key geometry of Fatar's 61 TP/9 drawing (23.6 mm white key pitch, 10.4 mm keybed frame per side). `mechanical.md` uses those values until the 73SW drawing arrives.
 - The keybed's contact count (2 or 3) and whether it has aftertouch are still unknown, so the scan MCU handles both cases.
 - The low-volume BOM is about US$ 1,200–1,600 and the landed cost about R$ 11,000. These are forge estimates, not verified.
+- The modeled electric piano's floor of ≥64 voices matches VA. Board measurement confirms or changes it.
+- The founder can reach a well-maintained tine and reed instrument for measurement, as the rights record implies.
 
 ## Open Questions
 
@@ -164,3 +193,6 @@ This spec has two drivers: a vision and a pain. The founder's Korg Kronos caps s
 - sfizz was archived upstream (final 1.2.3, BSD-2). The architecture vendors its SFZ parser (AD-15). Do the licenses of the vendored parts and their dependencies allow closed-product use?
 - Which MIDI CC numbers does the Hammond M-solo use for drawbars? The Drawbar Data List on pp. 64–65 of the manual is an image.
 - Can the founder record a real tonewheel B-3 through a real rotary speaker cabinet for organ reference? This is recommended, not blocking.
+- Which real tine and reed instruments supply the final CAP-24 reference recordings?
+- Which attorney runs the patent search and opinion for CAP-24 and CAP-26? `ip-and-references.md` holds the preliminary search.
+- Is the Brazil launch of CAP-26 clear, as INPI suggests, and what would export need against the Yamaha, Kawai, Casio, and Modartt patents in `ip-and-references.md`?

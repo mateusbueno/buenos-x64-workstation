@@ -12,4 +12,5 @@ These were rejected in the forge session. Do not reopen them without new evidenc
 | Shrink Kronos preload heads | It would mean rewriting Korg's factory preload. |
 | Emulate OA.ko on ARM64 | Realtime x86/SSE DSP cannot be emulated within audio latency. |
 | "Kronos 4" pitch to Korg | Korg owns the OA.ko source, so the port is their in-house job. A proof of concept that bypasses their anti-tamper would be a liability. |
+| Fully modeled acoustic piano | Rejected on 2026-10-30. It has no null-test oracle, so 88 notes of calibration depend on listening alone, a multi-year effort. Pedal-down cost is estimated at about 3 GFLOP/s, against about 0.6 for a resonance layer (both unmeasured). Samples plus modeled resonance keep the streaming differentiator. |
 | Unbreakable encryption | The key lives on the device, and the Kronos crypto was broken publicly. The only realistic goal is deterrence. |
