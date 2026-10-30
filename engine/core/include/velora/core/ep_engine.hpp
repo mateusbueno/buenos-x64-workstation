@@ -49,8 +49,12 @@ class EpEngine final : public Engine {
 
   // Real-time control
   void set_sustain(uint32_t channel, bool sustain) noexcept;
+  void set_half_pedal(uint32_t channel, float cc64) noexcept;
+  float part_pedal_cc(uint32_t part) const noexcept { return part_pedal_cc_[part % kPartCount]; }
   void set_pitch_bend(uint32_t channel, float semitones) noexcept;
   float part_pitch_bend(uint32_t part) const noexcept { return part_pitch_bend_[part % kPartCount]; }
+
+  bool set_part_cc(uint32_t part, uint32_t cc, uint32_t value32) noexcept VELORA_NONBLOCKING override;
 
   bool set_part_pitch_bend(uint32_t part, uint32_t value32) noexcept override {
     set_pitch_bend(part, static_cast<float>((static_cast<double>(value32) / 2147483648.0 - 1.0) * 2.0));
@@ -66,6 +70,7 @@ class EpEngine final : public Engine {
   std::array<EpVoicingParameters, kPartCount> part_params_{};
   std::array<EpVoicingParameters, kPartCount> base_params_{};
   std::array<bool, kPartCount> part_sustain_{};
+  std::array<float, kPartCount> part_pedal_cc_{};
   std::array<float, kPartCount> part_pitch_bend_{};
 
   std::vector<EpVoice> voices_;

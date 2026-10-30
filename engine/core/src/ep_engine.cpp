@@ -11,6 +11,7 @@ EpEngine::EpEngine(float sample_rate, uint32_t voice_capacity)
     base_params_[i] = create_default_tine_parameters();
     part_params_[i] = base_params_[i];
     part_sustain_[i] = false;
+    part_pedal_cc_[i] = 0.0f;
     part_pitch_bend_[i] = 0.0f;
   }
 
@@ -31,7 +32,9 @@ EngineStatus EpEngine::start_voice(uint32_t channel, uint32_t note, uint32_t vel
 
   voices_[slot].start(channel, note7, velocity16, part_params_[part],
                       part_pitch_bend_[part], frame_clock_);
-  if (part_sustain_[part]) {
+  if (part_pedal_cc_[part] > 0.0f) {
+    voices_[slot].set_half_pedal(part_pedal_cc_[part]);
+  } else if (part_sustain_[part]) {
     voices_[slot].set_sustain(true);
   }
 
@@ -91,6 +94,7 @@ void EpEngine::reset_play_state() noexcept {
   for (uint32_t i = 0; i < kPartCount; ++i) {
     part_params_[i] = base_params_[i];
     part_sustain_[i] = false;
+    part_pedal_cc_[i] = 0.0f;
     part_pitch_bend_[i] = 0.0f;
   }
   for (auto& v : voices_) {
@@ -185,11 +189,32 @@ const EpVoicingParameters& EpEngine::part_voice_params(uint32_t part_idx) const 
 void EpEngine::set_sustain(uint32_t channel, bool sustain) noexcept {
   uint32_t p = channel % kPartCount;
   part_sustain_[p] = sustain;
+  part_pedal_cc_[p] = sustain ? 127.0f : 0.0f;
   for (auto& v : voices_) {
     if (v.is_active() && v.channel() == channel) {
       v.set_sustain(sustain);
     }
   }
+}
+
+void EpEngine::set_half_pedal(uint32_t channel, float cc64) noexcept {
+  uint32_t p = channel % kPartCount;
+  part_pedal_cc_[p] = cc64;
+  part_sustain_[p] = (cc64 >= EpVoice::kHalfPedalHoldCc);
+  for (auto& v : voices_) {
+    if (v.is_active() && v.channel() == channel) {
+      v.set_half_pedal(cc64);
+    }
+  }
+}
+
+bool EpEngine::set_part_cc(uint32_t part, uint32_t cc, uint32_t value32) noexcept {
+  if (cc == 64) {
+    float cc64 = static_cast<float>(value32) / 4294967295.0f * 127.0f;
+    set_half_pedal(part, cc64);
+    return true;
+  }
+  return false;
 }
 
 void EpEngine::set_pitch_bend(uint32_t channel, float semitones) noexcept {

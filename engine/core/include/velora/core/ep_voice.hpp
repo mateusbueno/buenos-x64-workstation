@@ -15,6 +15,14 @@ class EpVoice {
   static constexpr float kPi = 3.14159265358979323846f;
   static constexpr float kTwoPi = 6.28318530717958647692f;
   static constexpr uint32_t kNumModes = 4;
+  static constexpr float kHalfPedalHoldCc = 63.5f;
+  static constexpr float kHalfPedalMinScale = 0.1f;
+
+  static float half_pedal_scale(float cc64) noexcept {
+    if (!(cc64 > 0.0f)) return 1.0f;
+    if (cc64 >= kHalfPedalHoldCc) return 1.0f;
+    return 1.0f - (1.0f - kHalfPedalMinScale) * (cc64 / kHalfPedalHoldCc);
+  }
 
   EpVoice() = default;
 
@@ -28,9 +36,11 @@ class EpVoice {
     channel_ = 0;
     note_ = 60;
     velocity_ = 0;
+    release_velocity_ = 64;
     start_time_ = 0;
     state_ = VoiceState::kHeld;
     pedal_held_ = false;
+    pedal_cc_ = 0.0f;
     current_level_ = 0.0f;
 
     stealing_ = false;
@@ -102,37 +112,60 @@ class EpVoice {
     noise_seed_ = 1234567u + note * 10139u + velocity_ * 31337u;
   }
 
+  void set_half_pedal(float cc64) noexcept {
+    pedal_cc_ = std::clamp(cc64, 0.0f, 127.0f);
+    if (!active_ || state_ == VoiceState::kHeld || stealing_) return;
+
+    if (pedal_cc_ >= kHalfPedalHoldCc) {
+      state_ = VoiceState::kSustained;
+      pedal_held_ = true;
+    } else {
+      state_ = VoiceState::kReleasing;
+      pedal_held_ = false;
+      float scale = half_pedal_scale(pedal_cc_);
+      update_release_damping(scale);
+    }
+  }
+
   void stop(uint8_t release_velocity = 64) noexcept {
     if (!active_ || state_ == VoiceState::kReleasing || stealing_) return;
-    if (pedal_held_) {
+    release_velocity_ = release_velocity;
+    if (pedal_held_ || pedal_cc_ >= kHalfPedalHoldCc) {
       state_ = VoiceState::kSustained;
       return;
     }
-    release(release_velocity);
+    float scale = half_pedal_scale(pedal_cc_);
+    release(release_velocity, scale);
   }
 
-  void release(uint8_t release_velocity = 64) noexcept {
+  void release(uint8_t release_velocity = 64, float scale = 1.0f) noexcept {
     state_ = VoiceState::kReleasing;
     pedal_held_ = false;
-    float norm_rel = static_cast<float>(std::clamp<uint8_t>(release_velocity, 1, 127)) / 127.0f;
-
-    // Release velocity sets damper contact damping speed
-    for (uint32_t m = 0; m < kNumModes; ++m) {
-      float t60_rel = 0.12f / (0.6f + 0.8f * norm_rel);
-      release_damp_[m] = std::exp(-3.0f / (t60_rel * sample_rate_));
-    }
+    release_velocity_ = release_velocity;
+    update_release_damping(scale);
 
     // Trigger subtle felt release scrape
     if (params_.damper_noise > 0.01f) {
+      float norm_rel = static_cast<float>(std::clamp<uint8_t>(release_velocity, 1, 127)) / 127.0f;
       release_noise_samples_ = static_cast<uint32_t>(sample_rate_ * 0.035f);
-      release_noise_gain_ = params_.damper_noise * 0.04f * (0.5f + 0.5f * norm_rel);
+      release_noise_gain_ = params_.damper_noise * 0.04f * (0.5f + 0.5f * norm_rel) * scale;
+    }
+  }
+
+  void update_release_damping(float scale) noexcept {
+    float norm_rel = static_cast<float>(std::clamp<uint8_t>(release_velocity_, 1, 127)) / 127.0f;
+    float t60_base = 0.12f / (0.6f + 0.8f * norm_rel);
+    float t60_eff = t60_base / std::max(0.05f, scale);
+    for (uint32_t m = 0; m < kNumModes; ++m) {
+      release_damp_[m] = std::exp(-3.0f / (t60_eff * sample_rate_));
     }
   }
 
   void set_sustain(bool sustain) noexcept {
     pedal_held_ = sustain;
+    pedal_cc_ = sustain ? 127.0f : 0.0f;
     if (!sustain && state_ == VoiceState::kSustained) {
-      release(64);
+      release(release_velocity_, 1.0f);
     }
   }
 
@@ -352,9 +385,11 @@ class EpVoice {
   uint32_t channel_{0};
   uint32_t note_{60};
   uint8_t velocity_{0};
+  uint8_t release_velocity_{64};
   uint64_t start_time_{0};
   VoiceState state_{VoiceState::kHeld};
   bool pedal_held_{false};
+  float pedal_cc_{0.0f};
   float current_level_{0.0f};
 
   bool stealing_{false};
