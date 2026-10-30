@@ -73,4 +73,11 @@ target_link_libraries(sysd_engine_firmware_update_test PRIVATE velora_sysd_servi
 add_test(NAME sysd_engine_firmware_update_test COMMAND sysd_engine_firmware_update_test)
 set_tests_properties(sysd_engine_firmware_update_test PROPERTIES TIMEOUT 120)
 
+# Story 12.14: FM and VA firmware update reaches shipped v1 units (release acceptance).
+add_executable(story_12_14_acceptance_test tests/story_12_14_firmware_update_acceptance_test.cpp)
+target_link_libraries(story_12_14_acceptance_test PRIVATE velora_sysd_service)
+add_test(NAME story_12_14_acceptance_test COMMAND story_12_14_acceptance_test)
+set_tests_properties(story_12_14_acceptance_test PROPERTIES TIMEOUT 180)
+
+
 
