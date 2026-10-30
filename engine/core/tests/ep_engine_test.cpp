@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "velora/core/ep_engine.hpp"
+#include "velora/core/params_gen.hpp"
 
 using namespace velora::core;
 
@@ -795,9 +796,75 @@ void test_ep_objective_comparison_against_references() {
   std::cout << "[PASS] Objective comparison against development references verified\n";
 }
 
+void test_ep_voicing_parameters_persistence_and_bit_identical_render() {
+  std::cout << "Testing EP voicing parameters persistence and bit-identical render (Story 14.7)...\n";
+
+  EpEngine engine_a(48000.0f);
+  EpEngine engine_b(48000.0f);
+
+  const uint32_t part_idx = 0;
+
+  // Set parameters on engine_a via set_part_param
+  engine_a.set_part_param(part_idx, params::kEpModelType, static_cast<float>(params::kEpModelTypeReed));
+  engine_a.set_part_param(part_idx, params::kEpHammerHardness, 0.85f);
+  engine_a.set_part_param(part_idx, params::kEpPickupPosition, 0.42f);
+  engine_a.set_part_param(part_idx, params::kEpPickupLevel, 0.91f);
+  engine_a.set_part_param(part_idx, params::kEpDamperNoise, 0.65f);
+  engine_a.set_part_param(part_idx, params::kEpAttackNoise, 0.73f);
+  engine_a.set_part_param(part_idx, params::kEpDecayRate, 0.38f);
+  engine_a.set_part_param(part_idx, params::kEpToneBarCoupling, 0.82f);
+
+  // Verify parameters took effect on engine_a
+  const auto& params_a = engine_a.part_voice_params(part_idx);
+  assert(params_a.instrument_type == EpInstrumentType::kReed);
+  assert(std::abs(params_a.hammer_hardness - 0.85f) < 1e-5f);
+  assert(std::abs(params_a.pickup_position - 0.42f) < 1e-5f);
+  assert(std::abs(params_a.pickup_level - 0.91f) < 1e-5f);
+  assert(std::abs(params_a.damper_noise - 0.65f) < 1e-5f);
+  assert(std::abs(params_a.attack_noise - 0.73f) < 1e-5f);
+  assert(std::abs(params_a.decay_rate - 0.38f) < 1e-5f);
+  assert(std::abs(params_a.tone_bar_coupling - 0.82f) < 1e-5f);
+
+  // Set identical parameters on engine_b via set_part_param_edit
+  engine_b.set_part_param_edit(part_idx, params::kEpModelType, static_cast<float>(params::kEpModelTypeReed));
+  engine_b.set_part_param_edit(part_idx, params::kEpHammerHardness, 0.85f);
+  engine_b.set_part_param_edit(part_idx, params::kEpPickupPosition, 0.42f);
+  engine_b.set_part_param_edit(part_idx, params::kEpPickupLevel, 0.91f);
+  engine_b.set_part_param_edit(part_idx, params::kEpDamperNoise, 0.65f);
+  engine_b.set_part_param_edit(part_idx, params::kEpAttackNoise, 0.73f);
+  engine_b.set_part_param_edit(part_idx, params::kEpDecayRate, 0.38f);
+  engine_b.set_part_param_edit(part_idx, params::kEpToneBarCoupling, 0.82f);
+
+  // Render both engines and check for bit-identical sample output
+  constexpr size_t kRenderFrames = 4800;
+  std::vector<float> l_a(kRenderFrames, 0.0f);
+  std::vector<float> r_a(kRenderFrames, 0.0f);
+  std::vector<float> l_b(kRenderFrames, 0.0f);
+  std::vector<float> r_b(kRenderFrames, 0.0f);
+
+  engine_a.start_voice(part_idx, 60, 0x6400);
+  engine_b.start_voice(part_idx, 60, 0x6400);
+
+  engine_a.render(l_a.data(), r_a.data(), kRenderFrames);
+  engine_b.render(l_b.data(), r_b.data(), kRenderFrames);
+
+  for (size_t i = 0; i < kRenderFrames; ++i) {
+    assert(l_a[i] == l_b[i]);
+    assert(r_a[i] == r_b[i]);
+  }
+
+  // Verify reset_play_state restores defaults
+  engine_a.reset_play_state();
+  const auto& params_reset = engine_a.part_voice_params(part_idx);
+  assert(params_reset.instrument_type == EpInstrumentType::kTine);
+  assert(std::abs(params_reset.hammer_hardness - 0.5f) < 1e-5f);
+
+  std::cout << "[PASS] EP voicing parameters persistence and bit-identical render\n";
+}
+
 int main() {
   std::cout << "========================================\n";
-  std::cout << "Starting EpEngine Test Suite (Stories 14.2 & 14.3 & 14.4 & 14.6)\n";
+  std::cout << "Starting EpEngine Test Suite (Stories 14.2 & 14.3 & 14.4 & 14.6 & 14.7)\n";
   std::cout << "========================================\n";
 
   test_ep_engine_initialization_and_metadata();
@@ -815,6 +882,7 @@ int main() {
   test_ep_release_velocity_damper_sound();
   test_ep_continuous_half_pedal_law();
   test_ep_objective_comparison_against_references();
+  test_ep_voicing_parameters_persistence_and_bit_identical_render();
 
   std::cout << "========================================\n";
   std::cout << "All EpEngine tests passed successfully!\n";

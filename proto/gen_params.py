@@ -30,7 +30,7 @@ REQUIRED = ("id", "name", "class", "type", "scope", "unit", "default")
 
 
 UI_SECTIONS = ("sound", "amp_eq", "effects", "zone", "master", "hidden")
-UI_ENGINES = ("any", "organ", "fm", "va")
+UI_ENGINES = ("any", "organ", "fm", "va", "ep")
 UI_GROUP_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
 class RegistryError(Exception):
     pass
@@ -355,6 +355,18 @@ def derive_ui(p):
             ui["group"] = "va.lfo"
         else:
             ui["group"] = "va.voice"
+    elif n.startswith("ep_"):
+        ui["engine"] = "ep"
+        if n in ("ep_model_type", "ep_decay_rate", "ep_tone_bar_coupling"):
+            ui["group"] = "ep.model"
+        elif n in ("ep_hammer_hardness", "ep_attack_noise"):
+            ui["group"] = "ep.hammer"
+        elif n in ("ep_pickup_position", "ep_pickup_level"):
+            ui["group"] = "ep.pickup"
+        elif n == "ep_damper_noise":
+            ui["group"] = "ep.damper"
+        else:
+            ui["group"] = "ep.voicing"
     elif n == "part_brightness":
         ui["group"] = "sound.main"
     ui.setdefault("hideEngines", [])

@@ -20,7 +20,8 @@ export const REGISTRY = {
  "va_filter_type": ["lp24", "lp12", "bp12", "hp12"],
  "va_lfo_wave": ["sine", "triangle", "saw_up", "saw_down", "square", "sample_and_hold"],
  "va_voice_mode": ["poly", "mono", "legato"],
- "va_glide_mode": ["always", "legato_only"]
+ "va_glide_mode": ["always", "legato_only"],
+ "ep_model_type": ["tine", "reed"]
  },
  "params": [
  {"id": 100, "name": "drawbar_16", "class": "performance", "type": "int", "scope": "part", "unit": "step", "min": 0, "max": 8, "default": 0, "enum": null, "cc": 70, "assignable": true, "localeKey": "", "section": "sound", "engine": "organ", "group": "organ.drawbars", "hideEngines": []},
@@ -245,6 +246,14 @@ export const REGISTRY = {
  {"id": 1263, "name": "va_unison_spread", "class": "performance", "type": "float", "scope": "part", "unit": "percent", "min": 0, "max": 100, "default": 50, "enum": null, "cc": -1, "assignable": true, "localeKey": "va.param.unison_detune", "section": "sound", "engine": "va", "group": "va.voice", "hideEngines": []},
  {"id": 1264, "name": "va_glide_time", "class": "performance", "type": "float", "scope": "part", "unit": "ms", "min": 0, "max": 2000, "default": 0, "enum": null, "cc": -1, "assignable": true, "localeKey": "va.param.glide_time", "section": "sound", "engine": "va", "group": "va.voice", "hideEngines": []},
  {"id": 1265, "name": "va_glide_mode", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "min": 0, "max": 1, "default": 1, "enum": "va_glide_mode", "cc": -1, "assignable": true, "localeKey": "va.param.glide_mode", "section": "sound", "engine": "va", "group": "va.voice", "hideEngines": []},
- {"id": 1266, "name": "va_brightness", "class": "performance", "type": "int", "scope": "part", "unit": "step", "min": 0, "max": 127, "default": 64, "enum": null, "cc": -1, "assignable": true, "localeKey": "va.param.cutoff", "section": "sound", "engine": "va", "group": "va.filter", "hideEngines": []}
+ {"id": 1266, "name": "va_brightness", "class": "performance", "type": "int", "scope": "part", "unit": "step", "min": 0, "max": 127, "default": 64, "enum": null, "cc": -1, "assignable": true, "localeKey": "va.param.cutoff", "section": "sound", "engine": "va", "group": "va.filter", "hideEngines": []},
+ {"id": 1300, "name": "ep_model_type", "class": "performance", "type": "enum", "scope": "part", "unit": "enum", "min": 0, "max": 1, "default": 0, "enum": "ep_model_type", "cc": -1, "assignable": true, "localeKey": "ep.param.model_type", "section": "sound", "engine": "ep", "group": "ep.model", "hideEngines": []},
+ {"id": 1301, "name": "ep_hammer_hardness", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0.0, "max": 1.0, "default": 0.5, "enum": null, "cc": -1, "assignable": true, "localeKey": "ep.param.hammer_hardness", "section": "sound", "engine": "ep", "group": "ep.hammer", "hideEngines": []},
+ {"id": 1302, "name": "ep_pickup_position", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0.0, "max": 1.0, "default": 0.5, "enum": null, "cc": -1, "assignable": true, "localeKey": "ep.param.pickup_position", "section": "sound", "engine": "ep", "group": "ep.pickup", "hideEngines": []},
+ {"id": 1303, "name": "ep_pickup_level", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0.0, "max": 1.0, "default": 0.7, "enum": null, "cc": -1, "assignable": true, "localeKey": "ep.param.pickup_level", "section": "sound", "engine": "ep", "group": "ep.pickup", "hideEngines": []},
+ {"id": 1304, "name": "ep_damper_noise", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0.0, "max": 1.0, "default": 0.3, "enum": null, "cc": -1, "assignable": true, "localeKey": "ep.param.damper_noise", "section": "sound", "engine": "ep", "group": "ep.damper", "hideEngines": []},
+ {"id": 1305, "name": "ep_attack_noise", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0.0, "max": 1.0, "default": 0.3, "enum": null, "cc": -1, "assignable": true, "localeKey": "ep.param.attack_noise", "section": "sound", "engine": "ep", "group": "ep.hammer", "hideEngines": []},
+ {"id": 1306, "name": "ep_decay_rate", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0.0, "max": 1.0, "default": 0.5, "enum": null, "cc": -1, "assignable": true, "localeKey": "ep.param.decay_rate", "section": "sound", "engine": "ep", "group": "ep.model", "hideEngines": []},
+ {"id": 1307, "name": "ep_tone_bar_coupling", "class": "performance", "type": "float", "scope": "part", "unit": "ratio", "min": 0.0, "max": 1.0, "default": 0.5, "enum": null, "cc": -1, "assignable": true, "localeKey": "ep.param.tone_bar_coupling", "section": "sound", "engine": "ep", "group": "ep.model", "hideEngines": []}
  ]
 };

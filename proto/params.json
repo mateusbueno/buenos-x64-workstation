@@ -112,6 +112,10 @@
     "va_glide_mode": [
       "always",
       "legato_only"
+    ],
+    "ep_model_type": [
+      "tine",
+      "reed"
     ]
   },
   "reserved": [
@@ -2732,6 +2736,101 @@
       "max": 127,
       "default": 64,
       "locale_key": "va.param.cutoff"
+    },
+    {
+      "id": 1300,
+      "name": "ep_model_type",
+      "class": "performance",
+      "type": "enum",
+      "scope": "part",
+      "unit": "enum",
+      "enum": "ep_model_type",
+      "default": "tine",
+      "locale_key": "ep.param.model_type"
+    },
+    {
+      "id": 1301,
+      "name": "ep_hammer_hardness",
+      "class": "performance",
+      "type": "float",
+      "scope": "part",
+      "unit": "ratio",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "locale_key": "ep.param.hammer_hardness"
+    },
+    {
+      "id": 1302,
+      "name": "ep_pickup_position",
+      "class": "performance",
+      "type": "float",
+      "scope": "part",
+      "unit": "ratio",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "locale_key": "ep.param.pickup_position"
+    },
+    {
+      "id": 1303,
+      "name": "ep_pickup_level",
+      "class": "performance",
+      "type": "float",
+      "scope": "part",
+      "unit": "ratio",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.7,
+      "locale_key": "ep.param.pickup_level"
+    },
+    {
+      "id": 1304,
+      "name": "ep_damper_noise",
+      "class": "performance",
+      "type": "float",
+      "scope": "part",
+      "unit": "ratio",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.3,
+      "locale_key": "ep.param.damper_noise"
+    },
+    {
+      "id": 1305,
+      "name": "ep_attack_noise",
+      "class": "performance",
+      "type": "float",
+      "scope": "part",
+      "unit": "ratio",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.3,
+      "locale_key": "ep.param.attack_noise"
+    },
+    {
+      "id": 1306,
+      "name": "ep_decay_rate",
+      "class": "performance",
+      "type": "float",
+      "scope": "part",
+      "unit": "ratio",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "locale_key": "ep.param.decay_rate"
+    },
+    {
+      "id": 1307,
+      "name": "ep_tone_bar_coupling",
+      "class": "performance",
+      "type": "float",
+      "scope": "part",
+      "unit": "ratio",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "locale_key": "ep.param.tone_bar_coupling"
     }
   ]
 }

@@ -24,6 +24,7 @@
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/sample_engine.hpp"
 #include "velora/core/va_engine.hpp"
+#include "velora/core/ep_engine.hpp"
 #include "velora/format/bundle.hpp"
 #include "velora/host/control_plane.hpp"
 #include "velora/host/fs_port.hpp"
@@ -783,6 +784,51 @@ void test_va_part_floor_reservation() {
   CHECK(rig.br->arbiter().floor_cost(va_id) == 0);
 }
 
+void test_ep_part_floor_reservation() {
+  Rig rig;
+  core::EpEngine ep(48000.0f, 128);
+  CHECK(rig.br->bind_engine(ep));
+
+  // 1. Live Set with an EP part: EP floor is reserved (64 voices * 4 = 256 cost units)
+  const std::string lib = install_library(rig.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet s = base_set(29);
+  sample_part(s, 0, lib, "dc.sfz");
+  s.mutable_parts(1)->mutable_engine()->set_engine_type_id(5);  // EP
+  const host::LiveSetLoadResult res = rig.loader.load(s);
+  CHECK(res.ok());
+  CHECK(res.parts[1].state == core::PartState::kReady);
+  const std::uint32_t ep_id = static_cast<std::uint32_t>(core::EngineTypeId::kModeledEP);
+  CHECK(rig.br->arbiter().floor_cost(ep_id) == 64 * 4);
+  CHECK(rig.br->arbiter().floor_cost(static_cast<std::uint32_t>(core::EngineTypeId::kSample)) > 0);
+
+  // 2. Live Set with NO EP part: EP floor is zero
+  lsp::LiveSet s_no_ep = base_set(30);
+  sample_part(s_no_ep, 0, lib, "dc.sfz");
+  const host::LiveSetLoadResult res2 = rig.loader.load(s_no_ep);
+  CHECK(res2.ok());
+  CHECK(rig.br->arbiter().floor_cost(ep_id) == 0);
+}
+
+void test_ep_part_unbound_engine_not_available() {
+  Rig rig;  // Only sample engine is bound by default in Rig
+
+  const std::string lib = install_library(rig.tmp.path, 1, {{"dc.sfz", 0.1f}});
+  lsp::LiveSet s = base_set(31);
+  sample_part(s, 0, lib, "dc.sfz");
+  s.mutable_parts(1)->mutable_engine()->set_engine_type_id(5);  // EP, not bound!
+  auto* pe = s.mutable_parts(1)->mutable_engine()->add_params();
+  pe->set_param_id(1301);
+  pe->set_value(0.85f);
+
+  const host::LiveSetLoadResult res = rig.loader.load(s);
+  CHECK(res.ok());
+  // EP engine is not bound -> kEngineNotAvailable
+  CHECK(res.parts[1].state == core::PartState::kEngineNotAvailable);
+  // Stored parameters are preserved in the LiveSet message
+  CHECK(s.parts(1).engine().params(0).param_id() == 1301);
+  CHECK(s.parts(1).engine().params(0).value() == 0.85f);
+}
+
 int main() {
   test_layer_and_states();
   test_split_b2_c3();
@@ -792,6 +838,8 @@ int main() {
   test_fm_part_silent_organ_ready();
   test_fm_part_floor_reservation();
   test_va_part_floor_reservation();
+  test_ep_part_floor_reservation();
+  test_ep_part_unbound_engine_not_available();
   test_no_sample_part_floor_zero();
   test_without_sample_engine();
   test_second_load_replaces_first();

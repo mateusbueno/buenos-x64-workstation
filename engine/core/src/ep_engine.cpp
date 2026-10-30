@@ -81,13 +81,55 @@ void EpEngine::set_param(uint32_t param_id, float value) noexcept {
 }
 
 void EpEngine::set_part_param(uint32_t part, uint32_t param_id, float value) noexcept {
-  (void)part;
-  (void)param_id;
-  (void)value;
+  put_part_param(part, param_id, value, false);
 }
 
 void EpEngine::set_part_param_edit(uint32_t part, uint32_t param_id, float value) noexcept {
-  set_part_param(part, param_id, value);
+  put_part_param(part, param_id, value, true);
+}
+
+void EpEngine::put_part_param(uint32_t part, uint32_t param_id, float value, bool edit) noexcept {
+  constexpr uint32_t kEpFirstId = params::kEpModelType;
+  constexpr uint32_t kEpLastId = params::kEpToneBarCoupling;
+  uint32_t p = part % kPartCount;
+  if (param_id < kEpFirstId || param_id > kEpLastId || !std::isfinite(value)) return;
+  uint32_t idx = param_id - kEpFirstId;
+  if (edit) {
+    part_params::engage(engaged_[p], idx);
+  } else if (!part_params::should_apply(engaged_[p], idx, param_id, value)) {
+    return;
+  }
+
+  switch (param_id) {
+    case params::kEpModelType:
+      part_params_[p].instrument_type = (static_cast<int>(value) == params::kEpModelTypeReed)
+                                           ? EpInstrumentType::kReed
+                                           : EpInstrumentType::kTine;
+      break;
+    case params::kEpHammerHardness:
+      part_params_[p].hammer_hardness = std::clamp(value, 0.0f, 1.0f);
+      break;
+    case params::kEpPickupPosition:
+      part_params_[p].pickup_position = std::clamp(value, 0.0f, 1.0f);
+      break;
+    case params::kEpPickupLevel:
+      part_params_[p].pickup_level = std::clamp(value, 0.0f, 1.0f);
+      break;
+    case params::kEpDamperNoise:
+      part_params_[p].damper_noise = std::clamp(value, 0.0f, 1.0f);
+      break;
+    case params::kEpAttackNoise:
+      part_params_[p].attack_noise = std::clamp(value, 0.0f, 1.0f);
+      break;
+    case params::kEpDecayRate:
+      part_params_[p].decay_rate = std::clamp(value, 0.0f, 1.0f);
+      break;
+    case params::kEpToneBarCoupling:
+      part_params_[p].tone_bar_coupling = std::clamp(value, 0.0f, 1.0f);
+      break;
+    default:
+      break;
+  }
 }
 
 void EpEngine::reset_play_state() noexcept {
@@ -96,6 +138,7 @@ void EpEngine::reset_play_state() noexcept {
     part_sustain_[i] = false;
     part_pedal_cc_[i] = 0.0f;
     part_pitch_bend_[i] = 0.0f;
+    engaged_[i].clear();
   }
   for (auto& v : voices_) {
     v.reset();
@@ -180,6 +223,7 @@ void EpEngine::set_part_voice_params(uint32_t part_idx, const EpVoicingParameter
   uint32_t p = part_idx % kPartCount;
   base_params_[p] = params;
   part_params_[p] = params;
+  engaged_[p].clear();
 }
 
 const EpVoicingParameters& EpEngine::part_voice_params(uint32_t part_idx) const noexcept {

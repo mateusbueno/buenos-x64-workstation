@@ -1,12 +1,15 @@
 #pragma once
 
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <vector>
 
 #include "velora/core/engine.hpp"
 #include "velora/core/ep_parameters.hpp"
 #include "velora/core/ep_voice.hpp"
+#include "velora/core/params_gen.hpp"
+#include "velora/core/part_params.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/part_params.hpp"
 
@@ -79,6 +82,9 @@ class EpEngine final : public Engine {
   std::array<bool, kPartCount> part_sustain_{};
   std::array<float, kPartCount> part_pedal_cc_{};
   std::array<float, kPartCount> part_pitch_bend_{};
+  std::array<part_params::EngagedSet, kPartCount> engaged_{};
+
+  void put_part_param(uint32_t part, uint32_t param_id, float value, bool edit) noexcept;
 
   std::vector<EpVoice> voices_;
   alignas(16) std::array<float, kBlockFrames> scratch_left_{};
