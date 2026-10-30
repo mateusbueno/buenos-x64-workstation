@@ -74,7 +74,7 @@ deferred: []
 - findings:
   - `[medium]` `[patch]` Non-linear pickup displacement singularity avoidance — Patched: Added explicit numerical safety constraints ($d_{\text{eff}} = \max(d_0 - y, d_{\min})$ and hyperbolic tangent soft-clipping) to `CLEAN-ROOM.md`.
   - `[medium]` `[patch]` Singularity in transducer equations on large excursions — Patched: Addressed in `CLEAN-ROOM.md` with explicit bounding conditions.
-  - `[low]` `[patch]` Freesound pack URL references rather than consecutive ID assumptions — Patched: Added explicit pack URLs (5012 and 5370) to `ip-and-references.md`.
+  - `[low]` `[patch]` Freesound pack URL references rather than consecutive ID assumptions — Patched: Verified live pack URLs on Freesound (Pack 3957 for tim.kahn and Pack 5726 for OldBassMan) in `ip-and-references.md`.
   - `[low]` `[patch]` Patent table missing explicit grant dates and publication years — Patched: Added grant and expiration years to table in `ip-and-references.md`.
   - `[low]` `[patch]` Missing target keybed frequency range in beam equations — Patched: Added 73-key range E1 (41.2 Hz) to E7 (2637 Hz) in `CLEAN-ROOM.md`.
   - `[low]` `[patch]` Downstream attribution requirement for Freesound references — Patched: Specified attribution requirement for offline reports in `ip-and-references.md`.

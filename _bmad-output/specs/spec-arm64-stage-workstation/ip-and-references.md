@@ -8,21 +8,21 @@ Nothing here ships. The final comparison uses the founder's own recordings.
 
 | Source | Instrument | License | Format | Use | Status |
 |---|---|---|---|---|---|
-| [tim.kahn, C_S Fender Rhodes Mark II](https://freesound.org/people/tim.kahn/sounds/65762/) ([Pack 5012](https://freesound.org/people/tim.kahn/packs/5012/), 53 note recordings) | 73 Stage tine, through a tube preamp, 53 sounds | CC BY 4.0 (audited on individual sound pages) | Mono, 44.1 kHz, 16-bit | Tine development reference | Approved for development |
-| [OldBassMan, Wurlitzer 200a](https://freesound.org/people/OldBassMan/sounds/88000/) ([Pack 5370](https://freesound.org/people/OldBassMan/packs/5370/), 60 note recordings) | 200A reed, through a transformer and tube preamp | CC BY 4.0 (audited on individual sound pages) | Mono, 48 kHz, 24-bit | Reed development reference | Approved for development |
+| [tim.kahn, C_S Fender Rhodes Mark II](https://freesound.org/people/tim.kahn/sounds/65762/) ([Pack 3957](https://freesound.org/people/tim.kahn/packs/3957/), 53 note recordings) | 73 Stage tine, through a tube preamp, 53 sounds | CC BY 4.0 (audited on individual sound pages) | Mono, 44.1 kHz, 16-bit | Tine development reference | Approved for development |
+| [OldBassMan, Wurlitzer 200a](https://freesound.org/people/OldBassMan/sounds/88000/) ([Pack 5726](https://freesound.org/people/OldBassMan/packs/5726/), 60 note recordings) | 200A reed, through a transformer and tube preamp | CC BY 4.0 (audited on individual sound pages) | Mono, 48 kHz, 24-bit | Reed development reference | Approved for development |
 | [jRhodes3d](https://github.com/sfzinstruments/jlearman.jRhodes3d) | 1977 Mark I Stage 73 | Samples CC BY-NC 4.0 | FLAC, up to 5 layers | Not used | Dropped (NC restriction) |
 
 ### License Audit and Attribution Details
 
-1. **tim.kahn Rhodes Mark II recordings (Freesound Pack 5012)**:
+1. **tim.kahn Rhodes Mark II recordings (Freesound Pack 3957)**:
    - License: Creative Commons Attribution 4.0 International (CC BY 4.0).
-   - Verification: All 53 constituent sounds in pack 5012 (`https://freesound.org/people/tim.kahn/packs/5012/`) were verified individually; each is released by author `tim.kahn` under CC BY 4.0.
-   - Required Attribution: *"C_S Fender Rhodes Mark II" by tim.kahn (https://freesound.org/people/tim.kahn/packs/5012/), licensed under CC BY 4.0.*
+   - Verification: All constituent sounds in pack 3957 (`https://freesound.org/people/tim.kahn/packs/3957/`) were verified individually; each is released by author `tim.kahn` under CC BY 4.0.
+   - Required Attribution: *"C_S Fender Rhodes Mark II" by tim.kahn (https://freesound.org/people/tim.kahn/packs/3957/), licensed under CC BY 4.0.*
    - Scope limit: Used strictly offline on developer workstations for model parameter extraction and spectral tuning (Story 14.6). Zero audio samples are vendored, included in firmware images, or shipped in customer packages. If offline tuning reports or comparison plots reference these sounds, this attribution must appear in the corresponding report.
-2. **OldBassMan Wurlitzer 200a recordings (Freesound Pack 5370)**:
+2. **OldBassMan Wurlitzer 200a recordings (Freesound Pack 5726)**:
    - License: Creative Commons Attribution 4.0 International (CC BY 4.0).
-   - Verification: All individual sound pages within pack 5370 (`https://freesound.org/people/OldBassMan/packs/5370/`) carry CC BY 4.0.
-   - Required Attribution: *"Wurlitzer 200a" by OldBassMan (https://freesound.org/people/OldBassMan/packs/5370/), licensed under CC BY 4.0.*
+   - Verification: All individual sound pages within pack 5726 (`https://freesound.org/people/OldBassMan/packs/5726/`) carry CC BY 4.0.
+   - Required Attribution: *"Wurlitzer 200a" by OldBassMan (https://freesound.org/people/OldBassMan/packs/5726/), licensed under CC BY 4.0.*
    - Scope limit: Strictly offline development reference for reed vibration decay and electrostatic pickup non-linear behavior. No files bundled or shipped.
 3. **jRhodes3d samples**:
    - License: CC BY-NC 4.0.
@@ -50,7 +50,22 @@ Limits: unpublished applications cannot be seen, because filings stay secret for
 
 ### Electric piano physical modeling patent search
 
-Focused search conducted on Google Patents and worldwide databases across classification codes **G10H 1/0058** (physical modeling synthesis), **G10H 7/08** (physical model sound synthesis), and **G10H 3/18** / **G10H 3/06** (transducers for musical instruments), with keywords *electric piano, tine, reed, physical modeling, cantilever, pickup, tone bar*:
+Focused search conducted on Google Patents and worldwide databases across classification codes **G10H 1/00** (including **G10H 1/0058** for physical modeling synthesis), **G10H 7/00** (including **G10H 7/08** for physical model sound synthesis from computation), and **G10H 3/18** / **G10H 3/06** (electromechanical instruments using strings/tines/reeds and electromagnetic/electrostatic pickups), with keywords *electric piano, tine, reed, physical modeling, cantilever, pickup, tone bar, variable reluctance, variable capacitance*:
+
+#### Holder & Classification Search Summary
+
+| Holder / Assignee | Search Queries / Classifications | Findings | Status & Risk Assessment |
+|---|---|---|---|
+| **Harold B. Rhodes / CBS** | G10H 3/18, G10H 1/00, "electric piano", "tine", "tone bar" | [US3244793A](https://patents.google.com/patent/US3244793A/en), [US3453372A](https://patents.google.com/patent/US3453372A/en), [US2972274A](https://patents.google.com/patent/US2972274A/en), [US3453923A](https://patents.google.com/patent/US3453923A/en) | Expired (1978–1986). Fundamental electromechanical tine & reluctance pickup physics reside in the public domain. |
+| **B. F. Miessner / Wurlitzer** | G10H 3/18, G10H 1/00, "reed", "electrostatic pickup", "capacitive pickup" | [US1929027A](https://patents.google.com/patent/US1929027A/en), [US2942512A](https://patents.google.com/patent/US2942512A/en), [US3038364A](https://patents.google.com/patent/US3038364A/en), [US3260784A](https://patents.google.com/patent/US3260784A/en) | Expired (1950–1983). Fundamental electrostatic capacitive reed pickup principles reside in the public domain. |
+| **Yamaha** | G10H 7/00, G10H 7/08, G10H 1/0058, "physical model", "waveguide", "electric piano" | [US5369217A](https://patents.google.com/patent/US5369217A/en), [US5521325A](https://patents.google.com/patent/US5521325A/en), [US5747713A](https://patents.google.com/patent/US5747713A/en), [US5468906A](https://patents.google.com/patent/US5468906A/en), [US8115092B2](https://patents.google.com/patent/US8115092B2/en) | Broad waveguide bar and non-linear contact patents expired (2012–2016). Active acoustic piano patent US8115092B2 (expires 2030) is specific to acoustic grand string/soundboard loop networks. Yamaha CP1/CP4/CP88 SCM is sample+filter, not cantilever ODE solver. Low risk. |
+| **Roland** | G10H 7/00, G10H 1/00, "physical modeling", "electric piano", "pickup" | [US8629343B2](https://patents.google.com/patent/US8629343B2/en) (SuperNATURAL acoustic piano), [US5731533A](https://patents.google.com/patent/US5731533A/en) (COSM guitar/string) | Zero active patents found claiming cantilever beam modeling or electric piano reluctance/capacitance pickup emulation. Low risk. |
+| **Korg** | G10H 7/00, G10H 1/00, "physical model", "electric piano", "reed", "tine" | [US6943286B2](https://patents.google.com/patent/US6943286B2/en) (STR-1 plucked string modeling) | STR-1 covers plucked strings. Korg EP-1 / SGX engines rely on Multi-Dimensional Synthesis (multi-sample playback with interpolation), not physical simulation. Zero patents found on EP beam modeling. Low risk. |
+| **Modartt** | G10H 7/00, G10H 7/08, "modal", "soundboard", "electric piano" | [US7915515B2](https://patents.google.com/patent/US7915515B2/en) | Active (expires 2027-10-20). Claims precomputing damped partial coefficients from physical string/soundboard dimensions. Velora EP uses real-time state-space Euler-Bernoulli cantilever modal equations without soundboard partial matrix precomputation. Low risk. |
+| **Applied Acoustics Systems (AAS)** | G10H 7/00, G10H 1/0058, all classes, "Lounge Lizard", "physical modeling" | 0 patents found in USPTO / WIPO / EPO registers | AAS relies on trade secret software and copyright rather than public utility patents. No blocking patent on cantilever beam ODE or pickup emulation. Low risk. |
+| **Casio & Kawai** | G10H 7/00, G10H 1/00, "piano modeling", "electric piano" | [US9489933B2](https://patents.google.com/patent/US9489933B2/en) (Casio), [US10102837B1](https://patents.google.com/patent/US10102837) (Kawai) | Acoustic piano resonance and channel routing only. Zero EP physical modeling filings found. Low risk. |
+
+#### Specific Patents Identified in Search
 
 | Patent / Publication | Holder / Inventor | Subject | Status | Grant / Expiry Notes |
 |---|---|---|---|---|
@@ -64,7 +79,7 @@ Focused search conducted on Google Patents and worldwide databases across classi
 | [US8115092B2](https://patents.google.com/patent/US8115092B2/en) | Yamaha | Piano synthesis modeling damper, hammer, string, and body | Active | Granted 2012, expires 2030-06-06. Specific to acoustic grand string/soundboard coupling |
 | [US7915515B2](https://patents.google.com/patent/US7915515B2/en) | Modartt | Partials computation for piano strings and soundboard | Active | Granted 2011, expires 2027-10-20. Restricted to string-soundboard modal networks |
 
-Limits: Worldwide patent filings (USPTO, EPO, WIPO, INPI) remain confidential during the statutory 18-month secrecy window from priority date. Attorney review prior to release (Story 14.13) should include a renewed search across late-published applications.
+Limits: Worldwide patent filings (USPTO, EPO, WIPO, INPI) remain confidential during the statutory 18-month secrecy window from priority date. Attorney review prior to release (Story 14.13) should include a renewed search across late-published applications. This preliminary search does not constitute a formal legal freedom-to-operate opinion.
 
 #### Potential Patents for Attorney Review Prior to Release (Epic 14 Merge Gate)
 1. **US8115092B2 (Yamaha, active to 2030)**:
