@@ -281,7 +281,7 @@ development_status:
   11-19-brand-assets-integration-final-typeface-app-icon-and-boot-ar: done
   epic-11-retrospective: optional
 
-  epic-12: in-progress
+  epic-12: done
   12-1-clean-room-6-operator-fm-voice-in-the-engine-core: done
   12-2-fm-null-test-against-an-unshipped-reference-oracle: done
   12-3-import-6-op-sysex-banks-and-single-voices-from-files-usb-a-a: done
