@@ -502,6 +502,7 @@
   "ep.param.decay_rate": "Decaimento",
   "ep.param.tone_bar_coupling": "Acoplamento da barra",
   "va.brightness.note": "→ corte do filtro",
+  "ep.brightness.note": "→ dureza do martelo",
   "sound.brightness.knob": "Brilho · BOTÃO 2",
   "sound.brightness.always_works": "Botão de brilho sempre funciona",
   "sound.editing.prefix": "Editando · %s",

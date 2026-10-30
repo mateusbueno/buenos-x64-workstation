@@ -39,7 +39,28 @@ enum class EngineType {
   Sample = 1,
   Organ = 2,
   Fm = 3,
-  Va = 4
+  Va = 4,
+  ModeledEp = 5
+};
+
+enum class EpSoundGroup {
+  Model = 0,
+  Hammer,
+  Pickup,
+  Damper,
+  Count
+};
+
+struct EpSettings {
+  int32_t model_type{0}; // 0: Tine, 1: Reed
+  float hammer_hardness{0.50f};
+  float pickup_position{0.50f};
+  float pickup_level{0.70f};
+  float damper_noise{0.30f};
+  float attack_noise{0.30f};
+  float decay_rate{0.50f};
+  float tone_bar_coupling{0.50f};
+  int32_t brightness_offset{64};
 };
 
 enum class FmSoundGroup {
@@ -196,6 +217,7 @@ class PartView {
   bool is_organ() const noexcept { return engine_type_ == EngineType::Organ; }
   bool is_fm() const noexcept { return engine_type_ == EngineType::Fm; }
   bool is_va() const noexcept { return engine_type_ == EngineType::Va; }
+  bool is_ep() const noexcept { return engine_type_ == EngineType::ModeledEp; }
   bool is_sample() const noexcept { return engine_type_ == EngineType::Sample; }
 
   void set_engine_unavailable(bool unavail, const std::string& required_version = "1.4");
@@ -214,6 +236,12 @@ class PartView {
   VaSoundGroup va_group() const noexcept { return va_sound_group_; }
   const VaSettings& va_settings() const noexcept { return va_settings_; }
   VaSettings& va_settings() noexcept { return va_settings_; }
+
+  // Modeled EP accessors & mutators (Story 14.9)
+  void set_ep_group(EpSoundGroup group);
+  EpSoundGroup ep_group() const noexcept { return ep_sound_group_; }
+  const EpSettings& ep_settings() const noexcept { return ep_settings_; }
+  EpSettings& ep_settings() noexcept { return ep_settings_; }
 
   bool sound_group_focus() const noexcept { return sound_group_focus_; }
   bool is_sound_group_focus() const noexcept { return sound_group_focus_; }
@@ -345,14 +373,16 @@ class PartView {
   int32_t organ_vibrato_{3}; // C3
   int32_t organ_rotary_speed_{1}; // Slow
 
-  // Sound Engine (FM & VA)
+  // Sound Engine (FM, VA & Modeled EP)
   EngineType engine_type_{EngineType::Sample};
   bool is_engine_unavailable_{false};
   std::string required_version_{"1.4"};
   FmSettings fm_settings_{};
   VaSettings va_settings_{};
+  EpSettings ep_settings_{};
   FmSoundGroup fm_sound_group_{FmSoundGroup::Algorithm};
   VaSoundGroup va_sound_group_{VaSoundGroup::Oscillators};
+  EpSoundGroup ep_sound_group_{EpSoundGroup::Model};
   bool sound_group_focus_{true};
   bool is_editing_field_{false};
 

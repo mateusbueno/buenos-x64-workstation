@@ -355,6 +355,88 @@ void test_part_view_navigation_controller_integration() {
   std::cout << "[PASS] test_part_view_navigation_controller_integration\n";
 }
 
+void test_part_view_modeled_ep_sound_section() {
+  PartView view(nullptr);
+  bool ok = view.create(lv_screen_active());
+  assert(ok);
+
+  // Set timbre to modeled EP
+  view.set_timbre("73 Stage Pure", "E.PIANO");
+  assert(view.is_ep());
+  assert(view.engine_type() == EngineType::ModeledEp);
+
+  view.set_section(PartSection::SoundEngine);
+  assert(view.current_section() == PartSection::SoundEngine);
+
+  // 1. Initial group is Model
+  assert(view.ep_group() == EpSoundGroup::Model);
+  assert(view.ep_settings().model_type == 0); // Tine
+  assert(view.sound_group_focus());
+
+  // 2. Turn VALUE encoder to step to Hammer group
+  PanelEvent enc_step_group;
+  enc_step_group.type = PanelEventType::Encoder;
+  enc_step_group.id = MCU_CTRL_VALUE_ENCODER;
+  enc_step_group.delta = 1;
+  view.on_panel_event(enc_step_group);
+  assert(view.ep_group() == EpSoundGroup::Hammer);
+
+  // Step to Pickup and Damper
+  view.on_panel_event(enc_step_group);
+  assert(view.ep_group() == EpSoundGroup::Pickup);
+  view.on_panel_event(enc_step_group);
+  assert(view.ep_group() == EpSoundGroup::Damper);
+
+  // 3. Push VALUE to enter Damper group and edit damper_noise
+  PanelEvent push_ev = PanelEvent::button_press(MCU_BTN_VALUE_PUSH);
+  view.on_panel_event(push_ev);
+  assert(!view.sound_group_focus());
+
+  // Turn VALUE to edit damper noise
+  PanelEvent enc_edit;
+  enc_edit.type = PanelEventType::Encoder;
+  enc_edit.id = MCU_CTRL_VALUE_ENCODER;
+  enc_edit.delta = 2;
+  view.on_panel_event(push_ev); // enter edit mode
+  assert(view.is_editing_field());
+  float prev_damper = view.ep_settings().damper_noise;
+  view.on_panel_event(enc_edit);
+  assert(view.ep_settings().damper_noise > prev_damper);
+
+  // 4. Test Fixed Knob 2 (Brightness) live adjustment
+  PanelEvent enc_knob2;
+  enc_knob2.type = PanelEventType::Encoder;
+  enc_knob2.id = MCU_CTRL_ENCODER_2;
+  enc_knob2.delta = 3;
+  int32_t prev_b = view.ep_settings().brightness_offset;
+  view.on_panel_event(enc_knob2);
+  assert(view.ep_settings().brightness_offset == prev_b + 3);
+
+  // 5. Test ASSIGN K1 (Model toggle: Tine -> Reed)
+  PanelEvent enc_k1;
+  enc_k1.type = PanelEventType::Encoder;
+  enc_k1.id = MCU_CTRL_ENCODER_1;
+  enc_k1.delta = 1;
+  view.on_panel_event(enc_k1);
+  assert(view.ep_settings().model_type == 1); // Reed
+
+  // 6. Test EXIT hierarchical back-step
+  assert(view.handle_exit_step()); // from edit mode to field focus
+  assert(!view.is_editing_field());
+  assert(view.handle_exit_step()); // from field focus to sound group focus
+  assert(view.sound_group_focus());
+
+  // 7. Engine not-available state
+  view.set_engine_unavailable(true, "1.4");
+  assert(view.is_engine_unavailable());
+  // Turning encoders when unavailable produces no edits
+  float saved_damper = view.ep_settings().damper_noise;
+  view.on_panel_event(enc_knob2);
+  assert(view.ep_settings().damper_noise == saved_damper);
+
+  std::cout << "[PASS] test_part_view_modeled_ep_sound_section\n";
+}
+
 int main() {
   lv_init();
   Locale::instance().initialize("", "en");
@@ -372,6 +454,7 @@ int main() {
   test_part_view_arpeggiator_section();
   test_part_view_write_scope_arpeggiator_scene_available();
   test_part_view_navigation_controller_integration();
+  test_part_view_modeled_ep_sound_section();
 
   std::cout << "All PartView tests passed successfully!\n";
   return 0;

@@ -504,6 +504,7 @@
   "ep.param.decay_rate": "Decay rate",
   "ep.param.tone_bar_coupling": "Tone bar coupling",
   "va.brightness.note": "→ filter cutoff",
+  "ep.brightness.note": "→ hammer hardness",
   "sound.brightness.knob": "Brightness · KNOB 2",
   "sound.brightness.always_works": "Brightness knob always works",
   "sound.editing.prefix": "Editing · %s",

@@ -178,6 +178,31 @@ void modify_va_param(VaSettings& s, VaSoundGroup group, int field_idx, int delta
   }
 }
 
+void modify_ep_param(EpSettings& s, EpSoundGroup group, int field_idx, int delta) {
+  float fdelta = static_cast<float>(delta) * 0.05f;
+  if (group == EpSoundGroup::Model) {
+    switch (field_idx) {
+      case 0: s.model_type = (s.model_type == 0 ? 1 : 0); break;
+      case 1: s.decay_rate = std::clamp(s.decay_rate + fdelta, 0.0f, 1.0f); break;
+      case 2: s.tone_bar_coupling = std::clamp(s.tone_bar_coupling + fdelta, 0.0f, 1.0f); break;
+    }
+  } else if (group == EpSoundGroup::Hammer) {
+    switch (field_idx) {
+      case 0: s.hammer_hardness = std::clamp(s.hammer_hardness + fdelta, 0.0f, 1.0f); break;
+      case 1: s.attack_noise = std::clamp(s.attack_noise + fdelta, 0.0f, 1.0f); break;
+    }
+  } else if (group == EpSoundGroup::Pickup) {
+    switch (field_idx) {
+      case 0: s.pickup_position = std::clamp(s.pickup_position + fdelta, 0.0f, 1.0f); break;
+      case 1: s.pickup_level = std::clamp(s.pickup_level + fdelta, 0.0f, 1.0f); break;
+    }
+  } else if (group == EpSoundGroup::Damper) {
+    switch (field_idx) {
+      case 0: s.damper_noise = std::clamp(s.damper_noise + fdelta, 0.0f, 1.0f); break;
+    }
+  }
+}
+
 }  // namespace
 
 PartView::PartView(WsClient* client)
@@ -412,6 +437,8 @@ void PartView::set_timbre(const std::string& name, const std::string& category) 
     engine_type_ = EngineType::Fm;
   } else if (category_name_ == "VA" || category_name_ == "SYNTH PAD" || category_name_ == "SYNTH LEAD" || timbre_name_.find("Warm Saw Pad") != std::string::npos || timbre_name_.find("Analog") != std::string::npos) {
     engine_type_ = EngineType::Va;
+  } else if (category_name_ == "E.PIANO" || category_name_ == "EP" || timbre_name_.find("Stage Pure") != std::string::npos || timbre_name_.find("Tine") != std::string::npos || timbre_name_.find("Reed") != std::string::npos || timbre_name_.find("Suitcase") != std::string::npos || timbre_name_.find("Wurly") != std::string::npos) {
+    engine_type_ = EngineType::ModeledEp;
   } else {
     engine_type_ = EngineType::Sample;
   }
@@ -447,6 +474,14 @@ void PartView::set_va_group(VaSoundGroup group) {
   rebuild_panel();
 }
 
+void PartView::set_ep_group(EpSoundGroup group) {
+  ep_sound_group_ = group;
+  field_focus_idx_ = 0;
+  is_editing_field_ = false;
+  sound_group_focus_ = false;
+  rebuild_panel();
+}
+
 std::string PartView::fm_modulators_string() const {
   if (fm_settings_.algorithm == 5) {
     return "OP 2 · 4 · 6";
@@ -455,7 +490,7 @@ std::string PartView::fm_modulators_string() const {
 }
 
 bool PartView::handle_exit_step() {
-  if (current_section_ == PartSection::SoundEngine && (is_fm() || is_va())) {
+  if (current_section_ == PartSection::SoundEngine && (is_fm() || is_va() || is_ep())) {
     if (is_editing_field_) {
       is_editing_field_ = false;
       rebuild_panel();
@@ -1783,6 +1818,231 @@ void PartView::rebuild_panel() {
       };
       skeleton_.set_hints(va_hints, tr("sound.brightness.always_works"));
 
+    } else if (is_ep()) {
+      // Modeled Electric Piano Sound Section (Story 14.9, FR125, UX-DR115)
+      static const char* ep_grp_keys[] = {
+        "ep.group.model", "ep.group.hammer", "ep.group.pickup", "ep.group.damper"
+      };
+
+      // 1. Group Selector Strip (Segmented Control)
+      lv_obj_t* grp_seg = lv_obj_create(panel_col_);
+      lv_obj_set_size(grp_seg, 720, 40);
+      lv_obj_set_scrollable(grp_seg, false);
+      lv_obj_set_style_bg_color(grp_seg, p.surface, LV_PART_MAIN);
+      lv_obj_set_style_border_color(grp_seg, sound_group_focus_ ? p.accent : p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(grp_seg, sound_group_focus_ ? 3 : 1, LV_PART_MAIN);
+      lv_obj_set_style_radius(grp_seg, r.sm, LV_PART_MAIN);
+      lv_obj_set_style_pad_all(grp_seg, 2, LV_PART_MAIN);
+
+      for (int g = 0; g < 4; ++g) {
+        lv_obj_t* seg = lv_obj_create(grp_seg);
+        lv_obj_set_size(seg, 178, 36);
+        lv_obj_set_pos(seg, g * 179, 0);
+        lv_obj_set_scrollable(seg, false);
+        bool is_active = (static_cast<int>(ep_sound_group_) == g);
+        lv_obj_set_style_bg_color(seg, is_active ? p.accent : p.surface, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(seg, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(seg, r.sm, LV_PART_MAIN);
+
+        lv_obj_t* lbl = lv_label_create(seg);
+        lv_label_set_text(lbl, tr(ep_grp_keys[g]).c_str());
+        lv_obj_set_style_text_color(lbl, is_active ? p.on_accent : p.text, LV_PART_MAIN);
+        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+      }
+
+      // 2. Field rendering per active EpSoundGroup
+      if (ep_sound_group_ == EpSoundGroup::Model) {
+        // Model Type (Segmented control: Tine / Reed)
+        lv_obj_t* card_m = lv_obj_create(panel_col_);
+        lv_obj_set_size(card_m, 720, sp.touch_target_min);
+        lv_obj_set_scrollable(card_m, false);
+        bool is_hl = (!sound_group_focus_ && field_focus_idx_ == 0);
+        lv_obj_set_style_bg_color(card_m, is_hl ? p.raised : p.surface, LV_PART_MAIN);
+        lv_obj_set_style_border_color(card_m, is_hl ? p.accent : p.line_strong, LV_PART_MAIN);
+        lv_obj_set_style_border_width(card_m, is_hl ? 3 : 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(card_m, r.sm, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(card_m, sp.space_3, LV_PART_MAIN);
+
+        lv_obj_t* lbl_mh = lv_label_create(card_m);
+        lv_label_set_text(lbl_mh, tr("ep.param.model_type").c_str());
+        lv_obj_add_style(lbl_mh, Theme::style_text_muted(), LV_PART_MAIN);
+        lv_obj_align(lbl_mh, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_t* lbl_mv = lv_label_create(card_m);
+        lv_label_set_text(lbl_mv, ep_settings_.model_type == 0 ? "Tine" : "Reed");
+        lv_obj_add_style(lbl_mv, Theme::style_text(), LV_PART_MAIN);
+        lv_obj_align(lbl_mv, LV_ALIGN_RIGHT_MID, 0, 0);
+
+        field_objs_.push_back(card_m);
+        field_val_objs_.push_back(lbl_mv);
+
+        // Decay Rate and Tone Bar Coupling
+        char dr_buf[16], tb_buf[16];
+        std::snprintf(dr_buf, sizeof(dr_buf), "%.2f", ep_settings_.decay_rate);
+        std::snprintf(tb_buf, sizeof(tb_buf), "%.2f", ep_settings_.tone_bar_coupling);
+
+        struct EpFieldDef { std::string key; std::string val; };
+        std::vector<EpFieldDef> m_defs = {
+          {"ep.param.decay_rate", dr_buf},
+          {"ep.param.tone_bar_coupling", tb_buf}
+        };
+
+        for (size_t i = 0; i < m_defs.size(); ++i) {
+          lv_obj_t* card = lv_obj_create(panel_col_);
+          lv_obj_set_size(card, 720, sp.touch_target_min);
+          lv_obj_set_scrollable(card, false);
+          bool is_f_hl = (!sound_group_focus_ && field_focus_idx_ == static_cast<int>(i + 1));
+          lv_obj_set_style_bg_color(card, is_f_hl ? p.raised : p.surface, LV_PART_MAIN);
+          lv_obj_set_style_border_color(card, is_f_hl ? p.accent : p.line_strong, LV_PART_MAIN);
+          lv_obj_set_style_border_width(card, is_f_hl ? 3 : 1, LV_PART_MAIN);
+          lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+          lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+
+          lv_obj_t* lbl_h = lv_label_create(card);
+          lv_label_set_text(lbl_h, tr(m_defs[i].key).c_str());
+          lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+          lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+          lv_obj_t* lbl_v = lv_label_create(card);
+          lv_label_set_text(lbl_v, m_defs[i].val.c_str());
+          lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+          lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+          field_objs_.push_back(card);
+          field_val_objs_.push_back(lbl_v);
+        }
+      } else if (ep_sound_group_ == EpSoundGroup::Hammer) {
+        char hh_buf[16], an_buf[16];
+        std::snprintf(hh_buf, sizeof(hh_buf), "%.2f", ep_settings_.hammer_hardness);
+        std::snprintf(an_buf, sizeof(an_buf), "%.2f", ep_settings_.attack_noise);
+
+        struct EpFieldDef { std::string key; std::string val; };
+        std::vector<EpFieldDef> h_defs = {
+          {"ep.param.hammer_hardness", hh_buf},
+          {"ep.param.attack_noise", an_buf}
+        };
+
+        for (size_t i = 0; i < h_defs.size(); ++i) {
+          lv_obj_t* card = lv_obj_create(panel_col_);
+          lv_obj_set_size(card, 720, sp.touch_target_min);
+          lv_obj_set_scrollable(card, false);
+          bool is_f_hl = (!sound_group_focus_ && field_focus_idx_ == static_cast<int>(i));
+          lv_obj_set_style_bg_color(card, is_f_hl ? p.raised : p.surface, LV_PART_MAIN);
+          lv_obj_set_style_border_color(card, is_f_hl ? p.accent : p.line_strong, LV_PART_MAIN);
+          lv_obj_set_style_border_width(card, is_f_hl ? 3 : 1, LV_PART_MAIN);
+          lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+          lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+
+          lv_obj_t* lbl_h = lv_label_create(card);
+          lv_label_set_text(lbl_h, tr(h_defs[i].key).c_str());
+          lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+          lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+          lv_obj_t* lbl_v = lv_label_create(card);
+          lv_label_set_text(lbl_v, h_defs[i].val.c_str());
+          lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+          lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+          field_objs_.push_back(card);
+          field_val_objs_.push_back(lbl_v);
+        }
+      } else if (ep_sound_group_ == EpSoundGroup::Pickup) {
+        char pp_buf[16], pl_buf[16];
+        std::snprintf(pp_buf, sizeof(pp_buf), "%.2f", ep_settings_.pickup_position);
+        std::snprintf(pl_buf, sizeof(pl_buf), "%.2f", ep_settings_.pickup_level);
+
+        struct EpFieldDef { std::string key; std::string val; };
+        std::vector<EpFieldDef> p_defs = {
+          {"ep.param.pickup_position", pp_buf},
+          {"ep.param.pickup_level", pl_buf}
+        };
+
+        for (size_t i = 0; i < p_defs.size(); ++i) {
+          lv_obj_t* card = lv_obj_create(panel_col_);
+          lv_obj_set_size(card, 720, sp.touch_target_min);
+          lv_obj_set_scrollable(card, false);
+          bool is_f_hl = (!sound_group_focus_ && field_focus_idx_ == static_cast<int>(i));
+          lv_obj_set_style_bg_color(card, is_f_hl ? p.raised : p.surface, LV_PART_MAIN);
+          lv_obj_set_style_border_color(card, is_f_hl ? p.accent : p.line_strong, LV_PART_MAIN);
+          lv_obj_set_style_border_width(card, is_f_hl ? 3 : 1, LV_PART_MAIN);
+          lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+          lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+
+          lv_obj_t* lbl_h = lv_label_create(card);
+          lv_label_set_text(lbl_h, tr(p_defs[i].key).c_str());
+          lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+          lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+          lv_obj_t* lbl_v = lv_label_create(card);
+          lv_label_set_text(lbl_v, p_defs[i].val.c_str());
+          lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+          lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+          field_objs_.push_back(card);
+          field_val_objs_.push_back(lbl_v);
+        }
+      } else if (ep_sound_group_ == EpSoundGroup::Damper) {
+        char dn_buf[16];
+        std::snprintf(dn_buf, sizeof(dn_buf), "%.2f", ep_settings_.damper_noise);
+
+        lv_obj_t* card = lv_obj_create(panel_col_);
+        lv_obj_set_size(card, 720, sp.touch_target_min);
+        lv_obj_set_scrollable(card, false);
+        bool is_f_hl = (!sound_group_focus_ && field_focus_idx_ == 0);
+        lv_obj_set_style_bg_color(card, is_f_hl ? p.raised : p.surface, LV_PART_MAIN);
+        lv_obj_set_style_border_color(card, is_f_hl ? p.accent : p.line_strong, LV_PART_MAIN);
+        lv_obj_set_style_border_width(card, is_f_hl ? 3 : 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(card, r.sm, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(card, sp.space_3, LV_PART_MAIN);
+
+        lv_obj_t* lbl_h = lv_label_create(card);
+        lv_label_set_text(lbl_h, tr("ep.param.damper_noise").c_str());
+        lv_obj_add_style(lbl_h, Theme::style_text_muted(), LV_PART_MAIN);
+        lv_obj_align(lbl_h, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_t* lbl_v = lv_label_create(card);
+        lv_label_set_text(lbl_v, dn_buf);
+        lv_obj_add_style(lbl_v, Theme::style_text(), LV_PART_MAIN);
+        lv_obj_align(lbl_v, LV_ALIGN_RIGHT_MID, 0, 0);
+
+        field_objs_.push_back(card);
+        field_val_objs_.push_back(lbl_v);
+      }
+
+      // Bottom Row: Brightness (Knob 2)
+      lv_obj_t* b_card = lv_obj_create(panel_col_);
+      lv_obj_set_size(b_card, 720, sp.touch_target_min);
+      lv_obj_set_scrollable(b_card, false);
+      lv_obj_set_style_bg_color(b_card, p.surface, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(b_card, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_color(b_card, p.line_strong, LV_PART_MAIN);
+      lv_obj_set_style_border_width(b_card, 1, LV_PART_MAIN);
+      lv_obj_set_style_radius(b_card, r.sm, LV_PART_MAIN);
+      lv_obj_set_style_pad_hor(b_card, sp.space_3, LV_PART_MAIN);
+
+      lv_obj_t* lbl_bh = lv_label_create(b_card);
+      lv_label_set_text(lbl_bh, tr("sound.brightness.knob").c_str());
+      lv_obj_add_style(lbl_bh, Theme::style_text_muted(), LV_PART_MAIN);
+      lv_obj_align(lbl_bh, LV_ALIGN_LEFT_MID, 0, -8);
+
+      lv_obj_t* lbl_bv = lv_label_create(b_card);
+      lv_label_set_text(lbl_bv, std::to_string(ep_settings_.brightness_offset).c_str());
+      lv_obj_add_style(lbl_bv, Theme::style_text(), LV_PART_MAIN);
+      lv_obj_align(lbl_bv, LV_ALIGN_LEFT_MID, 0, 10);
+
+      lv_obj_t* lbl_bn = lv_label_create(b_card);
+      lv_label_set_text(lbl_bn, tr("ep.brightness.note").c_str());
+      lv_obj_add_style(lbl_bn, Theme::style_text_muted(), LV_PART_MAIN);
+      lv_obj_align(lbl_bn, LV_ALIGN_RIGHT_MID, 0, 0);
+
+      std::vector<HintItem> ep_hints = {
+          {"VALUE", is_editing_field_ ? tr("hint.verb.change") : (sound_group_focus_ ? tr("hint.verb.select") : tr("hint.verb.select"))},
+          {"WRITE", is_editing_field_ ? tr("hint.verb.confirm") : tr("hint.verb.change")},
+          {"EXIT", tr("hint.verb.back")}
+      };
+      skeleton_.set_hints(ep_hints, tr("sound.brightness.always_works"));
+
     } else {
       // Sample sound section
       char b_buf[32], c_buf[32], r_buf[32], v_buf[32];
@@ -2211,6 +2471,31 @@ void PartView::on_panel_event(const PanelEvent& ev) {
           mark_edits();
           rebuild_panel();
         }
+      } else if (is_ep()) {
+        if (sound_group_focus_) {
+          int cur = static_cast<int>(ep_sound_group_);
+          cur = std::clamp(cur + ev.delta, 0, 3);
+          ep_sound_group_ = static_cast<EpSoundGroup>(cur);
+          field_focus_idx_ = 0;
+          rebuild_panel();
+        } else if (!is_editing_field_) {
+          int count = 0;
+          switch (ep_sound_group_) {
+            case EpSoundGroup::Model: count = 3; break;
+            case EpSoundGroup::Hammer: count = 2; break;
+            case EpSoundGroup::Pickup: count = 2; break;
+            case EpSoundGroup::Damper: count = 1; break;
+            default: break;
+          }
+          if (count > 0) {
+            field_focus_idx_ = std::clamp(field_focus_idx_ + ev.delta, 0, count - 1);
+            rebuild_panel();
+          }
+        } else {
+          modify_ep_param(ep_settings_, ep_sound_group_, field_focus_idx_, ev.delta);
+          mark_edits();
+          rebuild_panel();
+        }
       } else {
         switch (field_focus_idx_) {
           case 0:
@@ -2402,6 +2687,41 @@ void PartView::on_panel_event(const PanelEvent& ev) {
           mark_edits();
           rebuild_panel();
         }
+      } else if (is_ep()) {
+        // Fixed Knob 2 Brightness mapping or ASSIGN K1..K8
+        if (enc_idx == 1) {
+          ep_settings_.brightness_offset = std::clamp(ep_settings_.brightness_offset + ev.delta, 0, 127);
+          ep_settings_.hammer_hardness = static_cast<float>(ep_settings_.brightness_offset) / 127.0f;
+          mark_edits();
+          rebuild_panel();
+        } else {
+          float fdelta = static_cast<float>(ev.delta) * 0.05f;
+          switch (enc_idx) {
+            case 0:
+              ep_settings_.model_type = (ep_settings_.model_type == 0 ? 1 : 0);
+              break;
+            case 2:
+              ep_settings_.pickup_position = std::clamp(ep_settings_.pickup_position + fdelta, 0.0f, 1.0f);
+              break;
+            case 3:
+              ep_settings_.pickup_level = std::clamp(ep_settings_.pickup_level + fdelta, 0.0f, 1.0f);
+              break;
+            case 4:
+              ep_settings_.damper_noise = std::clamp(ep_settings_.damper_noise + fdelta, 0.0f, 1.0f);
+              break;
+            case 5:
+              ep_settings_.attack_noise = std::clamp(ep_settings_.attack_noise + fdelta, 0.0f, 1.0f);
+              break;
+            case 6:
+              ep_settings_.decay_rate = std::clamp(ep_settings_.decay_rate + fdelta, 0.0f, 1.0f);
+              break;
+            case 7:
+              ep_settings_.tone_bar_coupling = std::clamp(ep_settings_.tone_bar_coupling + fdelta, 0.0f, 1.0f);
+              break;
+          }
+          mark_edits();
+          rebuild_panel();
+        }
       } else {
         switch (enc_idx) {
           case 0: brightness_ = std::clamp(brightness_ + (ev.delta * 0.02f), 0.0f, 1.0f); break;
@@ -2449,7 +2769,7 @@ void PartView::on_panel_event(const PanelEvent& ev) {
           }
           return;
         }
-        if (is_fm() || is_va()) {
+        if (is_fm() || is_va() || is_ep()) {
           if (sound_group_focus_) {
             sound_group_focus_ = false;
             field_focus_idx_ = 0;
