@@ -15,7 +15,7 @@ export const PART_SLOTS = 8; // the fixed Studio layout: the first 8 parts (a Pr
 // core::PartState as the engine publishes it (PartState.part_state)
 export const PART_STATE = Object.freeze({ READY: 0, EMPTY_TIMBRE: 1, MISSING_LIBRARY: 2, ENGINE_NOT_AVAILABLE: 3 });
 // core::EngineTypeId
-export const ENGINE = Object.freeze({ SAMPLE: 1, ORGAN: 2, FM: 3, VA: 4 });
+export const ENGINE = Object.freeze({ SAMPLE: 1, ORGAN: 2, FM: 3, VA: 4, EP: 5 });
 
 // proto/category.proto ids 1..17 -> the slug that is the stem of the locale keys `category.<slug>.short` / `.full`
 export const CATEGORY_SLUGS = Object.freeze([
@@ -49,6 +49,7 @@ export function engineKind(engineTypeId) {
     case ENGINE.ORGAN: return "organ";
     case ENGINE.FM: return "fm";
     case ENGINE.VA: return "va";
+    case ENGINE.EP: return "ep";
     default: return "sample"; // 1, and 0 / unknown read as a sample part like the engine's default Live Set
   }
 }

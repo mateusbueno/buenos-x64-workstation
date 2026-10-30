@@ -10,6 +10,7 @@ import {
   EditSender,
   PartEditorController,
   REFLOW,
+  REASON_UNAVAILABLE,
   applyDrag,
   applyKey,
   applyWheel,
@@ -97,6 +98,8 @@ test("the four sections are built from the registry for the part's engine", () =
   assert.equal(fm.sections[0].groups.filter((g) => /^fm\.op[1-6]$/.test(g.id)).length, 6);
   const va = buildPartEditorModel({ registry: REGISTRY, partIndex: 3, engine: "va", editable: false });
   assert.deepEqual(va.sections[0].groups.map((g) => g.id).filter((g) => g.startsWith("va.")).sort(), ["va.envelopes", "va.filter", "va.lfo", "va.mixer", "va.noise", "va.osc1", "va.osc2", "va.sub", "va.voice"]);
+  const ep = buildPartEditorModel({ registry: REGISTRY, partIndex: 4, engine: "ep", editable: false });
+  assert.deepEqual(ep.sections[0].groups.map((g) => g.id).filter((g) => g.startsWith("ep.")).sort(), ["ep.damper", "ep.hammer", "ep.model", "ep.pickup"]);
   // a sample part and an unknown engine get the generic sections only
   for (const e of ["sample", "mystery"]) {
     const g = buildPartEditorModel({ registry: REGISTRY, partIndex: 4, engine: e, editable: false });
@@ -106,7 +109,7 @@ test("the four sections are built from the registry for the part's engine", () =
 });
 
 test("every registry parameter the engine shows is drawn: the number of knobs follows the registry", () => {
-  for (const engine of ["sample", "organ", "fm", "va"]) {
+  for (const engine of ["sample", "organ", "fm", "va", "ep"]) {
     const m = buildPartEditorModel({ registry: REGISTRY, partIndex: 0, engine, editable: false });
     const drawn = knobs(m).filter((k) => k.kind === "param").map((k) => k.paramId).sort((a, b) => a - b);
     const expected = partParams(REGISTRY, engine).map((d) => d.id).sort((a, b) => a - b);
@@ -922,6 +925,7 @@ test("A1: only the knobs no engine plays are marked inert (organ / FM amp attack
   assert.deepEqual(inert("fm").sort(), ["part_attack", "part_release"]);
   assert.deepEqual(inert("organ").sort(), ["part_attack", "part_release"]);
   assert.deepEqual(inert("va"), ["va_unison_spread"]);
+  assert.deepEqual(inert("ep").sort(), ["part_attack", "part_release"]);
   assert.deepEqual(inert("sample"), []);
   const fm = inert("fm");
   assert.ok(!fm.includes("fm_algorithm") && !fm.includes("part_eq_low") && !fm.includes("part_brightness"));
@@ -932,9 +936,9 @@ test("A1: only the knobs no engine plays are marked inert (organ / FM amp attack
   assert.equal(m.sections[1].inert, true); // the Amp envelope + EQ section carries the note while part_attack / part_release are in it
   const ms = buildPartEditorModel({ registry: REGISTRY, partIndex: 0, engine: "sample", editable: true, live: true, state: { parts: [{ part: 0 }] } });
   assert.equal(ms.sections[1].inert, false);
-  // the table agrees with the fake unit's engines (engine type ids: 1 sample, 2 organ, 3 FM, 4 VA): every inert knob is unconsumed, every other registry knob of the engine is consumed
-  const unit = new FakeUnit();
-  for (const [engine, idx] of [["fm", 1], ["va", 2], ["sample", 0], ["organ", 3]]) {
+  // the table agrees with the fake unit's engines (engine type ids: 1 sample, 2 organ, 3 FM, 4 VA, 5 EP): every inert knob is unconsumed, every other registry knob of the engine is consumed
+  const unit = new FakeUnit({ engines: [1, 3, 4, 2, 5, 1, 1, 1] });
+  for (const [engine, idx] of [["fm", 1], ["va", 2], ["sample", 0], ["organ", 3], ["ep", 4]]) {
     const m2 = buildPartEditorModel({ registry: REGISTRY, partIndex: idx, engine, editable: true, live: true, state: { parts: [{ part: idx }] } });
     for (const k of knobs(m2)) {
       const d = REGISTRY.params.find((p) => p.id === k.numericId || p.name === k.id);
@@ -1047,4 +1051,71 @@ test("Story 9.23: stale revision on SetPartZone / SetPartArp triggers stale stat
   assert.ok(r.ctl.stale);
   assert.equal(byId(r.ctl.model(), "low_key").value, 36); // reverted to confirmed
   assert.equal(byId(r.ctl.model(), "low_key").readOnly, true);
+});
+
+test("modeled electric piano (EP) sound section model, parameter mapping and ASSIGN options", () => {
+  const m = buildPartEditorModel({ registry: REGISTRY, partIndex: 4, engine: "ep", editable: true, live: true, state: { parts: [{ part: 4 }] } });
+  const soundSec = m.sections.find((s) => s.id === "sound");
+  assert.ok(soundSec);
+  const groupIds = soundSec.groups.map((g) => g.id).filter((g) => g.startsWith("ep.")).sort();
+  assert.deepEqual(groupIds, ["ep.damper", "ep.hammer", "ep.model", "ep.pickup"]);
+
+  const modelKnobs = soundSec.groups.find((g) => g.id === "ep.model").knobs.map((k) => k.id);
+  assert.deepEqual(modelKnobs, ["ep_model_type", "ep_decay_rate", "ep_tone_bar_coupling"]);
+
+  const hammerKnobs = soundSec.groups.find((g) => g.id === "ep.hammer").knobs.map((k) => k.id);
+  assert.deepEqual(hammerKnobs, ["ep_hammer_hardness", "ep_attack_noise"]);
+
+  const pickupKnobs = soundSec.groups.find((g) => g.id === "ep.pickup").knobs.map((k) => k.id);
+  assert.deepEqual(pickupKnobs, ["ep_pickup_position", "ep_pickup_level"]);
+
+  const damperKnobs = soundSec.groups.find((g) => g.id === "ep.damper").knobs.map((k) => k.id);
+  assert.deepEqual(damperKnobs, ["ep_damper_noise"]);
+
+  // All 8 EP parameters are assignable
+  const assignable = assignableParams(REGISTRY, "ep").map((d) => d.name);
+  for (const epParam of ["ep_model_type", "ep_decay_rate", "ep_tone_bar_coupling", "ep_hammer_hardness", "ep_attack_noise", "ep_pickup_position", "ep_pickup_level", "ep_damper_noise"]) {
+    assert.ok(assignable.includes(epParam), `${epParam} is assignable`);
+  }
+});
+
+test("modeled electric piano (EP) live performance editing via controller and FakeUnit audibility", async () => {
+  const unit = new FakeUnit({ engines: [1, 3, 4, 2, 5, 1, 1, 1] });
+  let model = null;
+  const ctl = new PartEditorController({
+    request: (m) => unit.request(m),
+    clock: () => Date.now(),
+    setTimer: (f, ms) => setTimeout(f, ms),
+    clearTimer: (t) => clearTimeout(t),
+    onChange: () => { model = ctl.model(); },
+    onError: () => {},
+  });
+  ctl.select({ liveSetId: unit.liveSetId, part: 4, engine: "ep" });
+  ctl.onState(unit.state());
+  await new Promise((r) => setTimeout(r, 20));
+
+  // Edit ep_decay (1301) to 0.8
+  ctl.edit("p:1301", 0.8);
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.ok(unit.audibleLog.some(([id, part, val]) => id === 1301 && part === 4 && Math.abs(val - 0.8) < 1e-4));
+  assert.equal(unit.perf.get("1301:4"), 0.8);
+});
+
+test("modeled electric piano (EP) unavailable engine marks controls read-only with explanation", async () => {
+  const m = buildPartEditorModel({
+    registry: REGISTRY,
+    partIndex: 4,
+    engine: "ep",
+    editable: false,
+    available: false,
+    state: { parts: [{ part: 4 }] },
+  });
+  const soundSec = m.sections.find((s) => s.id === "sound");
+  for (const g of soundSec.groups) {
+    for (const k of g.knobs) {
+      assert.equal(k.readOnly, true);
+      assert.equal(k.reason, REASON_UNAVAILABLE);
+    }
+  }
 });

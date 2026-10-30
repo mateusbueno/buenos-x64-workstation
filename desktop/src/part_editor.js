@@ -70,7 +70,7 @@ export function columnsFor(containerPx, rootPx) {
  * sample is absent: part_attack / part_release are its amp envelope overrides and part_brightness / part_eq_* are played by the Mixer's tone stage for every engine.
  * Sends, output, volume, inserts and ASSIGN are never listed.
  */
-export const INERT_BY_ENGINE = Object.freeze({ organ: /^part_(attack|release)$/, fm: /^part_(attack|release)$/, va: /^va_unison_spread$/ });
+export const INERT_BY_ENGINE = Object.freeze({ organ: /^part_(attack|release)$/, fm: /^part_(attack|release)$/, va: /^va_unison_spread$/, ep: /^part_(attack|release)$/ });
 export function isInert(def, engine) {
   const re = INERT_BY_ENGINE[engine];
   return !!re && def.class === "performance" && def.scope === "part" && commandKind(def) === "perf" && re.test(def.name);

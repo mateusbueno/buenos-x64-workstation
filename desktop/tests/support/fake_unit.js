@@ -225,6 +225,7 @@ export class FakeUnit {
     if (type === 2) return /^(drawbar_|percussion_|vibrato_chorus_|key_click|leakage|rotary_)/.test(d.name);
     if (type === 3) return /^fm_/.test(d.name);
     if (type === 4) return /^va_/.test(d.name) && d.name !== "va_unison_spread";
+    if (type === 5) return /^ep_/.test(d.name);
     if (type === 1) return /^part_(attack|release)$/.test(d.name);
     return false;
   }

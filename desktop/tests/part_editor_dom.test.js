@@ -97,7 +97,7 @@ async function rig(part = 3, engines) {
   });
   view = new PartEditorView({ doc, host, tr: trKey, controller: ctl, announce: (m) => announced.push(m) });
   view.setHeader({ number: part + 1, name: "Glass Keys", category: "E.PIANO" });
-  const engine = { 1: "sample", 2: "organ", 3: "fm", 4: "va" }[unit.parts[part].engine_type_id];
+  const engine = { 1: "sample", 2: "organ", 3: "fm", 4: "va", 5: "ep" }[unit.parts[part].engine_type_id];
   ctl.select({ liveSetId: unit.liveSetId, part, engine });
   ctl.onState(unit.state());
   await clock.advance(100);
@@ -625,4 +625,31 @@ test("a stale edit shows 'Changed on the Velora since you opened it · Reload', 
   assert.equal(r.unit.perf.get("100:3"), 3);
   assert.equal(r.unit.staleRejected, 1);
   assert.equal(r.unit.log.filter((l) => l[0] === "SetPerformanceParam").at(-1)[2], r.unit.liveRevision);
+});
+
+test("EP Part Editor DOM: renders Sound groups (Model, Hammer, Pickup, Damper) with accessible sliders and supports editing", async () => {
+  const r = await rig(4, [1, 3, 4, 2, 5, 1, 1, 1]);
+  const secs = r.host.all((e) => e.tagName === "SECTION");
+  assert.equal(secs.length, 4);
+  const soundSec = secs[0];
+  const labels = soundSec.all((e) => e.attrs.role === "slider").map((s) => s.attrs["aria-label"]);
+  assert.ok(labels.includes("Model"));
+  assert.ok(labels.includes("Decay rate"));
+  assert.ok(labels.includes("Tone bar coupling"));
+  assert.ok(labels.includes("Hammer hardness"));
+  assert.ok(labels.includes("Attack noise"));
+  assert.ok(labels.includes("Pickup position"));
+  assert.ok(labels.includes("Pickup level"));
+  assert.ok(labels.includes("Damper noise"));
+
+  // Check initial aria-valuenow
+  const hammer = r.slider("Hammer hardness");
+  assert.equal(hammer.attrs["aria-valuemin"], "0");
+  assert.equal(hammer.attrs["aria-valuemax"], "1");
+  assert.equal(hammer.attrs["aria-valuenow"], "0.5");
+
+  // Keyboard navigation on slider changes value
+  const key = async (k, shift = false) => { const e = hammer.fire("keydown", { key: k, shiftKey: shift }); await r.clock.advance(40); return e; };
+  await key("ArrowRight");
+  assert.equal(hammer.attrs["aria-valuenow"], "0.51");
 });
