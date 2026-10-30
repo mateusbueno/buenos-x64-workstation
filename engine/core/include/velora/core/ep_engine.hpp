@@ -17,7 +17,7 @@ class EpEngine final : public Engine {
   static constexpr const char* kEngineName = "Modeled Electric Piano";
   static constexpr uint32_t kPartCount = params::kPartCount;  // 16 parts
   static constexpr uint32_t kBlockFrames = 64;
-  static constexpr uint32_t kVoiceCapacity = 64;
+  static constexpr uint32_t kVoiceCapacity = 128;
   static constexpr uint32_t kCostUnitsPerVoice = 4;
 
   explicit EpEngine(float sample_rate = 48000.0f, uint32_t voice_capacity = kVoiceCapacity);
@@ -26,6 +26,13 @@ class EpEngine final : public Engine {
   EngineTypeId type_id() const noexcept override { return EngineTypeId::kModeledEP; }
   uint32_t cost_units_per_voice() const noexcept override { return kCostUnitsPerVoice; }
   uint32_t voice_capacity() const noexcept override { return static_cast<uint32_t>(voices_.size()); }
+  uint32_t active_voices() const noexcept {
+    uint32_t count = 0;
+    for (const auto& v : voices_) {
+      if (v.is_active()) ++count;
+    }
+    return count;
+  }
 
   EngineStatus start_voice(uint32_t channel, uint32_t note, uint32_t velocity16) noexcept override;
   EngineStatus stop_voice(uint32_t channel, uint32_t note) noexcept override;

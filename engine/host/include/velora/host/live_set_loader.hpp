@@ -142,6 +142,7 @@ struct LiveSetLoaderOptions {
   std::uint32_t sample_floor_voices = core::VoiceArbiter::kSampleFloorVoices;
   std::uint32_t fm_floor_voices = core::VoiceArbiter::kFmFloorVoices;
   std::uint32_t va_floor_voices = core::VoiceArbiter::kVaFloorVoices;
+  std::uint32_t ep_floor_voices = core::VoiceArbiter::kEpFloorVoices;
   std::uint32_t steal_ramp_frames = core::VoiceArbiter::kStealRampFrames;
   std::map<std::uint32_t, std::uint32_t> custom_floor_voices{};
   // Quiescence guard. The reservation (VoiceArbiter::reserve()) must not run while the audio callback renders. When set, the loader asks this

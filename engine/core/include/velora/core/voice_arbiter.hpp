@@ -49,6 +49,8 @@ class VoiceArbiter final : public VoiceAllocator {
   static constexpr std::uint32_t kFmFloorVoices = 128;
   // The VA engine is guaranteed at least this many voices (Story 12.7, FR13).
   static constexpr std::uint32_t kVaFloorVoices = 64;
+  // The modeled electric piano engine is guaranteed at least this many voices (Story 14.5, FR123).
+  static constexpr std::uint32_t kEpFloorVoices = 64;
   // A floored engine's voice_capacity() must be at least floor + this many voices: stolen voices keep
   // their slot for the whole ramp (4 ms), and the slack lets an engine below its floor always find a free
   // slot while up to this many voices are still fading (reserve() enforces it).
@@ -82,6 +84,7 @@ class VoiceArbiter final : public VoiceAllocator {
     bool waive_organ_reservation = false;
     bool waive_fm_floor = false;
     bool waive_va_floor = false;
+    bool waive_ep_floor = false;
   };
 
   enum class ReserveStatus : std::uint8_t {
@@ -95,6 +98,7 @@ class VoiceArbiter final : public VoiceAllocator {
     kSampleFloorTooLow,     // sample engine bound with a floor below kSampleFloorVoices
     kFmFloorTooLow,         // FM engine bound with a floor below kFmFloorVoices
     kVaFloorTooLow,         // VA engine bound with a floor below kVaFloorVoices
+    kEpFloorTooLow,         // EP engine bound with a floor below kEpFloorVoices
   };
 
   struct Reservation {
@@ -119,6 +123,7 @@ class VoiceArbiter final : public VoiceAllocator {
   void set_min_sample_floor_for_tests(std::uint32_t voices) noexcept { min_sample_floor_ = voices; }
   void set_min_fm_floor_for_tests(std::uint32_t voices) noexcept { min_fm_floor_ = voices; }
   void set_min_va_floor_for_tests(std::uint32_t voices) noexcept { min_va_floor_ = voices; }
+  void set_min_ep_floor_for_tests(std::uint32_t voices) noexcept { min_ep_floor_ = voices; }
 #endif
 
   // Applies a Live Set configuration atomically: either everything is reserved or nothing changes.
@@ -261,6 +266,7 @@ class VoiceArbiter final : public VoiceAllocator {
   std::uint32_t min_sample_floor_ = kSampleFloorVoices;
   std::uint32_t min_fm_floor_ = kFmFloorVoices;
   std::uint32_t min_va_floor_ = kVaFloorVoices;
+  std::uint32_t min_ep_floor_ = kEpFloorVoices;
   std::atomic<std::uint64_t> steals_total_{0}, exhausted_{0};
   std::atomic<std::uint64_t> last_steal_{0};  // packed, 0 = none
 };

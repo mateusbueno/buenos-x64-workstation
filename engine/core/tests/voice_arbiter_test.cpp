@@ -11,6 +11,7 @@
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/sample_engine.hpp"
 #include "velora/core/organ_engine.hpp"
+#include "velora/core/ep_engine.hpp"
 #include "velora/core/voice_arbiter.hpp"
 #include "velora/ports/sample_source.hpp"
 
@@ -31,6 +32,7 @@ namespace {
 
 constexpr std::uint32_t kFmId = static_cast<std::uint32_t>(EngineTypeId::kFm);
 constexpr std::uint32_t kVaId = static_cast<std::uint32_t>(EngineTypeId::kVa);
+constexpr std::uint32_t kEpId = static_cast<std::uint32_t>(EngineTypeId::kModeledEP);
 constexpr std::uint32_t kToneId = static_cast<std::uint32_t>(EngineTypeId::kTestTone);
 constexpr std::uint32_t kSampleId = static_cast<std::uint32_t>(EngineTypeId::kSample);
 
@@ -1027,6 +1029,167 @@ void test_all_four_engines_at_floors_shared_pool() {
   CHECK(a.steals(kVaId) == 0);
 }
 
+// Story 14.5: EP floor reservation verification (64-voice floor)
+void test_ep_floor_reservation() {
+  auto br = std::make_unique<BlockRenderer>(100);
+  EpEngine ep(48000.0f, 128);
+  CHECK(br->bind_engine(ep));
+  auto& a = br->arbiter();
+
+  // 1. waive_ep_floor = false and floor is 0 -> kEpFloorTooLow
+  VoiceArbiter::LiveSetConfig c;
+  c.budget = 2000;
+  c.waive_ep_floor = false;
+  CHECK(a.reserve(c) == RS::kEpFloorTooLow);
+
+  // 2. waive_ep_floor = false and floor < 64 -> kEpFloorTooLow
+  auto c_low = c;
+  add_floor(c_low, kEpId, 63);
+  CHECK(a.reserve(c_low) == RS::kEpFloorTooLow);
+
+  // 3. waive_ep_floor = false and floor >= 64 -> kOk
+  auto c_64 = c;
+  add_floor(c_64, kEpId, 64);
+  CHECK(a.reserve(c_64) == RS::kOk);
+  CHECK(a.floor_cost(kEpId) == 64 * EpEngine::kCostUnitsPerVoice);
+
+  // 4. waive_ep_floor = true and floor is 0 -> kOk (zero reservation when no EP part)
+  auto c_waived = c;
+  c_waived.waive_ep_floor = true;
+  CHECK(a.reserve(c_waived) == RS::kOk);
+  CHECK(a.floor_cost(kEpId) == 0);
+
+  // 5. waive_ep_floor = true but a floor < 64 is set -> kEpFloorTooLow (waive only applies when floor is 0)
+  auto c_waived_low = c_waived;
+  add_floor(c_waived_low, kEpId, 32);
+  CHECK(a.reserve(c_waived_low) == RS::kEpFloorTooLow);
+
+  // 6. Floor exceeds capacity: capacity is 128, so floor of 65 + 64 headroom > 128
+  auto c_huge = c;
+  c_huge.budget = 10000;
+  add_floor(c_huge, kEpId, 65);
+  CHECK(a.reserve(c_huge) == RS::kFloorExceedsCapacity);
+}
+
+// Story 14.5: Scripted scenario with modeled electric piano layered over 256-voice piano, sustain pedal down, organ present
+void test_ep_piano_organ_shared_pool() {
+  SampleSrc src;
+  src.init(400000);
+  src.region(0, 127);
+  SampleEngine::Config sc;
+  sc.max_voices = 340;
+  SampleEngine se(sc);
+  se.set_instrument(src);
+  const std::uint32_t sc_cost = se.cost_units_per_voice();
+  CHECK(sc_cost == 5);
+
+  OrganEngine organ;
+  const std::uint32_t organ_cost = organ.cost_units_per_voice();
+  CHECK(organ.steal_protected());
+
+  EpEngine ep(48000.0f, 128);
+  const std::uint32_t ep_cost = ep.cost_units_per_voice();
+  CHECK(ep_cost == 4);
+
+  auto br = std::make_unique<BlockRenderer>(100);
+  CHECK(br->bind_engine(se));
+  CHECK(br->bind_engine(organ));
+  CHECK(br->bind_engine(ep));
+
+  // Route channels:
+  // ch 1: organ
+  // ch 2, 3: sample piano (256 notes)
+  // ch 4: modeled electric piano (64 notes)
+  // ch 5: modeled EP surplus (8 notes)
+  br->set_channel_engine(1, static_cast<std::uint32_t>(EngineTypeId::kOrgan));
+  br->set_channel_engine(2, kSampleId);
+  br->set_channel_engine(3, kSampleId);
+  br->set_channel_engine(4, kEpId);
+  br->set_channel_engine(5, kEpId);
+
+  // Configuration with:
+  // FX cost = 50
+  // Organ reservation = 73 keys * organ_cost
+  // Sample floor = 256 voices (1280 cost units)
+  // EP floor = 64 voices (256 cost units)
+  // Shared remainder = 32 cost units (8 EP voices)
+  const std::uint64_t organ_res = 73ull * organ_cost;
+  const std::uint64_t sample_res = 256ull * sc_cost;
+  const std::uint64_t ep_res = 64ull * ep_cost;
+  const std::uint64_t shared_units = 32;
+
+  VoiceArbiter::LiveSetConfig c;
+  c.fx_cost = 50;
+  c.organ_rotary_cost = organ_res;
+  add_floor(c, kSampleId, 256);
+  add_floor(c, kEpId, 64);
+  c.budget = c.fx_cost + c.organ_rotary_cost + sample_res + ep_res + shared_units;
+
+  CHECK(br->arbiter().reserve(c) == RS::kOk);
+  auto& a = br->arbiter();
+  CHECK(a.reservation().shared == shared_units);
+  CHECK(a.floor_cost(kSampleId) == sample_res);
+  CHECK(a.floor_cost(kEpId) == ep_res);
+
+  // 1. Play Organ notes
+  on(*br, 1, 60, 60000);
+  on(*br, 1, 64, 60000);
+  render(*br, 2);
+  const std::uint32_t organ_active = organ.active_voices();
+  CHECK(organ_active >= 2);
+
+  // 2. Play 256 sample piano notes (filling piano floor)
+  for (std::uint32_t k = 0; k < 256; ++k) {
+    on(*br, 2 + k / 128, k % 128, 40000, 0);
+  }
+  render(*br, 2);
+  CHECK(se.active_voices() == 256);
+  CHECK(a.usage(kSampleId).live_cost == sample_res);
+
+  // 3. Play 64 modeled EP notes (filling EP floor)
+  for (std::uint32_t k = 0; k < 64; ++k) {
+    on(*br, 4, 28 + k, 40000, 0);
+  }
+  render(*br, 2);
+  CHECK(ep.active_voices() == 64);
+  CHECK(a.usage(kEpId).live_cost == ep_res);
+
+  // Zero steals so far, every engine is exactly at its floor
+  CHECK(a.steals() == 0);
+
+  // 4. Put sustain pedal down on EP channel (ch 4)
+  br->submit({make_control_change(0, 4, 64, 0xFFFFFFFFu), 0});
+  render(*br, 1);
+
+  // Release some notes on ch 4: they become pedal-sustained (prio 2)
+  off(*br, 4, 30);
+  off(*br, 4, 31);
+  render(*br, 1);
+  CHECK(ep.active_voices() == 64);
+
+  // 5. Play 8 extra EP voices on ch 5 to completely fill the 32 shared units (8 * 4 = 32)
+  for (std::uint32_t k = 0; k < 8; ++k) {
+    on(*br, 5, 40 + k, 30000 + k * 1000); // varying velocities
+  }
+  render(*br, 2);
+  CHECK(ep.active_voices() == 72); // 64 floor + 8 shared
+  CHECK(a.usage(kSampleId).used() + a.usage(kEpId).used() == sample_res + ep_res + shared_units);
+  CHECK(a.steals() == 0);
+
+  // 6. Over-allocate into shared pool: play another note on ch 5
+  // Now pool is exhausted, stealing must occur from the shared pool above floor!
+  // Neither piano (at floor 256) nor organ (steal protected) drops below its floor.
+  // EP has 8 voices above floor.
+  on(*br, 5, 80, 50000);
+  render(*br, 2);
+  CHECK(a.steals() == 1);
+  CHECK(a.steals(kEpId) == 1);
+  CHECK(a.steals(kSampleId) == 0);
+  CHECK(a.steals(static_cast<std::uint32_t>(EngineTypeId::kOrgan)) == 0);
+  CHECK(se.active_voices() == 256); // Piano remained at 256 floor
+  CHECK(ep.active_voices() >= 64);  // EP never dropped below its floor!
+}
+
 // A note never steals the voices of its own note-on (all regions of one SFZ note).
 void test_own_event_not_stolen() {
   SampleSrc src;
@@ -1586,6 +1749,8 @@ int main() {
   test_fm_piano_organ_shared_pool();
   test_va_floor_reservation();
   test_all_four_engines_at_floors_shared_pool();
+  test_ep_floor_reservation();
+  test_ep_piano_organ_shared_pool();
   test_own_event_not_stolen();
   test_ramp_tone_and_sample();
   test_ramp_counts_until_silent();
