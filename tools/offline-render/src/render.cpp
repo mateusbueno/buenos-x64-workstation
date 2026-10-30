@@ -8,6 +8,7 @@
 #include "velora/core/block_renderer.hpp"
 #include "velora/core/contact_events.hpp"
 #include "velora/core/fm_engine.hpp"
+#include "velora/core/ep_engine.hpp"
 #include "velora/core/organ_engine.hpp"
 #include "velora/core/params_gen.hpp"
 #include "velora/core/param_events.hpp"
@@ -302,6 +303,21 @@ bool render_events(const std::vector<NoteEvent>& events, const RenderOptions& op
     }
     for (std::uint32_t ch = 0; ch < 16; ++ch) {
       br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kFm));
+    }
+  }
+
+  std::unique_ptr<EpEngine> ep;
+  if (opt.engine == EngineKind::kEp) {
+    ep = std::make_unique<EpEngine>(static_cast<float>(kSampleRate));
+    for (std::uint32_t ch = 0; ch < EpEngine::kPartCount; ++ch) {
+      ep->set_part_voice_params(ch, opt.ep_params);
+    }
+    if (!br->bind_engine(*ep)) {
+      error = "cannot bind the modeled EP engine";
+      return false;
+    }
+    for (std::uint32_t ch = 0; ch < 16; ++ch) {
+      br->set_channel_engine(ch, static_cast<std::uint32_t>(EngineTypeId::kModeledEP));
     }
   }
 

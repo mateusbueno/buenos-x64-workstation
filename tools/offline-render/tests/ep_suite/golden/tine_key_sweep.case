@@ -1,0 +1,5 @@
+# Golden null test for Modeled Tine Key Sweep (Story 14.2)
+reference=tine_key_sweep.wav
+tolerance_db=-60.0
+max_offset_frames=0
+check_excess=0

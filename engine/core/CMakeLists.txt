@@ -25,6 +25,7 @@ set(VELORA_CORE_SOURCES
   src/arpeggiator.cpp
   src/fm_engine.cpp
   src/va_engine.cpp
+  src/ep_engine.cpp
   src/worker_pool.cpp
   src/block_renderer.cpp)
 add_library(velora_core STATIC ${VELORA_CORE_SOURCES})
@@ -102,6 +103,11 @@ add_executable(va_engine_tests tests/va_engine_test.cpp)
 target_link_libraries(va_engine_tests PRIVATE velora_core)
 target_compile_definitions(va_engine_tests PRIVATE VELORA_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_test(NAME va_engine_tests COMMAND va_engine_tests)
+
+add_executable(ep_engine_tests tests/ep_engine_test.cpp)
+target_link_libraries(ep_engine_tests PRIVATE velora_core)
+target_compile_definitions(ep_engine_tests PRIVATE VELORA_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_test(NAME ep_engine_tests COMMAND ep_engine_tests)
 
 # Story 9.9 follow-up: registry part parameters inside the FM / VA / sample engines and the per-part tone stage (mapping, audible effect, defaults unchanged, smoothing,
 # EQ stability, parallel equivalence, allocation-free flood). The allocation hook is process wide; the RTSan build of the same file is in the RTSan block below.

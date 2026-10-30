@@ -83,7 +83,7 @@ static velora::core::FmVoiceParameters to_core(const velora::format::FmVoicePara
 static int usage() {
   std::fprintf(stderr,
                "usage: velora-offline-render [--midi in.mid] [--events in.contacts (test only, organ engine)] --out out.wav\n"
-               "       [--engine test-tone|sample|organ|fm]   (at least one of --midi / --events)\n"
+               "       [--engine test-tone|sample|organ|fm|ep]   (at least one of --midi / --events)\n"
                "       [--voices N] [--voice-threads 0|1|3 (sample engine only)] [--tail-seconds S] [--detune-cents C (test only)]\n"
                "       organ engine: [--drawbars 888000000] (nine steps 0..8, 16' to 1')\n"
                "                     [--percussion second|third,fast|slow,soft|normal | off] [--key-click 0..1]\n"
@@ -756,8 +756,8 @@ int main(int argc, char** argv) {
     return 0;
   }
   if ((midi.empty() && events_path.empty()) || out.empty()) return usage();
-  if (engine != "test-tone" && engine != "sample" && engine != "organ" && engine != "fm") {
-    std::fprintf(stderr, "error: unknown engine '%s' (test-tone, sample, organ or fm)\n", engine.c_str());
+  if (engine != "test-tone" && engine != "sample" && engine != "organ" && engine != "fm" && engine != "ep") {
+    std::fprintf(stderr, "error: unknown engine '%s' (test-tone, sample, organ, fm or ep)\n", engine.c_str());
     return 2;
   }
   if (voice_threads_given && engine != "sample") {
@@ -817,6 +817,9 @@ int main(int argc, char** argv) {
       }
     }
     opt.engine = EngineKind::kFm;
+  } else if (engine == "ep") {
+    opt.engine = EngineKind::kEp;
+    opt.ep_params = velora::core::create_default_tine_parameters();
   } else {
     if (!syx_path.empty() || voice_slot_given || !negative_opt.empty()) {
       std::fprintf(stderr, "error: --syx, --voice-slot and --negative need --engine fm\n");
@@ -931,7 +934,7 @@ int main(int argc, char** argv) {
     }
     opt.engine = EngineKind::kSample;
     opt.instrument = inst;
-  } else if (engine == "organ" || engine == "fm") {
+  } else if (engine == "organ" || engine == "fm" || engine == "ep") {
     // handled above
   } else if (!bundle_path.empty() || !instrument_key.empty() || sample_opts) {
     std::fprintf(stderr, "error: --bundle, --instrument, --seed, --gain-db, --interpolation and --oracle-block-frames need --engine sample\n");

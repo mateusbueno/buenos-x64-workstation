@@ -10,7 +10,7 @@ namespace velora::core {
 
 constexpr bool is_reserved_engine_id(std::uint32_t id) noexcept {
   return id >= static_cast<std::uint32_t>(EngineTypeId::kSample) &&
-         id <= static_cast<std::uint32_t>(EngineTypeId::kVa);
+         id <= static_cast<std::uint32_t>(EngineTypeId::kModeledEP);
 }
 
 // Registry of compiled-in engines. bind() is setup-time only; resolve()/at() are RT-safe.

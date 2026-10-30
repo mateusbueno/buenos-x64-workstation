@@ -9,10 +9,11 @@ namespace velora::core {
 // Engine type IDs. The numeric values of the four reserved IDs are STABLE and must never change
 // or be reused (they will appear in saved data). kTestTone is a non-reserved, test-only engine.
 enum class EngineTypeId : std::uint32_t {
-  kSample = 1,  // reserved
-  kOrgan = 2,   // reserved
-  kFm = 3,      // reserved
-  kVa = 4,      // reserved
+  kSample = 1,     // reserved
+  kOrgan = 2,      // reserved
+  kFm = 3,         // reserved
+  kVa = 4,         // reserved
+  kModeledEP = 5,  // reserved
   kTestTone = 0xF000,
 };
 

@@ -102,6 +102,10 @@ static void test_reserved_and_unknown() {
   br->submit({make_note_on(0, 2, 60, 0xFFFF), 0});
   b = render(*br);
   CHECK(br->status_count(EngineStatus::kEngineNotAvailable) == 2);
+  br->set_channel_engine(4, static_cast<std::uint32_t>(EngineTypeId::kModeledEP));
+  br->submit({make_note_on(0, 4, 60, 0xFFFF), 0});
+  b = render(*br);
+  CHECK(br->status_count(EngineStatus::kEngineNotAvailable) == 3);
   CHECK(br->test_tone().active_voices() == 0);  // no other engine served it
   br->submit({make_note_on(0, 3, 60, 0xFFFF), 0});
   render(*br);
@@ -112,6 +116,7 @@ static void test_reserved_and_unknown() {
   CHECK(static_cast<std::uint32_t>(EngineTypeId::kOrgan) == 2);
   CHECK(static_cast<std::uint32_t>(EngineTypeId::kFm) == 3);
   CHECK(static_cast<std::uint32_t>(EngineTypeId::kVa) == 4);
+  CHECK(static_cast<std::uint32_t>(EngineTypeId::kModeledEP) == 5);
 }
 
 static void test_queue_full() {
